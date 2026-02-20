@@ -12,7 +12,9 @@
 #include <vector>
 #include <filesystem>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
+#include <thread>
 
 #include <tbb/global_control.h>
 #include <tbb/task_group.h>
@@ -33,7 +35,9 @@ static void print_usage(const char* prog) {
         "                         Powers of 2 recommended\n"
         "  -max_freq_build <int>  Exclude k-mers with count > threshold\n"
         "                         (default: 0 = no exclusion)\n"
-        "  -threads <int>         Number of threads (default: 1)\n"
+        "  -openvol <int>         Max volumes processed simultaneously\n"
+        "                         (default: 1)\n"
+        "  -threads <int>         Number of threads (default: all cores)\n"
         "  -v, --verbose          Verbose output\n",
         prog, MIN_K, MAX_K);
 }
@@ -113,15 +117,21 @@ int main(int argc, char* argv[]) {
         vol_paths.push_back(db_path);
     }
 
+    int threads = cli.get_int("-threads", 0);
+    if (threads <= 0) {
+        threads = static_cast<int>(std::thread::hardware_concurrency());
+        if (threads <= 0) threads = 1;
+    }
+
+    int openvol = cli.get_int("-openvol", 1);
+    if (openvol < 1) openvol = 1;
+
     logger.info("Database: %s (%zu volume(s))", db_path.c_str(), vol_paths.size());
-    logger.info("Parameters: k=%d, buffer=%s, partitions=%d",
-                k, buf_size_str.c_str(), partitions);
+    logger.info("Parameters: k=%d, buffer=%s, partitions=%d, openvol=%d, threads=%d",
+                k, buf_size_str.c_str(), partitions, openvol, threads);
 
     // Extract DB base name from path
     std::string db_base = std::filesystem::path(db_path).filename().string();
-
-    int threads = cli.get_int("-threads", 1);
-    if (threads < 1) threads = 1;
 
     // Centralized TBB thread control
     tbb::global_control gc(tbb::global_control::max_allowed_parallelism, threads);
@@ -137,17 +147,37 @@ int main(int argc, char* argv[]) {
 
     uint16_t total_volumes = static_cast<uint16_t>(vol_paths.size());
 
-    // Process volumes in parallel via TBB task_group.
-    // Each volume opens its own BlastDbReader and writes independent output files.
-    // TBB work-stealing distributes threads across volumes automatically.
+    // Process volumes via TBB task_group with concurrency limited by -openvol.
+    // The main thread gates submission: it waits until a slot is available
+    // before submitting the next volume task, so at most openvol volumes
+    // are active simultaneously.
     std::atomic<bool> any_error{false};
     std::vector<std::string> error_messages(total_volumes);
     std::mutex log_mutex;
 
+    int max_active = std::min(openvol, static_cast<int>(total_volumes));
+    std::mutex vol_mutex;
+    std::condition_variable vol_cv;
+    int active_volumes = 0;
+
     tbb::task_group tg;
     for (uint16_t vi = 0; vi < total_volumes; vi++) {
+        // Wait until a slot is available
+        {
+            std::unique_lock<std::mutex> lock(vol_mutex);
+            vol_cv.wait(lock, [&] { return active_volumes < max_active; });
+            active_volumes++;
+        }
+
+        if (any_error.load(std::memory_order_relaxed)) break;
+
         tg.run([&, vi]() {
-            if (any_error.load(std::memory_order_relaxed)) return;
+            if (any_error.load(std::memory_order_relaxed)) {
+                std::lock_guard<std::mutex> lock(vol_mutex);
+                active_volumes--;
+                vol_cv.notify_one();
+                return;
+            }
 
             {
                 std::lock_guard<std::mutex> lock(log_mutex);
@@ -159,6 +189,9 @@ int main(int argc, char* argv[]) {
             if (!db.open(vol_paths[vi])) {
                 error_messages[vi] = "cannot open volume '" + vol_paths[vi] + "'";
                 any_error.store(true, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(vol_mutex);
+                active_volumes--;
+                vol_cv.notify_one();
                 return;
             }
 
@@ -183,6 +216,12 @@ int main(int argc, char* argv[]) {
                 error_messages[vi] = "index build failed for volume " + std::to_string(vi);
                 any_error.store(true, std::memory_order_relaxed);
             }
+
+            {
+                std::lock_guard<std::mutex> lock(vol_mutex);
+                active_volumes--;
+            }
+            vol_cv.notify_one();
         });
     }
     tg.wait();

@@ -55,7 +55,9 @@ ikafssnindex [options]
                           2 の冪乗を推奨 (1, 2, 4, 8, 16, ...)
   -max_freq_build <int>   構築時高頻度 k-mer 除外閾値
                           (デフォルト: 0 = 除外なし)
-  -threads <int>          使用スレッド数 (デフォルト: 1)
+  -openvol <int>          ボリューム同時処理数の上限 (デフォルト: 1)
+                          マルチボリューム DB のピークメモリ使用量を制御
+  -threads <int>          使用スレッド数 (デフォルト: 利用可能な全コア)
                           計数・パーティションスキャン・ソート・
                           ボリューム処理を並列化
   -v, --verbose           詳細ログ出力
@@ -68,7 +70,10 @@ ikafssnindex [options]
 ikafssnindex -db mydb -k 11 -o ./index -buffer_size 16G -partitions 1
 
 # 大規模 DB、メモリ制限、マルチスレッド
-ikafssnindex -db nt -k 11 -o ./nt_index -buffer_size 4G -partitions 16 -threads 32
+ikafssnindex -db nt -k 11 -o ./nt_index -partitions 16 -threads 32
+
+# 大規模 DB、ボリューム同時処理数を 2 に制限
+ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2
 
 # 高頻度 k-mer を除外して構築
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
@@ -239,7 +244,7 @@ ikafssnhttpd [options]
 オプション:
   -listen <host>:<port>  HTTP リスニングアドレス (デフォルト: 0.0.0.0:8080)
   -path_prefix <prefix>  API パスプレフィックス (例: /nt)
-  -threads <int>         Drogon I/O スレッド数 (デフォルト: 4)
+  -threads <int>         Drogon I/O スレッド数 (デフォルト: 利用可能な全コア)
   -pid <path>            PID ファイルパス
   -v, --verbose          詳細ログ出力
 ```

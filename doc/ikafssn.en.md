@@ -55,7 +55,9 @@ Options:
                           Powers of 2 recommended (1, 2, 4, 8, 16, ...)
   -max_freq_build <int>   Exclude k-mers with count above this threshold
                           (default: 0 = no exclusion)
-  -threads <int>          Number of threads (default: 1)
+  -openvol <int>          Max volumes processed simultaneously (default: 1)
+                          Controls peak memory usage for multi-volume DBs
+  -threads <int>          Number of threads (default: all cores)
                           Parallelizes counting, partition scan, sort,
                           and volume processing
   -v, --verbose           Verbose output
@@ -68,7 +70,10 @@ Options:
 ikafssnindex -db mydb -k 11 -o ./index -buffer_size 16G -partitions 1
 
 # Large DB, limited memory, multi-threaded
-ikafssnindex -db nt -k 11 -o ./nt_index -buffer_size 4G -partitions 16 -threads 32
+ikafssnindex -db nt -k 11 -o ./nt_index -partitions 16 -threads 32
+
+# Large DB, allow 2 volumes to be processed simultaneously
+ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2
 
 # Exclude high-frequency k-mers during build
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
@@ -239,7 +244,7 @@ Backend connection (one required):
 Options:
   -listen <host>:<port>  HTTP listen address (default: 0.0.0.0:8080)
   -path_prefix <prefix>  API path prefix (e.g., /nt)
-  -threads <int>         Drogon I/O threads (default: 4)
+  -threads <int>         Drogon I/O threads (default: all cores)
   -pid <path>            PID file path
   -v, --verbose          Verbose logging
 ```

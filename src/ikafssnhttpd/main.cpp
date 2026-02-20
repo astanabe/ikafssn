@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include <unistd.h>
 
@@ -27,7 +28,7 @@ static void print_usage(const char* prog) {
         "Options:\n"
         "  -listen <host>:<port>  HTTP listen address (default: 0.0.0.0:8080)\n"
         "  -path_prefix <prefix>  API path prefix (e.g., /nt)\n"
-        "  -threads <int>         Drogon I/O threads (default: 4)\n"
+        "  -threads <int>         Drogon I/O threads (default: all cores)\n"
         "  -pid <path>            PID file path\n"
         "  -v, --verbose          Verbose logging\n",
         prog);
@@ -82,7 +83,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    int threads = cli.get_int("-threads", 4);
+    int threads = cli.get_int("-threads", 0);
+    if (threads <= 0) {
+        threads = static_cast<int>(std::thread::hardware_concurrency());
+        if (threads <= 0) threads = 1;
+    }
 
     // Configure Drogon
     drogon::app()
