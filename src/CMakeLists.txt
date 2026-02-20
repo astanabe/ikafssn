@@ -61,8 +61,16 @@ target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_i
 add_library(ikafssn_util STATIC
     util/cli_parser.cpp
     util/size_parser.cpp
+    util/socket_utils.cpp
 )
 target_link_libraries(ikafssn_util PUBLIC ikafssn_core)
+
+# Protocol library (frame + messages + serializer)
+add_library(ikafssn_protocol STATIC
+    protocol/frame.cpp
+    protocol/serializer.cpp
+)
+target_link_libraries(ikafssn_protocol PUBLIC ikafssn_core)
 
 # --- Command executables ---
 
@@ -85,4 +93,37 @@ add_executable(ikafssnsearch
 target_link_libraries(ikafssnsearch PRIVATE
     ikafssn_search ikafssn_index ikafssn_io ikafssn_util ikafssn_core
     TBB::tbb
+)
+
+# ikafssnserver
+add_library(ikafssn_server_lib STATIC
+    ikafssnserver/server.cpp
+    ikafssnserver/connection_handler.cpp
+    ikafssnserver/request_processor.cpp
+)
+target_link_libraries(ikafssn_server_lib PUBLIC
+    ikafssn_search ikafssn_protocol ikafssn_index ikafssn_io ikafssn_util ikafssn_core
+    TBB::tbb
+)
+
+add_executable(ikafssnserver
+    ikafssnserver/main.cpp
+)
+target_link_libraries(ikafssnserver PRIVATE
+    ikafssn_server_lib
+)
+
+# ikafssnclient
+add_library(ikafssn_client_lib STATIC
+    ikafssnclient/socket_client.cpp
+)
+target_link_libraries(ikafssn_client_lib PUBLIC
+    ikafssn_protocol ikafssn_util ikafssn_core
+)
+
+add_executable(ikafssnclient
+    ikafssnclient/main.cpp
+)
+target_link_libraries(ikafssnclient PRIVATE
+    ikafssn_client_lib ikafssn_io ikafssn_util ikafssn_core
 )

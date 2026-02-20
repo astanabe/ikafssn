@@ -103,3 +103,30 @@ target_compile_definitions(test_multivolume PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME test_multivolume COMMAND test_multivolume)
+
+# --- Phase 5 tests ---
+
+# Protocol serialize/deserialize test (no external dependencies)
+add_executable(test_protocol test_protocol.cpp)
+target_link_libraries(test_protocol PRIVATE
+    ikafssn_protocol ikafssn_util ikafssn_core
+)
+target_include_directories(test_protocol PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME test_protocol COMMAND test_protocol)
+
+# Server-client integration test (requires NCBI Toolkit + TBB)
+add_executable(test_server_client test_server_client.cpp)
+target_link_libraries(test_server_client PRIVATE
+    ikafssn_server_lib ikafssn_client_lib
+    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    TBB::tbb
+)
+target_include_directories(test_server_client PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_compile_definitions(test_server_client PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME test_server_client COMMAND test_server_client)
