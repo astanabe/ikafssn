@@ -170,3 +170,62 @@ if(BUILD_HTTPD)
         add_test(NAME test_httpd_client COMMAND test_httpd_client)
     endif()
 endif()
+
+# --- Phase 6 tests (retrieve) ---
+
+# Result reader test (no external dependencies)
+add_executable(test_result_reader test_result_reader.cpp)
+target_link_libraries(test_result_reader PRIVATE
+    ikafssn_io ikafssn_core
+)
+target_include_directories(test_result_reader PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME test_result_reader COMMAND test_result_reader)
+
+# efetch retriever unit test (no external dependencies, no HTTP calls)
+add_executable(test_efetch_retriever test_efetch_retriever.cpp
+    "${CMAKE_SOURCE_DIR}/src/ikafssnretrieve/efetch_retriever.cpp"
+)
+target_link_libraries(test_efetch_retriever PRIVATE
+    ikafssn_io ikafssn_core
+)
+target_include_directories(test_efetch_retriever PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+add_test(NAME test_efetch_retriever COMMAND test_efetch_retriever)
+
+# Retrieve pipeline integration test (requires NCBI Toolkit)
+add_executable(test_retrieve_pipeline test_retrieve_pipeline.cpp
+    "${CMAKE_SOURCE_DIR}/src/ikafssnretrieve/local_retriever.cpp"
+)
+target_link_libraries(test_retrieve_pipeline PRIVATE
+    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_retrieve_pipeline PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_compile_definitions(test_retrieve_pipeline PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME test_retrieve_pipeline COMMAND test_retrieve_pipeline)
+
+# SSU_eukaryote_rRNA integration test (requires network + NCBI Toolkit; optionally libcurl)
+add_executable(test_retrieve_ssu test_retrieve_ssu.cpp
+    "${CMAKE_SOURCE_DIR}/src/ikafssnretrieve/local_retriever.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ikafssnretrieve/efetch_retriever.cpp"
+)
+target_link_libraries(test_retrieve_ssu PRIVATE
+    ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_retrieve_ssu PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+if(ENABLE_REMOTE_RETRIEVE)
+    target_link_libraries(test_retrieve_ssu PRIVATE CURL::libcurl)
+    target_compile_definitions(test_retrieve_ssu PRIVATE IKAFSSN_ENABLE_REMOTE)
+endif()
+add_test(NAME test_retrieve_ssu COMMAND test_retrieve_ssu)

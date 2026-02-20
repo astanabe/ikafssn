@@ -60,6 +60,12 @@ if(ENABLE_CLIENT_HTTP)
     find_package(jsoncpp REQUIRED)
 endif()
 
+# --- libcurl (optional, for ikafssnretrieve remote mode) ---
+option(ENABLE_REMOTE_RETRIEVE "Enable NCBI efetch in ikafssnretrieve (requires libcurl)" ON)
+if(ENABLE_REMOTE_RETRIEVE)
+    find_package(CURL REQUIRED)
+endif()
+
 # --- Subdirectories ---
 add_subdirectory(src)
 

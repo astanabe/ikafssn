@@ -33,6 +33,7 @@ add_library(ikafssn_io STATIC
     io/fasta_reader.cpp
     io/seqidlist_reader.cpp
     io/result_writer.cpp
+    io/result_reader.cpp
 )
 target_link_libraries(ikafssn_io PUBLIC ikafssn_core)
 
@@ -133,6 +134,23 @@ add_executable(ikafssnclient
 target_link_libraries(ikafssnclient PRIVATE
     ikafssn_client_lib ikafssn_io ikafssn_util ikafssn_core
 )
+
+# ikafssnretrieve
+add_executable(ikafssnretrieve
+    ikafssnretrieve/main.cpp
+    ikafssnretrieve/local_retriever.cpp
+    ikafssnretrieve/efetch_retriever.cpp
+)
+target_include_directories(ikafssnretrieve PRIVATE
+    "${NCBI_TOOLKIT_INCLUDE}"
+)
+target_link_libraries(ikafssnretrieve PRIVATE
+    ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+if(ENABLE_REMOTE_RETRIEVE)
+    target_link_libraries(ikafssnretrieve PRIVATE CURL::libcurl)
+    target_compile_definitions(ikafssnretrieve PRIVATE IKAFSSN_ENABLE_REMOTE)
+endif()
 
 # ikafssnhttpd (requires Drogon)
 if(BUILD_HTTPD)
