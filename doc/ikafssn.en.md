@@ -52,7 +52,9 @@ Options:
   -memory_limit <size>    Memory limit (default: half of physical RAM)
                           Accepts K, M, G suffixes
                           Partitions are auto-calculated to fit within this limit
-  -max_freq_build <int>   Exclude k-mers with count above this threshold
+  -max_freq_build <num>   Exclude k-mers with count above this threshold
+                          >= 1: absolute count threshold
+                          0 < x < 1: fraction of NSEQ per volume
                           (default: 0 = no exclusion)
   -openvol <int>          Max volumes processed simultaneously (default: 1)
                           Controls peak memory usage for multi-volume DBs
@@ -74,8 +76,11 @@ ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -threads 32
 # Large DB, allow 2 volumes to be processed simultaneously
 ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2
 
-# Exclude high-frequency k-mers during build
+# Exclude high-frequency k-mers during build (absolute)
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
+
+# Exclude k-mers appearing in >1% of sequences per volume
+ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
 ```
 
 ### ikafssnsearch

@@ -52,7 +52,9 @@ ikafssnindex [options]
   -memory_limit <size>    メモリ上限 (デフォルト: 物理メモリの半分)
                           接尾辞 K, M, G を認識
                           パーティション数はこの上限内に収まるよう自動決定
-  -max_freq_build <int>   構築時高頻度 k-mer 除外閾値
+  -max_freq_build <num>   構築時高頻度 k-mer 除外閾値
+                          1 以上: 絶対カウント閾値
+                          0〜1 未満: ボリュームあたり NSEQ に対する割合
                           (デフォルト: 0 = 除外なし)
   -openvol <int>          ボリューム同時処理数の上限 (デフォルト: 1)
                           マルチボリューム DB のピークメモリ使用量を制御
@@ -74,8 +76,11 @@ ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -threads 32
 # 大規模 DB、ボリューム同時処理数を 2 に制限
 ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2
 
-# 高頻度 k-mer を除外して構築
+# 高頻度 k-mer を除外して構築 (絶対値指定)
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
+
+# ボリュームあたり配列数の 1% を超える k-mer を除外
+ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
 ```
 
 ### ikafssnsearch

@@ -49,4 +49,14 @@ int CliParser::get_int(const std::string& key, int default_val) const {
     }
 }
 
+double CliParser::get_double(const std::string& key, double default_val) const {
+    auto it = opts_.find(key);
+    if (it == opts_.end()) return default_val;
+    try {
+        return std::stod(it->second);
+    } catch (...) {
+        return default_val;
+    }
+}
+
 } // namespace ikafssn

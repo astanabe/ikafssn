@@ -21,6 +21,9 @@ public:
     // Get integer value for a key. Returns default_val if not found or invalid.
     int get_int(const std::string& key, int default_val = 0) const;
 
+    // Get double value for a key. Returns default_val if not found or invalid.
+    double get_double(const std::string& key, double default_val = 0.0) const;
+
     // Get the program name (argv[0]).
     const std::string& program() const { return program_; }
 

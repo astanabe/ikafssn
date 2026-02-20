@@ -172,10 +172,22 @@ bool build_index(BlastDbReader& db,
     logger.info("Phase 1: total postings = %lu", static_cast<unsigned long>(total_postings));
 
     // Apply max_freq_build exclusion
+    // Resolve threshold: if 0 < value < 1.0, treat as fraction of num_seqs
+    uint64_t freq_threshold = 0;
     if (config.max_freq_build > 0) {
+        if (config.max_freq_build < 1.0) {
+            freq_threshold = static_cast<uint64_t>(config.max_freq_build * num_seqs);
+            if (freq_threshold == 0) freq_threshold = 1;
+            logger.info("Phase 1: max_freq_build=%.6g (fraction) -> threshold=%lu (nseq=%u)",
+                        config.max_freq_build,
+                        static_cast<unsigned long>(freq_threshold),
+                        num_seqs);
+        } else {
+            freq_threshold = static_cast<uint64_t>(config.max_freq_build);
+        }
         uint64_t excluded = 0;
         for (uint64_t i = 0; i < tbl_size; i++) {
-            if (counts[i] > config.max_freq_build) {
+            if (counts[i] > freq_threshold) {
                 total_postings -= counts[i];
                 counts[i] = 0;
                 excluded++;
@@ -183,7 +195,7 @@ bool build_index(BlastDbReader& db,
         }
         logger.info("Phase 1: excluded %lu high-frequency k-mers (threshold=%lu)",
                     static_cast<unsigned long>(excluded),
-                    static_cast<unsigned long>(config.max_freq_build));
+                    static_cast<unsigned long>(freq_threshold));
     }
 
     // =========== Determine partition count from memory_limit ===========

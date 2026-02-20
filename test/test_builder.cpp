@@ -279,6 +279,33 @@ static void test_build_with_max_freq_build() {
 
     kix1.close();
     kix2.close();
+
+    // Build with fractional max_freq_build (e.g., 0.5 = exclude kmers in > 50% of seqs)
+    uint32_t nseqs = db.num_sequences();
+    uint64_t frac_threshold = static_cast<uint64_t>(0.5 * nseqs);
+    if (frac_threshold == 0) frac_threshold = 1;
+
+    IndexBuilderConfig config3;
+    config3.k = 7;
+    config3.max_freq_build = 0.5;  // fraction of NSEQ
+
+    std::string prefix3 = g_output_dir + "/freq_test3.00.07mer";
+    CHECK(build_index<uint16_t>(db, config3, prefix3, 0, 1, "test", logger));
+
+    // Re-open kix1 for comparison with fractional-threshold build
+    CHECK(kix1.open(prefix1 + ".kix"));
+
+    KixReader kix3;
+    CHECK(kix3.open(prefix3 + ".kix"));
+    CHECK(kix3.total_postings() <= kix1.total_postings());
+
+    for (uint64_t kmer = 0; kmer < kix3.table_size(); kmer++) {
+        if (kix1.counts()[kmer] > frac_threshold) {
+            CHECK_EQ(kix3.counts()[kmer], 0u);
+        }
+    }
+    kix1.close();
+    kix3.close();
 }
 
 static void test_build_with_memory_limits() {

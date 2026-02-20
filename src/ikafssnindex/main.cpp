@@ -43,7 +43,9 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "Options:\n"
         "  -memory_limit <size>   Memory limit (default: %s = half of RAM)\n"
         "                         Accepts K, M, G suffixes\n"
-        "  -max_freq_build <int>  Exclude k-mers with count > threshold\n"
+        "  -max_freq_build <num>  Exclude k-mers with count > threshold\n"
+        "                         >= 1: absolute count threshold\n"
+        "                         0 < x < 1: fraction of NSEQ per volume\n"
         "                         (default: 0 = no exclusion)\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
@@ -111,9 +113,13 @@ int main(int argc, char* argv[]) {
         mem_limit_str = default_mem_str;
     }
 
-    uint64_t max_freq_build = 0;
+    double max_freq_build = 0;
     if (cli.has("-max_freq_build")) {
-        max_freq_build = static_cast<uint64_t>(cli.get_int("-max_freq_build", 0));
+        max_freq_build = cli.get_double("-max_freq_build", 0);
+        if (max_freq_build < 0) {
+            std::fprintf(stderr, "Error: -max_freq_build must be >= 0\n");
+            return 1;
+        }
     }
 
     bool verbose = cli.has("-v") || cli.has("--verbose");
