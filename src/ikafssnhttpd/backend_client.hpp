@@ -26,6 +26,9 @@ public:
     // Send a health check and receive response.
     bool health_check(HealthResponse& resp, std::string& error_msg);
 
+    // Send an info request and receive response.
+    bool info(InfoResponse& resp, std::string& error_msg);
+
     const std::string& address() const { return address_; }
 
 private:

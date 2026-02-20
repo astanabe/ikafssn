@@ -22,6 +22,12 @@ static void put_u32(std::vector<uint8_t>& buf, uint32_t v) {
     buf.push_back(static_cast<uint8_t>(v >> 24));
 }
 
+static void put_u64(std::vector<uint8_t>& buf, uint64_t v) {
+    for (int i = 0; i < 8; i++) {
+        buf.push_back(static_cast<uint8_t>(v >> (i * 8)));
+    }
+}
+
 static void put_str16(std::vector<uint8_t>& buf, const std::string& s) {
     put_u16(buf, static_cast<uint16_t>(s.size()));
     buf.insert(buf.end(), s.begin(), s.end());
@@ -56,6 +62,16 @@ public:
             (static_cast<uint32_t>(data_[pos_ + 2]) << 16) |
             (static_cast<uint32_t>(data_[pos_ + 3]) << 24);
         pos_ += 4;
+        return true;
+    }
+
+    bool get_u64(uint64_t& v) {
+        if (!has(8)) return false;
+        v = 0;
+        for (int i = 0; i < 8; i++) {
+            v |= static_cast<uint64_t>(data_[pos_ + i]) << (i * 8);
+        }
+        pos_ += 8;
         return true;
     }
 
@@ -255,6 +271,86 @@ std::vector<uint8_t> serialize(const HealthResponse& resp) {
 bool deserialize(const std::vector<uint8_t>& data, HealthResponse& resp) {
     Reader r(data.data(), data.size());
     if (!r.get_u8(resp.status)) return false;
+    return true;
+}
+
+// --- InfoRequest ---
+
+std::vector<uint8_t> serialize(const InfoRequest& /*req*/) {
+    return {};
+}
+
+bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
+    return true;
+}
+
+// --- InfoResponse ---
+// Wire format:
+//   u8  status
+//   u8  default_k
+//   u16 num_groups
+//   for each group:
+//     u8  k
+//     u8  kmer_type
+//     u16 num_volumes
+//     for each volume:
+//       u16 volume_index
+//       u32 num_sequences
+//       u64 total_postings
+//       str16 db_name
+
+std::vector<uint8_t> serialize(const InfoResponse& resp) {
+    std::vector<uint8_t> buf;
+    buf.reserve(256);
+
+    put_u8(buf, resp.status);
+    put_u8(buf, resp.default_k);
+    put_u16(buf, static_cast<uint16_t>(resp.groups.size()));
+
+    for (const auto& g : resp.groups) {
+        put_u8(buf, g.k);
+        put_u8(buf, g.kmer_type);
+        put_u16(buf, static_cast<uint16_t>(g.volumes.size()));
+
+        for (const auto& v : g.volumes) {
+            put_u16(buf, v.volume_index);
+            put_u32(buf, v.num_sequences);
+            put_u64(buf, v.total_postings);
+            put_str16(buf, v.db_name);
+        }
+    }
+
+    return buf;
+}
+
+bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
+    Reader r(data.data(), data.size());
+
+    if (!r.get_u8(resp.status)) return false;
+    if (!r.get_u8(resp.default_k)) return false;
+
+    uint16_t num_groups;
+    if (!r.get_u16(num_groups)) return false;
+    resp.groups.resize(num_groups);
+
+    for (uint16_t gi = 0; gi < num_groups; gi++) {
+        auto& g = resp.groups[gi];
+        if (!r.get_u8(g.k)) return false;
+        if (!r.get_u8(g.kmer_type)) return false;
+
+        uint16_t num_vols;
+        if (!r.get_u16(num_vols)) return false;
+        g.volumes.resize(num_vols);
+
+        for (uint16_t vi = 0; vi < num_vols; vi++) {
+            auto& v = g.volumes[vi];
+            if (!r.get_u16(v.volume_index)) return false;
+            if (!r.get_u32(v.num_sequences)) return false;
+            if (!r.get_u64(v.total_postings)) return false;
+            if (!r.get_str16(v.db_name)) return false;
+        }
+    }
+
     return true;
 }
 

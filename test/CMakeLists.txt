@@ -229,3 +229,20 @@ if(ENABLE_REMOTE_RETRIEVE)
     target_compile_definitions(test_retrieve_ssu PRIVATE IKAFSSN_ENABLE_REMOTE)
 endif()
 add_test(NAME test_retrieve_ssu COMMAND test_retrieve_ssu)
+
+# --- Phase 7 tests ---
+
+# ikafssninfo integration test (requires NCBI Toolkit for index building)
+add_executable(test_ikafssninfo test_ikafssninfo.cpp)
+target_link_libraries(test_ikafssninfo PRIVATE
+    ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_ikafssninfo PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_compile_definitions(test_ikafssninfo PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME test_ikafssninfo COMMAND test_ikafssninfo)

@@ -106,4 +106,54 @@ bool BackendClient::health_check(HealthResponse& resp, std::string& error_msg) {
     return true;
 }
 
+bool BackendClient::info(InfoResponse& resp, std::string& error_msg) {
+    int fd = connect();
+    if (fd < 0) {
+        error_msg = "Failed to connect to backend server at " + address_;
+        return false;
+    }
+
+    InfoRequest ireq;
+    auto payload = serialize(ireq);
+    if (!write_frame(fd, MsgType::kInfoRequest, payload)) {
+        close_fd(fd);
+        error_msg = "Failed to send info request to backend";
+        return false;
+    }
+
+    FrameHeader hdr;
+    std::vector<uint8_t> resp_payload;
+    if (!read_frame(fd, hdr, resp_payload)) {
+        close_fd(fd);
+        error_msg = "Failed to read info response from backend";
+        return false;
+    }
+    close_fd(fd);
+
+    MsgType type = static_cast<MsgType>(hdr.msg_type);
+
+    if (type == MsgType::kErrorResponse) {
+        ErrorResponse err;
+        if (deserialize(resp_payload, err)) {
+            error_msg = "Backend error " + std::to_string(err.error_code) +
+                        ": " + err.message;
+        } else {
+            error_msg = "Backend returned unparseable error response";
+        }
+        return false;
+    }
+
+    if (type != MsgType::kInfoResponse) {
+        error_msg = "Unexpected response type for info request";
+        return false;
+    }
+
+    if (!deserialize(resp_payload, resp)) {
+        error_msg = "Failed to deserialize info response";
+        return false;
+    }
+
+    return true;
+}
+
 } // namespace ikafssn

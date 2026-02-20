@@ -1,6 +1,8 @@
 #include "ikafssnserver/connection_handler.hpp"
 #include "util/socket_utils.hpp"
 
+#include <cstring>
+
 namespace ikafssn {
 
 static void send_error(int fd, uint32_t code, const std::string& msg) {
@@ -55,6 +57,36 @@ void handle_connection(
         hresp.status = 0;
         auto resp_payload = serialize(hresp);
         write_frame(client_fd, MsgType::kHealthResponse, resp_payload);
+        break;
+    }
+
+    case MsgType::kInfoRequest: {
+        InfoResponse iresp;
+        iresp.status = 0;
+        iresp.default_k = static_cast<uint8_t>(default_k);
+
+        for (const auto& [k, group] : kmer_groups) {
+            KmerGroupInfo gi;
+            gi.k = static_cast<uint8_t>(k);
+            gi.kmer_type = group.kmer_type;
+
+            for (const auto& vol : group.volumes) {
+                VolumeInfo vi;
+                vi.volume_index = vol.volume_index;
+                vi.num_sequences = vol.kix.num_sequences();
+                vi.total_postings = vol.kix.total_postings();
+                // Extract db_name from kix header
+                const auto& hdr = vol.kix.header();
+                vi.db_name = std::string(hdr.db_name,
+                    strnlen(hdr.db_name, sizeof(hdr.db_name)));
+                gi.volumes.push_back(std::move(vi));
+            }
+
+            iresp.groups.push_back(std::move(gi));
+        }
+
+        auto resp_payload = serialize(iresp);
+        write_frame(client_fd, MsgType::kInfoResponse, resp_payload);
         break;
     }
 

@@ -185,9 +185,55 @@ void HttpController::health(
 void HttpController::info(
     const drogon::HttpRequestPtr& req,
     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-    // Info endpoint not yet implemented in ikafssnserver
-    callback(make_error_response(drogon::k501NotImplemented,
-                                 "Info endpoint not yet implemented"));
+
+    auto backend = backend_;
+    auto cb = std::make_shared<std::function<void(const drogon::HttpResponsePtr&)>>(
+        std::move(callback));
+
+    std::thread([backend, cb]() {
+        InfoResponse iresp;
+        std::string error_msg;
+        if (!backend->info(iresp, error_msg)) {
+            (*cb)(make_error_response(drogon::k502BadGateway, error_msg));
+            return;
+        }
+
+        Json::Value result;
+        result["status"] = (iresp.status == 0) ? "success" : "error";
+        result["default_k"] = iresp.default_k;
+
+        Json::Value groups_arr(Json::arrayValue);
+        for (const auto& g : iresp.groups) {
+            Json::Value gobj;
+            gobj["k"] = g.k;
+            gobj["kmer_type"] = (g.kmer_type == 0) ? "uint16" : "uint32";
+
+            uint64_t group_total_sequences = 0;
+            uint64_t group_total_postings = 0;
+
+            Json::Value vols_arr(Json::arrayValue);
+            for (const auto& v : g.volumes) {
+                Json::Value vobj;
+                vobj["volume_index"] = v.volume_index;
+                vobj["num_sequences"] = v.num_sequences;
+                vobj["total_postings"] = static_cast<Json::UInt64>(v.total_postings);
+                vobj["db_name"] = v.db_name;
+                vols_arr.append(std::move(vobj));
+
+                group_total_sequences += v.num_sequences;
+                group_total_postings += v.total_postings;
+            }
+            gobj["volumes"] = std::move(vols_arr);
+            gobj["num_volumes"] = static_cast<Json::UInt>(g.volumes.size());
+            gobj["total_sequences"] = static_cast<Json::UInt64>(group_total_sequences);
+            gobj["total_postings"] = static_cast<Json::UInt64>(group_total_postings);
+            groups_arr.append(std::move(gobj));
+        }
+        result["kmer_groups"] = std::move(groups_arr);
+
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(std::move(result));
+        (*cb)(resp);
+    }).detach();
 }
 
 drogon::HttpResponsePtr HttpController::make_error_response(

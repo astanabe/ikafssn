@@ -152,6 +152,17 @@ if(ENABLE_REMOTE_RETRIEVE)
     target_compile_definitions(ikafssnretrieve PRIVATE IKAFSSN_ENABLE_REMOTE)
 endif()
 
+# ikafssninfo
+add_executable(ikafssninfo
+    ikafssninfo/main.cpp
+)
+target_include_directories(ikafssninfo PRIVATE
+    "${NCBI_TOOLKIT_INCLUDE}"
+)
+target_link_libraries(ikafssninfo PRIVATE
+    ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+
 # ikafssnhttpd (requires Drogon)
 if(BUILD_HTTPD)
     add_library(ikafssn_httpd_backend STATIC

@@ -282,6 +282,100 @@ static void test_search_request_with_seqidlist_exclude() {
     std::printf(" OK\n");
 }
 
+static void test_info_request_roundtrip() {
+    std::printf("  test_info_request_roundtrip...");
+
+    InfoRequest ireq;
+    auto req_data = serialize(ireq);
+    assert(req_data.empty());
+
+    InfoRequest ireq2;
+    assert(deserialize(req_data, ireq2));
+
+    std::printf(" OK\n");
+}
+
+static void test_info_response_serialize() {
+    std::printf("  test_info_response_serialize...");
+
+    InfoResponse resp;
+    resp.status = 0;
+    resp.default_k = 11;
+
+    KmerGroupInfo g1;
+    g1.k = 7;
+    g1.kmer_type = 0; // uint16
+    VolumeInfo v1;
+    v1.volume_index = 0;
+    v1.num_sequences = 1000;
+    v1.total_postings = 500000;
+    v1.db_name = "testdb";
+    g1.volumes.push_back(v1);
+    VolumeInfo v2;
+    v2.volume_index = 1;
+    v2.num_sequences = 2000;
+    v2.total_postings = 900000;
+    v2.db_name = "testdb";
+    g1.volumes.push_back(v2);
+    resp.groups.push_back(g1);
+
+    KmerGroupInfo g2;
+    g2.k = 11;
+    g2.kmer_type = 1; // uint32
+    VolumeInfo v3;
+    v3.volume_index = 0;
+    v3.num_sequences = 1000;
+    v3.total_postings = 450000;
+    v3.db_name = "testdb";
+    g2.volumes.push_back(v3);
+    resp.groups.push_back(g2);
+
+    auto data = serialize(resp);
+    InfoResponse resp2;
+    assert(deserialize(data, resp2));
+
+    assert(resp2.status == 0);
+    assert(resp2.default_k == 11);
+    assert(resp2.groups.size() == 2);
+
+    assert(resp2.groups[0].k == 7);
+    assert(resp2.groups[0].kmer_type == 0);
+    assert(resp2.groups[0].volumes.size() == 2);
+    assert(resp2.groups[0].volumes[0].volume_index == 0);
+    assert(resp2.groups[0].volumes[0].num_sequences == 1000);
+    assert(resp2.groups[0].volumes[0].total_postings == 500000);
+    assert(resp2.groups[0].volumes[0].db_name == "testdb");
+    assert(resp2.groups[0].volumes[1].volume_index == 1);
+    assert(resp2.groups[0].volumes[1].num_sequences == 2000);
+    assert(resp2.groups[0].volumes[1].total_postings == 900000);
+
+    assert(resp2.groups[1].k == 11);
+    assert(resp2.groups[1].kmer_type == 1);
+    assert(resp2.groups[1].volumes.size() == 1);
+    assert(resp2.groups[1].volumes[0].total_postings == 450000);
+
+    std::printf(" OK\n");
+}
+
+static void test_info_response_empty() {
+    std::printf("  test_info_response_empty...");
+
+    InfoResponse resp;
+    resp.status = 0;
+    resp.default_k = 9;
+    // No groups
+
+    auto data = serialize(resp);
+    InfoResponse resp2;
+    assert(deserialize(data, resp2));
+
+    assert(resp2.status == 0);
+    assert(resp2.default_k == 9);
+    assert(resp2.groups.empty());
+
+    std::printf(" OK\n");
+}
+
 static void test_frame_full_round_trip() {
     std::printf("  test_frame_full_round_trip...");
 
@@ -326,6 +420,9 @@ int main() {
     test_error_response_serialize();
     test_health_roundtrip();
     test_search_request_with_seqidlist_exclude();
+    test_info_request_roundtrip();
+    test_info_response_serialize();
+    test_info_response_empty();
     test_frame_full_round_trip();
 
     std::printf("All protocol tests passed.\n");

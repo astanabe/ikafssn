@@ -210,6 +210,59 @@ static void test_backend_health() {
     ::unlink(sock_path.c_str());
 }
 
+// Test: BackendClient info request
+static void test_backend_info() {
+    std::fprintf(stderr, "-- test_backend_info\n");
+
+    std::string sock_path = g_test_dir + "/test_httpd_info.sock";
+    ::unlink(sock_path.c_str());
+
+    std::string ix_dir = g_test_dir + "/httpd_index";
+
+    Server server;
+    Logger logger(Logger::kError);
+    CHECK(server.load_indexes(ix_dir, logger));
+
+    SearchConfig config;
+    int listen_fd = unix_listen(sock_path);
+    CHECK(listen_fd >= 0);
+
+    std::thread server_thread([&] {
+        int client_fd = accept_connection(listen_fd);
+        if (client_fd >= 0) {
+            handle_connection(client_fd, server.kmer_groups(),
+                              server.default_k(), config, logger);
+        }
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    BackendClient backend(BackendMode::kUnix, sock_path);
+
+    InfoResponse iresp;
+    std::string error_msg;
+    CHECK(backend.info(iresp, error_msg));
+    CHECK_EQ(iresp.status, 0);
+    CHECK_EQ(iresp.default_k, static_cast<uint8_t>(server.default_k()));
+
+    // Should have at least one kmer group
+    CHECK(!iresp.groups.empty());
+
+    // First group should have k=7 (we built with k=7)
+    CHECK_EQ(iresp.groups[0].k, 7);
+    CHECK_EQ(iresp.groups[0].kmer_type, 0); // uint16 for k<9
+    CHECK(!iresp.groups[0].volumes.empty());
+
+    // Volume 0 should have 5 sequences (our test db)
+    CHECK_EQ(iresp.groups[0].volumes[0].volume_index, 0);
+    CHECK_EQ(iresp.groups[0].volumes[0].num_sequences, 5u);
+    CHECK(iresp.groups[0].volumes[0].total_postings > 0);
+
+    server_thread.join();
+    close_fd(listen_fd);
+    ::unlink(sock_path.c_str());
+}
+
 // Test: BackendClient error handling (connection failure)
 static void test_backend_connection_failure() {
     std::fprintf(stderr, "-- test_backend_connection_failure\n");
@@ -326,6 +379,7 @@ int main() {
 
     test_backend_search();
     test_backend_health();
+    test_backend_info();
     test_backend_connection_failure();
     test_backend_seqidlist_filter();
 

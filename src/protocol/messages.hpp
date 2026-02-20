@@ -73,4 +73,29 @@ struct HealthResponse {
     uint8_t status = 0; // 0 = OK
 };
 
+// Info request: empty payload
+struct InfoRequest {};
+
+// Per-volume info in the info response
+struct VolumeInfo {
+    uint16_t volume_index;
+    uint32_t num_sequences;
+    uint64_t total_postings;
+    std::string db_name;
+};
+
+// Per-k group info in the info response
+struct KmerGroupInfo {
+    uint8_t  k;
+    uint8_t  kmer_type; // 0 = uint16, 1 = uint32
+    std::vector<VolumeInfo> volumes;
+};
+
+// Info response message (server -> client)
+struct InfoResponse {
+    uint8_t  status = 0;  // 0 = success
+    uint8_t  default_k = 0;
+    std::vector<KmerGroupInfo> groups;
+};
+
 } // namespace ikafssn
