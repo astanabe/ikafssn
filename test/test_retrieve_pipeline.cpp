@@ -39,8 +39,6 @@ static void test_full_pipeline() {
     Logger logger(Logger::kError);
     IndexBuilderConfig bconfig;
     bconfig.k = 7;
-    bconfig.partitions = 1;
-    bconfig.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_test_dir + "/ret.00.07mer";
     CHECK(build_index<uint16_t>(db, bconfig, prefix, 0, 1, "test", logger));

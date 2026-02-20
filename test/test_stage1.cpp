@@ -30,8 +30,6 @@ static bool build_test_index() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 7;
-    config.partitions = 1;
-    config.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_index_dir + "/test.00.07mer";
     return build_index<uint16_t>(db, config, prefix, 0, 1, "test", logger);

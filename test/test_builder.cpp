@@ -78,8 +78,6 @@ static void test_build_and_verify_ksx() {
     Logger logger(Logger::kError); // quiet
     IndexBuilderConfig config;
     config.k = 7;
-    config.partitions = 1;
-    config.buffer_size = uint64_t(1) << 30;
     config.verbose = false;
 
     std::string prefix = g_output_dir + "/test.00.07mer";
@@ -219,8 +217,6 @@ static void test_build_k9_uint32() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 9;
-    config.partitions = 2;
-    config.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_output_dir + "/test.00.09mer";
     CHECK(build_index<uint32_t>(db, config, prefix, 0, 1, "test", logger));
@@ -254,8 +250,6 @@ static void test_build_with_max_freq_build() {
     // Build without exclusion
     IndexBuilderConfig config1;
     config1.k = 7;
-    config1.partitions = 1;
-    config1.buffer_size = uint64_t(1) << 30;
     config1.max_freq_build = 0;
 
     std::string prefix1 = g_output_dir + "/freq_test1.00.07mer";
@@ -264,8 +258,6 @@ static void test_build_with_max_freq_build() {
     // Build with max_freq_build=3 (exclude kmers with count > 3)
     IndexBuilderConfig config2;
     config2.k = 7;
-    config2.partitions = 1;
-    config2.buffer_size = uint64_t(1) << 30;
     config2.max_freq_build = 3;
 
     std::string prefix2 = g_output_dir + "/freq_test2.00.07mer";
@@ -289,28 +281,25 @@ static void test_build_with_max_freq_build() {
     kix2.close();
 }
 
-static void test_build_with_partitions() {
-    std::fprintf(stderr, "-- test_build_with_partitions\n");
+static void test_build_with_memory_limits() {
+    std::fprintf(stderr, "-- test_build_with_memory_limits\n");
 
     BlastDbReader db;
     CHECK(db.open(g_testdb_path));
 
     Logger logger(Logger::kError);
 
-    // Build with 1 partition
+    // Build with large memory_limit (-> 1 partition)
     IndexBuilderConfig config1;
     config1.k = 7;
-    config1.partitions = 1;
-    config1.buffer_size = uint64_t(1) << 30;
 
     std::string prefix1 = g_output_dir + "/part1.00.07mer";
     CHECK(build_index<uint16_t>(db, config1, prefix1, 0, 1, "test", logger));
 
-    // Build with 4 partitions
+    // Build with tiny memory_limit to force multiple partitions
     IndexBuilderConfig config4;
     config4.k = 7;
-    config4.partitions = 4;
-    config4.buffer_size = uint64_t(1) << 30;
+    config4.memory_limit = uint64_t(256) << 10; // 256 KB -> forces multiple partitions
 
     std::string prefix4 = g_output_dir + "/part4.00.07mer";
     CHECK(build_index<uint16_t>(db, config4, prefix4, 0, 1, "test", logger));
@@ -360,8 +349,7 @@ static void test_build_parallel_scan() {
 
         IndexBuilderConfig config;
         config.k = 7;
-        config.partitions = 2;
-        config.buffer_size = uint64_t(1) << 30;
+        config.memory_limit = uint64_t(256) << 10; // 256 KB -> forces multiple partitions
         config.threads = 1;
 
         std::string prefix = g_output_dir + "/parscan_st.00.07mer";
@@ -375,8 +363,7 @@ static void test_build_parallel_scan() {
 
         IndexBuilderConfig config;
         config.k = 7;
-        config.partitions = 2;
-        config.buffer_size = uint64_t(1) << 30;
+        config.memory_limit = uint64_t(256) << 10; // 256 KB -> forces multiple partitions
         config.threads = 2;
 
         std::string prefix = g_output_dir + "/parscan_mt.00.07mer";
@@ -471,7 +458,7 @@ int main(int argc, char* argv[]) {
     test_known_kmer_in_index();
     test_build_k9_uint32();
     test_build_with_max_freq_build();
-    test_build_with_partitions();
+    test_build_with_memory_limits();
     test_build_parallel_scan();
 
     // Clean up

@@ -51,8 +51,6 @@ static std::string build_test_index(int k) {
     Logger logger(Logger::kError);
     IndexBuilderConfig bconfig;
     bconfig.k = k;
-    bconfig.partitions = 1;
-    bconfig.buffer_size = uint64_t(1) << 30;
 
     char kk[4];
     std::snprintf(kk, sizeof(kk), "%02d", k);

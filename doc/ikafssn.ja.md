@@ -49,10 +49,9 @@ ikafssnindex [options]
   -o <dir>                出力ディレクトリ
 
 オプション:
-  -buffer_size <size>     バッファサイズ (デフォルト: 8G)
+  -memory_limit <size>    メモリ上限 (デフォルト: 物理メモリの半分)
                           接尾辞 K, M, G を認識
-  -partitions <int>       パーティション数 (デフォルト: 4)
-                          2 の冪乗を推奨 (1, 2, 4, 8, 16, ...)
+                          パーティション数はこの上限内に収まるよう自動決定
   -max_freq_build <int>   構築時高頻度 k-mer 除外閾値
                           (デフォルト: 0 = 除外なし)
   -openvol <int>          ボリューム同時処理数の上限 (デフォルト: 1)
@@ -67,10 +66,10 @@ ikafssnindex [options]
 
 ```bash
 # 小規模 DB、メモリ豊富
-ikafssnindex -db mydb -k 11 -o ./index -buffer_size 16G -partitions 1
+ikafssnindex -db mydb -k 11 -o ./index -memory_limit 128G
 
 # 大規模 DB、メモリ制限、マルチスレッド
-ikafssnindex -db nt -k 11 -o ./nt_index -partitions 16 -threads 32
+ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -threads 32
 
 # 大規模 DB、ボリューム同時処理数を 2 に制限
 ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2

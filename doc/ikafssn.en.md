@@ -49,10 +49,9 @@ Required:
   -o <dir>                Output directory
 
 Options:
-  -buffer_size <size>     Buffer size (default: 8G)
+  -memory_limit <size>    Memory limit (default: half of physical RAM)
                           Accepts K, M, G suffixes
-  -partitions <int>       Number of partitions (default: 4)
-                          Powers of 2 recommended (1, 2, 4, 8, 16, ...)
+                          Partitions are auto-calculated to fit within this limit
   -max_freq_build <int>   Exclude k-mers with count above this threshold
                           (default: 0 = no exclusion)
   -openvol <int>          Max volumes processed simultaneously (default: 1)
@@ -67,10 +66,10 @@ Options:
 
 ```bash
 # Small DB, plenty of memory
-ikafssnindex -db mydb -k 11 -o ./index -buffer_size 16G -partitions 1
+ikafssnindex -db mydb -k 11 -o ./index -memory_limit 128G
 
 # Large DB, limited memory, multi-threaded
-ikafssnindex -db nt -k 11 -o ./nt_index -partitions 16 -threads 32
+ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -threads 32
 
 # Large DB, allow 2 volumes to be processed simultaneously
 ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2

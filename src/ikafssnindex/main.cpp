@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <unistd.h>
 #include <vector>
 #include <filesystem>
 #include <atomic>
@@ -21,7 +22,18 @@
 
 using namespace ikafssn;
 
-static void print_usage(const char* prog) {
+// Detect physical memory and return half of it (minimum 1 GB).
+static uint64_t default_memory_limit() {
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long page_size = sysconf(_SC_PAGE_SIZE);
+    if (pages > 0 && page_size > 0) {
+        uint64_t half = static_cast<uint64_t>(pages) * static_cast<uint64_t>(page_size) / 2;
+        if (half >= (uint64_t(1) << 30)) return half;
+    }
+    return uint64_t(1) << 30; // fallback: 1 GB
+}
+
+static void print_usage(const char* prog, const std::string& default_mem) {
     std::fprintf(stderr,
         "Usage: %s [options]\n\n"
         "Required:\n"
@@ -29,25 +41,31 @@ static void print_usage(const char* prog) {
         "  -k <int>               k-mer length (%d-%d)\n"
         "  -o <dir>               Output directory\n\n"
         "Options:\n"
-        "  -buffer_size <size>    Buffer size (default: 8G)\n"
+        "  -memory_limit <size>   Memory limit (default: %s = half of RAM)\n"
         "                         Accepts K, M, G suffixes\n"
-        "  -partitions <int>      Number of partitions (default: 4)\n"
-        "                         Powers of 2 recommended\n"
         "  -max_freq_build <int>  Exclude k-mers with count > threshold\n"
         "                         (default: 0 = no exclusion)\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
         "  -threads <int>         Number of threads (default: all cores)\n"
         "  -v, --verbose          Verbose output\n",
-        prog, MIN_K, MAX_K);
+        prog, MIN_K, MAX_K, default_mem.c_str());
 }
 
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
+    // Compute default memory limit string for help display
+    uint64_t default_mem = default_memory_limit();
+    std::string default_mem_str;
+    if (default_mem >= (uint64_t(1) << 30) && default_mem % (uint64_t(1) << 30) == 0)
+        default_mem_str = std::to_string(default_mem >> 30) + "G";
+    else
+        default_mem_str = std::to_string(default_mem >> 20) + "M";
+
     // Check for help
     if (cli.has("-h") || cli.has("--help") || argc < 2) {
-        print_usage(argv[0]);
+        print_usage(argv[0], default_mem_str);
         return (argc < 2) ? 1 : 0;
     }
 
@@ -58,17 +76,17 @@ int main(int argc, char* argv[]) {
 
     if (db_path.empty()) {
         std::fprintf(stderr, "Error: -db is required\n");
-        print_usage(argv[0]);
+        print_usage(argv[0], default_mem_str);
         return 1;
     }
     if (k == 0) {
         std::fprintf(stderr, "Error: -k is required\n");
-        print_usage(argv[0]);
+        print_usage(argv[0], default_mem_str);
         return 1;
     }
     if (out_dir.empty()) {
         std::fprintf(stderr, "Error: -o is required\n");
-        print_usage(argv[0]);
+        print_usage(argv[0], default_mem_str);
         return 1;
     }
 
@@ -79,17 +97,18 @@ int main(int argc, char* argv[]) {
     }
 
     // Optional arguments
-    std::string buf_size_str = cli.get_string("-buffer_size", "8G");
-    uint64_t buffer_size = parse_size_string(buf_size_str);
-    if (buffer_size == 0) {
-        std::fprintf(stderr, "Error: invalid -buffer_size '%s'\n", buf_size_str.c_str());
-        return 1;
-    }
-
-    int partitions = cli.get_int("-partitions", 4);
-    if (partitions < 1 || (partitions & (partitions - 1)) != 0) {
-        std::fprintf(stderr, "Error: -partitions must be a power of 2 (got %d)\n", partitions);
-        return 1;
+    uint64_t memory_limit;
+    std::string mem_limit_str;
+    if (cli.has("-memory_limit")) {
+        mem_limit_str = cli.get_string("-memory_limit");
+        memory_limit = parse_size_string(mem_limit_str);
+        if (memory_limit == 0) {
+            std::fprintf(stderr, "Error: invalid -memory_limit '%s'\n", mem_limit_str.c_str());
+            return 1;
+        }
+    } else {
+        memory_limit = default_mem;
+        mem_limit_str = default_mem_str;
     }
 
     uint64_t max_freq_build = 0;
@@ -127,8 +146,8 @@ int main(int argc, char* argv[]) {
     if (openvol < 1) openvol = 1;
 
     logger.info("Database: %s (%zu volume(s))", db_path.c_str(), vol_paths.size());
-    logger.info("Parameters: k=%d, buffer=%s, partitions=%d, openvol=%d, threads=%d",
-                k, buf_size_str.c_str(), partitions, openvol, threads);
+    logger.info("Parameters: k=%d, memory_limit=%s, openvol=%d, threads=%d",
+                k, mem_limit_str.c_str(), openvol, threads);
 
     // Extract DB base name from path
     std::string db_base = std::filesystem::path(db_path).filename().string();
@@ -136,11 +155,10 @@ int main(int argc, char* argv[]) {
     // Centralized TBB thread control
     tbb::global_control gc(tbb::global_control::max_allowed_parallelism, threads);
 
-    // Build config
+    // Build config (per-volume memory budget = total limit / openvol)
     IndexBuilderConfig config;
     config.k = k;
-    config.buffer_size = buffer_size;
-    config.partitions = partitions;
+    config.memory_limit = memory_limit / static_cast<uint64_t>(openvol);
     config.max_freq_build = max_freq_build;
     config.threads = threads;
     config.verbose = verbose;

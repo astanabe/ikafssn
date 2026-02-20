@@ -46,8 +46,6 @@ static void build_multivolume_index(int k, const std::string& db_base) {
 
         IndexBuilderConfig config;
         config.k = k;
-        config.partitions = 1;
-        config.buffer_size = uint64_t(1) << 30;
 
         char kk_str[8];
         std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
@@ -68,8 +66,6 @@ static void build_multivolume_index(int k, const std::string& db_base) {
 
         IndexBuilderConfig config;
         config.k = k;
-        config.partitions = 1;
-        config.buffer_size = uint64_t(1) << 30;
 
         char kk_str[8];
         std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
@@ -370,8 +366,6 @@ static void test_parallel_counting_pass() {
     {
         IndexBuilderConfig config;
         config.k = 7;
-        config.partitions = 1;
-        config.buffer_size = uint64_t(1) << 30;
         config.threads = 1;
 
         std::string prefix = g_test_dir + "/pcnt_st.00.07mer";
@@ -384,8 +378,6 @@ static void test_parallel_counting_pass() {
     {
         IndexBuilderConfig config;
         config.k = 7;
-        config.partitions = 1;
-        config.buffer_size = uint64_t(1) << 30;
         config.threads = 2;
 
         std::string prefix = g_test_dir + "/pcnt_mt.00.07mer";

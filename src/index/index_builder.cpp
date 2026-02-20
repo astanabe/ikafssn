@@ -82,11 +82,8 @@ bool build_index(BlastDbReader& db,
     const int k = config.k;
     const uint64_t tbl_size = table_size(k);
     const uint32_t num_seqs = db.num_sequences();
-    const int num_partitions = config.partitions;
-    const int partition_bits = log2_ceil(num_partitions);
 
-    logger.info("Building index: k=%d, sequences=%u, partitions=%d",
-                k, num_seqs, num_partitions);
+    logger.info("Building index: k=%d, sequences=%u", k, num_seqs);
 
     // File paths (.tmp during construction)
     std::string ksx_tmp = output_prefix + ".ksx.tmp";
@@ -189,13 +186,25 @@ bool build_index(BlastDbReader& db,
                     static_cast<unsigned long>(config.max_freq_build));
     }
 
-    // =========== Phase 2 & 3: Posting write with partition + buffer ===========
-    // Method B: write postings first, record offsets, seek back to write tables.
-    //
-    // We open kix and kpx files, write headers and reserve table space,
-    // then process partitions one by one.
+    // =========== Determine partition count from memory_limit ===========
+    int num_partitions = 1;
+    if (total_postings > 0) {
+        uint64_t entries_limit = config.memory_limit / sizeof(TempEntry);
+        while (static_cast<uint64_t>((total_postings + num_partitions - 1) / num_partitions)
+               > entries_limit) {
+            num_partitions *= 2;
+        }
+    }
+    const int partition_bits = log2_ceil(num_partitions);
 
-    logger.info("Phase 2-3: writing postings...");
+    if (config.memory_limit >= (uint64_t(1) << 30))
+        logger.info("Phase 2-3: writing postings (partitions=%d, memory_limit=%luG)...",
+                    num_partitions,
+                    static_cast<unsigned long>(config.memory_limit >> 30));
+    else
+        logger.info("Phase 2-3: writing postings (partitions=%d, memory_limit=%luM)...",
+                    num_partitions,
+                    static_cast<unsigned long>(config.memory_limit >> 20));
 
     // Open kix file
     FILE* kix_fp = std::fopen(kix_tmp.c_str(), "wb");
@@ -246,15 +255,8 @@ bool build_index(BlastDbReader& db,
     uint64_t kix_data_pos = 0;
     uint64_t kpx_data_pos = 0;
 
-    // Estimate buffer capacity
     uint64_t est_partition_postings = (total_postings + num_partitions - 1) / num_partitions;
-    uint64_t buffer_entries_limit = config.buffer_size / sizeof(TempEntry);
-    if (est_partition_postings > buffer_entries_limit) {
-        logger.warn("Estimated partition size (%lu entries) exceeds buffer capacity (%lu entries). "
-                    "Increase -buffer_size or -partitions.",
-                    static_cast<unsigned long>(est_partition_postings),
-                    static_cast<unsigned long>(buffer_entries_limit));
-    }
+    uint64_t reserve_entries = config.memory_limit / sizeof(TempEntry);
 
     // Process each partition (sequentially to respect memory constraints)
     uint8_t varint_buf[5];
@@ -321,7 +323,7 @@ bool build_index(BlastDbReader& db,
 
         // Merge thread-local buffers into single buffer
         std::vector<TempEntry> buffer;
-        buffer.reserve(std::min(est_partition_postings, buffer_entries_limit));
+        buffer.reserve(std::min(est_partition_postings, reserve_entries));
         local_buffers.combine_each([&buffer](std::vector<TempEntry>& local) {
             buffer.insert(buffer.end(),
                           std::make_move_iterator(local.begin()),

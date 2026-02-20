@@ -40,8 +40,6 @@ static void test_build_and_search() {
     Logger logger(Logger::kError);
     IndexBuilderConfig bconfig;
     bconfig.k = 7;
-    bconfig.partitions = 1;
-    bconfig.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_test_dir + "/test.00.07mer";
     CHECK(build_index<uint16_t>(db, bconfig, prefix, 0, 1, "test", logger));
@@ -287,8 +285,6 @@ static void test_search_k9() {
     Logger logger(Logger::kError);
     IndexBuilderConfig bconfig;
     bconfig.k = 9;
-    bconfig.partitions = 1;
-    bconfig.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_test_dir + "/test.00.09mer";
     CHECK(build_index<uint32_t>(db, bconfig, prefix, 0, 1, "test", logger));

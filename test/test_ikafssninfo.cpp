@@ -43,8 +43,6 @@ static void setup() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 7;
-    config.partitions = 1;
-    config.buffer_size = uint64_t(1) << 30;
     config.max_freq_build = 0;
 
     std::string prefix = g_index_dir + "/testdb.00.07mer";

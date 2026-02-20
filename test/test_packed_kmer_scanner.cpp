@@ -623,8 +623,6 @@ static void test_ambig_db_index_build() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 5;
-    config.partitions = 1;
-    config.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_output_dir + "/ambig.00.05mer";
     CHECK(build_index<uint16_t>(db, config, prefix, 0, 1, "ambig", logger));
@@ -672,8 +670,6 @@ static void test_ambig_expansion_in_index() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 5;
-    config.partitions = 1;
-    config.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_output_dir + "/ambig_exp.00.05mer";
     CHECK(build_index<uint16_t>(db, config, prefix, 0, 1, "ambig", logger));
@@ -729,8 +725,6 @@ static void test_ssu_db_kmer_check() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 7;
-    config.partitions = 1;
-    config.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_output_dir + "/compat.00.07mer";
     CHECK(build_index<uint16_t>(db, config, prefix, 0, 1, "test", logger));
@@ -776,8 +770,6 @@ static void test_ambig_db_odd_length() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 5;
-    config.partitions = 1;
-    config.buffer_size = uint64_t(1) << 30;
 
     std::string prefix = g_output_dir + "/odd.00.05mer";
     CHECK(build_index<uint16_t>(db, config, prefix, 0, 1, "ambig", logger));
