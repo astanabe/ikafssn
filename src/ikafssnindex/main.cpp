@@ -11,6 +11,11 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <atomic>
+#include <mutex>
+
+#include <tbb/global_control.h>
+#include <tbb/task_group.h>
 
 using namespace ikafssn;
 
@@ -28,7 +33,7 @@ static void print_usage(const char* prog) {
         "                         Powers of 2 recommended\n"
         "  -max_freq_build <int>  Exclude k-mers with count > threshold\n"
         "                         (default: 0 = no exclusion)\n"
-        "  -threads <int>         Threads for counting pass (default: 1)\n"
+        "  -threads <int>         Number of threads (default: 1)\n"
         "  -v, --verbose          Verbose output\n",
         prog, MIN_K, MAX_K);
 }
@@ -118,6 +123,9 @@ int main(int argc, char* argv[]) {
     int threads = cli.get_int("-threads", 1);
     if (threads < 1) threads = 1;
 
+    // Centralized TBB thread control
+    tbb::global_control gc(tbb::global_control::max_allowed_parallelism, threads);
+
     // Build config
     IndexBuilderConfig config;
     config.k = k;
@@ -129,39 +137,63 @@ int main(int argc, char* argv[]) {
 
     uint16_t total_volumes = static_cast<uint16_t>(vol_paths.size());
 
-    // Process each volume sequentially
+    // Process volumes in parallel via TBB task_group.
+    // Each volume opens its own BlastDbReader and writes independent output files.
+    // TBB work-stealing distributes threads across volumes automatically.
+    std::atomic<bool> any_error{false};
+    std::vector<std::string> error_messages(total_volumes);
+    std::mutex log_mutex;
+
+    tbb::task_group tg;
     for (uint16_t vi = 0; vi < total_volumes; vi++) {
-        logger.info("=== Volume %d/%d: %s ===", vi + 1, total_volumes,
-                    vol_paths[vi].c_str());
+        tg.run([&, vi]() {
+            if (any_error.load(std::memory_order_relaxed)) return;
 
-        BlastDbReader db;
-        if (!db.open(vol_paths[vi])) {
-            std::fprintf(stderr, "Error: cannot open volume '%s'\n",
-                         vol_paths[vi].c_str());
-            return 1;
+            {
+                std::lock_guard<std::mutex> lock(log_mutex);
+                logger.info("=== Volume %d/%d: %s ===", vi + 1, total_volumes,
+                            vol_paths[vi].c_str());
+            }
+
+            BlastDbReader db;
+            if (!db.open(vol_paths[vi])) {
+                error_messages[vi] = "cannot open volume '" + vol_paths[vi] + "'";
+                any_error.store(true, std::memory_order_relaxed);
+                return;
+            }
+
+            // Output prefix: <out_dir>/<db_base>.<vol_idx>.<kk>mer
+            char kk_str[8];
+            std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+            char vol_str[8];
+            std::snprintf(vol_str, sizeof(vol_str), "%02d", vi);
+            std::string prefix = out_dir + "/" + db_base + "." +
+                                 vol_str + "." + kk_str + "mer";
+
+            bool ok;
+            if (k < K_TYPE_THRESHOLD) {
+                ok = build_index<uint16_t>(db, config, prefix,
+                                            vi, total_volumes, db_base, logger);
+            } else {
+                ok = build_index<uint32_t>(db, config, prefix,
+                                            vi, total_volumes, db_base, logger);
+            }
+
+            if (!ok) {
+                error_messages[vi] = "index build failed for volume " + std::to_string(vi);
+                any_error.store(true, std::memory_order_relaxed);
+            }
+        });
+    }
+    tg.wait();
+
+    if (any_error.load()) {
+        for (uint16_t vi = 0; vi < total_volumes; vi++) {
+            if (!error_messages[vi].empty()) {
+                std::fprintf(stderr, "Error: %s\n", error_messages[vi].c_str());
+            }
         }
-
-        // Output prefix: <out_dir>/<db_base>.<vol_idx>.<kk>mer
-        char kk_str[8];
-        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-        char vol_str[8];
-        std::snprintf(vol_str, sizeof(vol_str), "%02d", vi);
-        std::string prefix = out_dir + "/" + db_base + "." +
-                             vol_str + "." + kk_str + "mer";
-
-        bool ok;
-        if (k < K_TYPE_THRESHOLD) {
-            ok = build_index<uint16_t>(db, config, prefix,
-                                        vi, total_volumes, db_base, logger);
-        } else {
-            ok = build_index<uint32_t>(db, config, prefix,
-                                        vi, total_volumes, db_base, logger);
-        }
-
-        if (!ok) {
-            std::fprintf(stderr, "Error: index build failed for volume %d\n", vi);
-            return 1;
-        }
+        return 1;
     }
 
     logger.info("All volumes completed successfully.");

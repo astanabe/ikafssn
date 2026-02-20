@@ -346,6 +346,117 @@ static void test_build_with_partitions() {
     kix4.close();
 }
 
+static void test_build_parallel_scan() {
+    std::fprintf(stderr, "-- test_build_parallel_scan\n");
+
+    // Build with threads=1 and threads=2, verify identical results.
+    // This tests that the parallel partition scan produces correct output.
+    Logger logger(Logger::kError);
+
+    // Build with 1 thread
+    {
+        BlastDbReader db;
+        CHECK(db.open(g_testdb_path));
+
+        IndexBuilderConfig config;
+        config.k = 7;
+        config.partitions = 2;
+        config.buffer_size = uint64_t(1) << 30;
+        config.threads = 1;
+
+        std::string prefix = g_output_dir + "/parscan_st.00.07mer";
+        CHECK(build_index<uint16_t>(db, config, prefix, 0, 1, "test", logger));
+    }
+
+    // Build with 2 threads
+    {
+        BlastDbReader db;
+        CHECK(db.open(g_testdb_path));
+
+        IndexBuilderConfig config;
+        config.k = 7;
+        config.partitions = 2;
+        config.buffer_size = uint64_t(1) << 30;
+        config.threads = 2;
+
+        std::string prefix = g_output_dir + "/parscan_mt.00.07mer";
+        CHECK(build_index<uint16_t>(db, config, prefix, 0, 1, "test", logger));
+    }
+
+    // Compare kix files
+    KixReader kix_st, kix_mt;
+    CHECK(kix_st.open(g_output_dir + "/parscan_st.00.07mer.kix"));
+    CHECK(kix_mt.open(g_output_dir + "/parscan_mt.00.07mer.kix"));
+
+    CHECK_EQ(kix_st.table_size(), kix_mt.table_size());
+    CHECK_EQ(kix_st.total_postings(), kix_mt.total_postings());
+
+    // Compare counts
+    bool counts_match = true;
+    for (uint64_t i = 0; i < kix_st.table_size(); i++) {
+        if (kix_st.counts()[i] != kix_mt.counts()[i]) {
+            counts_match = false;
+            std::fprintf(stderr, "  counts mismatch at kmer %lu: st=%u mt=%u\n",
+                         (unsigned long)i, kix_st.counts()[i], kix_mt.counts()[i]);
+            break;
+        }
+    }
+    CHECK(counts_match);
+
+    // Compare posting data for each kmer
+    for (uint64_t kmer = 0; kmer < kix_st.table_size(); kmer++) {
+        uint32_t cnt = kix_st.counts()[kmer];
+        if (cnt == 0) continue;
+
+        std::vector<uint32_t> ids_st = decode_id_postings(
+            kix_st.posting_data(), kix_st.offsets()[kmer], cnt);
+        std::vector<uint32_t> ids_mt = decode_id_postings(
+            kix_mt.posting_data(), kix_mt.offsets()[kmer], cnt);
+
+        CHECK_EQ(ids_st.size(), ids_mt.size());
+        for (size_t j = 0; j < ids_st.size(); j++) {
+            if (ids_st[j] != ids_mt[j]) {
+                std::fprintf(stderr, "  posting mismatch at kmer %lu, idx %zu\n",
+                             (unsigned long)kmer, j);
+                CHECK_EQ(ids_st[j], ids_mt[j]);
+                break;
+            }
+        }
+    }
+
+    // Compare kpx files
+    KpxReader kpx_st, kpx_mt;
+    CHECK(kpx_st.open(g_output_dir + "/parscan_st.00.07mer.kpx"));
+    CHECK(kpx_mt.open(g_output_dir + "/parscan_mt.00.07mer.kpx"));
+
+    CHECK_EQ(kpx_st.total_postings(), kpx_mt.total_postings());
+
+    for (uint64_t kmer = 0; kmer < kix_st.table_size(); kmer++) {
+        uint32_t cnt = kix_st.counts()[kmer];
+        if (cnt == 0) continue;
+
+        std::vector<uint32_t> ids = decode_id_postings(
+            kix_st.posting_data(), kix_st.offsets()[kmer], cnt);
+        std::vector<uint32_t> pos_st = decode_pos_postings(
+            kpx_st.posting_data(), kpx_st.pos_offsets()[kmer], cnt, ids);
+        std::vector<uint32_t> pos_mt = decode_pos_postings(
+            kpx_mt.posting_data(), kpx_mt.pos_offsets()[kmer], cnt, ids);
+
+        CHECK_EQ(pos_st.size(), pos_mt.size());
+        for (size_t j = 0; j < pos_st.size(); j++) {
+            if (pos_st[j] != pos_mt[j]) {
+                std::fprintf(stderr, "  pos mismatch at kmer %lu, idx %zu\n",
+                             (unsigned long)kmer, j);
+                CHECK_EQ(pos_st[j], pos_mt[j]);
+                break;
+            }
+        }
+    }
+
+    kix_st.close(); kix_mt.close();
+    kpx_st.close(); kpx_mt.close();
+}
+
 int main(int argc, char* argv[]) {
     check_ssu_available();
 
@@ -361,6 +472,7 @@ int main(int argc, char* argv[]) {
     test_build_k9_uint32();
     test_build_with_max_freq_build();
     test_build_with_partitions();
+    test_build_parallel_scan();
 
     // Clean up
     std::filesystem::remove_all(g_output_dir);

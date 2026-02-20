@@ -14,15 +14,18 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 #include <numeric>
 #include <vector>
 #include <string>
 #include <filesystem>
 
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_sort.h>
 #include <tbb/blocked_range.h>
 #include <tbb/combinable.h>
-#include <tbb/task_arena.h>
+
+#include <atomic>
 
 namespace ikafssn {
 
@@ -114,70 +117,43 @@ bool build_index(BlastDbReader& db,
     }
 
     // =========== Phase 1: Counting pass (TBB parallel) ===========
-    const int num_threads = config.threads;
-    logger.info("Phase 1: counting k-mers (threads=%d)...", num_threads);
+    logger.info("Phase 1: counting k-mers (threads=%d)...", config.threads);
     std::vector<uint64_t> counts64(tbl_size, 0);
     {
-        if (num_threads > 1) {
-            // Parallel counting with TBB
-            tbb::combinable<std::vector<uint64_t>> local_counts(
-                [tbl_size]() { return std::vector<uint64_t>(tbl_size, 0); });
+        // Always use parallel path; TBB respects global_control parallelism
+        // (threads==1 degrades gracefully to sequential execution)
+        tbb::combinable<std::vector<uint64_t>> local_counts(
+            [tbl_size]() { return std::vector<uint64_t>(tbl_size, 0); });
 
-            tbb::task_arena arena(num_threads);
-            arena.execute([&] {
-                tbb::parallel_for(
-                    tbb::blocked_range<uint32_t>(0, num_seqs, 64),
-                    [&](const tbb::blocked_range<uint32_t>& range) {
-                        auto& my_counts = local_counts.local();
-                        PackedKmerScanner<KmerInt> scanner(k);
-                        for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
-                            auto raw = db.get_raw_sequence(oid);
-                            auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
-                            scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
-                                [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
-                                    my_counts[kmer]++;
-                                },
-                                [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
-                                             uint8_t ncbi4na, int bit_offset) {
-                                    expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
-                                        [&my_counts](KmerInt expanded) {
-                                            my_counts[expanded]++;
-                                        });
+        tbb::parallel_for(
+            tbb::blocked_range<uint32_t>(0, num_seqs, 64),
+            [&](const tbb::blocked_range<uint32_t>& range) {
+                auto& my_counts = local_counts.local();
+                PackedKmerScanner<KmerInt> scanner(k);
+                for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
+                    auto raw = db.get_raw_sequence(oid);
+                    auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+                    scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
+                        [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
+                            my_counts[kmer]++;
+                        },
+                        [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
+                                     uint8_t ncbi4na, int bit_offset) {
+                            expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                                [&my_counts](KmerInt expanded) {
+                                    my_counts[expanded]++;
                                 });
-                            db.ret_raw_sequence(raw);
-                        }
-                    });
-            });
-
-            // Reduce thread-local counts
-            local_counts.combine_each([&counts64, tbl_size](const std::vector<uint64_t>& lc) {
-                for (uint64_t i = 0; i < tbl_size; i++) {
-                    counts64[i] += lc[i];
+                        });
+                    db.ret_raw_sequence(raw);
                 }
             });
-        } else {
-            // Single-threaded counting
-            PackedKmerScanner<KmerInt> scanner(k);
-            Progress prog("Phase 1", num_seqs, config.verbose);
-            for (uint32_t oid = 0; oid < num_seqs; oid++) {
-                auto raw = db.get_raw_sequence(oid);
-                auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
-                scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
-                    [&counts64](uint32_t /*pos*/, KmerInt kmer) {
-                        counts64[kmer]++;
-                    },
-                    [&counts64](uint32_t /*pos*/, KmerInt base_kmer,
-                                uint8_t ncbi4na, int bit_offset) {
-                        expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
-                            [&counts64](KmerInt expanded) {
-                                counts64[expanded]++;
-                            });
-                    });
-                db.ret_raw_sequence(raw);
-                prog.update(oid + 1);
+
+        // Reduce thread-local counts
+        local_counts.combine_each([&counts64, tbl_size](const std::vector<uint64_t>& lc) {
+            for (uint64_t i = 0; i < tbl_size; i++) {
+                counts64[i] += lc[i];
             }
-            prog.finish();
-        }
+        });
     }
 
     // Convert uint64 -> uint32 with overflow check
@@ -280,59 +256,91 @@ bool build_index(BlastDbReader& db,
                     static_cast<unsigned long>(buffer_entries_limit));
     }
 
-    // Process each partition
-    PackedKmerScanner<KmerInt> scanner(k);
+    // Process each partition (sequentially to respect memory constraints)
     uint8_t varint_buf[5];
-
-    // Lambda to emit a posting entry to the buffer (used in partition scan)
-    auto emit_posting = [&](std::vector<TempEntry>& buffer,
-                            const std::vector<uint32_t>& counts_ref,
-                            int p, int partition_bits_l, int k_l,
-                            uint32_t oid, uint32_t pos, KmerInt kmer) {
-        uint32_t kval = static_cast<uint32_t>(kmer);
-        if (counts_ref[kval] == 0) return; // excluded
-        if (static_cast<int>(partition_of(kval, partition_bits_l, k_l)) != p) return;
-        buffer.push_back({kval, oid, pos});
-    };
 
     for (int p = 0; p < num_partitions; p++) {
         logger.info("  Partition %d/%d...", p + 1, num_partitions);
 
-        // Collect all entries for this partition into buffer
+        // Parallel scan: collect entries for this partition using thread-local buffers
+        tbb::combinable<std::vector<TempEntry>> local_buffers;
+
+        std::atomic<uint32_t> progress_counter{0};
+        auto progress_start = std::chrono::steady_clock::now();
+
+        tbb::parallel_for(
+            tbb::blocked_range<uint32_t>(0, num_seqs, 64),
+            [&](const tbb::blocked_range<uint32_t>& range) {
+                auto& my_buffer = local_buffers.local();
+                PackedKmerScanner<KmerInt> scanner(k);
+                for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
+                    auto raw = db.get_raw_sequence(oid);
+                    auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+                    scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
+                        [&](uint32_t pos, KmerInt kmer) {
+                            uint32_t kval = static_cast<uint32_t>(kmer);
+                            if (counts[kval] == 0) return;
+                            if (static_cast<int>(partition_of(kval, partition_bits, k)) != p) return;
+                            my_buffer.push_back({kval, oid, pos});
+                        },
+                        [&](uint32_t pos, KmerInt base_kmer,
+                            uint8_t ncbi4na, int bit_offset) {
+                            expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                                [&](KmerInt expanded) {
+                                    uint32_t kval = static_cast<uint32_t>(expanded);
+                                    if (counts[kval] == 0) return;
+                                    if (static_cast<int>(partition_of(kval, partition_bits, k)) != p) return;
+                                    my_buffer.push_back({kval, oid, pos});
+                                });
+                        });
+                    db.ret_raw_sequence(raw);
+                }
+                // Atomic progress update (coarse-grained per chunk)
+                uint32_t done = progress_counter.fetch_add(
+                    range.end() - range.begin(), std::memory_order_relaxed)
+                    + (range.end() - range.begin());
+                if (config.verbose && done % 1000 < (range.end() - range.begin())) {
+                    auto now = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                        now - progress_start).count();
+                    std::fprintf(stderr, "\r  Partition scan: %.1f%% (%u/%u) [%lds]",
+                                 100.0 * done / num_seqs, done, num_seqs,
+                                 static_cast<long>(elapsed));
+                    std::fflush(stderr);
+                }
+            });
+
+        if (config.verbose) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                now - progress_start).count();
+            std::fprintf(stderr, "\r  Partition scan: done (%u items, %lds)\n",
+                         num_seqs, static_cast<long>(elapsed));
+            std::fflush(stderr);
+        }
+
+        // Merge thread-local buffers into single buffer
         std::vector<TempEntry> buffer;
         buffer.reserve(std::min(est_partition_postings, buffer_entries_limit));
-
-        Progress prog("  Partition scan", num_seqs, config.verbose);
-        for (uint32_t oid = 0; oid < num_seqs; oid++) {
-            auto raw = db.get_raw_sequence(oid);
-            auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
-            scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
-                [&](uint32_t pos, KmerInt kmer) {
-                    emit_posting(buffer, counts, p, partition_bits, k, oid, pos, kmer);
-                },
-                [&](uint32_t pos, KmerInt base_kmer,
-                    uint8_t ncbi4na, int bit_offset) {
-                    expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
-                        [&](KmerInt expanded) {
-                            emit_posting(buffer, counts, p, partition_bits, k, oid, pos, expanded);
-                        });
-                });
-            db.ret_raw_sequence(raw);
-            prog.update(oid + 1);
-        }
-        prog.finish();
+        local_buffers.combine_each([&buffer](std::vector<TempEntry>& local) {
+            buffer.insert(buffer.end(),
+                          std::make_move_iterator(local.begin()),
+                          std::make_move_iterator(local.end()));
+            // Release local memory
+            std::vector<TempEntry>().swap(local);
+        });
 
         if (buffer.empty()) continue;
 
-        // Sort by kmer, then seq_id, then pos
-        std::sort(buffer.begin(), buffer.end(),
+        // Parallel sort by kmer, then seq_id, then pos
+        tbb::parallel_sort(buffer.begin(), buffer.end(),
             [](const TempEntry& a, const TempEntry& b) {
                 if (a.kmer_value != b.kmer_value) return a.kmer_value < b.kmer_value;
                 if (a.seq_id != b.seq_id) return a.seq_id < b.seq_id;
                 return a.pos < b.pos;
             });
 
-        // Write sorted postings grouped by kmer
+        // Write sorted postings grouped by kmer (sequential — I/O bound)
         size_t i = 0;
         while (i < buffer.size()) {
             uint32_t cur_kmer = buffer[i].kmer_value;

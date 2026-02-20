@@ -55,7 +55,9 @@ ikafssnindex [options]
                           2 の冪乗を推奨 (1, 2, 4, 8, 16, ...)
   -max_freq_build <int>   構築時高頻度 k-mer 除外閾値
                           (デフォルト: 0 = 除外なし)
-  -threads <int>          計数パスのスレッド数 (デフォルト: 1)
+  -threads <int>          使用スレッド数 (デフォルト: 1)
+                          計数・パーティションスキャン・ソート・
+                          ボリューム処理を並列化
   -v, --verbose           詳細ログ出力
 ```
 
@@ -65,8 +67,8 @@ ikafssnindex [options]
 # 小規模 DB、メモリ豊富
 ikafssnindex -db mydb -k 11 -o ./index -buffer_size 16G -partitions 1
 
-# 大規模 DB、メモリ制限
-ikafssnindex -db nt -k 11 -o ./nt_index -buffer_size 4G -partitions 16
+# 大規模 DB、メモリ制限、マルチスレッド
+ikafssnindex -db nt -k 11 -o ./nt_index -buffer_size 4G -partitions 16 -threads 32
 
 # 高頻度 k-mer を除外して構築
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000

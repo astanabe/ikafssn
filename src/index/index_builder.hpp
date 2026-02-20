@@ -14,7 +14,7 @@ struct IndexBuilderConfig {
     uint64_t buffer_size = uint64_t(8) << 30; // 8 GB default
     int partitions = 4;                 // number of partitions (power of 2)
     uint64_t max_freq_build = 0;        // 0 = no exclusion
-    int threads = 1;                    // threads for counting pass
+    int threads = 1;                    // threads (counting + partition scan + sort)
     bool verbose = false;
 };
 

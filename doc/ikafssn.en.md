@@ -55,7 +55,9 @@ Options:
                           Powers of 2 recommended (1, 2, 4, 8, 16, ...)
   -max_freq_build <int>   Exclude k-mers with count above this threshold
                           (default: 0 = no exclusion)
-  -threads <int>          Threads for counting pass (default: 1)
+  -threads <int>          Number of threads (default: 1)
+                          Parallelizes counting, partition scan, sort,
+                          and volume processing
   -v, --verbose           Verbose output
 ```
 
@@ -65,8 +67,8 @@ Options:
 # Small DB, plenty of memory
 ikafssnindex -db mydb -k 11 -o ./index -buffer_size 16G -partitions 1
 
-# Large DB, limited memory
-ikafssnindex -db nt -k 11 -o ./nt_index -buffer_size 4G -partitions 16
+# Large DB, limited memory, multi-threaded
+ikafssnindex -db nt -k 11 -o ./nt_index -buffer_size 4G -partitions 16 -threads 32
 
 # Exclude high-frequency k-mers during build
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
