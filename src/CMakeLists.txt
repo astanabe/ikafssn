@@ -24,6 +24,7 @@ target_include_directories(ikafssn_builder PRIVATE
 )
 target_link_libraries(ikafssn_builder PUBLIC
     ikafssn_core ikafssn_index ikafssn_blastdb
+    TBB::tbb
 )
 
 # IO library (without NCBI dependency)
@@ -83,4 +84,5 @@ add_executable(ikafssnsearch
 )
 target_link_libraries(ikafssnsearch PRIVATE
     ikafssn_search ikafssn_index ikafssn_io ikafssn_util ikafssn_core
+    TBB::tbb
 )

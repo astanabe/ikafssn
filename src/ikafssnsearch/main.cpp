@@ -18,9 +18,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <regex>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <tbb/parallel_for_each.h>
+#include <tbb/task_arena.h>
 
 using namespace ikafssn;
 
@@ -34,6 +39,7 @@ static void print_usage(const char* prog) {
         "\n"
         "Options:\n"
         "  -o <path>                Output file (default: stdout)\n"
+        "  -threads <int>           Parallel search threads (default: all cores)\n"
         "  -min_score <int>         Minimum chain score (default: 3)\n"
         "  -max_gap <int>           Chaining diagonal gap tolerance (default: 100)\n"
         "  -max_freq <int>          High-frequency k-mer skip threshold (default: auto)\n"
@@ -83,6 +89,21 @@ static std::vector<VolumeFiles> discover_volumes(const std::string& ix_dir) {
     return volumes;
 }
 
+// Pre-opened volume data shared across threads (read-only after init).
+struct VolumeData {
+    KixReader kix;
+    KpxReader kpx;
+    KsxReader ksx;
+    OidFilter filter;
+    uint16_t volume_index;
+};
+
+// A (query, volume) search job.
+struct SearchJob {
+    size_t query_idx;
+    size_t volume_idx;
+};
+
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
@@ -107,6 +128,12 @@ int main(int argc, char* argv[]) {
     std::string output_path = cli.get_string("-o");
     bool verbose = cli.has("-v") || cli.has("--verbose");
 
+    int num_threads = cli.get_int("-threads", 0);
+    if (num_threads <= 0) {
+        num_threads = static_cast<int>(std::thread::hardware_concurrency());
+        if (num_threads <= 0) num_threads = 1;
+    }
+
     Logger logger(verbose ? Logger::kDebug : Logger::kInfo);
 
     // Search config
@@ -130,14 +157,14 @@ int main(int argc, char* argv[]) {
     }
 
     // Discover volumes
-    auto volumes = discover_volumes(ix_dir);
-    if (volumes.empty()) {
+    auto vol_files = discover_volumes(ix_dir);
+    if (vol_files.empty()) {
         std::fprintf(stderr, "Error: no index files found in %s\n", ix_dir.c_str());
         return 1;
     }
 
-    int k = volumes[0].k;
-    logger.info("Found %zu volume(s), k=%d", volumes.size(), k);
+    int k = vol_files[0].k;
+    logger.info("Found %zu volume(s), k=%d, threads=%d", vol_files.size(), k, num_threads);
 
     // Read query FASTA
     auto queries = read_fasta(query_path);
@@ -160,62 +187,87 @@ int main(int argc, char* argv[]) {
         logger.info("Loaded %zu accessions from seqidlist (exclude mode)", seqidlist.size());
     }
 
-    // Collect all output hits
-    std::vector<OutputHit> all_hits;
-
-    // Process each volume
-    for (const auto& vol : volumes) {
-        logger.info("Searching volume %u...", vol.volume_index);
-
-        KixReader kix;
-        if (!kix.open(vol.kix_path)) {
-            std::fprintf(stderr, "Error: cannot open %s\n", vol.kix_path.c_str());
+    // Pre-open all volumes (mmap kix/kpx, load ksx)
+    std::vector<VolumeData> vol_data(vol_files.size());
+    for (size_t vi = 0; vi < vol_files.size(); vi++) {
+        const auto& vf = vol_files[vi];
+        if (!vol_data[vi].kix.open(vf.kix_path)) {
+            std::fprintf(stderr, "Error: cannot open %s\n", vf.kix_path.c_str());
             return 1;
         }
-        KpxReader kpx;
-        if (!kpx.open(vol.kpx_path)) {
-            std::fprintf(stderr, "Error: cannot open %s\n", vol.kpx_path.c_str());
+        if (!vol_data[vi].kpx.open(vf.kpx_path)) {
+            std::fprintf(stderr, "Error: cannot open %s\n", vf.kpx_path.c_str());
             return 1;
         }
-        KsxReader ksx;
-        if (!ksx.open(vol.ksx_path)) {
-            std::fprintf(stderr, "Error: cannot open %s\n", vol.ksx_path.c_str());
+        if (!vol_data[vi].ksx.open(vf.ksx_path)) {
+            std::fprintf(stderr, "Error: cannot open %s\n", vf.ksx_path.c_str());
             return 1;
         }
+        vol_data[vi].volume_index = vf.volume_index;
 
-        // Build OID filter for this volume
-        OidFilter filter;
+        // Build per-volume OID filter
         if (filter_mode != OidFilterMode::kNone) {
-            filter.build(seqidlist, ksx, filter_mode);
-        }
-
-        // Search each query
-        for (const auto& query : queries) {
-            SearchResult sr;
-            if (k < K_TYPE_THRESHOLD) {
-                sr = search_volume<uint16_t>(
-                    query.id, query.sequence, k, kix, kpx, ksx, filter, config);
-            } else {
-                sr = search_volume<uint32_t>(
-                    query.id, query.sequence, k, kix, kpx, ksx, filter, config);
-            }
-
-            // Convert to OutputHit
-            for (const auto& cr : sr.hits) {
-                OutputHit oh;
-                oh.query_id = sr.query_id;
-                oh.accession = std::string(ksx.accession(cr.seq_id));
-                oh.strand = cr.is_reverse ? '-' : '+';
-                oh.q_start = cr.q_start;
-                oh.q_end = cr.q_end;
-                oh.s_start = cr.s_start;
-                oh.s_end = cr.s_end;
-                oh.score = cr.score;
-                oh.volume = vol.volume_index;
-                all_hits.push_back(oh);
-            }
+            vol_data[vi].filter.build(seqidlist, vol_data[vi].ksx, filter_mode);
         }
     }
+
+    // Build job list: (query, volume) pairs
+    std::vector<SearchJob> jobs;
+    jobs.reserve(queries.size() * vol_data.size());
+    for (size_t qi = 0; qi < queries.size(); qi++) {
+        for (size_t vi = 0; vi < vol_data.size(); vi++) {
+            jobs.push_back({qi, vi});
+        }
+    }
+
+    // Collect results with mutex protection
+    std::vector<OutputHit> all_hits;
+    std::mutex hits_mutex;
+
+    logger.info("Launching %zu search job(s)...", jobs.size());
+
+    // Execute search jobs in parallel
+    tbb::task_arena arena(num_threads);
+    arena.execute([&] {
+        tbb::parallel_for_each(jobs.begin(), jobs.end(),
+            [&](const SearchJob& job) {
+                const auto& query = queries[job.query_idx];
+                const auto& vd = vol_data[job.volume_idx];
+
+                SearchResult sr;
+                if (k < K_TYPE_THRESHOLD) {
+                    sr = search_volume<uint16_t>(
+                        query.id, query.sequence, k,
+                        vd.kix, vd.kpx, vd.ksx, vd.filter, config);
+                } else {
+                    sr = search_volume<uint32_t>(
+                        query.id, query.sequence, k,
+                        vd.kix, vd.kpx, vd.ksx, vd.filter, config);
+                }
+
+                // Convert to OutputHit and collect
+                if (!sr.hits.empty()) {
+                    std::vector<OutputHit> local_hits;
+                    local_hits.reserve(sr.hits.size());
+                    for (const auto& cr : sr.hits) {
+                        OutputHit oh;
+                        oh.query_id = sr.query_id;
+                        oh.accession = std::string(vd.ksx.accession(cr.seq_id));
+                        oh.strand = cr.is_reverse ? '-' : '+';
+                        oh.q_start = cr.q_start;
+                        oh.q_end = cr.q_end;
+                        oh.s_start = cr.s_start;
+                        oh.s_end = cr.s_end;
+                        oh.score = cr.score;
+                        oh.volume = vd.volume_index;
+                        local_hits.push_back(oh);
+                    }
+
+                    std::lock_guard<std::mutex> lock(hits_mutex);
+                    all_hits.insert(all_hits.end(), local_hits.begin(), local_hits.end());
+                }
+            });
+    });
 
     // Sort final results by (query_id, score desc)
     std::sort(all_hits.begin(), all_hits.end(),

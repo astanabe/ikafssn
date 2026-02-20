@@ -86,3 +86,20 @@ target_compile_definitions(test_search_integration PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME test_search_integration COMMAND test_search_integration)
+
+# --- Phase 4 tests ---
+
+# Multi-volume and parallel search test (requires NCBI Toolkit + TBB)
+add_executable(test_multivolume test_multivolume.cpp)
+target_link_libraries(test_multivolume PRIVATE
+    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    TBB::tbb
+)
+target_include_directories(test_multivolume PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+)
+target_compile_definitions(test_multivolume PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME test_multivolume COMMAND test_multivolume)

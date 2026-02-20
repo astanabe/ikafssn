@@ -115,12 +115,16 @@ int main(int argc, char* argv[]) {
     // Extract DB base name from path
     std::string db_base = std::filesystem::path(db_path).filename().string();
 
+    int threads = cli.get_int("-threads", 1);
+    if (threads < 1) threads = 1;
+
     // Build config
     IndexBuilderConfig config;
     config.k = k;
     config.buffer_size = buffer_size;
     config.partitions = partitions;
     config.max_freq_build = max_freq_build;
+    config.threads = threads;
     config.verbose = verbose;
 
     uint16_t total_volumes = static_cast<uint16_t>(vol_paths.size());

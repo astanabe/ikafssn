@@ -18,6 +18,11 @@
 #include <string>
 #include <filesystem>
 
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
+#include <tbb/combinable.h>
+#include <tbb/task_arena.h>
+
 namespace ikafssn {
 
 // Temporary entry for posting buffer.
@@ -89,22 +94,53 @@ bool build_index(BlastDbReader& db,
         logger.info("Phase 0: wrote %s (%u sequences)", ksx_tmp.c_str(), num_seqs);
     }
 
-    // =========== Phase 1: Counting pass ===========
-    logger.info("Phase 1: counting k-mers...");
+    // =========== Phase 1: Counting pass (TBB parallel) ===========
+    const int num_threads = config.threads;
+    logger.info("Phase 1: counting k-mers (threads=%d)...", num_threads);
     std::vector<uint64_t> counts64(tbl_size, 0);
     {
-        KmerScanner<KmerInt> scanner(k);
-        Progress prog("Phase 1", num_seqs, config.verbose);
+        if (num_threads > 1) {
+            // Parallel counting with TBB
+            tbb::combinable<std::vector<uint64_t>> local_counts(
+                [tbl_size]() { return std::vector<uint64_t>(tbl_size, 0); });
 
-        for (uint32_t oid = 0; oid < num_seqs; oid++) {
-            std::string seq = db.get_sequence(oid);
-            scanner.scan(seq.data(), seq.size(),
-                [&counts64](uint32_t /*pos*/, KmerInt kmer) {
-                    counts64[kmer]++;
-                });
-            prog.update(oid + 1);
+            tbb::task_arena arena(num_threads);
+            arena.execute([&] {
+                tbb::parallel_for(
+                    tbb::blocked_range<uint32_t>(0, num_seqs, 64),
+                    [&](const tbb::blocked_range<uint32_t>& range) {
+                        auto& my_counts = local_counts.local();
+                        KmerScanner<KmerInt> scanner(k);
+                        for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
+                            std::string seq = db.get_sequence(oid);
+                            scanner.scan(seq.data(), seq.size(),
+                                [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
+                                    my_counts[kmer]++;
+                                });
+                        }
+                    });
+            });
+
+            // Reduce thread-local counts
+            local_counts.combine_each([&counts64, tbl_size](const std::vector<uint64_t>& lc) {
+                for (uint64_t i = 0; i < tbl_size; i++) {
+                    counts64[i] += lc[i];
+                }
+            });
+        } else {
+            // Single-threaded counting
+            KmerScanner<KmerInt> scanner(k);
+            Progress prog("Phase 1", num_seqs, config.verbose);
+            for (uint32_t oid = 0; oid < num_seqs; oid++) {
+                std::string seq = db.get_sequence(oid);
+                scanner.scan(seq.data(), seq.size(),
+                    [&counts64](uint32_t /*pos*/, KmerInt kmer) {
+                        counts64[kmer]++;
+                    });
+                prog.update(oid + 1);
+            }
+            prog.finish();
         }
-        prog.finish();
     }
 
     // Convert uint64 -> uint32 with overflow check
