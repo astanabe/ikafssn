@@ -29,6 +29,9 @@ target_link_libraries(ikafssn_builder PUBLIC
 # IO library (without NCBI dependency)
 add_library(ikafssn_io STATIC
     io/mmap_file.cpp
+    io/fasta_reader.cpp
+    io/seqidlist_reader.cpp
+    io/result_writer.cpp
 )
 target_link_libraries(ikafssn_io PUBLIC ikafssn_core)
 
@@ -42,6 +45,16 @@ target_include_directories(ikafssn_blastdb PRIVATE
 target_link_libraries(ikafssn_blastdb PUBLIC ikafssn_core
     seqdb xobjutil xobjmgr xncbi xser xutil
 )
+
+# Search library (no NCBI dependency)
+add_library(ikafssn_search STATIC
+    search/oid_filter.cpp
+    search/stage1_filter.cpp
+    search/diagonal_filter.cpp
+    search/stage2_chaining.cpp
+    search/volume_searcher.cpp
+)
+target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_io)
 
 # Utility library
 add_library(ikafssn_util STATIC
@@ -62,4 +75,12 @@ target_include_directories(ikafssnindex PRIVATE
 target_link_libraries(ikafssnindex PRIVATE
     ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
     TBB::tbb
+)
+
+# ikafssnsearch
+add_executable(ikafssnsearch
+    ikafssnsearch/main.cpp
+)
+target_link_libraries(ikafssnsearch PRIVATE
+    ikafssn_search ikafssn_index ikafssn_io ikafssn_util ikafssn_core
 )
