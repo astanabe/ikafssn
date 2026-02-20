@@ -6,18 +6,24 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # --- NCBI C++ Toolkit ---
-set(NCBI_TOOLKIT_DIR "${CMAKE_SOURCE_DIR}/ncbi-toolkit")
+set(NCBI_TOOLKIT_DIR "${CMAKE_SOURCE_DIR}/ncbi-cxx-toolkit" CACHE PATH
+    "Path to NCBI C++ Toolkit install root (contains include/ and CMake-*/)")
+set(NCBI_TOOLKIT_BUILD_TAG "CMake-GCC1330-Release" CACHE STRING
+    "NCBI Toolkit build subdirectory name (e.g. CMake-GCC1330-Release)")
+
 set(NCBI_TOOLKIT_INCLUDE
     "${NCBI_TOOLKIT_DIR}/include"
-    "${NCBI_TOOLKIT_DIR}/CMake-GCC1330-Release/inc"
+    "${NCBI_TOOLKIT_DIR}/${NCBI_TOOLKIT_BUILD_TAG}/inc"
 )
-set(NCBI_TOOLKIT_CMAKE "${NCBI_TOOLKIT_DIR}/CMake-GCC1330-Release/cmake/ncbi-cpp-toolkit.cmake")
+set(NCBI_TOOLKIT_CMAKE
+    "${NCBI_TOOLKIT_DIR}/${NCBI_TOOLKIT_BUILD_TAG}/cmake/ncbi-cpp-toolkit.cmake")
 
 # Define dependency targets required by NCBI export before including it
 if(NOT TARGET LMDB::lmdb_LIB)
+    find_library(LMDB_LIBRARY NAMES lmdb REQUIRED)
     add_library(LMDB::lmdb_LIB UNKNOWN IMPORTED)
     set_target_properties(LMDB::lmdb_LIB PROPERTIES
-        IMPORTED_LOCATION "/usr/lib/x86_64-linux-gnu/liblmdb.so"
+        IMPORTED_LOCATION "${LMDB_LIBRARY}"
     )
 endif()
 

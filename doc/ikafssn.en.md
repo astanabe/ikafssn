@@ -467,6 +467,84 @@ ID and position postings are stored in separate files so that Stage 1 filtering 
 - Drogon (for ikafssnhttpd, optional)
 - libcurl (for HTTP client mode and remote retrieval, optional)
 
+### Installing Dependencies
+
+Install the required packages (excluding NCBI C++ Toolkit) with the following commands.
+
+**Ubuntu Server 24.04:**
+
+```bash
+sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
+    libcurl4-openssl-dev libjsoncpp-dev libdrogon-dev
+```
+
+To skip Drogon (if ikafssnhttpd is not needed), omit `libdrogon-dev` and build with `-DBUILD_HTTPD=OFF`.
+
+**AlmaLinux 9 / Rocky Linux 9:**
+
+```bash
+sudo dnf config-manager --set-enabled crb
+sudo dnf install -y epel-release
+sudo dnf group install -y "Development Tools"
+sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel
+```
+
+**Oracle Linux 9:**
+
+```bash
+sudo dnf config-manager --set-enabled crb
+sudo dnf install -y oracle-epel-release-el9
+sudo dnf group install -y "Development Tools"
+sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel
+```
+
+**AlmaLinux 10 / Rocky Linux 10:**
+
+```bash
+sudo dnf config-manager --set-enabled crb
+sudo dnf group install -y "Development Tools"
+sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel
+```
+
+**Oracle Linux 10:**
+
+```bash
+sudo dnf config-manager --set-enabled crb
+sudo dnf group install -y "Development Tools"
+sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel
+```
+
+On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. Drogon is not packaged for EL9/EL10; build with `-DBUILD_HTTPD=OFF` or build Drogon from source.
+
+### NCBI C++ Toolkit
+
+ikafssn requires a pre-built NCBI C++ Toolkit. By default, CMake looks for the toolkit at `./ncbi-cxx-toolkit` relative to the source root. If the toolkit is installed elsewhere, specify the path with `-DNCBI_TOOLKIT_DIR`.
+
+The build subdirectory name within the toolkit (e.g. `CMake-GCC1330-Release`) is auto-detected by default but can be overridden with `-DNCBI_TOOLKIT_BUILD_TAG` if needed.
+
+To download, build, and install the toolkit into `./ncbi-cxx-toolkit`, run the following from the ikafssn source root:
+
+```bash
+curl -L -o ncbi-cxx-toolkit-30.0.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
+tar xf ncbi-cxx-toolkit-30.0.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.0.0
+./cmake-configure \
+    --without-debug \
+    --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
+    --with-install="$(realpath ..)/ncbi-cxx-toolkit"
+cd CMake-GCC*/build
+make -j$(nproc)
+make install
+cd ../..
+```
+
+Only the libraries required by ikafssn (`seqdb`, `blastdb_format`, and their dependencies) are built. The full toolkit build is not necessary.
+
 ### Build
 
 ```bash
@@ -476,10 +554,19 @@ make -j$(nproc)
 make test
 ```
 
+If the NCBI C++ Toolkit is installed at a non-default location:
+
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DNCBI_TOOLKIT_DIR=/path/to/ncbi-cxx-toolkit
+```
+
 ### CMake Options
 
 | Option | Default | Description |
 |---|---|---|
+| `NCBI_TOOLKIT_DIR` | `${CMAKE_SOURCE_DIR}/ncbi-cxx-toolkit` | Path to NCBI C++ Toolkit install root |
+| `NCBI_TOOLKIT_BUILD_TAG` | `CMake-GCC1330-Release` | Toolkit build subdirectory name |
 | `BUILD_HTTPD` | ON | Build ikafssnhttpd (requires Drogon) |
 | `BUILD_CLIENT` | ON | Build ikafssnclient (requires libcurl for HTTP mode) |
 | `ENABLE_REMOTE_RETRIEVE` | ON | Enable NCBI efetch in ikafssnretrieve |

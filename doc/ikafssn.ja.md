@@ -467,6 +467,84 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 - Drogon (ikafssnhttpd 用、オプション)
 - libcurl (HTTP クライアントモードおよびリモート取得用、オプション)
 
+### 依存パッケージのインストール
+
+NCBI C++ Toolkit 以外の依存パッケージを以下のコマンドでインストールできます。
+
+**Ubuntu Server 24.04:**
+
+```bash
+sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
+    libcurl4-openssl-dev libjsoncpp-dev libdrogon-dev
+```
+
+ikafssnhttpd が不要な場合は `libdrogon-dev` を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。
+
+**AlmaLinux 9 / Rocky Linux 9:**
+
+```bash
+sudo dnf config-manager --set-enabled crb
+sudo dnf install -y epel-release
+sudo dnf group install -y "Development Tools"
+sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel
+```
+
+**Oracle Linux 9:**
+
+```bash
+sudo dnf config-manager --set-enabled crb
+sudo dnf install -y oracle-epel-release-el9
+sudo dnf group install -y "Development Tools"
+sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel
+```
+
+**AlmaLinux 10 / Rocky Linux 10:**
+
+```bash
+sudo dnf config-manager --set-enabled crb
+sudo dnf group install -y "Development Tools"
+sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel
+```
+
+**Oracle Linux 10:**
+
+```bash
+sudo dnf config-manager --set-enabled crb
+sudo dnf group install -y "Development Tools"
+sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel
+```
+
+EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。Drogon は EL9/EL10 ではパッケージ提供されていないため、`-DBUILD_HTTPD=OFF` でビルドするか、Drogon をソースからビルドしてください。
+
+### NCBI C++ Toolkit
+
+ikafssn のビルドには NCBI C++ Toolkit が必要です。デフォルトではソースルート直下の `./ncbi-cxx-toolkit` を参照します。別の場所にインストール済みの場合は `-DNCBI_TOOLKIT_DIR` で指定してください。
+
+Toolkit 内のビルドサブディレクトリ名 (例: `CMake-GCC1330-Release`) はデフォルトで自動認識されますが、必要に応じて `-DNCBI_TOOLKIT_BUILD_TAG` で変更できます。
+
+Toolkit のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
+
+```bash
+curl -L -o ncbi-cxx-toolkit-30.0.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
+tar xf ncbi-cxx-toolkit-30.0.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.0.0
+./cmake-configure \
+    --without-debug \
+    --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
+    --with-install="$(realpath ..)/ncbi-cxx-toolkit"
+cd CMake-GCC*/build
+make -j$(nproc)
+make install
+cd ../..
+```
+
+ikafssn が必要とするライブラリ (`seqdb`、`blastdb_format` およびその依存) のみをビルドします。Toolkit 全体のビルドは不要です。
+
 ### ビルド
 
 ```bash
@@ -476,10 +554,19 @@ make -j$(nproc)
 make test
 ```
 
+NCBI C++ Toolkit がデフォルト以外の場所にインストールされている場合:
+
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DNCBI_TOOLKIT_DIR=/path/to/ncbi-cxx-toolkit
+```
+
 ### CMake オプション
 
 | オプション | デフォルト | 説明 |
 |---|---|---|
+| `NCBI_TOOLKIT_DIR` | `${CMAKE_SOURCE_DIR}/ncbi-cxx-toolkit` | NCBI C++ Toolkit のインストールルートパス |
+| `NCBI_TOOLKIT_BUILD_TAG` | `CMake-GCC1330-Release` | Toolkit ビルドサブディレクトリ名 |
 | `BUILD_HTTPD` | ON | ikafssnhttpd をビルド (Drogon が必要) |
 | `BUILD_CLIENT` | ON | ikafssnclient をビルド (HTTP モードで libcurl が必要) |
 | `ENABLE_REMOTE_RETRIEVE` | ON | ikafssnretrieve で NCBI efetch を有効化 |
