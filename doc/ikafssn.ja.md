@@ -571,6 +571,22 @@ cmake .. -DCMAKE_BUILD_TYPE=Release \
     -DNCBI_TOOLKIT_DIR=/path/to/ncbi-cxx-toolkit
 ```
 
+### インストール
+
+```bash
+sudo make install
+```
+
+デフォルトでは実行ファイルは `/usr/local/bin` に、systemd ユニットファイルは `/usr/local/share/ikafssn/systemd` にインストールされます。インストール先を変更する場合は `CMAKE_INSTALL_PREFIX` を指定します:
+
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ikafssn
+make -j$(nproc)
+sudo make install
+```
+
+この例では実行ファイルが `/opt/ikafssn/bin` にインストールされます。
+
 ### CMake オプション
 
 | オプション | デフォルト | 説明 |

@@ -571,6 +571,22 @@ cmake .. -DCMAKE_BUILD_TYPE=Release \
     -DNCBI_TOOLKIT_DIR=/path/to/ncbi-cxx-toolkit
 ```
 
+### Installation
+
+```bash
+sudo make install
+```
+
+By default, executables are installed to `/usr/local/bin` and systemd unit files to `/usr/local/share/ikafssn/systemd`. To change the install prefix:
+
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ikafssn
+make -j$(nproc)
+sudo make install
+```
+
+In this example, executables are installed to `/opt/ikafssn/bin`.
+
 ### CMake Options
 
 | Option | Default | Description |
