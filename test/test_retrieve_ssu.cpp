@@ -11,6 +11,7 @@
 //
 
 #include "test_util.hpp"
+#include "ssu_test_fixture.hpp"
 #include "io/blastdb_reader.hpp"
 #include "io/result_writer.hpp"
 #include "ikafssnretrieve/local_retriever.hpp"
@@ -30,14 +31,12 @@
 #include <vector>
 
 using namespace ikafssn;
+using namespace ssu_fixture;
 
-static const char* SSU_URL = "https://ftp.ncbi.nih.gov/blast/db/SSU_eukaryote_rRNA.tar.gz";
-
-// Target accessions (unversioned, as stored in BLAST DB)
-static const char* TARGET_ACC[] = {"FJ876973", "GQ912721", "DQ235612"};
+// Target accessions (versioned, as stored in BLAST DB)
+static const char* TARGET_ACC[] = {ACC_FJ, ACC_GQ, ACC_DQ};
 static constexpr int NUM_TARGETS = 3;
 
-static std::string g_db_dir;
 static std::string g_db_prefix;
 
 // Per-accession info discovered from the BLAST DB
@@ -113,37 +112,10 @@ static std::vector<OutputHit> make_hits() {
 // ---- Setup ----
 
 static bool setup_database() {
-    g_db_dir = "/tmp/ikafssn_ssu_test";
-    g_db_prefix = g_db_dir + "/SSU_eukaryote_rRNA";
+    g_db_prefix = ssu_db_prefix();
 
-    std::filesystem::create_directories(g_db_dir);
-
-    // Check if already extracted (single- or multi-volume)
-    bool have_db = std::filesystem::exists(g_db_prefix + ".nsq") ||
-                   std::filesystem::exists(g_db_prefix + ".00.nsq");
-    if (have_db) {
-        std::fprintf(stderr, "SSU_eukaryote_rRNA already present, skipping download\n");
-    } else {
-        // Download
-        std::string tar_path = g_db_dir + "/SSU_eukaryote_rRNA.tar.gz";
-        std::string cmd = "curl -fSL --connect-timeout 30 --max-time 300 -o "
-                          + tar_path + " " + SSU_URL;
-        std::fprintf(stderr, "Downloading SSU_eukaryote_rRNA...\n");
-        int ret = std::system(cmd.c_str());
-        if (ret != 0) {
-            std::fprintf(stderr, "Download failed (exit code %d)\n", ret);
-            return false;
-        }
-
-        // Extract
-        cmd = "tar xzf " + tar_path + " -C " + g_db_dir;
-        std::fprintf(stderr, "Extracting...\n");
-        ret = std::system(cmd.c_str());
-        if (ret != 0) {
-            std::fprintf(stderr, "Extraction failed (exit code %d)\n", ret);
-            return false;
-        }
-    }
+    // Verify the DB exists locally
+    check_ssu_available();
 
     // Open DB and find the target accessions
     auto vol_paths = BlastDbReader::find_volume_paths(g_db_prefix);

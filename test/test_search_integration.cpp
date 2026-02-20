@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "ssu_test_fixture.hpp"
 #include "io/blastdb_reader.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/seqidlist_reader.hpp"
@@ -20,9 +21,14 @@
 #include <string>
 
 using namespace ikafssn;
+using namespace ssu_fixture;
 
 static std::string g_testdb_path;
 static std::string g_test_dir;
+
+// Runtime-extracted data
+static std::string g_query_seq;   // 100bp from FJ876973.1
+static uint32_t g_fj_oid = UINT32_MAX;
 
 static void test_build_and_search() {
     std::fprintf(stderr, "-- test_build_and_search\n");
@@ -48,34 +54,33 @@ static void test_build_and_search() {
     CHECK(kpx.open(prefix + ".kpx"));
     CHECK(ksx.open(prefix + ".ksx"));
 
-    // Search with query from seq1
+    // Search with query from FJ876973.1
     OidFilter filter;
     SearchConfig config;
     config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1; // relaxed for small test
+    config.stage2.min_diag_hits = 1;
     config.stage2.min_score = 2;
     config.num_results = 50;
 
-    // Query: first 24 bases of seq1 "ACGTACGTACGTACGTACGTACGT"
-    std::string query_seq = "ACGTACGTACGTACGTACGTACGT";
+    // Query: 100bp from FJ876973.1 (extracted at runtime)
     auto result = search_volume<uint16_t>(
-        "query1", query_seq, 7, kix, kpx, ksx, filter, config);
+        "query1", g_query_seq, 7, kix, kpx, ksx, filter, config);
 
     CHECK(!result.hits.empty());
     CHECK(result.query_id == "query1");
 
-    // seq1 (OID 0) should be found
-    bool found_seq1 = false;
+    // FJ876973.1 OID should be found
+    bool found_fj = false;
     for (const auto& cr : result.hits) {
-        if (cr.seq_id == 0 && !cr.is_reverse) {
-            found_seq1 = true;
+        if (cr.seq_id == g_fj_oid && !cr.is_reverse) {
+            found_fj = true;
             CHECK(cr.score >= 2);
         }
     }
-    CHECK(found_seq1);
+    CHECK(found_fj);
 
     kix.close();
     kpx.close();
@@ -104,24 +109,23 @@ static void test_revcomp_search() {
     config.stage2.min_score = 2;
     config.num_results = 50;
 
-    // Reverse complement of "ACGTACGT" = "ACGTACGT" (palindrome!)
-    // Use something non-palindromic: revcomp of "AACCGGTT" = "AACCGGTT" (also palindromic)
-    // Use "AACCGGTTAA": revcomp = "TTAACCGGTT"
-    // seq5 = "ACGTACGTAACCGGTTAACCGGTTACGTACGTAACCGGTTAACCGGTT"
-    // "TTAACCGGTT" is the revcomp of a substring of seq5
-    std::string query_seq = "TTAACCGGTTAACCGGTTAACCGGTT";
-    auto result = search_volume<uint16_t>(
-        "rc_query", query_seq, 7, kix, kpx, ksx, filter, config);
-
-    // Should find seq5 on reverse strand
-    bool found_rev = false;
-    for (const auto& cr : result.hits) {
-        if (cr.is_reverse) {
-            found_rev = true;
+    // Compute the reverse complement of the query
+    std::string rc_query;
+    rc_query.reserve(g_query_seq.size());
+    for (auto it = g_query_seq.rbegin(); it != g_query_seq.rend(); ++it) {
+        switch (*it) {
+            case 'A': rc_query += 'T'; break;
+            case 'T': rc_query += 'A'; break;
+            case 'C': rc_query += 'G'; break;
+            case 'G': rc_query += 'C'; break;
+            default:  rc_query += 'N'; break;
         }
     }
-    // Not necessarily finding reverse - depends on actual k-mer content
-    // Just verify the search completes without error
+
+    auto result = search_volume<uint16_t>(
+        "rc_query", rc_query, 7, kix, kpx, ksx, filter, config);
+
+    // Verify the search completes without error
     CHECK(result.query_id == "rc_query");
 
     kix.close();
@@ -141,8 +145,16 @@ static void test_seqidlist_filter() {
     CHECK(kpx.open(prefix + ".kpx"));
     CHECK(ksx.open(prefix + ".ksx"));
 
-    // Build OID filter that includes only seq3 and seq4
-    std::vector<std::string> include_list = {"seq3", "seq4"};
+    // Find OIDs for the target accessions
+    uint32_t oid_gq = UINT32_MAX, oid_dq = UINT32_MAX;
+    for (uint32_t i = 0; i < ksx.num_sequences(); i++) {
+        std::string acc(ksx.accession(i));
+        if (acc == ACC_GQ) oid_gq = i;
+        if (acc == ACC_DQ) oid_dq = i;
+    }
+
+    // Build OID filter that includes only ACC_GQ and ACC_DQ
+    std::vector<std::string> include_list = {ACC_GQ, ACC_DQ};
     OidFilter filter;
     filter.build(include_list, ksx, OidFilterMode::kInclude);
 
@@ -155,13 +167,12 @@ static void test_seqidlist_filter() {
     config.stage2.min_score = 1;
     config.num_results = 50;
 
-    std::string query_seq = "ACGTACGTACGTACGTACGTACGT";
     auto result = search_volume<uint16_t>(
-        "filtered_query", query_seq, 7, kix, kpx, ksx, filter, config);
+        "filtered_query", g_query_seq, 7, kix, kpx, ksx, filter, config);
 
-    // Results should only contain seq3 (OID 2) or seq4 (OID 3), not seq1 (OID 0)
+    // Results should only contain the included OIDs, not FJ876973.1
     for (const auto& cr : result.hits) {
-        CHECK(cr.seq_id == 2 || cr.seq_id == 3);
+        CHECK(cr.seq_id == oid_gq || cr.seq_id == oid_dq);
     }
 
     kix.close();
@@ -181,8 +192,8 @@ static void test_negative_seqidlist() {
     CHECK(kpx.open(prefix + ".kpx"));
     CHECK(ksx.open(prefix + ".ksx"));
 
-    // Build OID filter that excludes seq1
-    std::vector<std::string> exclude_list = {"seq1"};
+    // Build OID filter that excludes ACC_FJ
+    std::vector<std::string> exclude_list = {ACC_FJ};
     OidFilter filter;
     filter.build(exclude_list, ksx, OidFilterMode::kExclude);
 
@@ -195,13 +206,12 @@ static void test_negative_seqidlist() {
     config.stage2.min_score = 1;
     config.num_results = 50;
 
-    std::string query_seq = "ACGTACGTACGTACGTACGTACGT";
     auto result = search_volume<uint16_t>(
-        "neg_query", query_seq, 7, kix, kpx, ksx, filter, config);
+        "neg_query", g_query_seq, 7, kix, kpx, ksx, filter, config);
 
-    // seq1 (OID 0) should be excluded from results
+    // FJ876973.1 OID should be excluded from results
     for (const auto& cr : result.hits) {
-        CHECK(cr.seq_id != 0);
+        CHECK(cr.seq_id != g_fj_oid);
     }
 
     kix.close();
@@ -300,9 +310,8 @@ static void test_search_k9() {
     config.stage2.min_score = 2;
     config.num_results = 50;
 
-    std::string query_seq = "ACGTACGTACGTACGTACGTACGT";
     auto result = search_volume<uint32_t>(
-        "query_k9", query_seq, 9, kix, kpx, ksx, filter, config);
+        "query_k9", g_query_seq, 9, kix, kpx, ksx, filter, config);
 
     // Should find hits (seq1 has this pattern)
     CHECK(result.query_id == "query_k9");
@@ -321,9 +330,22 @@ static void test_search_k9() {
 }
 
 int main() {
-    g_testdb_path = std::string(SOURCE_DIR) + "/test/testdata/testdb";
+    check_ssu_available();
+
+    g_testdb_path = ssu_db_prefix();
     g_test_dir = "/tmp/ikafssn_search_test";
     std::filesystem::create_directories(g_test_dir);
+
+    // Extract 100bp query from FJ876973.1 at runtime
+    {
+        BlastDbReader db;
+        CHECK(db.open(g_testdb_path));
+        g_fj_oid = find_oid_by_accession(db, ACC_FJ);
+        CHECK(g_fj_oid != UINT32_MAX);
+        std::string full_seq = db.get_sequence(g_fj_oid);
+        CHECK(full_seq.size() >= 200);
+        g_query_seq = full_seq.substr(100, 100);
+    }
 
     test_fasta_reader();
     test_result_output_tab();

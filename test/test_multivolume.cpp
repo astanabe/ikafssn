@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "ssu_test_fixture.hpp"
 #include "io/blastdb_reader.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/result_writer.hpp"
@@ -23,9 +24,15 @@
 #include <tbb/task_arena.h>
 
 using namespace ikafssn;
+using namespace ssu_fixture;
 
-static std::string g_testdata_dir;
+static std::string g_multivol_a_path;
+static std::string g_multivol_b_path;
 static std::string g_test_dir;
+
+// Runtime-extracted queries from the multi-volume DBs
+static std::string g_query_fj;  // 100bp from FJ876973.1 (in multivol_a)
+static std::string g_query_gq;  // 100bp from GQ912721.1 (in multivol_b)
 
 // Build indexes for two separate BLAST DBs as volume 0 and volume 1
 // in the same output directory. This simulates a multi-volume DB.
@@ -35,7 +42,7 @@ static void build_multivolume_index(int k, const std::string& db_base) {
     // Volume 0: multivol_a
     {
         BlastDbReader db;
-        CHECK(db.open(g_testdata_dir + "/multivol_a"));
+        CHECK(db.open(g_multivol_a_path));
 
         IndexBuilderConfig config;
         config.k = k;
@@ -57,7 +64,7 @@ static void build_multivolume_index(int k, const std::string& db_base) {
     // Volume 1: multivol_b
     {
         BlastDbReader db;
-        CHECK(db.open(g_testdata_dir + "/multivol_b"));
+        CHECK(db.open(g_multivol_b_path));
 
         IndexBuilderConfig config;
         config.k = k;
@@ -133,11 +140,13 @@ static std::vector<OutputHit> search_sequential(
         ksx.close();
     }
 
-    // Sort by (query_id, score desc)
+    // Sort by (query_id, score desc, accession, volume)
     std::sort(all_hits.begin(), all_hits.end(),
               [](const OutputHit& a, const OutputHit& b) {
                   if (a.query_id != b.query_id) return a.query_id < b.query_id;
-                  return a.score > b.score;
+                  if (a.score != b.score) return a.score > b.score;
+                  if (a.accession != b.accession) return a.accession < b.accession;
+                  return a.volume < b.volume;
               });
 
     return all_hits;
@@ -225,11 +234,13 @@ static std::vector<OutputHit> search_parallel(
             });
     });
 
-    // Sort by (query_id, score desc)
+    // Sort by (query_id, score desc, accession, volume)
     std::sort(all_hits.begin(), all_hits.end(),
               [](const OutputHit& a, const OutputHit& b) {
                   if (a.query_id != b.query_id) return a.query_id < b.query_id;
-                  return a.score > b.score;
+                  if (a.score != b.score) return a.score > b.score;
+                  if (a.accession != b.accession) return a.accession < b.accession;
+                  return a.volume < b.volume;
               });
 
     for (auto& vd : vols) {
@@ -249,10 +260,9 @@ static void test_multivolume_search() {
 
     build_multivolume_index(k, db_base);
 
-    // Query that matches sequences in both volumes
-    // mvseq1 (vol 0) and mvseq5 (vol 1) both contain ACGTACGT repeats
+    // Queries extracted from sequences in both volumes
     std::vector<FastaRecord> queries = {
-        {"query_acgt", "ACGTACGTACGTACGTACGTACGT"}
+        {"query_fj", g_query_fj}
     };
 
     SearchConfig config;
@@ -289,8 +299,8 @@ static void test_parallel_equals_sequential() {
 
     // Index already built by test_multivolume_search
     std::vector<FastaRecord> queries = {
-        {"query_acgt", "ACGTACGTACGTACGTACGTACGT"},
-        {"query_aaccggtt", "AACCGGTTAACCGGTTAACCGGTT"}
+        {"query_fj", g_query_fj},
+        {"query_gq", g_query_gq}
     };
 
     SearchConfig config;
@@ -325,7 +335,7 @@ static void test_result_merge_ordering() {
     const std::string db_base = "mvtest";
 
     std::vector<FastaRecord> queries = {
-        {"query_acgt", "ACGTACGTACGTACGTACGTACGT"}
+        {"query_fj", g_query_fj}
     };
 
     SearchConfig config;
@@ -354,7 +364,7 @@ static void test_parallel_counting_pass() {
     // and verify it produces the same result as threads=1
     Logger logger(Logger::kError);
     BlastDbReader db;
-    CHECK(db.open(g_testdata_dir + "/multivol_a"));
+    CHECK(db.open(g_multivol_a_path));
 
     // Build with 1 thread
     {
@@ -370,7 +380,7 @@ static void test_parallel_counting_pass() {
 
     // Build with 2 threads (need to re-open DB as it may have internal state)
     BlastDbReader db2;
-    CHECK(db2.open(g_testdata_dir + "/multivol_a"));
+    CHECK(db2.open(g_multivol_a_path));
     {
         IndexBuilderConfig config;
         config.k = 7;
@@ -420,12 +430,10 @@ static void test_parallel_counting_pass() {
     sconfig.stage2.min_score = 2;
     sconfig.num_results = 50;
 
-    std::string query_seq = "ACGTACGTACGTACGTACGTACGT";
-
     auto sr_st = search_volume<uint16_t>(
-        "q", query_seq, 7, kix_st, kpx_st, ksx_st, filter, sconfig);
+        "q", g_query_fj, 7, kix_st, kpx_st, ksx_st, filter, sconfig);
     auto sr_mt = search_volume<uint16_t>(
-        "q", query_seq, 7, kix_mt, kpx_mt, ksx_mt, filter, sconfig);
+        "q", g_query_fj, 7, kix_mt, kpx_mt, ksx_mt, filter, sconfig);
 
     CHECK_EQ(sr_st.hits.size(), sr_mt.hits.size());
     for (size_t i = 0; i < sr_st.hits.size() && i < sr_mt.hits.size(); i++) {
@@ -447,7 +455,7 @@ static void test_multivolume_k9() {
     build_multivolume_index(k, db_base);
 
     std::vector<FastaRecord> queries = {
-        {"query_acgt9", "ACGTACGTACGTACGTACGTACGT"}
+        {"query_fj9", g_query_fj}
     };
 
     SearchConfig config;
@@ -471,9 +479,33 @@ static void test_multivolume_k9() {
 }
 
 int main() {
-    g_testdata_dir = std::string(SOURCE_DIR) + "/test/testdata";
+    check_ssu_available();
+    check_derived_data_ready();
+
+    g_multivol_a_path = multivol_a_prefix();
+    g_multivol_b_path = multivol_b_prefix();
     g_test_dir = "/tmp/ikafssn_multivolume_test";
     std::filesystem::create_directories(g_test_dir);
+
+    // Extract queries from the multi-volume DBs at runtime
+    {
+        BlastDbReader db_a;
+        CHECK(db_a.open(g_multivol_a_path));
+        uint32_t oid_fj = find_oid_by_accession(db_a, ACC_FJ);
+        CHECK(oid_fj != UINT32_MAX);
+        std::string seq = db_a.get_sequence(oid_fj);
+        CHECK(seq.size() >= 200);
+        g_query_fj = seq.substr(100, 100);
+    }
+    {
+        BlastDbReader db_b;
+        CHECK(db_b.open(g_multivol_b_path));
+        uint32_t oid_gq = find_oid_by_accession(db_b, ACC_GQ);
+        CHECK(oid_gq != UINT32_MAX);
+        std::string seq = db_b.get_sequence(oid_gq);
+        CHECK(seq.size() >= 200);
+        g_query_gq = seq.substr(50, 100);
+    }
 
     test_multivolume_search();
     test_parallel_equals_sequential();

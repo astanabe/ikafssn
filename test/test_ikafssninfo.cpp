@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "ssu_test_fixture.hpp"
 #include "io/blastdb_reader.hpp"
 #include "index/index_builder.hpp"
 #include "index/kix_reader.hpp"
@@ -15,18 +16,17 @@
 #include <string>
 
 using namespace ikafssn;
-
-#ifndef SOURCE_DIR
-#define SOURCE_DIR "."
-#endif
+using namespace ssu_fixture;
 
 static std::string g_testdb_path;
 static std::string g_index_dir;
 static std::string g_build_dir;
 
 static void setup() {
-    g_testdb_path = std::string(SOURCE_DIR) + "/test/testdata/testdb";
-    g_index_dir = std::string(SOURCE_DIR) + "/test/testdata/info_test_index";
+    check_ssu_available();
+
+    g_testdb_path = ssu_db_prefix();
+    g_index_dir = "/tmp/ikafssn_info_test_index";
     g_build_dir = std::string(SOURCE_DIR) + "/build/src";
 
     // Create output directory
@@ -130,7 +130,7 @@ static void test_db_info() {
     // DB info section should be present
     CHECK(output.find("BLAST DB Information") != std::string::npos);
     CHECK(output.find("DB prefix:") != std::string::npos);
-    CHECK(output.find("DB sequences:      5") != std::string::npos);
+    CHECK(output.find("DB sequences:") != std::string::npos);
     CHECK(output.find("DB total bases:") != std::string::npos);
 }
 

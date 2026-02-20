@@ -1,6 +1,0 @@
->query1 exact match from seq1
-ACGTACGTACGTACGTACGTACGT
->query2 exact match from seq5
-AACCGGTTAACCGGTTACGTACGT
->query3 reverse complement of seq1 region
-ACGTACGTACGTACGTACGTACGT

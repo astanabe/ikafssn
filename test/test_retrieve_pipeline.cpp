@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "ssu_test_fixture.hpp"
 #include "io/blastdb_reader.hpp"
 #include "io/result_reader.hpp"
 #include "io/result_writer.hpp"
@@ -18,9 +19,14 @@
 #include <string>
 
 using namespace ikafssn;
+using namespace ssu_fixture;
 
 static std::string g_testdb_path;
 static std::string g_test_dir;
+
+// Runtime-extracted data
+static std::string g_query_seq;
+static uint32_t g_fj_oid = UINT32_MAX;
 
 // Build index, search, write results, read results back, retrieve subsequences.
 static void test_full_pipeline() {
@@ -58,10 +64,9 @@ static void test_full_pipeline() {
     config.stage2.min_score = 2;
     config.num_results = 50;
 
-    // Query: first 24 bases of seq1
-    std::string query_seq = "ACGTACGTACGTACGTACGTACGT";
+    // Query: 100bp from FJ876973.1 (extracted at runtime)
     auto result = search_volume<uint16_t>(
-        "query1", query_seq, 7, kix, kpx, ksx, filter, config);
+        "query1", g_query_seq, 7, kix, kpx, ksx, filter, config);
     CHECK(!result.hits.empty());
 
     // Convert to OutputHit
@@ -119,10 +124,9 @@ static void test_full_pipeline() {
 static void test_context_extension() {
     std::fprintf(stderr, "-- test_context_extension\n");
 
-    // Create hits manually targeting seq1 (ACGTACGTACGTACGTACGTACGTACGTACGT, 32bp)
-    // Match region: [4, 11] (8 bases)
+    // Create hits manually targeting ACC_FJ, hit at [100, 200]
     std::vector<OutputHit> hits;
-    hits.push_back({"query1", "seq1", '+', 0, 7, 4, 11, 5, 0});
+    hits.push_back({"query1", ACC_FJ, '+', 0, 100, 100, 200, 5, 0});
 
     // Retrieve without context
     {
@@ -132,7 +136,6 @@ static void test_context_extension() {
         uint32_t n = retrieve_local(hits, g_testdb_path, opts, out);
         CHECK_EQ(n, 1u);
         std::string fasta = out.str();
-        // Extract sequence (skip header line)
         std::istringstream iss(fasta);
         std::string hdr, seq;
         std::getline(iss, hdr);
@@ -141,13 +144,13 @@ static void test_context_extension() {
         while (std::getline(iss, sline)) {
             if (!sline.empty() && sline[0] != '>') seq += sline;
         }
-        CHECK_EQ(seq.size(), 8u); // s_end - s_start + 1 = 11 - 4 + 1 = 8
+        CHECK_EQ(seq.size(), 101u); // s_end - s_start + 1 = 200 - 100 + 1 = 101
     }
 
-    // Retrieve with context=3
+    // Retrieve with context=10
     {
         RetrieveOptions opts;
-        opts.context = 3;
+        opts.context = 10;
         std::ostringstream out;
         uint32_t n = retrieve_local(hits, g_testdb_path, opts, out);
         CHECK_EQ(n, 1u);
@@ -160,18 +163,18 @@ static void test_context_extension() {
         while (std::getline(iss, sline)) {
             if (!sline.empty() && sline[0] != '>') seq += sline;
         }
-        // Range: [4-3, 11+3] = [1, 14], size = 14
-        CHECK_EQ(seq.size(), 14u);
-        CHECK(hdr.find("range=1-14") != std::string::npos);
+        // Range: [100-10, 200+10] = [90, 210], size = 121
+        CHECK_EQ(seq.size(), 121u);
+        CHECK(hdr.find("range=90-210") != std::string::npos);
     }
 }
 
 static void test_context_clamp_start() {
     std::fprintf(stderr, "-- test_context_clamp_start\n");
 
-    // Hit at the very start of the sequence
+    // Hit at the very start of ACC_FJ
     std::vector<OutputHit> hits;
-    hits.push_back({"query1", "seq1", '+', 0, 3, 0, 3, 3, 0});
+    hits.push_back({"query1", ACC_FJ, '+', 0, 3, 0, 3, 3, 0});
 
     RetrieveOptions opts;
     opts.context = 10;  // context extends before position 0, should clamp
@@ -185,15 +188,29 @@ static void test_context_clamp_start() {
 static void test_reverse_strand() {
     std::fprintf(stderr, "-- test_reverse_strand\n");
 
-    // seq1 = "ACGTACGTACGTACGTACGTACGTACGTACGT" (32bp)
-    // Take a region [0,3] -> "ACGT", reverse complement = "ACGT" (palindrome)
-    // Take [0,7] -> "ACGTACGT", revcomp = "ACGTACGT" (also palindrome)
-    // Use a non-palindromic region from seq5:
-    // seq5 = "ACGTACGTAACCGGTTAACCGGTTACGTACGTAACCGGTTAACCGGTT" (48bp)
-    // Region [8,15] = "AACCGGTT", revcomp = "AACCGGTT" (palindromic too!)
-    // Region [0,3] of seq4 = "ACAC", revcomp = "GTGT"
+    // Read first 4bp of ACC_GQ at runtime and compute expected revcomp dynamically
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_GQ);
+    CHECK(oid != UINT32_MAX);
+    std::string full_seq = db.get_sequence(oid);
+    CHECK(full_seq.size() >= 4);
+    std::string first4 = full_seq.substr(0, 4);
+
+    // Compute expected reverse complement
+    std::string expected_rc;
+    for (auto it = first4.rbegin(); it != first4.rend(); ++it) {
+        switch (*it) {
+            case 'A': expected_rc += 'T'; break;
+            case 'T': expected_rc += 'A'; break;
+            case 'C': expected_rc += 'G'; break;
+            case 'G': expected_rc += 'C'; break;
+            default:  expected_rc += 'N'; break;
+        }
+    }
+
     std::vector<OutputHit> hits;
-    hits.push_back({"query1", "seq4", '-', 0, 3, 0, 3, 3, 0});
+    hits.push_back({"query1", ACC_GQ, '-', 0, 3, 0, 3, 3, 0});
 
     RetrieveOptions opts;
     opts.context = 0;
@@ -210,8 +227,7 @@ static void test_reverse_strand() {
     while (std::getline(iss, sline)) {
         if (!sline.empty() && sline[0] != '>') seq += sline;
     }
-    // seq4[0..3] = "ACAC", revcomp = "GTGT"
-    CHECK(seq == "GTGT");
+    CHECK(seq == expected_rc);
     CHECK(hdr.find("strand=-") != std::string::npos);
 }
 
@@ -220,7 +236,7 @@ static void test_missing_accession() {
 
     std::vector<OutputHit> hits;
     hits.push_back({"query1", "NONEXISTENT", '+', 0, 10, 0, 10, 5, 0});
-    hits.push_back({"query1", "seq1", '+', 0, 3, 0, 3, 3, 0});
+    hits.push_back({"query1", ACC_FJ, '+', 0, 3, 0, 3, 3, 0});
 
     RetrieveOptions opts;
     std::ostringstream out;
@@ -230,9 +246,22 @@ static void test_missing_accession() {
 }
 
 int main() {
-    g_testdb_path = std::string(SOURCE_DIR) + "/test/testdata/testdb";
+    check_ssu_available();
+
+    g_testdb_path = ssu_db_prefix();
     g_test_dir = "/tmp/ikafssn_retrieve_test";
     std::filesystem::create_directories(g_test_dir);
+
+    // Extract 100bp query from FJ876973.1 at runtime
+    {
+        BlastDbReader db;
+        CHECK(db.open(g_testdb_path));
+        g_fj_oid = find_oid_by_accession(db, ACC_FJ);
+        CHECK(g_fj_oid != UINT32_MAX);
+        std::string full_seq = db.get_sequence(g_fj_oid);
+        CHECK(full_seq.size() >= 200);
+        g_query_seq = full_seq.substr(100, 100);
+    }
 
     test_full_pipeline();
     test_context_extension();

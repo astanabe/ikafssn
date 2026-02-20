@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "ssu_test_fixture.hpp"
 #include "core/ambiguity_parser.hpp"
 #include "core/packed_kmer_scanner.hpp"
 #include "core/kmer_encoding.hpp"
@@ -19,6 +20,7 @@
 #include <filesystem>
 
 using namespace ikafssn;
+using namespace ssu_fixture;
 
 static std::string g_testdb_path;
 static std::string g_ambigdb_path;
@@ -512,10 +514,13 @@ static void test_blastdb_raw_sequence() {
     BlastDbReader db;
     CHECK(db.open(g_testdb_path));
 
-    // seq1 = "ACGTACGTACGTACGTACGTACGTACGTACGT" (32 bases, no ambiguity)
-    auto raw = db.get_raw_sequence(0);
+    // Find FJ876973.1 and verify raw sequence access
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+
+    auto raw = db.get_raw_sequence(oid);
     CHECK(raw.ncbi2na_data != nullptr);
-    CHECK_EQ(raw.seq_length, uint32_t(32));
+    CHECK_EQ(raw.seq_length, db.seq_length(oid));
     CHECK(raw.ncbi2na_bytes > 0);
 
     // Verify we can decode bases correctly
@@ -524,9 +529,12 @@ static void test_blastdb_raw_sequence() {
         CHECK(code < 4);
     }
 
-    // Verify get_sequence still works correctly
-    std::string seq = db.get_sequence(0);
-    CHECK(seq == "ACGTACGTACGTACGTACGTACGTACGTACGT");
+    // Verify get_sequence returns valid bases
+    std::string seq = db.get_sequence(oid);
+    CHECK_EQ(seq.size(), static_cast<size_t>(raw.seq_length));
+    for (char c : seq) {
+        CHECK(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+    }
 
     db.ret_raw_sequence(raw);
 }
@@ -534,30 +542,25 @@ static void test_blastdb_raw_sequence() {
 static void test_blastdb_raw_sequence_with_ambig() {
     std::fprintf(stderr, "-- test_blastdb_raw_sequence_with_ambig\n");
 
+    // Open the ambig DB where FJ876973.1 has R injected at position 100
     BlastDbReader db;
-    CHECK(db.open(g_testdb_path));
+    CHECK(db.open(g_ambigdb_path));
 
-    // seq2 = "ACGTNNNNACGTACGTACGT" (20 bases, has 4 Ns at pos 4-7)
-    auto raw = db.get_raw_sequence(1);
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+
+    auto raw = db.get_raw_sequence(oid);
     CHECK(raw.ncbi2na_data != nullptr);
-    CHECK_EQ(raw.seq_length, uint32_t(20));
+    CHECK_EQ(raw.seq_length, db.seq_length(oid));
 
-    // Check ambiguity data exists
+    // Check ambiguity data exists (R was injected at position 100)
     auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
     CHECK(ambig.size() > 0);
 
-    // Verify Ns are in ambiguity entries
-    bool found_n = false;
-    for (const auto& e : ambig) {
-        if (e.ncbi4na == 15) { // N
-            found_n = true;
-        }
-    }
-    CHECK(found_n);
-
-    // Verify get_sequence produces correct output with Ns
-    std::string seq = db.get_sequence(1);
-    CHECK(seq == "ACGTNNNNACGTACGTACGT");
+    // Verify get_sequence shows R at position 100
+    std::string seq = db.get_sequence(oid);
+    CHECK(seq.size() > 100);
+    CHECK(seq[100] == 'R');
 
     db.ret_raw_sequence(raw);
 }
@@ -570,8 +573,9 @@ static void test_packed_scanner_matches_kmer_scanner_on_blastdb() {
 
     int k = 7;
 
-    // Compare on all non-ambiguous sequences
-    for (uint32_t oid = 0; oid < db.num_sequences(); oid++) {
+    // Compare on the first 20 non-ambiguous sequences to keep runtime bounded
+    uint32_t limit = std::min(db.num_sequences(), uint32_t(20));
+    for (uint32_t oid = 0; oid < limit; oid++) {
         std::string seq = db.get_sequence(oid);
         bool has_ambig = false;
         for (char c : seq) {
@@ -643,14 +647,27 @@ static void test_ambig_db_index_build() {
 static void test_ambig_expansion_in_index() {
     std::fprintf(stderr, "-- test_ambig_expansion_in_index\n");
 
-    // Build index on ambig DB with k=5
-    // test_ambig_single_R = "ACGTACGRACGTACGT"
-    // R at position 7 means A or G
-    // The k-mer starting at position 3 is "TACGR" -> expands to "TACGA" and "TACGG"
-    // Both should be in the index.
+    // In ssu_ambigdb, FJ876973.1 has R (A|G) injected at position 100.
+    // The 5-mer spanning position 100 should be expanded into A and G variants.
 
     BlastDbReader db;
     CHECK(db.open(g_ambigdb_path));
+
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+
+    // Read the sequence to get the bases around position 100
+    std::string seq = db.get_sequence(oid);
+    CHECK(seq.size() > 104);
+    CHECK(seq[100] == 'R');
+
+    // Extract the 5-mer at position 96..100: 4 clean bases + R
+    // Expand: replace R(pos 100) with A and G
+    std::string kmer_base = seq.substr(96, 5);  // has 'R' at index 4
+    std::string kmer_a = kmer_base;
+    std::string kmer_g = kmer_base;
+    kmer_a[4] = 'A';
+    kmer_g[4] = 'G';
 
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
@@ -664,15 +681,15 @@ static void test_ambig_expansion_in_index() {
     KixReader kix;
     CHECK(kix.open(prefix + ".kix"));
 
-    // Encode "TACGA" and "TACGG" to get their k-mer values
-    uint16_t kmer_tacga = 0, kmer_tacgg = 0;
+    // Encode both expansion variants
+    uint16_t kval_a = 0, kval_g = 0;
     KmerScanner<uint16_t> ref(5);
-    ref.scan("TACGA", 5, [&](uint32_t, uint16_t km) { kmer_tacga = km; });
-    ref.scan("TACGG", 5, [&](uint32_t, uint16_t km) { kmer_tacgg = km; });
+    ref.scan(kmer_a.data(), 5, [&](uint32_t, uint16_t km) { kval_a = km; });
+    ref.scan(kmer_g.data(), 5, [&](uint32_t, uint16_t km) { kval_g = km; });
 
     // Both should have non-zero counts in the index
-    CHECK(kix.counts()[kmer_tacga] > 0);
-    CHECK(kix.counts()[kmer_tacgg] > 0);
+    CHECK(kix.counts()[kval_a] > 0);
+    CHECK(kix.counts()[kval_g] > 0);
 
     kix.close();
 }
@@ -695,11 +712,19 @@ static std::vector<uint32_t> decode_id_postings(
     return result;
 }
 
-static void test_existing_testdb_still_correct() {
-    std::fprintf(stderr, "-- test_existing_testdb_still_correct\n");
+static void test_ssu_db_kmer_check() {
+    std::fprintf(stderr, "-- test_ssu_db_kmer_check\n");
 
     BlastDbReader db;
     CHECK(db.open(g_testdb_path));
+
+    // Find FJ876973.1 and extract first 7bp
+    uint32_t target_oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(target_oid != UINT32_MAX);
+
+    std::string full_seq = db.get_sequence(target_oid);
+    CHECK(full_seq.size() >= 7);
+    std::string first7 = full_seq.substr(0, 7);
 
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
@@ -713,43 +738,39 @@ static void test_existing_testdb_still_correct() {
     KixReader kix;
     CHECK(kix.open(prefix + ".kix"));
     CHECK_EQ(kix.k(), 7);
-    CHECK_EQ(kix.num_sequences(), 5u);
+    CHECK(kix.num_sequences() > 0);
 
-    // "ACGTACG" should be present (from seq1, seq5)
-    uint16_t kmer_acgtacg = 0;
+    uint16_t target_kmer = 0;
     KmerScanner<uint16_t> ref(7);
-    ref.scan("ACGTACG", 7, [&](uint32_t, uint16_t km) { kmer_acgtacg = km; });
+    ref.scan(first7.data(), 7, [&](uint32_t, uint16_t km) { target_kmer = km; });
 
-    CHECK(kix.counts()[kmer_acgtacg] > 0);
+    CHECK(kix.counts()[target_kmer] > 0);
 
     auto ids = decode_id_postings(
-        kix.posting_data(), kix.offsets()[kmer_acgtacg],
-        kix.counts()[kmer_acgtacg]);
-    bool has_seq1 = false;
+        kix.posting_data(), kix.offsets()[target_kmer],
+        kix.counts()[target_kmer]);
+    bool has_target = false;
     for (uint32_t id : ids) {
-        if (id == 0) has_seq1 = true;
+        if (id == target_oid) has_target = true;
     }
-    CHECK(has_seq1);
+    CHECK(has_target);
 
     kix.close();
 }
 
-// Test index build with odd-length sequence from ambig DB
+// Test index build with odd-length sequence (DQ235612.1 = 1809bp, odd)
 static void test_ambig_db_odd_length() {
     std::fprintf(stderr, "-- test_ambig_db_odd_length\n");
 
     BlastDbReader db;
     CHECK(db.open(g_ambigdb_path));
 
-    // test_odd_length = "ACGTACGTACGTACGTACG" (19 bases, not multiple of 4)
-    // Find its OID (should be 6, last sequence)
-    uint32_t num = db.num_sequences();
-    CHECK(num >= 7u);
+    // DQ235612.1 is 1809bp (odd length)
+    uint32_t oid = find_oid_by_accession(db, ACC_DQ);
+    CHECK(oid != UINT32_MAX);
 
-    // Verify the odd-length sequence decodes correctly
-    std::string seq = db.get_sequence(6);
-    CHECK(seq == "ACGTACGTACGTACGTACG");
-    CHECK_EQ(seq.size(), size_t(19));
+    uint32_t len = db.seq_length(oid);
+    CHECK(len % 2 == 1); // Verify odd length
 
     // Build index and verify it succeeds
     Logger logger(Logger::kError);
@@ -775,8 +796,11 @@ static void test_ambig_db_odd_length() {
 }
 
 int main(int argc, char* argv[]) {
-    g_testdb_path = std::string(SOURCE_DIR) + "/test/testdata/testdb";
-    g_ambigdb_path = std::string(SOURCE_DIR) + "/test/testdata/ambigdb";
+    check_ssu_available();
+    check_derived_data_ready();
+
+    g_testdb_path = ssu_db_prefix();
+    g_ambigdb_path = ambig_db_prefix();
     g_output_dir = "/tmp/ikafssn_packed_scanner_test";
     std::filesystem::create_directories(g_output_dir);
 
@@ -802,7 +826,7 @@ int main(int argc, char* argv[]) {
     test_packed_scanner_matches_kmer_scanner_on_blastdb();
     test_ambig_db_index_build();
     test_ambig_expansion_in_index();
-    test_existing_testdb_still_correct();
+    test_ssu_db_kmer_check();
     test_ambig_db_odd_length();
 
     // Clean up

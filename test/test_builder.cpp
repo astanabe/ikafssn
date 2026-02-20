@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "ssu_test_fixture.hpp"
 #include "io/blastdb_reader.hpp"
 #include "index/index_builder.hpp"
 #include "index/kix_reader.hpp"
@@ -17,8 +18,9 @@
 #include <filesystem>
 
 using namespace ikafssn;
+using namespace ssu_fixture;
 
-// Test data paths (relative to build dir or absolute)
+// Test data paths
 static std::string g_testdb_path;
 static std::string g_output_dir;
 
@@ -70,7 +72,7 @@ static void test_build_and_verify_ksx() {
     BlastDbReader db;
     CHECK(db.open(g_testdb_path));
     uint32_t num_seqs = db.num_sequences();
-    CHECK_EQ(num_seqs, 5u);
+    CHECK(num_seqs > 0);
 
     // Build index with k=7
     Logger logger(Logger::kError); // quiet
@@ -86,7 +88,7 @@ static void test_build_and_verify_ksx() {
     // Verify .ksx
     KsxReader ksx;
     CHECK(ksx.open(prefix + ".ksx"));
-    CHECK_EQ(ksx.num_sequences(), 5u);
+    CHECK_EQ(ksx.num_sequences(), num_seqs);
 
     // Verify sequence lengths match BLAST DB
     for (uint32_t i = 0; i < num_seqs; i++) {
@@ -116,7 +118,7 @@ static void test_build_and_verify_kix_kpx() {
     // Verify headers
     CHECK_EQ(kix.k(), 7);
     CHECK_EQ(kix.kmer_type(), 0u); // uint16_t for k=7
-    CHECK_EQ(kix.num_sequences(), 5u);
+    CHECK(kix.num_sequences() > 0);
     CHECK_EQ(kpx.k(), 7);
     CHECK_EQ(kix.total_postings(), kpx.total_postings());
 
@@ -149,7 +151,7 @@ static void test_build_and_verify_kix_kpx() {
 
         // All IDs must be valid OIDs
         for (uint32_t id : ids) {
-            CHECK(id < 5);
+            CHECK(id < kix.num_sequences());
         }
 
         // Decode positions and verify they are valid
@@ -168,24 +170,20 @@ static void test_build_and_verify_kix_kpx() {
 static void test_known_kmer_in_index() {
     std::fprintf(stderr, "-- test_known_kmer_in_index\n");
 
-    // seq1 = "ACGTACGTACGTACGTACGTACGTACGTACGT" (32 bases, k=7)
-    // The 7-mer "ACGTACG" occurs at positions 0, 4, 8, 12, 16, 20, 24 in seq1
-    // and also in seq5 at similar positions.
-    //
-    // Encode "ACGTACG":
-    //   A=00, C=01, G=10, T=11, A=00, C=01, G=10
-    //   = 0b00011011000110 = 0x06C6
-    //   Wait, let me compute properly:
-    //   A(00) C(01) G(10) T(11) A(00) C(01) G(10)
-    //   = 00_01_10_11_00_01_10
-    //   = 0001101100_0110 (14 bits for k=7)
-    //   = 0b00 01 10 11 00 01 10
-    //   = 0x01B2 ... let me just use the encoder
+    // Find FJ876973.1 OID and extract first 7bp as target k-mer
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t target_oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(target_oid != UINT32_MAX);
+
+    std::string full_seq = db.get_sequence(target_oid);
+    CHECK(full_seq.size() >= 7);
+    std::string first7 = full_seq.substr(0, 7);
 
     KmerScanner<uint16_t> scanner(7);
     uint16_t target_kmer = 0;
     bool found = false;
-    scanner.scan("ACGTACG", 7, [&](uint32_t /*pos*/, uint16_t kmer) {
+    scanner.scan(first7.data(), first7.size(), [&](uint32_t /*pos*/, uint16_t kmer) {
         target_kmer = kmer;
         found = true;
     });
@@ -197,17 +195,17 @@ static void test_known_kmer_in_index() {
     CHECK(kix.open(prefix + ".kix"));
 
     uint32_t cnt = kix.counts()[target_kmer];
-    CHECK(cnt > 0); // "ACGTACG" should appear at least in seq1
+    CHECK(cnt > 0);
 
     std::vector<uint32_t> ids = decode_id_postings(
         kix.posting_data(), kix.offsets()[target_kmer], cnt);
 
-    // seq1 = OID 0 should be in the posting list
-    bool has_seq1 = false;
+    // FJ876973.1 OID should be in the posting list
+    bool has_target = false;
     for (uint32_t id : ids) {
-        if (id == 0) has_seq1 = true;
+        if (id == target_oid) has_target = true;
     }
-    CHECK(has_seq1);
+    CHECK(has_target);
 
     kix.close();
 }
@@ -232,7 +230,7 @@ static void test_build_k9_uint32() {
     CHECK(kix.open(prefix + ".kix"));
     CHECK_EQ(kix.k(), 9);
     CHECK_EQ(kix.kmer_type(), 1u); // uint32_t for k>=9
-    CHECK_EQ(kix.num_sequences(), 5u);
+    CHECK(kix.num_sequences() > 0);
     CHECK_EQ(kix.table_size(), table_size(9)); // 4^9 = 262144
 
     // Verify counts sum
@@ -349,8 +347,9 @@ static void test_build_with_partitions() {
 }
 
 int main(int argc, char* argv[]) {
-    // Default test DB path
-    g_testdb_path = std::string(SOURCE_DIR) + "/test/testdata/testdb";
+    check_ssu_available();
+
+    g_testdb_path = ssu_db_prefix();
     g_output_dir = "/tmp/ikafssn_builder_test";
 
     // Create output directory

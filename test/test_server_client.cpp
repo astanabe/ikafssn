@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "ssu_test_fixture.hpp"
 
 #include "io/blastdb_reader.hpp"
 #include "io/fasta_reader.hpp"
@@ -20,6 +21,7 @@
 #include "util/logger.hpp"
 #include "core/config.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -30,6 +32,7 @@
 #include <unistd.h>
 
 using namespace ikafssn;
+using namespace ssu_fixture;
 
 static std::string g_testdb_path;
 static std::string g_test_dir;
@@ -78,8 +81,8 @@ static void test_server_client_search() {
     std::string ix_dir = build_test_index(k);
     CHECK(!ix_dir.empty());
 
-    // Read query from test FASTA (use sequence from BLAST DB itself for guaranteed hits)
-    std::string query_fasta = std::string(SOURCE_DIR) + "/test/testdata/queries.fasta";
+    // Read query from derived test data
+    std::string query_fasta = queries_path();
     auto queries = read_fasta(query_fasta);
     CHECK(!queries.empty());
 
@@ -160,19 +163,40 @@ static void test_server_client_search() {
         CHECK(server_qr.query_id == local_sr.query_id);
         CHECK_EQ(server_qr.hits.size(), local_sr.hits.size());
 
-        for (size_t hi = 0; hi < server_qr.hits.size() && hi < local_sr.hits.size(); hi++) {
-            const auto& sh = server_qr.hits[hi];
-            const auto& lh = local_sr.hits[hi];
+        // Build comparable lists sorted by (accession, s_start, q_start) to avoid ordering issues
+        struct HitKey {
+            std::string accession;
+            uint32_t q_start, q_end, s_start, s_end;
+            uint16_t score;
+            bool is_reverse;
+            bool operator<(const HitKey& o) const {
+                if (accession != o.accession) return accession < o.accession;
+                if (s_start != o.s_start) return s_start < o.s_start;
+                return q_start < o.q_start;
+            }
+        };
 
-            std::string local_acc(ksx.accession(lh.seq_id));
-            CHECK(sh.accession == local_acc);
-            CHECK_EQ(sh.q_start, lh.q_start);
-            CHECK_EQ(sh.q_end, lh.q_end);
-            CHECK_EQ(sh.s_start, lh.s_start);
-            CHECK_EQ(sh.s_end, lh.s_end);
-            CHECK_EQ(sh.score, static_cast<uint16_t>(lh.score));
-            bool sh_reverse = (sh.strand == 1);
-            CHECK(sh_reverse == lh.is_reverse);
+        std::vector<HitKey> server_sorted, local_sorted;
+        for (const auto& sh : server_qr.hits) {
+            server_sorted.push_back({sh.accession, sh.q_start, sh.q_end,
+                                     sh.s_start, sh.s_end, sh.score, sh.strand == 1});
+        }
+        for (const auto& lh : local_sr.hits) {
+            local_sorted.push_back({std::string(ksx.accession(lh.seq_id)),
+                                    lh.q_start, lh.q_end, lh.s_start, lh.s_end,
+                                    static_cast<uint16_t>(lh.score), lh.is_reverse});
+        }
+        std::sort(server_sorted.begin(), server_sorted.end());
+        std::sort(local_sorted.begin(), local_sorted.end());
+
+        for (size_t hi = 0; hi < server_sorted.size() && hi < local_sorted.size(); hi++) {
+            CHECK(server_sorted[hi].accession == local_sorted[hi].accession);
+            CHECK_EQ(server_sorted[hi].q_start, local_sorted[hi].q_start);
+            CHECK_EQ(server_sorted[hi].q_end, local_sorted[hi].q_end);
+            CHECK_EQ(server_sorted[hi].s_start, local_sorted[hi].s_start);
+            CHECK_EQ(server_sorted[hi].s_end, local_sorted[hi].s_end);
+            CHECK_EQ(server_sorted[hi].score, local_sorted[hi].score);
+            CHECK(server_sorted[hi].is_reverse == local_sorted[hi].is_reverse);
         }
     }
 }
@@ -228,8 +252,7 @@ static void test_seqidlist_filter_via_server() {
     ::unlink(sock_path.c_str());
 
     // Read queries
-    std::string query_fasta = std::string(SOURCE_DIR) + "/test/testdata/queries.fasta";
-    auto queries = read_fasta(query_fasta);
+    auto queries = read_fasta(queries_path());
     CHECK(!queries.empty());
 
     // Get an accession from the ksx to use as seqidlist filter
@@ -294,18 +317,10 @@ static void test_seqidlist_filter_via_server() {
 }
 
 int main() {
-    std::string source_dir = SOURCE_DIR;
-    g_testdb_path = source_dir + "/test/testdata/testdb";
+    check_ssu_available();
+    check_derived_data_ready();
 
-    // Check if test BLAST DB exists
-    struct stat st;
-    if (stat((g_testdb_path + ".ndb").c_str(), &st) != 0 &&
-        stat((g_testdb_path + ".nsq").c_str(), &st) != 0) {
-        std::fprintf(stderr, "Test BLAST DB not found at %s. "
-                     "Run test/scripts/create_test_blastdb.sh first.\n",
-                     g_testdb_path.c_str());
-        return 1;
-    }
+    g_testdb_path = ssu_db_prefix();
 
     // Create temp directory
     g_test_dir = "/tmp/ikafssn_test_server_client_" + std::to_string(::getpid());

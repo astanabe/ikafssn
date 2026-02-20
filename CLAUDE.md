@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ikafssn (Independent programs of K-mer-based Alignment-Free Similarity Search for Nucleotide sequences) builds a complete inverted index over NCBI BLAST DB nucleotide sequences and performs alignment-free similarity search using k-mer matching and collinear chaining. The full design spec is in `devplan_ikafssn.md`.
+ikafssn (Independent programs of K-mer-based Alignment-Free Similarity Search for Nucleotide sequences) builds a complete inverted index over NCBI BLAST DB nucleotide sequences and performs alignment-free similarity search using k-mer matching and collinear chaining.
 
 ## Build Commands
 
@@ -98,7 +98,7 @@ Usage documentation is maintained in two languages:
 
 ## Test structure
 
-Tests are in `test/` using CTest. Test data lives in `test/testdata/` (small FASTA files with controlled hit patterns). `test/scripts/create_test_blastdb.sh` generates test BLAST DBs via `makeblastdb`.
+Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eukaryote_rRNA` is used for all BLAST-DB-dependent tests. `test/scripts/setup_ssu_testdata.sh` generates derived test data (ambig DB, multi-volume DBs, queries) in `/tmp/ikafssn_ssu_test/`. Shared fixture: `test/ssu_test_fixture.hpp`.
 
 ## Development Environment Rules
 
