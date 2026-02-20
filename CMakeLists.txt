@@ -7,7 +7,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # --- NCBI C++ Toolkit ---
 set(NCBI_TOOLKIT_DIR "${CMAKE_SOURCE_DIR}/ncbi-toolkit")
-set(NCBI_TOOLKIT_INCLUDE "${NCBI_TOOLKIT_DIR}/include")
+set(NCBI_TOOLKIT_INCLUDE
+    "${NCBI_TOOLKIT_DIR}/include"
+    "${NCBI_TOOLKIT_DIR}/CMake-GCC1330-Release/inc"
+)
 set(NCBI_TOOLKIT_CMAKE "${NCBI_TOOLKIT_DIR}/CMake-GCC1330-Release/cmake/ncbi-cpp-toolkit.cmake")
 
 # Define dependency targets required by NCBI export before including it
