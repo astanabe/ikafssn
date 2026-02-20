@@ -1,0 +1,105 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+ikafssn (Independent programs of K-mer-based Alignment-Free Similarity Search for Nucleotide sequences) builds a complete inverted index over NCBI BLAST DB nucleotide sequences and performs alignment-free similarity search using k-mer matching and collinear chaining. The full design spec is in `devplan_ikafssn.md`.
+
+## Build Commands
+
+```bash
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+make test          # run all unit tests
+ctest --test-dir build -R test_kmer_encoding   # run a single test
+```
+
+CMake options for selective builds:
+- `-DBUILD_HTTPD=OFF` — skip ikafssnhttpd (requires Drogon)
+- `-DBUILD_CLIENT=OFF` — skip ikafssnclient (requires libcurl for HTTP mode)
+- `-DENABLE_REMOTE_RETRIEVE=OFF` — disable NCBI efetch in ikafssnretrieve
+
+## Dependencies
+
+This project's external dependencies and their status on this dev machine (Ubuntu 24.04.4 LTS, x86_64):
+
+| Library | Version | Location | Install method |
+|---|---|---|---|
+| g++ | 13.3.0 | system | apt (pre-installed) |
+| CMake | 3.28.3 | system | apt (pre-installed) |
+| NCBI C++ Toolkit 30.0.0 | 30.0.0 | `./ncbi-toolkit/` | source build |
+| Intel TBB (oneTBB) | 2021.11.0 | system | `sudo apt install libtbb-dev` |
+| Drogon | 1.8.7 | system | `sudo apt install libdrogon-dev` |
+| libcurl | 8.5.0 | system | apt (pre-installed) |
+| BLAST+ | 2.12.0 | system | apt (pre-installed, for test data generation) |
+
+### NCBI C++ Toolkit
+
+Installed at `./ncbi-toolkit/` (project-local, built from source):
+- Headers: `ncbi-toolkit/include/`
+- Libraries: `ncbi-toolkit/CMake-GCC1330-Release/lib/` (static `.a`)
+- CMake exports: `ncbi-toolkit/CMake-GCC1330-Release/cmake/ncbi-cpp-toolkit.cmake`
+- Exported targets: `seqdb`, `blastdb_format`, `xobjutil`, `xobjmgr`, `xncbi`, `xser`, `xutil`, etc.
+
+## Architecture
+
+### Command binaries (separate executables, not subcommands)
+
+Each command links only its required dependencies to allow lightweight deployment:
+
+| Command | Purpose | Key Dependencies |
+|---|---|---|
+| `ikafssnindex` | Build k-mer inverted index from BLAST DB | NCBI C++ Toolkit, TBB |
+| `ikafssnsearch` | Local direct search (mmap index) | NCBI C++ Toolkit, TBB |
+| `ikafssnretrieve` | Extract matched subsequences | NCBI C++ Toolkit, libcurl (remote) |
+| `ikafssnserver` | Search daemon (UNIX/TCP socket) | NCBI C++ Toolkit, TBB |
+| `ikafssnhttpd` | HTTP REST proxy to ikafssnserver | Drogon |
+| `ikafssnclient` | Client (socket or HTTP) | libcurl (HTTP mode) |
+| `ikafssninfo` | Index/DB info display | NCBI C++ Toolkit (optional) |
+
+### Shared library layers (`src/`)
+
+- **`core/`** — Fundamental types (`Hit`, `ChainResult`), constants, k-mer 2-bit encoding/revcomp (templates parameterized on `KmerInt` = `uint16_t` for k<=8, `uint32_t` for k=9-13), LEB128 varint
+- **`index/`** — Reader/writer for three index file formats (`.kix` main index, `.kpx` position data, `.ksx` sequence metadata), index builder with partition+buffer strategy
+- **`search/`** — Two-stage search pipeline: Stage 1 (ID posting scan with OID filter) -> Stage 2 (position-aware chaining DP with diagonal filter)
+- **`protocol/`** — Length-prefixed binary protocol for client-server communication (frame header + typed messages)
+- **`io/`** — BLAST DB reader (CSeqDB wrapper), FASTA reader, mmap RAII wrapper, seqidlist reader (text/binary auto-detect), result writer/reader
+- **`util/`** — CLI parser, size string parser ("8G"), socket utilities, progress display, logger
+
+### Index file formats
+
+Per BLAST DB volume, three files are generated with naming pattern `<db_prefix>.<volume_index>.<kk>mer.{kix,kpx,ksx}` where `<kk>` is the zero-padded 2-digit k value (e.g. `nt.00.09mer.kix`, `nt.01.11mer.kpx`):
+
+- **`.kix`** — Header + direct-address table (offsets[4^k], counts[4^k]) + delta-compressed ID postings
+- **`.kpx`** — Header + pos_offsets[4^k] + delta-compressed position postings (correlated with .kix ID postings)
+- **`.ksx`** — Header + seq_lengths[] + accession string table (enables standalone result display without BLAST DB)
+
+ID and position postings are in separate files so Stage 1 never touches `.kpx`, maximizing page cache efficiency.
+
+### Key design conventions
+
+- **C++17**, CMake >= 3.16, little-endian only (Linux x86_64/aarch64)
+- k-mer values use direct-address tables (array index = k-mer integer value), no hash maps
+- Template dispatch on `KmerInt` type; runtime dispatch reads `kmer_type` from index header, then calls the correct template instantiation — no virtual calls in hot loops
+- Delta encoding uses LEB128 varint; position deltas reset at sequence boundaries (detected by checking if the corresponding ID delta is non-zero)
+- N-containing k-mers are skipped via an N-counter (shared logic between indexing and query scanning)
+- Reverse complement: index stores forward strand only; search generates both forward and revcomp of query
+- Parallelization via Intel TBB: `parallel_for` for counting pass, `parallel_for_each` for (query, volume) search jobs
+- mmap is read-only and shared across threads; `score_per_seq` arrays are thread-local
+- One server process serves one BLAST DB; multiple DBs require multiple processes
+
+## Documentation
+
+Usage documentation is maintained in two languages:
+- `doc/ikafssn.en.md` — English
+- `doc/ikafssn.ja.md` — Japanese
+
+## Test structure
+
+Tests are in `test/` using CTest. Test data lives in `test/testdata/` (small FASTA files with controlled hit patterns). `test/scripts/create_test_blastdb.sh` generates test BLAST DBs via `makeblastdb`.
+
+## Development Environment Rules
+
+- `sudo` が必要なコマンドは Claude Code から直接実行しない。ユーザーに提示して手動実行を求めること。

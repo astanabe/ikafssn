@@ -1,0 +1,6 @@
+# Build output
+build/
+
+# NCBI C++ Toolkit (source and install)
+ncbi-cxx-toolkit-public-release-*/
+ncbi-toolkit/
