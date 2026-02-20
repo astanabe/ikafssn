@@ -75,5 +75,25 @@ endif()
 # --- Subdirectories ---
 add_subdirectory(src)
 
+# --- Install rules ---
+include(GNUInstallDirs)
+
+install(TARGETS
+    ikafssnindex ikafssnsearch ikafssnserver ikafssnclient ikafssnretrieve ikafssninfo
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+if(BUILD_HTTPD)
+    install(TARGETS ikafssnhttpd
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
+
+install(FILES
+    doc/systemd/ikafssnserver@.service
+    doc/systemd/ikafssnhttpd@.service
+    doc/systemd/README.md
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/ikafssn/systemd
+)
+
 enable_testing()
 add_subdirectory(test)

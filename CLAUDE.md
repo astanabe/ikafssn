@@ -6,6 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ikafssn (Independent programs of K-mer-based Alignment-Free Similarity Search for Nucleotide sequences) builds a complete inverted index over NCBI BLAST DB nucleotide sequences and performs alignment-free similarity search using k-mer matching and collinear chaining.
 
+- **Primary**: https://github.com/astanabe/ikafssn
+- **Secondary**: https://gitlab.com/astanabe/ikafssn
+
 ## Build Commands
 
 ```bash

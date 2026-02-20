@@ -18,7 +18,7 @@
 [Unit]
 Description=ikafssn search server (%i)
 After=network.target
-Documentation=https://github.com/example/ikafssn
+Documentation=https://github.com/astanabe/ikafssn
 
 [Service]
 Type=simple

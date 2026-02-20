@@ -21,7 +21,7 @@
 Description=ikafssn HTTP daemon (%i)
 After=network.target ikafssnserver@%i.service
 Requires=ikafssnserver@%i.service
-Documentation=https://github.com/example/ikafssn
+Documentation=https://github.com/astanabe/ikafssn
 
 [Service]
 Type=simple

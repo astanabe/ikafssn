@@ -2,6 +2,9 @@
 
 **ikafssn** (Independent programs of K-mer-based Alignment-Free Similarity Search for Nucleotide sequences) is a suite of tools that builds inverted indexes over NCBI BLAST DB nucleotide sequences and performs alignment-free similarity search using k-mer matching and collinear chaining.
 
+- **Primary repository**: <https://github.com/astanabe/ikafssn>
+- **Secondary repository**: <https://gitlab.com/astanabe/ikafssn>
+
 ## Overview
 
 ikafssn consists of seven independent command-line programs:
@@ -475,10 +478,11 @@ Install the required packages (excluding NCBI C++ Toolkit) with the following co
 
 ```bash
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
-    libcurl4-openssl-dev libjsoncpp-dev libdrogon-dev
+    libcurl4-openssl-dev libjsoncpp-dev
+sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev
 ```
 
-To skip Drogon (if ikafssnhttpd is not needed), omit `libdrogon-dev` and build with `-DBUILD_HTTPD=OFF`.
+The second line installs Drogon and its additional dependencies that are not automatically pulled in by `libdrogon-dev` on Ubuntu. If ikafssnhttpd is not needed, omit the second line and build with `-DBUILD_HTTPD=OFF`.
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
@@ -488,6 +492,7 @@ sudo dnf install -y epel-release
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
+sudo dnf install -y libuuid-devel openssl-devel zlib-devel
 ```
 
 **Oracle Linux 9:**
@@ -498,6 +503,7 @@ sudo dnf install -y oracle-epel-release-el9
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
+sudo dnf install -y libuuid-devel openssl-devel zlib-devel
 ```
 
 **AlmaLinux 10 / Rocky Linux 10:**
@@ -507,6 +513,7 @@ sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
+sudo dnf install -y libuuid-devel openssl-devel zlib-devel
 ```
 
 **Oracle Linux 10:**
@@ -516,9 +523,10 @@ sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
+sudo dnf install -y libuuid-devel openssl-devel zlib-devel
 ```
 
-On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. Drogon is not packaged for EL9/EL10; build with `-DBUILD_HTTPD=OFF` or build Drogon from source.
+On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. Drogon is not packaged for EL9/EL10; the last line of each block installs dependencies needed to build Drogon from source. If ikafssnhttpd is not needed, omit the last line and build with `-DBUILD_HTTPD=OFF`.
 
 ### NCBI C++ Toolkit
 

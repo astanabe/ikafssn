@@ -57,6 +57,11 @@ For detailed usage, command-line options, deployment architecture, and index fil
 - **English**: [doc/ikafssn.en.md](doc/ikafssn.en.md)
 - **Japanese**: [doc/ikafssn.ja.md](doc/ikafssn.ja.md)
 
+## Repository
+
+- **Primary**: <https://github.com/astanabe/ikafssn>
+- **Secondary**: <https://gitlab.com/astanabe/ikafssn>
+
 ## License
 
 This project is licensed under the GNU General Public License v2.0. See [LICENSE](LICENSE) for details.

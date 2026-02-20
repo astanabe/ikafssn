@@ -2,6 +2,9 @@
 
 **ikafssn** (Independent programs of K-mer-based Alignment-Free Similarity Search for Nucleotide sequences) は、NCBI BLAST DB の塩基配列に対して転置インデックスを構築し、k-mer マッチングとコリニアチェイニングによるアライメントフリー類似配列検索を行うツール群です。
 
+- **プライマリリポジトリ**: <https://github.com/astanabe/ikafssn>
+- **セカンダリリポジトリ**: <https://gitlab.com/astanabe/ikafssn>
+
 ## 概要
 
 ikafssn は 7 つの独立したコマンドラインプログラムで構成されます。
@@ -475,10 +478,11 @@ NCBI C++ Toolkit 以外の依存パッケージを以下のコマンドでイン
 
 ```bash
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
-    libcurl4-openssl-dev libjsoncpp-dev libdrogon-dev
+    libcurl4-openssl-dev libjsoncpp-dev
+sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev
 ```
 
-ikafssnhttpd が不要な場合は `libdrogon-dev` を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。
+2 行目は Drogon および Ubuntu で `libdrogon-dev` が自動的に導入しない追加依存パッケージです。ikafssnhttpd が不要な場合は 2 行目を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
@@ -488,6 +492,7 @@ sudo dnf install -y epel-release
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
+sudo dnf install -y libuuid-devel openssl-devel zlib-devel
 ```
 
 **Oracle Linux 9:**
@@ -498,6 +503,7 @@ sudo dnf install -y oracle-epel-release-el9
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
+sudo dnf install -y libuuid-devel openssl-devel zlib-devel
 ```
 
 **AlmaLinux 10 / Rocky Linux 10:**
@@ -507,6 +513,7 @@ sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
+sudo dnf install -y libuuid-devel openssl-devel zlib-devel
 ```
 
 **Oracle Linux 10:**
@@ -516,9 +523,10 @@ sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
+sudo dnf install -y libuuid-devel openssl-devel zlib-devel
 ```
 
-EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。Drogon は EL9/EL10 ではパッケージ提供されていないため、`-DBUILD_HTTPD=OFF` でビルドするか、Drogon をソースからビルドしてください。
+EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。Drogon は EL9/EL10 ではパッケージ提供されていないため、各ブロックの最終行で Drogon のソースビルドに必要な依存パッケージをインストールしています。ikafssnhttpd が不要な場合は最終行を省略し、`-DBUILD_HTTPD=OFF` でビルドしてください。
 
 ### NCBI C++ Toolkit
 
