@@ -1,0 +1,58 @@
+# ikafssn search server - systemd template unit file
+#
+# Usage:
+#   Copy this file to /etc/systemd/system/ikafssnserver@.service
+#   Create a configuration file at /etc/ikafssn/<instance>.conf
+#   Then:
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now ikafssnserver@nt
+#
+# Configuration file example (/etc/ikafssn/nt.conf):
+#   IX_DIR=/data/ikafssn/nt_index
+#   SOCKET_PATH=/run/ikafssn/nt.sock
+#   THREADS=16
+#   EXTRA_OPTS=
+#
+# The instance name (%i) corresponds to the config file name.
+
+[Unit]
+Description=ikafssn search server (%i)
+After=network.target
+Documentation=https://github.com/example/ikafssn
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/ikafssn/%i.conf
+ExecStart=/usr/local/bin/ikafssnserver \
+    -ix ${IX_DIR} \
+    -socket ${SOCKET_PATH} \
+    -threads ${THREADS} \
+    -pid /run/ikafssn/%i.pid \
+    ${EXTRA_OPTS}
+
+# Runtime directory for socket and PID file
+RuntimeDirectory=ikafssn
+RuntimeDirectoryMode=0755
+
+# Process management
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=180
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/
+ReadWritePaths=/run/ikafssn
+PrivateTmp=yes
+PrivateDevices=yes
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

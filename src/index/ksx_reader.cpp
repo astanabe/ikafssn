@@ -2,6 +2,7 @@
 #include "index/ksx_format.hpp"
 #include "core/config.hpp"
 
+#include <sys/mman.h>
 #include <cstring>
 #include <cstdio>
 
@@ -43,6 +44,9 @@ bool KsxReader::open(const std::string& path) {
     ptr += sizeof(uint32_t) * (num_sequences_ + 1);
 
     acc_strings_ = reinterpret_cast<const char*>(ptr);
+
+    // Accession lookups are random (by OID from search results)
+    mmap_.advise(MADV_RANDOM);
 
     return true;
 }

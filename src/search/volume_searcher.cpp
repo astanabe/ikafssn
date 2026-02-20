@@ -42,15 +42,9 @@ search_one_strand(const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
     // Build candidate set for fast lookup
     std::unordered_set<SeqId> candidate_set(candidates.begin(), candidates.end());
 
-    // Compute effective max_freq (same logic as stage1)
-    uint32_t max_freq = config.stage1.max_freq;
-    if (max_freq == 0) {
-        double mean = static_cast<double>(kix.total_postings()) /
-                      static_cast<double>(kix.table_size());
-        max_freq = static_cast<uint32_t>(mean * 10.0);
-        if (max_freq < 1000) max_freq = 1000;
-        if (max_freq > 100000) max_freq = 100000;
-    }
+    // Compute effective max_freq (same as Stage 1)
+    uint32_t max_freq = compute_effective_max_freq(
+        config.stage1.max_freq, kix.total_postings(), kix.table_size());
 
     // Stage 2: collect hits for candidates
     std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;

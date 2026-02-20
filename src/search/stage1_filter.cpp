@@ -11,6 +11,18 @@
 
 namespace ikafssn {
 
+uint32_t compute_effective_max_freq(uint32_t config_max_freq,
+                                    uint64_t total_postings,
+                                    uint64_t table_size) {
+    if (config_max_freq > 0) return config_max_freq;
+    double mean = static_cast<double>(total_postings) /
+                  static_cast<double>(table_size);
+    uint32_t max_freq = static_cast<uint32_t>(mean * 10.0);
+    if (max_freq < 1000) max_freq = 1000;
+    if (max_freq > 100000) max_freq = 100000;
+    return max_freq;
+}
+
 template <typename KmerInt>
 std::vector<SeqId> stage1_filter(
     const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
@@ -22,15 +34,8 @@ std::vector<SeqId> stage1_filter(
     if (num_seqs == 0) return {};
 
     // Compute effective max_freq
-    uint32_t max_freq = config.max_freq;
-    if (max_freq == 0) {
-        // Auto: mean_count * 10, clamped to [1000, 100000]
-        double mean = static_cast<double>(kix.total_postings()) /
-                      static_cast<double>(kix.table_size());
-        max_freq = static_cast<uint32_t>(mean * 10.0);
-        if (max_freq < 1000) max_freq = 1000;
-        if (max_freq > 100000) max_freq = 100000;
-    }
+    uint32_t max_freq = compute_effective_max_freq(
+        config.max_freq, kix.total_postings(), kix.table_size());
 
     // score_per_seq: hit count per OID
     std::vector<uint32_t> score_per_seq(num_seqs, 0);

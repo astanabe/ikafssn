@@ -1,6 +1,7 @@
 #include "index/kpx_reader.hpp"
 #include "core/config.hpp"
 
+#include <sys/mman.h>
 #include <cstring>
 #include <cstdio>
 
@@ -42,6 +43,9 @@ bool KpxReader::open(const std::string& path) {
 
     posting_data_ = ptr;
     posting_data_size_ = mmap_.size() - (ptr - mmap_.data());
+
+    // Position data accessed randomly by k-mer index during Stage 2
+    mmap_.advise(MADV_RANDOM);
 
     return true;
 }

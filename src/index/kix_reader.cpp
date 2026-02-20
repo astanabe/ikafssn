@@ -1,6 +1,7 @@
 #include "index/kix_reader.hpp"
 #include "core/config.hpp"
 
+#include <sys/mman.h>
 #include <cstring>
 #include <cstdio>
 
@@ -45,6 +46,9 @@ bool KixReader::open(const std::string& path) {
 
     posting_data_ = ptr;
     posting_data_size_ = mmap_.size() - (ptr - mmap_.data());
+
+    // Search accesses offsets/counts tables and posting data by k-mer index (random)
+    mmap_.advise(MADV_RANDOM);
 
     return true;
 }

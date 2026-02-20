@@ -69,6 +69,22 @@ bool MmapFile::open(const std::string& path) {
     return true;
 }
 
+bool MmapFile::advise(int advice) {
+    if (!data_) return false;
+    return ::madvise(data_, size_, advice) == 0;
+}
+
+bool MmapFile::advise(size_t offset, size_t length, int advice) {
+    if (!data_) return false;
+    if (offset >= size_) return false;
+    if (offset + length > size_) length = size_ - offset;
+    // madvise requires page-aligned address
+    size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+    size_t aligned_offset = (offset / page_size) * page_size;
+    size_t adjust = offset - aligned_offset;
+    return ::madvise(data_ + aligned_offset, length + adjust, advice) == 0;
+}
+
 void MmapFile::close() {
     if (data_) {
         ::munmap(data_, size_);

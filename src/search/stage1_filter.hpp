@@ -16,6 +16,13 @@ struct Stage1Config {
     uint32_t min_stage1_score = 2;
 };
 
+// Compute effective max_freq from config and index statistics.
+// If config_max_freq > 0, returns it unchanged.
+// Otherwise, computes: mean_count * 10, clamped to [1000, 100000].
+uint32_t compute_effective_max_freq(uint32_t config_max_freq,
+                                    uint64_t total_postings,
+                                    uint64_t table_size);
+
 // Run Stage 1 filtering: scan ID postings for each query k-mer,
 // accumulate hit counts per seq_id, select top candidates.
 //
