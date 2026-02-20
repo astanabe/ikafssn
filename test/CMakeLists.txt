@@ -130,3 +130,43 @@ target_compile_definitions(test_server_client PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME test_server_client COMMAND test_server_client)
+
+# --- Phase 6 tests ---
+
+# HTTPD backend client integration test (requires NCBI Toolkit + TBB + Drogon build)
+if(BUILD_HTTPD)
+    add_executable(test_httpd test_httpd.cpp)
+    target_link_libraries(test_httpd PRIVATE
+        ikafssn_httpd_backend ikafssn_server_lib
+        ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+        TBB::tbb
+    )
+    target_include_directories(test_httpd PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${NCBI_TOOLKIT_INCLUDE}"
+        "${CMAKE_SOURCE_DIR}/src"
+    )
+    target_compile_definitions(test_httpd PRIVATE
+        SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    )
+    add_test(NAME test_httpd COMMAND test_httpd)
+
+    # Full stack integration test: ikafssnclient (HTTP) -> ikafssnhttpd -> ikafssnserver
+    if(ENABLE_CLIENT_HTTP)
+        add_executable(test_httpd_client test_httpd_client.cpp)
+        target_link_libraries(test_httpd_client PRIVATE
+            ikafssn_client_lib ikafssn_httpd_controller ikafssn_server_lib
+            ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+            TBB::tbb
+        )
+        target_include_directories(test_httpd_client PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${NCBI_TOOLKIT_INCLUDE}"
+            "${CMAKE_SOURCE_DIR}/src"
+        )
+        target_compile_definitions(test_httpd_client PRIVATE
+            SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        )
+        add_test(NAME test_httpd_client COMMAND test_httpd_client)
+    endif()
+endif()

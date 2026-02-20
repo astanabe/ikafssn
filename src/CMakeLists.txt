@@ -121,9 +121,40 @@ target_link_libraries(ikafssn_client_lib PUBLIC
     ikafssn_protocol ikafssn_util ikafssn_core
 )
 
+if(ENABLE_CLIENT_HTTP)
+    target_sources(ikafssn_client_lib PRIVATE ikafssnclient/http_client.cpp)
+    target_link_libraries(ikafssn_client_lib PUBLIC CURL::libcurl jsoncpp_lib)
+    target_compile_definitions(ikafssn_client_lib PUBLIC IKAFSSN_ENABLE_HTTP)
+endif()
+
 add_executable(ikafssnclient
     ikafssnclient/main.cpp
 )
 target_link_libraries(ikafssnclient PRIVATE
     ikafssn_client_lib ikafssn_io ikafssn_util ikafssn_core
 )
+
+# ikafssnhttpd (requires Drogon)
+if(BUILD_HTTPD)
+    add_library(ikafssn_httpd_backend STATIC
+        ikafssnhttpd/backend_client.cpp
+    )
+    target_link_libraries(ikafssn_httpd_backend PUBLIC
+        ikafssn_protocol ikafssn_util ikafssn_core
+    )
+
+    add_library(ikafssn_httpd_controller STATIC
+        ikafssnhttpd/http_controller.cpp
+    )
+    target_link_libraries(ikafssn_httpd_controller PUBLIC
+        ikafssn_httpd_backend ikafssn_protocol ikafssn_util ikafssn_core
+        Drogon::Drogon
+    )
+
+    add_executable(ikafssnhttpd
+        ikafssnhttpd/main.cpp
+    )
+    target_link_libraries(ikafssnhttpd PRIVATE
+        ikafssn_httpd_controller
+    )
+endif()

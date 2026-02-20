@@ -1,4 +1,7 @@
 #include "ikafssnclient/socket_client.hpp"
+#ifdef IKAFSSN_ENABLE_HTTP
+#include "ikafssnclient/http_client.hpp"
+#endif
 #include "io/fasta_reader.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
@@ -22,6 +25,9 @@ static void print_usage(const char* prog) {
         "Connection (one required):\n"
         "  -socket <path>           UNIX domain socket path\n"
         "  -tcp <host>:<port>       TCP server address\n"
+#ifdef IKAFSSN_ENABLE_HTTP
+        "  -http <url>              ikafssnhttpd URL (e.g., http://example.com:8080)\n"
+#endif
         "\n"
         "Required:\n"
         "  -query <path>            Query FASTA file (- for stdin)\n"
@@ -51,8 +57,17 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (!cli.has("-socket") && !cli.has("-tcp")) {
-        std::fprintf(stderr, "Error: one of -socket or -tcp is required\n");
+    bool has_http = false;
+#ifdef IKAFSSN_ENABLE_HTTP
+    has_http = cli.has("-http");
+#endif
+
+    if (!cli.has("-socket") && !cli.has("-tcp") && !has_http) {
+        std::fprintf(stderr, "Error: one of -socket, -tcp"
+#ifdef IKAFSSN_ENABLE_HTTP
+            ", or -http"
+#endif
+            " is required\n");
         print_usage(argv[0]);
         return 1;
     }
@@ -120,34 +135,49 @@ int main(int argc, char* argv[]) {
         req.queries.push_back({q.id, q.sequence});
     }
 
-    // Connect to server
-    int fd = -1;
-    if (cli.has("-socket")) {
-        std::string sock_path = cli.get_string("-socket");
-        fd = unix_connect(sock_path);
-        if (fd < 0) {
-            std::fprintf(stderr, "Error: cannot connect to UNIX socket %s\n", sock_path.c_str());
-            return 1;
-        }
-        logger.debug("Connected to UNIX socket %s", sock_path.c_str());
-    } else {
-        std::string tcp_addr = cli.get_string("-tcp");
-        fd = tcp_connect(tcp_addr);
-        if (fd < 0) {
-            std::fprintf(stderr, "Error: cannot connect to TCP %s\n", tcp_addr.c_str());
-            return 1;
-        }
-        logger.debug("Connected to TCP %s", tcp_addr.c_str());
-    }
-
-    // Send request and receive response
+    // Execute search via the selected transport
     SearchResponse resp;
-    if (!socket_search(fd, req, resp)) {
-        std::fprintf(stderr, "Error: search request failed\n");
+
+#ifdef IKAFSSN_ENABLE_HTTP
+    if (has_http) {
+        std::string http_url = cli.get_string("-http");
+        logger.debug("Connecting via HTTP to %s", http_url.c_str());
+
+        std::string error_msg;
+        if (!http_search(http_url, req, resp, error_msg)) {
+            std::fprintf(stderr, "Error: %s\n", error_msg.c_str());
+            return 1;
+        }
+    } else
+#endif
+    {
+        // Socket mode
+        int fd = -1;
+        if (cli.has("-socket")) {
+            std::string sock_path = cli.get_string("-socket");
+            fd = unix_connect(sock_path);
+            if (fd < 0) {
+                std::fprintf(stderr, "Error: cannot connect to UNIX socket %s\n", sock_path.c_str());
+                return 1;
+            }
+            logger.debug("Connected to UNIX socket %s", sock_path.c_str());
+        } else {
+            std::string tcp_addr = cli.get_string("-tcp");
+            fd = tcp_connect(tcp_addr);
+            if (fd < 0) {
+                std::fprintf(stderr, "Error: cannot connect to TCP %s\n", tcp_addr.c_str());
+                return 1;
+            }
+            logger.debug("Connected to TCP %s", tcp_addr.c_str());
+        }
+
+        if (!socket_search(fd, req, resp)) {
+            std::fprintf(stderr, "Error: search request failed\n");
+            close_fd(fd);
+            return 1;
+        }
         close_fd(fd);
-        return 1;
     }
-    close_fd(fd);
 
     if (resp.status != 0) {
         std::fprintf(stderr, "Error: server returned status %d\n", resp.status);

@@ -47,6 +47,19 @@ include("${NCBI_TOOLKIT_CMAKE}")
 # --- Intel TBB ---
 find_package(TBB REQUIRED)
 
+# --- Drogon (optional, for ikafssnhttpd) ---
+option(BUILD_HTTPD "Build ikafssnhttpd (requires Drogon)" ON)
+if(BUILD_HTTPD)
+    find_package(Drogon REQUIRED)
+endif()
+
+# --- libcurl + jsoncpp (optional, for ikafssnclient HTTP mode) ---
+option(ENABLE_CLIENT_HTTP "Enable HTTP mode in ikafssnclient (requires libcurl)" ON)
+if(ENABLE_CLIENT_HTTP)
+    find_package(CURL REQUIRED)
+    find_package(jsoncpp REQUIRED)
+endif()
+
 # --- Subdirectories ---
 add_subdirectory(src)
 

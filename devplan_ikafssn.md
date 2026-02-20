@@ -1804,7 +1804,7 @@ mmap 領域は物理メモリに全てが常駐するわけではなく、OS の
 ### Phase 6: HTTP、retrieve、リモート取得 (推定 3〜4 週間)
 
 - `ikafssnhttpd` の実装 (Drogon コントローラ、バックエンド接続)
-- REST API エンドポイントの実装
+- REST API エンドポイントの実装 (`/api/v1/search`, `/api/v1/health` を先行実装。`/api/v1/info` は `ikafssninfo` 開発後に Phase 7 で実装)
 - `ikafssnclient` の HTTP 接続モード (libcurl)
 - `ikafssnretrieve` の実装 (結果パーサ、ローカル BLAST DB 部分配列抽出)
 - `ikafssnretrieve` の NCBI efetch リモート取得機能:
@@ -1818,6 +1818,7 @@ mmap 領域は物理メモリに全てが常駐するわけではなく、OS の
 ### Phase 7: 補助ツールと最適化 (推定 2〜3 週間)
 
 - `ikafssninfo` コマンドの実装
+- `ikafssnhttpd` の `/api/v1/info` エンドポイント実装 (`ikafssnserver` への info プロトコルメッセージ追加を含む)
 - プロファイリングとボトルネック解消
 - madvise チューニング (MADV_SEQUENTIAL, MADV_RANDOM の適切な使用)
 - max_freq 自動調整のキャリブレーション
