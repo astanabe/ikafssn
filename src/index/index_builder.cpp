@@ -2,7 +2,8 @@
 #include "io/blastdb_reader.hpp"
 #include "core/config.hpp"
 #include "core/types.hpp"
-#include "core/kmer_encoding.hpp"
+#include "core/packed_kmer_scanner.hpp"
+#include "core/ambiguity_parser.hpp"
 #include "core/varint.hpp"
 #include "index/ksx_writer.hpp"
 #include "index/kix_format.hpp"
@@ -46,6 +47,24 @@ static inline int log2_ceil(int n) {
     int v = n - 1;
     while (v > 0) { v >>= 1; bits++; }
     return bits;
+}
+
+// Expand a single ambiguous base in a k-mer and invoke action for each expansion.
+// base_kmer: k-mer with the placeholder ncbi2na value at the ambiguous position
+// ncbi4na: the ambiguity code (which bases it represents)
+// bit_offset: 2-bit position in the k-mer integer of the ambiguous base
+// action: called with each expanded KmerInt value
+template <typename KmerInt, typename Action>
+static inline void expand_ambig_kmer(KmerInt base_kmer, uint8_t ncbi4na,
+                                     int bit_offset, Action&& action) {
+    KmerInt clear_mask = ~(KmerInt(0x03) << bit_offset);
+    KmerInt cleared = base_kmer & clear_mask;
+    for (uint8_t b = 0; b < 4; b++) {
+        if (ncbi4na & (1u << b)) {
+            KmerInt expanded = cleared | (KmerInt(b) << bit_offset);
+            action(expanded);
+        }
+    }
 }
 
 template <typename KmerInt>
@@ -110,13 +129,22 @@ bool build_index(BlastDbReader& db,
                     tbb::blocked_range<uint32_t>(0, num_seqs, 64),
                     [&](const tbb::blocked_range<uint32_t>& range) {
                         auto& my_counts = local_counts.local();
-                        KmerScanner<KmerInt> scanner(k);
+                        PackedKmerScanner<KmerInt> scanner(k);
                         for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
-                            std::string seq = db.get_sequence(oid);
-                            scanner.scan(seq.data(), seq.size(),
+                            auto raw = db.get_raw_sequence(oid);
+                            auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+                            scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
                                 [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
                                     my_counts[kmer]++;
+                                },
+                                [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
+                                             uint8_t ncbi4na, int bit_offset) {
+                                    expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                                        [&my_counts](KmerInt expanded) {
+                                            my_counts[expanded]++;
+                                        });
                                 });
+                            db.ret_raw_sequence(raw);
                         }
                     });
             });
@@ -129,14 +157,23 @@ bool build_index(BlastDbReader& db,
             });
         } else {
             // Single-threaded counting
-            KmerScanner<KmerInt> scanner(k);
+            PackedKmerScanner<KmerInt> scanner(k);
             Progress prog("Phase 1", num_seqs, config.verbose);
             for (uint32_t oid = 0; oid < num_seqs; oid++) {
-                std::string seq = db.get_sequence(oid);
-                scanner.scan(seq.data(), seq.size(),
+                auto raw = db.get_raw_sequence(oid);
+                auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+                scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
                     [&counts64](uint32_t /*pos*/, KmerInt kmer) {
                         counts64[kmer]++;
+                    },
+                    [&counts64](uint32_t /*pos*/, KmerInt base_kmer,
+                                uint8_t ncbi4na, int bit_offset) {
+                        expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                            [&counts64](KmerInt expanded) {
+                                counts64[expanded]++;
+                            });
                     });
+                db.ret_raw_sequence(raw);
                 prog.update(oid + 1);
             }
             prog.finish();
@@ -244,8 +281,19 @@ bool build_index(BlastDbReader& db,
     }
 
     // Process each partition
-    KmerScanner<KmerInt> scanner(k);
+    PackedKmerScanner<KmerInt> scanner(k);
     uint8_t varint_buf[5];
+
+    // Lambda to emit a posting entry to the buffer (used in partition scan)
+    auto emit_posting = [&](std::vector<TempEntry>& buffer,
+                            const std::vector<uint32_t>& counts_ref,
+                            int p, int partition_bits_l, int k_l,
+                            uint32_t oid, uint32_t pos, KmerInt kmer) {
+        uint32_t kval = static_cast<uint32_t>(kmer);
+        if (counts_ref[kval] == 0) return; // excluded
+        if (static_cast<int>(partition_of(kval, partition_bits_l, k_l)) != p) return;
+        buffer.push_back({kval, oid, pos});
+    };
 
     for (int p = 0; p < num_partitions; p++) {
         logger.info("  Partition %d/%d...", p + 1, num_partitions);
@@ -256,14 +304,20 @@ bool build_index(BlastDbReader& db,
 
         Progress prog("  Partition scan", num_seqs, config.verbose);
         for (uint32_t oid = 0; oid < num_seqs; oid++) {
-            std::string seq = db.get_sequence(oid);
-            scanner.scan(seq.data(), seq.size(),
+            auto raw = db.get_raw_sequence(oid);
+            auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+            scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
                 [&](uint32_t pos, KmerInt kmer) {
-                    uint32_t kval = static_cast<uint32_t>(kmer);
-                    if (counts[kval] == 0) return; // excluded
-                    if (static_cast<int>(partition_of(kval, partition_bits, k)) != p) return;
-                    buffer.push_back({kval, oid, pos});
+                    emit_posting(buffer, counts, p, partition_bits, k, oid, pos, kmer);
+                },
+                [&](uint32_t pos, KmerInt base_kmer,
+                    uint8_t ncbi4na, int bit_offset) {
+                    expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                        [&](KmerInt expanded) {
+                            emit_posting(buffer, counts, p, partition_bits, k, oid, pos, expanded);
+                        });
                 });
+            db.ret_raw_sequence(raw);
             prog.update(oid + 1);
         }
         prog.finish();

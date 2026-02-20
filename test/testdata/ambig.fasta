@@ -1,0 +1,15 @@
+>test_ambig_all_iupac
+ACGTACGTMRWSYKVHDBN
+ACGTACGTACGTACGTACGT
+>test_ambig_single_in_kmer
+ACGTACGNACGTACGT
+>test_ambig_double_in_kmer
+ACNNACGTACGT
+>test_long_ambig_run
+ACGTNNNNNNNNNNNNNNNNACGT
+>test_ambig_single_R
+ACGTACGRACGTACGT
+>test_ambig_clean
+ACGTACGTACGTACGTACGT
+>test_odd_length
+ACGTACGTACGTACGTACG

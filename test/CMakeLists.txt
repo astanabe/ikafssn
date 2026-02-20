@@ -25,6 +25,20 @@ target_compile_definitions(test_builder PRIVATE
 )
 add_test(NAME test_builder COMMAND test_builder)
 
+# PackedKmerScanner + AmbiguityParser test (requires NCBI Toolkit + BLAST DB)
+add_executable(test_packed_kmer_scanner test_packed_kmer_scanner.cpp)
+target_link_libraries(test_packed_kmer_scanner PRIVATE
+    ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_packed_kmer_scanner PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+)
+target_compile_definitions(test_packed_kmer_scanner PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME test_packed_kmer_scanner COMMAND test_packed_kmer_scanner)
+
 # --- Phase 3 tests ---
 
 # Diagonal filter test (no external dependencies)

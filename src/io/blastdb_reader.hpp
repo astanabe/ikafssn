@@ -41,6 +41,23 @@ public:
     // Returns empty string on error.
     std::string get_sequence(uint32_t oid) const;
 
+    // Raw sequence data from BLAST DB (ncbi2na packed + ambiguity data).
+    // Pointers are into mmap region; call ret_raw_sequence() when done.
+    struct RawSequence {
+        const char* ncbi2na_data;  // ncbi2na packed data pointer (mmap)
+        int ncbi2na_bytes;         // ncbi2na data byte length
+        const char* ambig_data;    // ambiguity data pointer (ncbi2na_data + ncbi2na_bytes)
+        int ambig_bytes;           // ambiguity data byte length
+        uint32_t seq_length;       // number of bases
+    };
+
+    // Get raw ncbi2na packed data + ambiguity data for given OID.
+    // Must call ret_raw_sequence() after use.
+    RawSequence get_raw_sequence(uint32_t oid) const;
+
+    // Release raw sequence buffer obtained from get_raw_sequence().
+    void ret_raw_sequence(const RawSequence& raw) const;
+
     // Get primary accession for given OID.
     // Returns empty string if not available.
     std::string get_accession(uint32_t oid) const;

@@ -1,7 +1,7 @@
 #include "io/blastdb_reader.hpp"
+#include "core/ambiguity_parser.hpp"
 
-#include <objtools/blast/seqdb_reader/seqdb.hpp>
-#include <objtools/blast/seqdb_reader/seqdbcommon.hpp>
+#include <objtools/blast/seqdb_reader/seqdbexpert.hpp>
 #include <objects/seqloc/Seq_id.hpp>
 #include <objects/general/Dbtag.hpp>
 #include <objects/general/Object_id.hpp>
@@ -11,21 +11,31 @@
 
 namespace ikafssn {
 
-// NCBI NA8 encoding: single-bit flags per base.
-// A=1, C=2, G=4, T=8, N=15 (all bits set), gap=0
-// We map to ACGT chars; anything else becomes 'N'.
-static char ncbi_na8_to_char(uint8_t val) {
-    switch (val) {
-        case 1:  return 'A';
-        case 2:  return 'C';
-        case 4:  return 'G';
-        case 8:  return 'T';
-        default: return 'N';
-    }
-}
+// ncbi2na 2-bit code -> ASCII character
+static constexpr char ncbi2na_to_char[4] = {'A', 'C', 'G', 'T'};
+
+// ncbi4na value -> IUPAC character
+static constexpr char ncbi4na_to_iupac[16] = {
+    '-',  // 0: gap
+    'A',  // 1
+    'C',  // 2
+    'M',  // 3: A,C
+    'G',  // 4
+    'R',  // 5: A,G
+    'S',  // 6: C,G
+    'V',  // 7: A,C,G
+    'T',  // 8
+    'W',  // 9: A,T
+    'Y',  // 10: C,T
+    'H',  // 11: A,C,T
+    'K',  // 12: G,T
+    'D',  // 13: A,G,T
+    'B',  // 14: C,G,T
+    'N',  // 15: A,C,G,T
+};
 
 struct BlastDbReader::Impl {
-    std::unique_ptr<ncbi::CSeqDB> db;
+    std::unique_ptr<ncbi::CSeqDBExpert> db;
 };
 
 BlastDbReader::BlastDbReader() : impl_(std::make_unique<Impl>()) {}
@@ -39,7 +49,7 @@ BlastDbReader& BlastDbReader::operator=(BlastDbReader&&) noexcept = default;
 
 bool BlastDbReader::open(const std::string& db_path) {
     try {
-        impl_->db = std::make_unique<ncbi::CSeqDB>(
+        impl_->db = std::make_unique<ncbi::CSeqDBExpert>(
             db_path, ncbi::CSeqDB::eNucleotide);
         return true;
     } catch (const std::exception& e) {
@@ -67,24 +77,61 @@ uint32_t BlastDbReader::seq_length(uint32_t oid) const {
     return static_cast<uint32_t>(impl_->db->GetSeqLength(static_cast<int>(oid)));
 }
 
+BlastDbReader::RawSequence BlastDbReader::get_raw_sequence(uint32_t oid) const {
+    RawSequence raw{};
+    if (!impl_->db) return raw;
+
+    const char* buffer = nullptr;
+    int seq_len = 0;
+    int ambig_len = 0;
+    impl_->db->GetRawSeqAndAmbig(static_cast<int>(oid),
+                                  &buffer, &seq_len, &ambig_len);
+    raw.ncbi2na_data = buffer;
+    raw.ncbi2na_bytes = seq_len;
+    raw.ambig_data = buffer ? buffer + seq_len : nullptr;
+    raw.ambig_bytes = ambig_len;
+    raw.seq_length = static_cast<uint32_t>(
+        impl_->db->GetSeqLength(static_cast<int>(oid)));
+    return raw;
+}
+
+void BlastDbReader::ret_raw_sequence(const RawSequence& raw) const {
+    if (impl_->db && raw.ncbi2na_data) {
+        const char* ptr = raw.ncbi2na_data;
+        impl_->db->RetSequence(&ptr);
+    }
+}
+
 std::string BlastDbReader::get_sequence(uint32_t oid) const {
     if (!impl_->db) return {};
 
-    const char* buf = nullptr;
-    int len = impl_->db->GetAmbigSeq(
-        static_cast<int>(oid), &buf, ncbi::kSeqDBNuclNcbiNA8);
-
-    if (len <= 0 || !buf) {
-        if (buf) impl_->db->RetAmbigSeq(&buf);
+    RawSequence raw = get_raw_sequence(oid);
+    if (!raw.ncbi2na_data || raw.seq_length == 0) {
+        if (raw.ncbi2na_data) ret_raw_sequence(raw);
         return {};
     }
 
-    std::string result(static_cast<size_t>(len), '\0');
-    for (int i = 0; i < len; i++) {
-        result[i] = ncbi_na8_to_char(static_cast<uint8_t>(buf[i]));
+    // Decode ncbi2na packed data to ASCII
+    std::string result(raw.seq_length, '\0');
+    for (uint32_t i = 0; i < raw.seq_length; i++) {
+        uint8_t byte = static_cast<uint8_t>(raw.ncbi2na_data[i >> 2]);
+        uint8_t code = (byte >> (6 - 2 * (i & 3))) & 0x03;
+        result[i] = ncbi2na_to_char[code];
     }
 
-    impl_->db->RetAmbigSeq(&buf);
+    // Apply ambiguity data to overwrite positions with IUPAC chars
+    auto ambig_entries = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+    for (const auto& entry : ambig_entries) {
+        char iupac = ncbi4na_to_iupac[entry.ncbi4na];
+        for (uint32_t j = 0; j < entry.run_length; j++) {
+            uint32_t pos = entry.position + j;
+            if (pos < raw.seq_length) {
+                result[pos] = iupac;
+            }
+        }
+    }
+
+    ret_raw_sequence(raw);
     return result;
 }
 
