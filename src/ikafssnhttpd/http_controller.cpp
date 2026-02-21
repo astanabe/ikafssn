@@ -71,6 +71,7 @@ void HttpController::search(
     sreq.stage1_score_type = static_cast<uint8_t>(j.get("stage1_score", 0).asUInt());
     sreq.sort_score = static_cast<uint8_t>(j.get("sort_score", 0).asUInt());
     sreq.accept_qdegen = static_cast<uint8_t>(j.get("accept_qdegen", 0).asUInt());
+    sreq.strand = static_cast<int8_t>(j.get("strand", 0).asInt());
 
     // Seqidlist mode
     std::string mode_str = j.get("seqidlist_mode", "none").asString();

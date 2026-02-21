@@ -22,6 +22,7 @@ struct SearchConfig {
     uint32_t num_results = 0;   // max results per query (0 = unlimited)
     uint8_t  mode = 2;          // 1 = stage1 only, 2 = stage1+stage2
     uint8_t  sort_score = 2;    // 1 = stage1 score, 2 = chainscore
+    int8_t   strand = 2;       // 1 = plus only, -1 = minus only, 2 = both
     double min_stage1_score_frac = 0; // 0 = disabled, 0 < P < 1 = fractional mode
 };
 
@@ -30,7 +31,7 @@ struct SearchResult {
     std::vector<ChainResult> hits;
 };
 
-// Search a single volume for a single query (both strands).
+// Search a single volume for a single query.
 // Template parameter KmerInt: uint16_t or uint32_t.
 // When mode=1, kpx is not accessed (may be unopened).
 // khx: nullable pointer to KhxReader for build-time exclusion info.

@@ -115,6 +115,8 @@ Options:
                           1=stage1 score, 2=chainscore
   -seqidlist <path>       Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
+  -strand <-1|1|2>       Strand to search (default: 2)
+                          1=plus only, -1=minus only, 2=both
   -accept_qdegen <0|1>    Accept queries with degenerate bases (default: 0)
   -outfmt <tab|json>      Output format (default: tab)
   -v, --verbose           Verbose logging
@@ -322,6 +324,7 @@ Options:
   -sort_score <1|2>        Sort key for results (default: server default)
   -seqidlist <path>        Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
+  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
   -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)
   -outfmt <tab|json>       Output format (default: tab)
   -v, --verbose            Verbose logging
@@ -398,7 +401,7 @@ The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0
 
 **Mode 1 (Stage 1 only):** When `-mode 1` is specified, Stage 2 is skipped entirely. The `.kpx` file is not accessed, saving I/O and memory. Results contain only Stage 1 scores; position fields (q_start, q_end, s_start, s_end) and chainscore are omitted. In mode 1, `-min_score` applies to the Stage 1 score, and `-sort_score` is forced to 1 (stage1 score).
 
-Both forward and reverse complement strands of the query are searched.
+By default, both forward and reverse complement strands of the query are searched. Use `-strand 1` to search only the plus (forward) strand, or `-strand -1` to search only the minus (reverse complement) strand.
 
 ### High-Frequency K-mer Filtering
 

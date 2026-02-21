@@ -32,6 +32,7 @@ static std::string build_request_json(const SearchRequest& req) {
     root["stage1_score"] = req.stage1_score_type;
     root["sort_score"] = req.sort_score;
     root["accept_qdegen"] = req.accept_qdegen;
+    root["strand"] = req.strand;
 
     switch (req.seqidlist_mode) {
     case SeqidlistMode::kInclude:

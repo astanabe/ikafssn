@@ -47,6 +47,7 @@ static void print_usage(const char* prog) {
         "  -num_results <int>       Max results per query (default: server default)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
+        "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)\n"
         "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)\n"
         "  -outfmt <tab|json>       Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
@@ -134,6 +135,7 @@ int main(int argc, char* argv[]) {
     req.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
     req.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 0));
     req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 0));
+    req.strand = static_cast<int8_t>(cli.get_int("-strand", 0));
 
     // Seqidlist
     if (cli.has("-seqidlist")) {

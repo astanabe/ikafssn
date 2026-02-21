@@ -56,6 +56,8 @@ SearchResponse process_search_request(
         config.stage1.stage1_score_type = req.stage1_score_type;
     if (req.sort_score != 0)
         config.sort_score = req.sort_score;
+    if (req.strand != 0)
+        config.strand = req.strand;
 
     // Mode 1: force sort_score=1
     if (config.mode == 1) {

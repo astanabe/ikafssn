@@ -53,6 +53,7 @@ static void print_usage(const char* prog) {
         "  -num_results <int>       Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
+        "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: 2)\n"
         "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)\n"
         "  -outfmt <tab|json>       Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
@@ -155,6 +156,11 @@ int main(int argc, char* argv[]) {
     config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 0));
     config.mode = static_cast<uint8_t>(cli.get_int("-mode", 2));
     config.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 2));
+    config.strand = static_cast<int8_t>(cli.get_int("-strand", 2));
+    if (config.strand != -1 && config.strand != 1 && config.strand != 2) {
+        std::fprintf(stderr, "Error: -strand must be -1, 1, or 2\n");
+        return 1;
+    }
 
     // Parse -min_stage1_score as double to support fractional values
     {

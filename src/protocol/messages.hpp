@@ -35,6 +35,7 @@ struct SearchRequest {
     uint8_t  stage1_score_type = 0; // 0 = server default, 1 = coverscore, 2 = matchscore
     uint8_t  sort_score = 0;        // 0 = server default, 1 = stage1 score, 2 = chainscore
     uint8_t  accept_qdegen = 0;     // 0 = reject degenerate queries, 1 = accept
+    int8_t   strand = 0;           // 0 = server default, 1 = plus, -1 = minus, 2 = both
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
 };

@@ -115,6 +115,8 @@ ikafssnsearch [options]
                            1=Stage 1 スコア、2=chainscore
   -seqidlist <path>       検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
+  -strand <-1|1|2>       検索する鎖 (デフォルト: 2)
+                          1=プラス鎖のみ、-1=マイナス鎖のみ、2=両鎖
   -accept_qdegen <0|1>    縮重塩基を含むクエリを許可 (デフォルト: 0)
   -outfmt <tab|json>      出力形式 (デフォルト: tab)
   -v, --verbose           詳細ログ出力
@@ -322,6 +324,7 @@ ikafssnclient [options]
   -sort_score <1|2>        結果のソート基準 (デフォルト: サーバ側デフォルト)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
+  -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
   -accept_qdegen <0|1>     縮重塩基を含むクエリを許可 (デフォルト: 0)
   -outfmt <tab|json>       出力形式 (デフォルト: tab)
   -v, --verbose            詳細ログ出力
@@ -398,7 +401,7 @@ ikafssn は 2 段階の検索パイプラインを使用します。
 
 **Mode 1 (Stage 1 のみ):** `-mode 1` を指定すると Stage 2 が省略されます。`.kpx` ファイルへのアクセスが不要となり、I/O とメモリを節約できます。結果には Stage 1 スコアのみが含まれ、位置フィールド (q_start, q_end, s_start, s_end) と chainscore は省略されます。Mode 1 では `-min_score` は Stage 1 スコアに適用され、`-sort_score` は 1 (Stage 1 スコア) に強制されます。
 
-クエリのフォワード鎖とリバースコンプリメント鎖の両方を検索します。
+デフォルトではクエリのフォワード鎖とリバースコンプリメント鎖の両方を検索します。`-strand 1` でプラス (フォワード) 鎖のみ、`-strand -1` でマイナス (リバースコンプリメント) 鎖のみの検索に制限できます。
 
 ### 高頻度 k-mer フィルタリング
 

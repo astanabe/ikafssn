@@ -217,22 +217,25 @@ SearchResult search_volume(
     auto fwd_kmers = extract_kmers<KmerInt>(query_seq, k);
 
     // Search forward strand
-    auto fwd_results = search_one_strand(fwd_kmers, k, false, kix, kpx, filter, config, khx);
-    result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
-
-    // Generate reverse complement k-mers
-    std::vector<std::pair<uint32_t, KmerInt>> rc_kmers;
-    rc_kmers.reserve(fwd_kmers.size());
-    for (const auto& [pos, kmer] : fwd_kmers) {
-        KmerInt rc = kmer_revcomp(kmer, k);
-        // For reverse complement search, the query position convention:
-        // q_pos in the reverse strand maps to the same position in forward coord
-        rc_kmers.emplace_back(pos, rc);
+    if (config.strand == 2 || config.strand == 1) {
+        auto fwd_results = search_one_strand(fwd_kmers, k, false, kix, kpx, filter, config, khx);
+        result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
     }
 
     // Search reverse complement
-    auto rc_results = search_one_strand(rc_kmers, k, true, kix, kpx, filter, config, khx);
-    result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
+    if (config.strand == 2 || config.strand == -1) {
+        std::vector<std::pair<uint32_t, KmerInt>> rc_kmers;
+        rc_kmers.reserve(fwd_kmers.size());
+        for (const auto& [pos, kmer] : fwd_kmers) {
+            KmerInt rc = kmer_revcomp(kmer, k);
+            // For reverse complement search, the query position convention:
+            // q_pos in the reverse strand maps to the same position in forward coord
+            rc_kmers.emplace_back(pos, rc);
+        }
+
+        auto rc_results = search_one_strand(rc_kmers, k, true, kix, kpx, filter, config, khx);
+        result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
+    }
 
     if (config.num_results > 0) {
         // Sort and truncate

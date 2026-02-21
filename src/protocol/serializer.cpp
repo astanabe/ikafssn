@@ -132,6 +132,9 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     // Backward-compatible trailer: accept_qdegen
     put_u8(buf, req.accept_qdegen);
 
+    // Backward-compatible trailer: strand
+    put_u8(buf, static_cast<uint8_t>(req.strand));
+
     return buf;
 }
 
@@ -187,6 +190,13 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     // Backward-compatible trailer: accept_qdegen
     if (r.remaining() >= 1) {
         r.get_u8(req.accept_qdegen);
+    }
+
+    // Backward-compatible trailer: strand
+    if (r.remaining() >= 1) {
+        uint8_t strand_raw;
+        r.get_u8(strand_raw);
+        req.strand = static_cast<int8_t>(strand_raw);
     }
 
     return true;
