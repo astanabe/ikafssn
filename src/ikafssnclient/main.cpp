@@ -53,7 +53,16 @@ static void print_usage(const char* prog) {
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)\n"
         "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)\n"
         "  -outfmt <tab|json>       Output format (default: tab)\n"
-        "  -v, --verbose            Verbose logging\n",
+        "  -v, --verbose            Verbose logging\n"
+#ifdef IKAFSSN_ENABLE_HTTP
+        "\n"
+        "HTTP Authentication:\n"
+        "  --user <user:password>   Credentials (curl-style)\n"
+        "  --http-user <USER>       Username (wget-style)\n"
+        "  --http-password <PASS>   Password (wget-style, used with --http-user)\n"
+        "  --netrc-file <path>      .netrc file for credentials\n"
+#endif
+        ,
         prog);
 }
 
@@ -63,7 +72,11 @@ static bool execute_search(
     bool has_http,
     const SearchRequest& req,
     SearchResponse& resp,
-    const Logger& logger) {
+    const Logger& logger
+#ifdef IKAFSSN_ENABLE_HTTP
+    , const HttpAuthConfig& auth
+#endif
+    ) {
 
 #ifdef IKAFSSN_ENABLE_HTTP
     if (has_http) {
@@ -71,7 +84,7 @@ static bool execute_search(
         logger.debug("Connecting via HTTP to %s", http_url.c_str());
 
         std::string error_msg;
-        if (!http_search(http_url, req, resp, error_msg)) {
+        if (!http_search(http_url, req, resp, error_msg, auth)) {
             std::fprintf(stderr, "Error: %s\n", error_msg.c_str());
             return false;
         }
@@ -147,6 +160,25 @@ int main(int argc, char* argv[]) {
 
     bool verbose = cli.has("-v") || cli.has("--verbose");
     Logger logger(verbose ? Logger::kDebug : Logger::kInfo);
+
+#ifdef IKAFSSN_ENABLE_HTTP
+    // HTTP authentication resolution
+    HttpAuthConfig auth;
+    if (cli.has("--user") && cli.has("--http-user")) {
+        std::fprintf(stderr, "Error: --user and --http-user are mutually exclusive\n");
+        return 1;
+    }
+    if (cli.has("--user")) {
+        auth.userpwd = cli.get_string("--user");
+    } else if (cli.has("--http-user")) {
+        std::string user = cli.get_string("--http-user");
+        std::string pass = cli.get_string("--http-password", "");
+        auth.userpwd = user + ":" + pass;
+    }
+    if (cli.has("--netrc-file")) {
+        auth.netrc_file = cli.get_string("--netrc-file");
+    }
+#endif
 
     std::string query_path = cli.get_string("-query");
     std::string output_path = cli.get_string("-o");
@@ -229,7 +261,11 @@ int main(int argc, char* argv[]) {
 
     for (int attempt = 0; ; attempt++) {
         SearchResponse resp;
-        if (!execute_search(cli, has_http, req, resp, logger)) {
+        if (!execute_search(cli, has_http, req, resp, logger
+#ifdef IKAFSSN_ENABLE_HTTP
+                , auth
+#endif
+                )) {
             return 1;
         }
 

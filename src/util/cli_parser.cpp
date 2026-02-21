@@ -12,6 +12,15 @@ CliParser::CliParser(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg.size() >= 2 && arg[0] == '-') {
+            // Handle --key=value syntax for double-dash args
+            if (arg.size() >= 3 && arg[0] == '-' && arg[1] == '-') {
+                auto eq = arg.find('=');
+                if (eq != std::string::npos) {
+                    opts_[arg.substr(0, eq)] = arg.substr(eq + 1);
+                    continue;
+                }
+            }
+
             // Handle --verbose or -v style flags
             std::string key = arg;
 

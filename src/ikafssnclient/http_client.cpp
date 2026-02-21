@@ -142,7 +142,8 @@ static bool parse_response_json(const std::string& body,
 }
 
 bool http_search(const std::string& base_url, const SearchRequest& req,
-                 SearchResponse& resp, std::string& error_msg) {
+                 SearchResponse& resp, std::string& error_msg,
+                 const HttpAuthConfig& auth) {
     // Build URL
     std::string url = base_url;
     if (!url.empty() && url.back() == '/') {
@@ -173,6 +174,16 @@ bool http_search(const std::string& base_url, const SearchRequest& req,
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    // HTTP authentication
+    if (!auth.userpwd.empty()) {
+        curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+        curl_easy_setopt(curl, CURLOPT_USERPWD, auth.userpwd.c_str());
+    }
+    if (!auth.netrc_file.empty()) {
+        curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
+        curl_easy_setopt(curl, CURLOPT_NETRC_FILE, auth.netrc_file.c_str());
+    }
 
     // Perform request
     CURLcode res = curl_easy_perform(curl);

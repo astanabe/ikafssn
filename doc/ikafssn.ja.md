@@ -350,6 +350,12 @@ ikafssnclient [options]
   -accept_qdegen <0|1>     縮重塩基を含むクエリを許可 (デフォルト: 0)
   -outfmt <tab|json>       出力形式 (デフォルト: tab)
   -v, --verbose            詳細ログ出力
+
+HTTP 認証 (HTTP モード専用):
+  --user <user:password>   認証情報 (curl 形式)
+  --http-user <USER>       ユーザー名 (wget 形式)
+  --http-password <PASS>   パスワード (--http-user と併用)
+  --netrc-file <path>      .netrc ファイルのパス
 ```
 
 **使用例:**
@@ -372,6 +378,15 @@ ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta | ikafssnretrieve
 
 # 特定の k-mer サイズを指定
 ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -k 9
+
+# HTTP Basic 認証 (curl 形式)
+ikafssnclient -http http://search.example.com:8080 -query query.fasta --user admin:secret
+
+# HTTP Basic 認証 (wget 形式)
+ikafssnclient -http http://search.example.com:8080 -query query.fasta --http-user=admin --http-password=secret
+
+# .netrc ファイルによる認証
+ikafssnclient -http http://search.example.com:8080 -query query.fasta --netrc-file ~/.netrc
 ```
 
 ### ikafssninfo

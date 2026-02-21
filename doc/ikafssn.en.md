@@ -350,6 +350,12 @@ Options:
   -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)
   -outfmt <tab|json>       Output format (default: tab)
   -v, --verbose            Verbose logging
+
+HTTP Authentication (HTTP mode only):
+  --user <user:password>   Credentials (curl-style)
+  --http-user <USER>       Username (wget-style)
+  --http-password <PASS>   Password (used with --http-user)
+  --netrc-file <path>      .netrc file for credentials
 ```
 
 **Examples:**
@@ -372,6 +378,15 @@ ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta | ikafssnretrieve
 
 # Specify k-mer size
 ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -k 9
+
+# HTTP with Basic Auth (curl-style)
+ikafssnclient -http http://search.example.com:8080 -query query.fasta --user admin:secret
+
+# HTTP with Basic Auth (wget-style)
+ikafssnclient -http http://search.example.com:8080 -query query.fasta --http-user=admin --http-password=secret
+
+# HTTP with .netrc credentials
+ikafssnclient -http http://search.example.com:8080 -query query.fasta --netrc-file ~/.netrc
 ```
 
 ### ikafssninfo
