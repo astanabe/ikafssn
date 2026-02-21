@@ -521,6 +521,79 @@ static void test_search_response_backward_compat_no_skipped() {
     std::printf(" OK\n");
 }
 
+static void test_search_response_rejected_query_ids() {
+    std::printf("  test_search_response_rejected_query_ids...");
+
+    SearchResponse resp;
+    resp.status = 0;
+    resp.k = 9;
+
+    // One accepted query with a hit
+    QueryResult qr1;
+    qr1.query_id = "q1";
+    ResponseHit hit;
+    hit.accession = "ACC001";
+    hit.strand = 0;
+    hit.q_start = 0;
+    hit.q_end = 100;
+    hit.s_start = 0;
+    hit.s_end = 100;
+    hit.score = 10;
+    hit.stage1_score = 5;
+    hit.volume = 0;
+    qr1.hits.push_back(hit);
+    resp.results.push_back(qr1);
+
+    // Three rejected query IDs
+    resp.rejected_query_ids = {"q2", "q3", "q4"};
+
+    auto data = serialize(resp);
+    SearchResponse resp2;
+    assert(deserialize(data, resp2));
+
+    assert(resp2.results.size() == 1);
+    assert(resp2.results[0].query_id == "q1");
+    assert(resp2.results[0].hits.size() == 1);
+    assert(resp2.rejected_query_ids.size() == 3);
+    assert(resp2.rejected_query_ids[0] == "q2");
+    assert(resp2.rejected_query_ids[1] == "q3");
+    assert(resp2.rejected_query_ids[2] == "q4");
+
+    std::printf(" OK\n");
+}
+
+static void test_search_response_backward_compat_no_rejected() {
+    std::printf("  test_search_response_backward_compat_no_rejected...");
+
+    // Simulate old format: serialize a response with rejected_query_ids,
+    // then truncate the rejected trailer to simulate an old server
+    SearchResponse resp;
+    resp.status = 0;
+    resp.k = 9;
+
+    QueryResult qr;
+    qr.query_id = "q1";
+    qr.skipped = 0;
+    resp.results.push_back(qr);
+    resp.rejected_query_ids = {"q2"};
+
+    auto data = serialize(resp);
+
+    // Calculate how many bytes to remove:
+    // rejected trailer = u16(1) + str16("q2") = 2 + 2 + 2 = 6 bytes
+    // Remove last 6 bytes to simulate old server without rejected trailer
+    for (int i = 0; i < 6; i++) data.pop_back();
+
+    SearchResponse resp2;
+    assert(deserialize(data, resp2));
+    assert(resp2.results.size() == 1);
+    assert(resp2.results[0].query_id == "q1");
+    // Should default to empty
+    assert(resp2.rejected_query_ids.empty());
+
+    std::printf(" OK\n");
+}
+
 int main() {
     std::printf("test_protocol:\n");
 
@@ -542,6 +615,8 @@ int main() {
     test_search_response_skipped();
     test_search_request_backward_compat_no_accept_qdegen();
     test_search_response_backward_compat_no_skipped();
+    test_search_response_rejected_query_ids();
+    test_search_response_backward_compat_no_rejected();
 
     std::printf("All protocol tests passed.\n");
     return 0;

@@ -28,6 +28,8 @@
 #include <thread>
 #include <chrono>
 
+#include <tbb/task_arena.h>
+
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -121,11 +123,12 @@ static void test_server_client_search() {
     CHECK(listen_fd >= 0);
 
     // Accept one connection in a background thread and process it
+    tbb::task_arena arena(1);
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, logger);
+                              server.default_k(), config, server, arena, logger);
         }
     });
 
@@ -217,11 +220,12 @@ static void test_health_check() {
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
 
+    tbb::task_arena arena(1);
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, logger);
+                              server.default_k(), config, server, arena, logger);
         }
     });
 
@@ -274,11 +278,12 @@ static void test_seqidlist_filter_via_server() {
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
 
+    tbb::task_arena arena(1);
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, logger);
+                              server.default_k(), config, server, arena, logger);
         }
     });
 

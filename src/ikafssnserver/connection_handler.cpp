@@ -1,4 +1,5 @@
 #include "ikafssnserver/connection_handler.hpp"
+#include "ikafssnserver/server.hpp"
 #include "util/socket_utils.hpp"
 
 #include <cstring>
@@ -18,6 +19,8 @@ void handle_connection(
     const std::map<int, KmerGroup>& kmer_groups,
     int default_k,
     const SearchConfig& default_config,
+    Server& server,
+    tbb::task_arena& arena,
     const Logger& logger) {
 
     FrameHeader hdr;
@@ -43,7 +46,7 @@ void handle_connection(
                       req.k, req.queries.size(), req.seqids.size());
 
         SearchResponse resp = process_search_request(
-            req, kmer_groups, default_k, default_config);
+            req, kmer_groups, default_k, default_config, server, arena);
 
         auto resp_payload = serialize(resp);
         if (!write_frame(client_fd, MsgType::kSearchResponse, resp_payload)) {

@@ -217,6 +217,8 @@ ikafssnserver [options]
 
 オプション:
   -threads <int>          ワーカースレッド数 (デフォルト: 利用可能な全コア)
+  -max_query <int>        同時処理クエリ配列数のグローバル上限 (デフォルト: 1024)
+  -max_seqs_per_req <int> 1 リクエストあたりの受理配列数上限 (デフォルト: スレッド数)
   -pid <path>             PID ファイルパス
   -min_score <int>        デフォルト最小チェインスコア (デフォルト: 1)
   -max_gap <int>          デフォルトチェイニング対角線ずれ許容幅 (デフォルト: 100)
@@ -251,6 +253,7 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn
 - 1 プロセスにつき 1 つの BLAST DB のインデックスのみをサーブします。複数 DB を同時にサーブする場合は DB ごとに別プロセスを起動してください。
 - 同一 DB の異なる k-mer サイズのインデックスが `-ix` ディレクトリに存在する場合、全て読み込み、クライアントのリクエストで k を指定できます。
 - SIGTERM/SIGINT 受信時はグレースフルシャットダウンを行います。新規接続の受付を停止し、実行中のリクエストの完了を最大 `-shutdown_timeout` 秒待ちます。
+- **配列単位の同時実行制御:** サーバは接続単位ではなく、配列単位で同時実行数を制御します。リクエストが到着すると、有効なクエリ配列ごとにパーミットの取得を試みます。グローバル上限 (`-max_query`) に達した場合、超過分の配列はリトライ用に「拒否」としてクライアントに返されます。`-max_seqs_per_req` は 1 リクエストが取得できるパーミット数の上限を設定し、大量配列を含む単一リクエストによるスロットの独占を防ぎます。
 
 ### ikafssnhttpd
 
@@ -295,7 +298,7 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 
 ### ikafssnclient
 
-クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。
+クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。サーバが同時実行制限によりクエリ配列を拒否した場合、クライアントは拒否された配列を指数バックオフ (30 秒、60 秒、120 秒、120 秒、…) で自動リトライし、全配列の処理が完了するまで繰り返します。
 
 ```
 ikafssnclient [options]

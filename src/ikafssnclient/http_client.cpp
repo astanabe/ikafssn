@@ -132,6 +132,12 @@ static bool parse_response_json(const std::string& body,
         resp.results.push_back(std::move(query_result));
     }
 
+    // Parse rejected query IDs (optional field)
+    if (root.isMember("rejected_query_ids") && root["rejected_query_ids"].isArray()) {
+        for (const auto& qid : root["rejected_query_ids"])
+            resp.rejected_query_ids.push_back(qid.asString());
+    }
+
     return true;
 }
 

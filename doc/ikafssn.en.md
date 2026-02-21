@@ -217,6 +217,8 @@ Listener (at least one required):
 
 Options:
   -threads <int>          Worker threads (default: all cores)
+  -max_query <int>        Max concurrent query sequences globally (default: 1024)
+  -max_seqs_per_req <int> Max sequences accepted per request (default: thread count)
   -pid <path>             PID file path
   -min_score <int>        Default minimum chain score (default: 1)
   -max_gap <int>          Default chaining gap tolerance (default: 100)
@@ -251,6 +253,7 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn
 - One process serves one BLAST DB index. To serve multiple DBs, start separate processes.
 - If the index directory contains indexes for multiple k-mer sizes, all are loaded and clients can specify k per request.
 - On SIGTERM/SIGINT, performs graceful shutdown: stops accepting new connections, waits for in-flight requests to complete (up to `-shutdown_timeout` seconds), then exits.
+- **Per-sequence concurrency control:** The server limits concurrency at the per-sequence level, not per-connection. When a request arrives, the server attempts to acquire permits for each valid query sequence. If the global limit (`-max_query`) is reached, excess sequences are returned to the client as "rejected" for retry. The `-max_seqs_per_req` option caps how many permits a single request can acquire, preventing one large request from monopolizing all slots.
 
 ### ikafssnhttpd
 
@@ -295,7 +298,7 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 
 ### ikafssnclient
 
-Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`.
+Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. If the server rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
 
 ```
 ikafssnclient [options]

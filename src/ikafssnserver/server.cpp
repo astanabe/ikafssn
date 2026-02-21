@@ -104,6 +104,20 @@ void Server::request_shutdown() {
     shutdown_requested_.store(true, std::memory_order_release);
 }
 
+int Server::try_acquire_sequences(int n) {
+    std::lock_guard<std::mutex> lock(seq_mutex_);
+    int capped = std::min(n, max_seqs_per_req_);
+    int available = max_active_sequences_ - active_sequences_;
+    int acquired = std::min(capped, std::max(0, available));
+    active_sequences_ += acquired;
+    return acquired;
+}
+
+void Server::release_sequences(int n) {
+    std::lock_guard<std::mutex> lock(seq_mutex_);
+    active_sequences_ -= n;
+}
+
 void Server::write_pid_file(const std::string& path) {
     std::ofstream f(path);
     if (f.is_open()) {
@@ -146,11 +160,12 @@ void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger
 
         logger.debug("Accepted connection (fd=%d)", client_fd);
 
-        // Dispatch to worker thread
+        // Dispatch to worker thread unconditionally (no connection-level gating).
+        // Per-sequence gating happens inside process_search_request().
         arena.execute([&, client_fd] {
             tg.run([&, client_fd] {
                 handle_connection(client_fd, kmer_groups_, default_k_,
-                                  config.search_config, logger);
+                                  config.search_config, *this, arena, logger);
             });
         });
     }
@@ -171,6 +186,19 @@ int Server::run(const ServerConfig& config) {
     // Write PID file if requested
     if (!config.pid_file.empty()) {
         write_pid_file(config.pid_file);
+    }
+
+    // Resolve per-sequence concurrency limits
+    {
+        int num_threads = config.num_threads;
+        if (num_threads <= 0) {
+            num_threads = static_cast<int>(std::thread::hardware_concurrency());
+            if (num_threads <= 0) num_threads = 1;
+        }
+        max_active_sequences_ = config.max_query > 0 ? config.max_query : 1024;
+        max_seqs_per_req_ = config.max_seqs_per_req > 0 ? config.max_seqs_per_req : num_threads;
+        logger.info("Max concurrent sequences: %d, max per request: %d",
+                     max_active_sequences_, max_seqs_per_req_);
     }
 
     // Set up listening sockets

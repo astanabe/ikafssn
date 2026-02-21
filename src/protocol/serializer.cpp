@@ -235,6 +235,12 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
         put_u8(buf, qr.skipped);
     }
 
+    // Backward-compatible trailer: rejected query IDs
+    put_u16(buf, static_cast<uint16_t>(resp.rejected_query_ids.size()));
+    for (const auto& qid : resp.rejected_query_ids) {
+        put_str16(buf, qid);
+    }
+
     return buf;
 }
 
@@ -276,6 +282,17 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
     if (r.remaining() >= num_queries) {
         for (uint16_t qi = 0; qi < num_queries; qi++) {
             r.get_u8(resp.results[qi].skipped);
+        }
+    }
+
+    // Backward-compatible trailer: rejected query IDs
+    if (r.remaining() >= 2) {
+        uint16_t num_rejected;
+        if (r.get_u16(num_rejected)) {
+            resp.rejected_query_ids.resize(num_rejected);
+            for (uint16_t i = 0; i < num_rejected; i++) {
+                if (!r.get_str16(resp.rejected_query_ids[i])) break;
+            }
         }
     }
 

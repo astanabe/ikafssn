@@ -169,6 +169,13 @@ void HttpController::search(
         }
         result["results"] = std::move(results_arr);
 
+        if (!sresp.rejected_query_ids.empty()) {
+            Json::Value rejected_arr(Json::arrayValue);
+            for (const auto& qid : sresp.rejected_query_ids)
+                rejected_arr.append(qid);
+            result["rejected_query_ids"] = std::move(rejected_arr);
+        }
+
         auto resp = drogon::HttpResponse::newHttpJsonResponse(std::move(result));
         (*cb)(resp);
     }).detach();

@@ -14,7 +14,11 @@
 #include "search/volume_searcher.hpp"
 #include "protocol/messages.hpp"
 
+#include <tbb/task_arena.h>
+
 namespace ikafssn {
+
+class Server;  // forward declaration
 
 // Pre-opened volume data (shared read-only across threads)
 struct ServerVolumeData {
@@ -33,11 +37,14 @@ struct KmerGroup {
 };
 
 // Process a search request using loaded index data.
-// Returns a SearchResponse.
+// Acquires per-sequence permits via server semaphore; rejected queries
+// are returned in resp.rejected_query_ids for client retry.
 SearchResponse process_search_request(
     const SearchRequest& req,
     const std::map<int, KmerGroup>& kmer_groups,
     int default_k,
-    const SearchConfig& default_config);
+    const SearchConfig& default_config,
+    Server& server,
+    tbb::task_arena& arena);
 
 } // namespace ikafssn

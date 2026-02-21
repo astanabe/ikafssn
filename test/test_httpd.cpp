@@ -24,6 +24,8 @@
 #include <thread>
 #include <chrono>
 
+#include <tbb/task_arena.h>
+
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -113,11 +115,12 @@ static void test_backend_search() {
     CHECK(listen_fd >= 0);
 
     // Accept one connection and handle it
+    tbb::task_arena arena(1);
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, logger);
+                              server.default_k(), config, server, arena, logger);
         }
     });
 
@@ -208,11 +211,12 @@ static void test_backend_health() {
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
 
+    tbb::task_arena arena(1);
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, logger);
+                              server.default_k(), config, server, arena, logger);
         }
     });
 
@@ -247,11 +251,12 @@ static void test_backend_info() {
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
 
+    tbb::task_arena arena(1);
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, logger);
+                              server.default_k(), config, server, arena, logger);
         }
     });
 
@@ -339,11 +344,12 @@ static void test_backend_seqidlist_filter() {
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
 
+    tbb::task_arena arena(1);
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, logger);
+                              server.default_k(), config, server, arena, logger);
         }
     });
 

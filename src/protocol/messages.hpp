@@ -67,6 +67,7 @@ struct SearchResponse {
     uint8_t  mode = 2;              // 1 = stage1 only, 2 = stage1+stage2
     uint8_t  stage1_score_type = 1; // 1 = coverscore, 2 = matchscore
     std::vector<QueryResult> results;
+    std::vector<std::string> rejected_query_ids;  // queries rejected due to concurrency limit
 };
 
 // Error response message (server -> client)

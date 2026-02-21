@@ -27,6 +27,8 @@ static void print_usage(const char* prog) {
         "\n"
         "Options:\n"
         "  -threads <int>           Worker threads (default: all cores)\n"
+        "  -max_query <int>         Max concurrent query sequences globally (default: 1024)\n"
+        "  -max_seqs_per_req <int>  Max sequences accepted per request (default: thread count)\n"
         "  -pid <path>              PID file path\n"
         "  -min_score <int>         Default minimum chain score (default: 1)\n"
         "  -max_gap <int>           Default chaining gap tolerance (default: 100)\n"
@@ -66,6 +68,16 @@ int main(int argc, char* argv[]) {
     config.tcp_addr = cli.get_string("-tcp");
     config.pid_file = cli.get_string("-pid");
     config.num_threads = cli.get_int("-threads", 0);
+    config.max_query = cli.get_int("-max_query", 0);
+    if (config.max_query < 0) {
+        std::fprintf(stderr, "Error: -max_query must be >= 0\n");
+        return 1;
+    }
+    config.max_seqs_per_req = cli.get_int("-max_seqs_per_req", 0);
+    if (config.max_seqs_per_req < 0) {
+        std::fprintf(stderr, "Error: -max_seqs_per_req must be >= 0\n");
+        return 1;
+    }
     config.shutdown_timeout = cli.get_int("-shutdown_timeout", 30);
 
     bool verbose = cli.has("-v") || cli.has("--verbose");
