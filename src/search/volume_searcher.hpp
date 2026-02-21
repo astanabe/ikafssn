@@ -7,6 +7,7 @@
 #include "core/types.hpp"
 #include "search/stage1_filter.hpp"
 #include "search/stage2_chaining.hpp"
+#include "search/query_preprocessor.hpp"
 
 namespace ikafssn {
 
@@ -55,5 +56,27 @@ extern template SearchResult search_volume<uint32_t>(
     const std::string&, const std::string&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
     const OidFilter&, const SearchConfig&, const KhxReader*);
+
+// Search a single volume using pre-processed query k-mer data.
+// High-freq k-mers have already been removed and thresholds resolved globally.
+template <typename KmerInt>
+SearchResult search_volume(
+    const std::string& query_id,
+    const QueryKmerData<KmerInt>& qdata,
+    int k,
+    const KixReader& kix,
+    const KpxReader& kpx,
+    const KsxReader& ksx,
+    const OidFilter& filter,
+    const SearchConfig& config);
+
+extern template SearchResult search_volume<uint16_t>(
+    const std::string&, const QueryKmerData<uint16_t>&, int,
+    const KixReader&, const KpxReader&, const KsxReader&,
+    const OidFilter&, const SearchConfig&);
+extern template SearchResult search_volume<uint32_t>(
+    const std::string&, const QueryKmerData<uint32_t>&, int,
+    const KixReader&, const KpxReader&, const KsxReader&,
+    const OidFilter&, const SearchConfig&);
 
 } // namespace ikafssn

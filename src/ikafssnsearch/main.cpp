@@ -8,6 +8,7 @@
 #include "index/khx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/volume_searcher.hpp"
+#include "search/query_preprocessor.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
@@ -48,7 +49,8 @@ static void print_usage(const char* prog) {
         "  -mode <1|2>              1=Stage1 only, 2=Stage1+Stage2 (default: 2)\n"
         "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: 1)\n"
         "  -sort_score <1|2>        1=stage1 score, 2=chainscore (default: 2)\n"
-        "  -min_score <int>         Minimum score (default: 1)\n"
+        "  -min_score <int>         Minimum chain score (default: 0 = adaptive)\n"
+        "                           0 = use resolved Stage 1 threshold\n"
         "  -max_gap <int>           Chaining diagonal gap tolerance (default: 100)\n"
         "  -max_freq <num>          High-frequency k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
@@ -174,7 +176,7 @@ int main(int argc, char* argv[]) {
     config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-max_gap", 100));
     config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-min_diag_hits", 2));
-    config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-min_score", 1));
+    config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-min_score", 0));
     config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 0));
     config.mode = static_cast<uint8_t>(cli.get_int("-mode", 2));
     config.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 2));
@@ -199,8 +201,10 @@ int main(int argc, char* argv[]) {
     if (config.mode == 1) {
         config.sort_score = 1;
 
-        // Consistency check: fractional + -min_score in mode 1
-        if (config.min_stage1_score_frac > 0 && cli.has("-min_score")) {
+        // Consistency check: fractional + explicit -min_score in mode 1
+        // (min_score=0 is allowed since it means adaptive)
+        if (config.min_stage1_score_frac > 0 && cli.has("-min_score") &&
+            config.stage2.min_score > 0) {
             std::fprintf(stderr, "Error: -min_score and fractional -min_stage1_score cannot both be specified in -mode 1\n");
             return 1;
         }
@@ -358,6 +362,41 @@ int main(int argc, char* argv[]) {
         config.stage1.max_freq = static_cast<uint32_t>(max_freq_raw);
     }
 
+    // Build vector of KixReader pointers for global preprocessing
+    std::vector<const KixReader*> all_kix;
+    all_kix.reserve(vol_data.size());
+    for (const auto& vd : vol_data) {
+        all_kix.push_back(&vd.kix);
+    }
+    const KhxReader* khx_ptr = shared_khx.is_open() ? &shared_khx : nullptr;
+
+    // Phase 1: preprocess queries (sequential per-query, global high-freq determination)
+    // Store preprocessed data per non-skipped query
+    struct PreprocessedQuery16 { QueryKmerData<uint16_t> qdata; };
+    struct PreprocessedQuery32 { QueryKmerData<uint32_t> qdata; };
+    std::vector<PreprocessedQuery16> pp16;
+    std::vector<PreprocessedQuery32> pp32;
+    // Map from original query index to preprocessed index
+    std::vector<size_t> query_pp_idx(queries.size(), SIZE_MAX);
+
+    if (k < K_TYPE_THRESHOLD) {
+        pp16.reserve(queries.size());
+        for (size_t qi = 0; qi < queries.size(); qi++) {
+            if (query_skipped[qi]) continue;
+            query_pp_idx[qi] = pp16.size();
+            pp16.push_back({preprocess_query<uint16_t>(
+                queries[qi].sequence, k, all_kix, khx_ptr, config)});
+        }
+    } else {
+        pp32.reserve(queries.size());
+        for (size_t qi = 0; qi < queries.size(); qi++) {
+            if (query_skipped[qi]) continue;
+            query_pp_idx[qi] = pp32.size();
+            pp32.push_back({preprocess_query<uint32_t>(
+                queries[qi].sequence, k, all_kix, khx_ptr, config)});
+        }
+    }
+
     // Build job list: (query, volume) pairs, skipping degenerate queries
     std::vector<SearchJob> jobs;
     jobs.reserve(queries.size() * vol_data.size());
@@ -374,25 +413,24 @@ int main(int argc, char* argv[]) {
 
     logger.info("Launching %zu search job(s)...", jobs.size());
 
-    // Execute search jobs in parallel
+    // Phase 2: execute search jobs in parallel using preprocessed data
     tbb::task_arena arena(num_threads);
     arena.execute([&] {
         tbb::parallel_for_each(jobs.begin(), jobs.end(),
             [&](const SearchJob& job) {
                 const auto& query = queries[job.query_idx];
                 const auto& vd = vol_data[job.volume_idx];
-
-                const KhxReader* khx_ptr = shared_khx.is_open() ? &shared_khx : nullptr;
+                size_t pp_idx = query_pp_idx[job.query_idx];
 
                 SearchResult sr;
                 if (k < K_TYPE_THRESHOLD) {
                     sr = search_volume<uint16_t>(
-                        query.id, query.sequence, k,
-                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, khx_ptr);
+                        query.id, pp16[pp_idx].qdata, k,
+                        vd.kix, vd.kpx, vd.ksx, vd.filter, config);
                 } else {
                     sr = search_volume<uint32_t>(
-                        query.id, query.sequence, k,
-                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, khx_ptr);
+                        query.id, pp32[pp_idx].qdata, k,
+                        vd.kix, vd.kpx, vd.ksx, vd.filter, config);
                 }
 
                 // Convert to OutputHit and collect

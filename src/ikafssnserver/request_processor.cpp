@@ -6,6 +6,7 @@
 #include <cmath>
 #include "io/result_writer.hpp"
 #include "search/oid_filter.hpp"
+#include "search/query_preprocessor.hpp"
 
 #include <algorithm>
 #include <mutex>
@@ -44,7 +45,7 @@ SearchResponse process_search_request(
 
     // Build search config, using request values if non-zero, else server defaults
     SearchConfig config = default_config;
-    if (req.min_score != 0)
+    if (req.has_min_score)
         config.stage2.min_score = req.min_score;
     if (req.max_gap != 0)
         config.stage2.max_gap = req.max_gap;
@@ -83,7 +84,7 @@ SearchResponse process_search_request(
         config.sort_score = 1;
 
         // Consistency check: min_score and min_stage1_score
-        bool has_min_score = (req.min_score != 0);
+        bool has_min_score = req.has_min_score;
         bool has_min_stage1_score = (req.min_stage1_score != 0);
         if (has_min_score && has_min_stage1_score &&
             config.stage2.min_score != config.stage1.min_stage1_score) {
@@ -140,6 +141,22 @@ SearchResponse process_search_request(
         is_accepted[valid_indices[i]] = true;
     }
 
+    // Build vector of KixReader pointers for global preprocessing
+    std::vector<const KixReader*> all_kix;
+    all_kix.reserve(group.volumes.size());
+    for (const auto& vol : group.volumes) {
+        all_kix.push_back(&vol.kix);
+    }
+    const KhxReader* khx_ptr = group.khx.is_open() ? &group.khx : nullptr;
+
+    // Preprocess accepted queries and build jobs
+    struct PreprocessedQuery16 { QueryKmerData<uint16_t> qdata; };
+    struct PreprocessedQuery32 { QueryKmerData<uint32_t> qdata; };
+    std::vector<PreprocessedQuery16> pp16;
+    std::vector<PreprocessedQuery32> pp32;
+    // Map from original query index to preprocessed index
+    std::vector<size_t> query_pp_idx(req.queries.size(), SIZE_MAX);
+
     std::vector<SearchJob> jobs;
     jobs.reserve(static_cast<size_t>(acquired) * group.volumes.size());
 
@@ -157,6 +174,17 @@ SearchResponse process_search_request(
 
         if (!is_accepted[qi]) continue; // rejected, skip
 
+        // Preprocess this accepted query
+        if (group.kmer_type == 0) {
+            query_pp_idx[qi] = pp16.size();
+            pp16.push_back({preprocess_query<uint16_t>(
+                req.queries[qi].sequence, k, all_kix, khx_ptr, config)});
+        } else {
+            query_pp_idx[qi] = pp32.size();
+            pp32.push_back({preprocess_query<uint32_t>(
+                req.queries[qi].sequence, k, all_kix, khx_ptr, config)});
+        }
+
         size_t result_idx = resp.results.size();
         QueryResult qr;
         qr.query_id = req.queries[qi].query_id;
@@ -168,13 +196,14 @@ SearchResponse process_search_request(
         }
     }
 
-    // Parallel execution
+    // Parallel execution using preprocessed data
     std::mutex hits_mutex;
     arena.execute([&] {
         tbb::parallel_for_each(jobs.begin(), jobs.end(),
             [&](const SearchJob& job) {
                 const auto& query = req.queries[job.query_idx];
                 const auto& vol = group.volumes[job.volume_idx];
+                size_t pp_idx = query_pp_idx[job.query_idx];
 
                 // Build per-volume OID filter
                 OidFilter oid_filter;
@@ -182,17 +211,15 @@ SearchResponse process_search_request(
                     oid_filter.build(req.seqids, vol.ksx, filter_mode);
                 }
 
-                const KhxReader* khx_ptr = group.khx.is_open() ? &group.khx : nullptr;
-
                 SearchResult sr;
                 if (group.kmer_type == 0) {
                     sr = search_volume<uint16_t>(
-                        query.query_id, query.sequence, k,
-                        vol.kix, vol.kpx, vol.ksx, oid_filter, config, khx_ptr);
+                        query.query_id, pp16[pp_idx].qdata, k,
+                        vol.kix, vol.kpx, vol.ksx, oid_filter, config);
                 } else {
                     sr = search_volume<uint32_t>(
-                        query.query_id, query.sequence, k,
-                        vol.kix, vol.kpx, vol.ksx, oid_filter, config, khx_ptr);
+                        query.query_id, pp32[pp_idx].qdata, k,
+                        vol.kix, vol.kpx, vol.ksx, oid_filter, config);
                 }
 
                 if (!sr.hits.empty()) {

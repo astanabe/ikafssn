@@ -99,7 +99,9 @@ Options:
   -k <int>                K-mer size to use (required if multiple k values exist)
   -o <path>               Output file (default: stdout)
   -threads <int>          Parallel search threads (default: all cores)
-  -min_score <int>        Minimum score (default: 1)
+  -min_score <int>        Minimum chain score (default: 0 = adaptive)
+                          0 = use resolved Stage 1 threshold as minimum
+                          >= 1: absolute minimum chain score
   -max_gap <int>          Chaining diagonal gap tolerance (default: 100)
   -max_freq <num>         High-frequency k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
@@ -242,7 +244,7 @@ Options:
   -max_query <int>        Max concurrent query sequences globally (default: 1024)
   -max_seqs_per_req <int> Max sequences accepted per request (default: thread count)
   -pid <path>             PID file path
-  -min_score <int>        Default minimum chain score (default: 1)
+  -min_score <int>        Default minimum chain score (default: 0 = adaptive)
   -max_gap <int>          Default chaining gap tolerance (default: 100)
   -max_freq <num>         Default high-freq k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
@@ -339,6 +341,7 @@ Options:
   -o <path>                Output file (default: stdout)
   -k <int>                 K-mer size (default: server default)
   -min_score <int>         Minimum score (default: server default)
+                           0 = explicitly request adaptive mode
   -max_gap <int>           Chaining gap tolerance (default: server default)
   -max_freq <num>          High-freq k-mer skip threshold (default: server default)
                            0 < x < 1: fraction of total NSEQ across all volumes
@@ -443,13 +446,15 @@ The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0
 
 2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= min_score` are reported.
 
+**Adaptive `-min_score` (default):** When `-min_score 0` (the default), the minimum chain score is set adaptively per query to the resolved Stage 1 threshold. With fractional `-min_stage1_score` (e.g. `0.5`), this means each query gets a per-query adaptive threshold based on its k-mer composition. With absolute `-min_stage1_score`, the configured value is used. Set `-min_score` to a positive integer to override this behavior with a fixed threshold.
+
 **Mode 1 (Stage 1 only):** When `-mode 1` is specified, Stage 2 is skipped entirely. The `.kpx` file is not accessed, saving I/O and memory. Results contain only Stage 1 scores; position fields (q_start, q_end, s_start, s_end) and chainscore are omitted. In mode 1, `-min_score` applies to the Stage 1 score, and `-sort_score` is forced to 1 (stage1 score).
 
 By default, both forward and reverse complement strands of the query are searched. Use `-strand 1` to search only the plus (forward) strand, or `-strand -1` to search only the minus (reverse complement) strand.
 
 ### High-Frequency K-mer Filtering
 
-K-mers occurring more than `max_freq` times are skipped during both stages.
+High-frequency k-mer filtering is performed globally across all volumes before the per-volume search loop. K-mer counts are aggregated across all volumes, and k-mers exceeding `max_freq` are removed from the query once. This ensures consistent filtering regardless of how data is partitioned across volumes. Build-time exclusions (`.khx`) are also checked globally.
 
 The default value of `-max_freq` is `0.5`, meaning k-mers occurring in more than 50% of the total sequences across all volumes are skipped. More generally, when a fractional value (0 < x < 1) is specified, the threshold is resolved as `ceil(x * total_NSEQ)` where `total_NSEQ` is the sum of sequence counts across all volumes. An integer value (>= 1) is used as an absolute count threshold directly.
 

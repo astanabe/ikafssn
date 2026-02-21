@@ -2,6 +2,7 @@
 #include "ssu_test_fixture.hpp"
 #include "search/stage1_filter.hpp"
 #include "search/volume_searcher.hpp"
+#include "search/query_preprocessor.hpp"
 #include "search/oid_filter.hpp"
 #include "index/index_builder.hpp"
 #include "index/index_filter.hpp"
@@ -75,33 +76,37 @@ static void test_stage1_basic() {
 }
 
 static void test_stage1_max_freq_skip() {
-    std::fprintf(stderr, "-- test_stage1_max_freq_skip\n");
+    std::fprintf(stderr, "-- test_stage1_max_freq_skip (via preprocess_query)\n");
 
     KixReader kix;
     CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
 
-    std::vector<std::pair<uint32_t, uint16_t>> query_kmers;
-    KmerScanner<uint16_t> scanner(7);
-    scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
-        query_kmers.emplace_back(pos, kmer);
-    });
+    // Test that preprocess_query with restrictive max_freq removes k-mers
+    std::vector<const KixReader*> all_kix = {&kix};
 
-    // Without frequency filter
-    OidFilter filter;
-    Stage1Config config_unrestricted;
-    config_unrestricted.max_freq = 100000;
-    config_unrestricted.stage1_topn = 100;
-    config_unrestricted.min_stage1_score = 1;
-    auto candidates_all = stage1_filter(query_kmers, kix, filter, config_unrestricted);
+    // Unrestricted: max_freq=100000 -> no k-mers removed
+    SearchConfig config_unrestricted;
+    config_unrestricted.stage1.max_freq = 100000;
+    config_unrestricted.stage1.stage1_topn = 100;
+    config_unrestricted.stage1.min_stage1_score = 1;
+    config_unrestricted.stage2.min_score = 1;
 
-    // With max_freq=1 (very restrictive) -> fewer candidates
-    Stage1Config config_restricted;
-    config_restricted.max_freq = 1;
-    config_restricted.stage1_topn = 100;
-    config_restricted.min_stage1_score = 1;
-    auto candidates_filtered = stage1_filter(query_kmers, kix, filter, config_restricted);
+    auto qdata_all = preprocess_query<uint16_t>(
+        g_query_seq, 7, all_kix, nullptr, config_unrestricted);
 
-    CHECK(candidates_filtered.size() <= candidates_all.size());
+    // Restricted: max_freq=1 -> many k-mers removed
+    SearchConfig config_restricted;
+    config_restricted.stage1.max_freq = 1;
+    config_restricted.stage1.stage1_topn = 100;
+    config_restricted.stage1.min_stage1_score = 1;
+    config_restricted.stage2.min_score = 1;
+
+    auto qdata_filtered = preprocess_query<uint16_t>(
+        g_query_seq, 7, all_kix, nullptr, config_restricted);
+
+    // Restrictive max_freq should remove k-mers
+    CHECK(qdata_filtered.fwd_kmers.size() <= qdata_all.fwd_kmers.size());
+    CHECK(qdata_filtered.rc_kmers.size() <= qdata_all.rc_kmers.size());
 
     kix.close();
 }
@@ -376,6 +381,77 @@ static void test_stage1_fractional_with_highfreq() {
     ksx.close();
 }
 
+static void test_adaptive_min_score() {
+    std::fprintf(stderr, "-- test_adaptive_min_score\n");
+
+    KixReader kix;
+    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
+
+    std::vector<const KixReader*> all_kix = {&kix};
+
+    // Test adaptive min_score: min_score=0 with fractional threshold
+    // effective_min_score should equal resolved Stage 1 threshold
+    SearchConfig config;
+    config.stage1.max_freq = 100000;
+    config.stage1.stage1_topn = 100;
+    config.stage1.min_stage1_score = 1;
+    config.stage2.min_score = 0; // adaptive
+    config.min_stage1_score_frac = 0.3; // 30% of query k-mers
+
+    auto qdata = preprocess_query<uint16_t>(
+        g_query_seq, 7, all_kix, nullptr, config);
+
+    // Adaptive: effective_min_score should equal resolved threshold
+    CHECK(qdata.effective_min_score_fwd == qdata.resolved_threshold_fwd);
+    CHECK(qdata.effective_min_score_rc == qdata.resolved_threshold_rc);
+    CHECK(qdata.resolved_threshold_fwd > 0);
+    CHECK(qdata.resolved_threshold_rc > 0);
+
+    // Test explicit min_score overrides adaptive
+    SearchConfig config_explicit;
+    config_explicit.stage1.max_freq = 100000;
+    config_explicit.stage1.stage1_topn = 100;
+    config_explicit.stage1.min_stage1_score = 1;
+    config_explicit.stage2.min_score = 5; // explicit
+    config_explicit.min_stage1_score_frac = 0.3;
+
+    auto qdata_explicit = preprocess_query<uint16_t>(
+        g_query_seq, 7, all_kix, nullptr, config_explicit);
+
+    CHECK(qdata_explicit.effective_min_score_fwd == 5);
+    CHECK(qdata_explicit.effective_min_score_rc == 5);
+
+    kix.close();
+}
+
+static void test_global_highfreq_across_volumes() {
+    std::fprintf(stderr, "-- test_global_highfreq_across_volumes\n");
+
+    KixReader kix;
+    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
+
+    // Using the same KixReader twice simulates two volumes with identical counts.
+    // A k-mer with count N in one volume appears as 2N globally.
+    std::vector<const KixReader*> all_kix_single = {&kix};
+    std::vector<const KixReader*> all_kix_double = {&kix, &kix};
+
+    SearchConfig config;
+    config.stage1.max_freq = 0; // auto mode
+    config.stage1.min_stage1_score = 1;
+    config.stage2.min_score = 1;
+
+    auto qdata_single = preprocess_query<uint16_t>(
+        g_query_seq, 7, all_kix_single, nullptr, config);
+    auto qdata_double = preprocess_query<uint16_t>(
+        g_query_seq, 7, all_kix_double, nullptr, config);
+
+    // With doubled volumes, global counts are higher, so more k-mers may
+    // exceed the auto threshold. Filtered k-mers should be <= single-volume case.
+    CHECK(qdata_double.fwd_kmers.size() <= qdata_single.fwd_kmers.size());
+
+    kix.close();
+}
+
 int main() {
     check_ssu_available();
 
@@ -406,6 +482,8 @@ int main() {
     test_stage1_topn_zero();
     test_stage1_fractional_threshold();
     test_stage1_fractional_with_highfreq();
+    test_adaptive_min_score();
+    test_global_highfreq_across_volumes();
 
     std::filesystem::remove_all(g_index_dir);
     std::filesystem::remove_all(g_maxfreq_index_dir);

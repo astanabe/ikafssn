@@ -138,6 +138,9 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     // Backward-compatible trailer: max_freq fraction
     put_u16(buf, req.max_freq_frac_x10000);
 
+    // Backward-compatible trailer: has_min_score
+    put_u8(buf, req.has_min_score);
+
     return buf;
 }
 
@@ -205,6 +208,11 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     // Backward-compatible trailer: max_freq fraction
     if (r.remaining() >= 2) {
         r.get_u16(req.max_freq_frac_x10000);
+    }
+
+    // Backward-compatible trailer: has_min_score
+    if (r.remaining() >= 1) {
+        r.get_u8(req.has_min_score);
     }
 
     return true;

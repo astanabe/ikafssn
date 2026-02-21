@@ -31,7 +31,7 @@ static void print_usage(const char* prog) {
         "  -max_query <int>         Max concurrent query sequences globally (default: 1024)\n"
         "  -max_seqs_per_req <int>  Max sequences accepted per request (default: thread count)\n"
         "  -pid <path>              PID file path\n"
-        "  -min_score <int>         Default minimum chain score (default: 1)\n"
+        "  -min_score <int>         Default minimum chain score (default: 0 = adaptive)\n"
         "  -max_gap <int>           Default chaining gap tolerance (default: 100)\n"
         "  -max_freq <num>          Default high-freq k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
@@ -107,7 +107,7 @@ int main(int argc, char* argv[]) {
     config.search_config.stage2.min_diag_hits =
         static_cast<uint32_t>(cli.get_int("-min_diag_hits", 2));
     config.search_config.stage2.min_score =
-        static_cast<uint32_t>(cli.get_int("-min_score", 1));
+        static_cast<uint32_t>(cli.get_int("-min_score", 0));
     config.search_config.num_results =
         static_cast<uint32_t>(cli.get_int("-num_results", 0));
 

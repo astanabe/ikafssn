@@ -22,6 +22,9 @@ static std::string build_request_json(const SearchRequest& req) {
 
     root["k"] = req.k;
     root["min_score"] = req.min_score;
+    if (req.has_min_score) {
+        root["has_min_score"] = true;
+    }
     root["max_gap"] = req.max_gap;
     if (req.max_freq_frac_x10000 != 0) {
         root["max_freq_frac"] = static_cast<double>(req.max_freq_frac_x10000) / 10000.0;

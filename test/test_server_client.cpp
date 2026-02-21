@@ -98,6 +98,7 @@ static void test_server_client_search() {
     CHECK(ksx.open(base + ".ksx"));
 
     SearchConfig config;
+    config.stage2.min_score = 1;
     OidFilter no_filter;
 
     std::vector<SearchResult> local_results;

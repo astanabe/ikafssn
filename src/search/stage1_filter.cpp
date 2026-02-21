@@ -33,10 +33,6 @@ std::vector<Stage1Candidate> stage1_filter(
     uint32_t num_seqs = kix.num_sequences();
     if (num_seqs == 0) return {};
 
-    // Compute effective max_freq
-    uint32_t max_freq = compute_effective_max_freq(
-        config.max_freq, kix.total_postings(), kix.table_size());
-
     // score_per_seq: hit count per OID
     std::vector<uint32_t> score_per_seq(num_seqs, 0);
 
@@ -49,7 +45,7 @@ std::vector<Stage1Candidate> stage1_filter(
     for (const auto& [q_pos, kmer] : query_kmers) {
         uint64_t kmer_idx = static_cast<uint64_t>(kmer);
         uint32_t cnt = counts[kmer_idx];
-        if (cnt == 0 || cnt > max_freq) continue;
+        if (cnt == 0) continue;
 
         SeqIdDecoder decoder(posting_data + offsets[kmer_idx]);
         for (uint32_t i = 0; i < cnt; i++) {

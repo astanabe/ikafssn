@@ -61,6 +61,9 @@ void HttpController::search(
 
     sreq.k = static_cast<uint8_t>(j.get("k", 0).asUInt());
     sreq.min_score = static_cast<uint16_t>(j.get("min_score", 0).asUInt());
+    if (j.isMember("has_min_score") && j["has_min_score"].asBool()) {
+        sreq.has_min_score = 1;
+    }
     sreq.max_gap = static_cast<uint16_t>(j.get("max_gap", 0).asUInt());
     if (j.isMember("max_freq_frac") && j["max_freq_frac"].isDouble()) {
         double frac = j["max_freq_frac"].asDouble();

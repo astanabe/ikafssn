@@ -212,7 +212,10 @@ int main(int argc, char* argv[]) {
     // Build base search request parameters (shared across retries)
     SearchRequest base_req;
     base_req.k = static_cast<uint8_t>(cli.get_int("-k", 0));
-    base_req.min_score = static_cast<uint16_t>(cli.get_int("-min_score", 0));
+    if (cli.has("-min_score")) {
+        base_req.min_score = static_cast<uint16_t>(cli.get_int("-min_score", 0));
+        base_req.has_min_score = 1;
+    }
     base_req.max_gap = static_cast<uint16_t>(cli.get_int("-max_gap", 0));
     {
         double max_freq_val = cli.get_double("-max_freq", 0.0);

@@ -22,7 +22,7 @@ struct QueryEntry {
 // Search request message (client -> server)
 struct SearchRequest {
     uint8_t  k = 0;                  // 0 = server default
-    uint16_t min_score = 0;          // 0 = server default
+    uint16_t min_score = 0;          // 0 = server default (see has_min_score)
     uint16_t max_gap = 0;            // 0 = server default
     uint32_t max_freq = 0;           // 0 = server default
     uint8_t  min_diag_hits = 0;      // 0 = server default
@@ -37,6 +37,7 @@ struct SearchRequest {
     uint8_t  sort_score = 0;        // 0 = server default, 1 = stage1 score, 2 = chainscore
     uint8_t  accept_qdegen = 0;     // 0 = reject degenerate queries, 1 = accept
     int8_t   strand = 0;           // 0 = server default, 1 = plus, -1 = minus, 2 = both
+    uint8_t  has_min_score = 0;    // 1 = min_score was explicitly set by client
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
 };

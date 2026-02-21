@@ -101,6 +101,7 @@ static void test_http_client_search() {
     // resolves to ceil(0.5 * total_nseq).  Use the same resolved value for
     // the local reference search so results are comparable.
     SearchConfig config;
+    config.stage2.min_score = 1;
     {
         uint32_t total_nseq = ksx.num_sequences();
         auto resolved = static_cast<uint32_t>(
@@ -126,6 +127,7 @@ static void test_http_client_search() {
     sconfig.unix_socket_path = sock_path;
     sconfig.num_threads = 2;
     sconfig.log_level = Logger::kError;
+    sconfig.search_config.stage2.min_score = 1;
 
     Server server;
     std::thread server_thread([&] {

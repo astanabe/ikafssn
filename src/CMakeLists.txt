@@ -58,6 +58,7 @@ add_library(ikafssn_search STATIC
     search/stage1_filter.cpp
     search/diagonal_filter.cpp
     search/stage2_chaining.cpp
+    search/query_preprocessor.cpp
     search/volume_searcher.cpp
 )
 target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_io)
