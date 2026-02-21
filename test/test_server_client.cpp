@@ -39,7 +39,7 @@ using namespace ssu_fixture;
 static std::string g_testdb_path;
 static std::string g_test_dir;
 
-// Build test index and return the index directory path
+// Build test index and return the index prefix path
 static std::string build_test_index(int k) {
     std::string ix_dir = g_test_dir + "/sc_index";
     std::filesystem::create_directories(ix_dir);
@@ -70,7 +70,7 @@ static std::string build_test_index(int k) {
         return {};
     }
 
-    return ix_dir;
+    return ix_dir + "/test";
 }
 
 // Test: direct local search produces results, and server produces same results
@@ -78,8 +78,8 @@ static void test_server_client_search() {
     std::fprintf(stderr, "-- test_server_client_search\n");
 
     int k = 7;
-    std::string ix_dir = build_test_index(k);
-    CHECK(!ix_dir.empty());
+    std::string ix_prefix = build_test_index(k);
+    CHECK(!ix_prefix.empty());
 
     // Read query from derived test data
     std::string query_fasta = queries_path();
@@ -92,7 +92,7 @@ static void test_server_client_search() {
     KsxReader ksx;
     char kk[4];
     std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string base = ix_dir + "/test.00." + std::string(kk) + "mer";
+    std::string base = ix_prefix + ".00." + std::string(kk) + "mer";
     CHECK(kix.open(base + ".kix"));
     CHECK(kpx.open(base + ".kpx"));
     CHECK(ksx.open(base + ".ksx"));
@@ -115,7 +115,7 @@ static void test_server_client_search() {
     // Load server index
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_dir, logger));
+    CHECK(server.load_indexes(ix_prefix, logger));
     CHECK(server.default_k() == k);
 
     // Start a listening socket
@@ -210,11 +210,11 @@ static void test_health_check() {
     ::unlink(sock_path.c_str());
 
     int k = 7;
-    std::string ix_dir = g_test_dir + "/sc_index";
+    std::string ix_prefix = g_test_dir + "/sc_index/test";
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_dir, logger));
+    CHECK(server.load_indexes(ix_prefix, logger));
 
     SearchConfig config;
     int listen_fd = unix_listen(sock_path);
@@ -249,7 +249,7 @@ static void test_seqidlist_filter_via_server() {
     std::fprintf(stderr, "-- test_seqidlist_filter_via_server\n");
 
     int k = 7;
-    std::string ix_dir = g_test_dir + "/sc_index";
+    std::string ix_prefix = g_test_dir + "/sc_index/test";
     std::string sock_path = g_test_dir + "/test_seqidlist.sock";
     ::unlink(sock_path.c_str());
 
@@ -261,7 +261,7 @@ static void test_seqidlist_filter_via_server() {
     KsxReader ksx;
     char kk[4];
     std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string base = ix_dir + "/test.00." + std::string(kk) + "mer";
+    std::string base = ix_prefix + ".00." + std::string(kk) + "mer";
     CHECK(ksx.open(base + ".ksx"));
 
     std::string target_acc;
@@ -272,7 +272,7 @@ static void test_seqidlist_filter_via_server() {
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_dir, logger));
+    CHECK(server.load_indexes(ix_prefix, logger));
 
     SearchConfig config;
     int listen_fd = unix_listen(sock_path);

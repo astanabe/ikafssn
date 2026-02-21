@@ -26,8 +26,13 @@ Server::~Server() {
     }
 }
 
-bool Server::load_indexes(const std::string& ix_dir, const Logger& logger) {
-    std::regex kix_pattern(R"((.+)\.(\d+)\.(\d+)mer\.kix)");
+bool Server::load_indexes(const std::string& ix_prefix, const Logger& logger) {
+    std::filesystem::path prefix_path(ix_prefix);
+    std::string parent_dir = prefix_path.parent_path().string();
+    std::string db_name = prefix_path.filename().string();
+    if (parent_dir.empty()) parent_dir = ".";
+
+    std::regex suffix_pattern(R"((\d+)\.(\d+)mer\.kix)");
 
     struct VolumeFile {
         std::string base_path;
@@ -36,21 +41,25 @@ bool Server::load_indexes(const std::string& ix_dir, const Logger& logger) {
     };
     std::vector<VolumeFile> vf_list;
 
-    for (const auto& entry : std::filesystem::directory_iterator(ix_dir)) {
+    std::string prefix_dot = db_name + ".";
+    for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
         if (!entry.is_regular_file()) continue;
         std::string fname = entry.path().filename().string();
+        if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
+            continue;
+        std::string suffix = fname.substr(prefix_dot.size());
         std::smatch m;
-        if (std::regex_match(fname, m, kix_pattern)) {
+        if (std::regex_match(suffix, m, suffix_pattern)) {
             VolumeFile vf;
-            vf.volume_index = static_cast<uint16_t>(std::stoi(m[2].str()));
-            vf.k = std::stoi(m[3].str());
-            vf.base_path = ix_dir + "/" + m[1].str() + "." + m[2].str() + "." + m[3].str() + "mer";
+            vf.volume_index = static_cast<uint16_t>(std::stoi(m[1].str()));
+            vf.k = std::stoi(m[2].str());
+            vf.base_path = parent_dir + "/" + db_name + "." + m[1].str() + "." + m[2].str() + "mer";
             vf_list.push_back(vf);
         }
     }
 
     if (vf_list.empty()) {
-        logger.error("No index files found in %s", ix_dir.c_str());
+        logger.error("No index files found for prefix %s", ix_prefix.c_str());
         return false;
     }
 
@@ -179,7 +188,7 @@ int Server::run(const ServerConfig& config) {
     Logger logger(config.log_level);
 
     // Load indexes
-    if (!load_indexes(config.ix_dir, logger)) {
+    if (!load_indexes(config.ix_prefix, logger)) {
         return 1;
     }
 

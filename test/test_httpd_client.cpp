@@ -69,7 +69,7 @@ static std::string build_test_index(int k) {
         return {};
     }
 
-    return ix_dir;
+    return ix_dir + "/test";
 }
 
 // Full stack test: ikafssnclient (http_search) -> ikafssnhttpd -> ikafssnserver
@@ -77,8 +77,8 @@ static void test_http_client_search() {
     std::fprintf(stderr, "-- test_http_client_search\n");
 
     int k = 7;
-    std::string ix_dir = build_test_index(k);
-    CHECK(!ix_dir.empty());
+    std::string ix_prefix = build_test_index(k);
+    CHECK(!ix_prefix.empty());
 
     // Read query FASTA
     auto queries = read_fasta(queries_path());
@@ -90,7 +90,7 @@ static void test_http_client_search() {
     KsxReader ksx;
     char kk[4];
     std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string base = ix_dir + "/test.00." + std::string(kk) + "mer";
+    std::string base = ix_prefix + ".00." + std::string(kk) + "mer";
     CHECK(kix.open(base + ".kix"));
     CHECK(kpx.open(base + ".kpx"));
     CHECK(ksx.open(base + ".ksx"));
@@ -110,7 +110,7 @@ static void test_http_client_search() {
     ::unlink(sock_path.c_str());
 
     ServerConfig sconfig;
-    sconfig.ix_dir = ix_dir;
+    sconfig.ix_prefix = ix_prefix;
     sconfig.unix_socket_path = sock_path;
     sconfig.num_threads = 2;
     sconfig.log_level = Logger::kError;

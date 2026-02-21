@@ -28,10 +28,10 @@ ikafssn は 7 つの独立したコマンドラインプログラムで構成さ
 ikafssnindex -db mydb -k 11 -o ./index
 
 # 2. クエリ FASTA で検索
-ikafssnsearch -ix ./index -query query.fasta
+ikafssnsearch -ix ./index/mydb -query query.fasta
 
 # 3. マッチした部分配列を抽出
-ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db mydb > matches.fasta
+ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db mydb > matches.fasta
 ```
 
 ## コマンド
@@ -91,10 +91,11 @@ ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
 ikafssnsearch [options]
 
 必須:
-  -ix <dir>               インデックスディレクトリ
+  -ix <prefix>            インデックスプレフィックス (blastn -db と同様)
   -query <path>           クエリ FASTA ファイル (- で標準入力)
 
 オプション:
+  -k <int>                使用する k-mer サイズ (複数の k 値が存在する場合は必須)
   -o <path>               出力ファイル (デフォルト: 標準出力)
   -threads <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
   -min_score <int>        最小スコア (デフォルト: 1)
@@ -122,6 +123,21 @@ ikafssnsearch [options]
   -v, --verbose           詳細ログ出力
 ```
 
+`-ix` オプションには `blastn -db` と同様にインデックスのプレフィックスパス (拡張子なし) を指定します。例えば、`ikafssnindex -db nt -k 11 -o /data/index` が以下のファイルを生成した場合:
+
+```
+/data/index/nt.00.11mer.kix
+/data/index/nt.00.11mer.kpx
+/data/index/nt.00.11mer.ksx
+/data/index/nt.01.11mer.kix
+/data/index/nt.01.11mer.kpx
+/data/index/nt.01.11mer.ksx
+```
+
+`-ix /data/index/nt` と指定します。プレフィックス `/data/index/nt` はディレクトリ `/data/index/` とベース名 `nt` に分割され、そのディレクトリ内の `nt.<vol>.<k>mer.k?x` に一致する全ファイルが自動的に検出されます。
+
+インデックスディレクトリに複数の k-mer サイズのインデックスが含まれる場合 (例: `nt.00.09mer.kix` と `nt.00.11mer.kix` の両方が存在する場合)、`-k` で使用するサイズを指定する必要があります。k-mer サイズが 1 種類のみの場合は `-k` を省略できます。
+
 `-accept_qdegen` が 0 (デフォルト) の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは警告付きでスキップされ、終了コードは 2 になります。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます (縮重塩基の位置は k-mer スキャン時に無効として扱われスキップされます)。
 
 `-seqidlist` と `-negative_seqidlist` は排他的 (同時指定不可) です。ファイル形式はテキスト (1 行 1 アクセッション) と `blastdb_aliastool -seqid_file_in` で生成されるバイナリ形式の両方を受け付け、先頭のマジックバイトで自動判別します。
@@ -130,23 +146,26 @@ ikafssnsearch [options]
 
 ```bash
 # 基本的な検索
-ikafssnsearch -ix ./index -query query.fasta -threads 8
+ikafssnsearch -ix ./index/mydb -query query.fasta -threads 8
+
+# k-mer サイズを指定 (インデックスに複数の k 値が含まれる場合は必須)
+ikafssnsearch -ix ./index/mydb -k 11 -query query.fasta
 
 # 感度を上げた検索
-ikafssnsearch -ix ./index -query query.fasta \
+ikafssnsearch -ix ./index/mydb -query query.fasta \
     -min_score 2 -stage1_topn 2000 -max_freq 50000
 
 # seqidlist で検索対象を限定
-ikafssnsearch -ix ./index -query query.fasta -seqidlist targets.txt
+ikafssnsearch -ix ./index/mydb -query query.fasta -seqidlist targets.txt
 
 # negative_seqidlist で特定配列を除外
-ikafssnsearch -ix ./index -query query.fasta -negative_seqidlist exclude.txt
+ikafssnsearch -ix ./index/mydb -query query.fasta -negative_seqidlist exclude.txt
 
 # 割合指定の Stage 1 閾値 (クエリ k-mer の 50%)
-ikafssnsearch -ix ./index -query query.fasta -min_stage1_score 0.5
+ikafssnsearch -ix ./index/mydb -query query.fasta -min_stage1_score 0.5
 
 # パイプラインで ikafssnretrieve に接続
-ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 ```
 
 ### ikafssnretrieve
@@ -181,17 +200,17 @@ ikafssnretrieve [options]
 
 ```bash
 # ローカル BLAST DB から抽出 (ファイル入力)
-ikafssnsearch -ix ./index -query query.fasta -o results.tsv
+ikafssnsearch -ix ./index/mydb -query query.fasta -o results.tsv
 ikafssnretrieve -db nt -results results.tsv -o matches.fasta
 
 # ローカル BLAST DB から抽出 (パイプ)
-ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # サーバ経由の検索結果からも同様に利用可能
 ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # NCBI efetch からリモート取得
-ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -remote > matches.fasta
+ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -remote > matches.fasta
 
 # NCBI efetch + API key (高スループット)
 ikafssnclient -http http://search.example.com:8080 -query query.fasta \
@@ -209,7 +228,7 @@ ikafssnretrieve -db nt -results results.tsv -context 50
 ikafssnserver [options]
 
 必須:
-  -ix <dir>               インデックスディレクトリ
+  -ix <prefix>            インデックスプレフィックス (blastn -db と同様)
 
 リスニング (いずれかまたは両方):
   -socket <path>          UNIX ドメインソケットパス
@@ -251,7 +270,7 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn
 **運用上の特性:**
 
 - 1 プロセスにつき 1 つの BLAST DB のインデックスのみをサーブします。複数 DB を同時にサーブする場合は DB ごとに別プロセスを起動してください。
-- 同一 DB の異なる k-mer サイズのインデックスが `-ix` ディレクトリに存在する場合、全て読み込み、クライアントのリクエストで k を指定できます。
+- `-ix` プレフィックスに対応する異なる k-mer サイズのインデックスが存在する場合、全て読み込み、クライアントのリクエストで k を指定できます。
 - SIGTERM/SIGINT 受信時はグレースフルシャットダウンを行います。新規接続の受付を停止し、実行中のリクエストの完了を最大 `-shutdown_timeout` 秒待ちます。
 - **配列単位の同時実行制御:** サーバは接続単位ではなく、配列単位で同時実行数を制御します。リクエストが到着すると、有効なクエリ配列ごとにパーミットの取得を試みます。グローバル上限 (`-max_query`) に達した場合、超過分の配列はリトライ用に「拒否」としてクライアントに返されます。`-max_seqs_per_req` は 1 リクエストが取得できるパーミット数の上限を設定し、大量配列を含む単一リクエストによるスロットの独占を防ぎます。
 
@@ -363,7 +382,7 @@ ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -k 9
 ikafssninfo [options]
 
 必須:
-  -ix <dir>               インデックスディレクトリ
+  -ix <prefix>            インデックスプレフィックス (blastn -db と同様)
 
 オプション:
   -db <path>              BLAST DB プレフィックス (指定時は DB 情報も表示)
@@ -383,13 +402,13 @@ ikafssninfo [options]
 
 ```bash
 # 基本的なインデックス情報
-ikafssninfo -ix ./index
+ikafssninfo -ix ./index/mydb
 
 # BLAST DB 情報も表示
-ikafssninfo -ix ./index -db mydb
+ikafssninfo -ix ./index/mydb -db mydb
 
 # 詳細な頻度分布を表示
-ikafssninfo -ix ./index -v
+ikafssninfo -ix ./index/mydb -v
 ```
 
 ## 検索パイプライン
@@ -528,7 +547,7 @@ ikafssnserver → ikafssnclient (UNIX ソケット経由)
 
 ```
 マシン A (検索サーバ):
-  ikafssnserver -ix ./index -tcp 0.0.0.0:9100
+  ikafssnserver -ix ./index/mydb -tcp 0.0.0.0:9100
 
 マシン B (HTTP フロントエンド):
   ikafssnhttpd -server_tcp A:9100 -listen :8080

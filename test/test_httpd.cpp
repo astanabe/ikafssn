@@ -67,7 +67,7 @@ static std::string build_test_index(int k) {
         return {};
     }
 
-    return ix_dir;
+    return ix_dir + "/test";
 }
 
 // Test: BackendClient search matches direct local search
@@ -75,8 +75,8 @@ static void test_backend_search() {
     std::fprintf(stderr, "-- test_backend_search\n");
 
     int k = 7;
-    std::string ix_dir = build_test_index(k);
-    CHECK(!ix_dir.empty());
+    std::string ix_prefix = build_test_index(k);
+    CHECK(!ix_prefix.empty());
 
     // Read query FASTA
     auto queries = read_fasta(queries_path());
@@ -88,7 +88,7 @@ static void test_backend_search() {
     KsxReader ksx;
     char kk[4];
     std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string base = ix_dir + "/test.00." + std::string(kk) + "mer";
+    std::string base = ix_prefix + ".00." + std::string(kk) + "mer";
     CHECK(kix.open(base + ".kix"));
     CHECK(kpx.open(base + ".kpx"));
     CHECK(ksx.open(base + ".ksx"));
@@ -109,7 +109,7 @@ static void test_backend_search() {
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_dir, logger));
+    CHECK(server.load_indexes(ix_prefix, logger));
 
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
@@ -201,11 +201,11 @@ static void test_backend_health() {
     std::string sock_path = g_test_dir + "/test_httpd_health.sock";
     ::unlink(sock_path.c_str());
 
-    std::string ix_dir = g_test_dir + "/httpd_index";
+    std::string ix_prefix = g_test_dir + "/httpd_index/test";
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_dir, logger));
+    CHECK(server.load_indexes(ix_prefix, logger));
 
     SearchConfig config;
     int listen_fd = unix_listen(sock_path);
@@ -241,11 +241,11 @@ static void test_backend_info() {
     std::string sock_path = g_test_dir + "/test_httpd_info.sock";
     ::unlink(sock_path.c_str());
 
-    std::string ix_dir = g_test_dir + "/httpd_index";
+    std::string ix_prefix = g_test_dir + "/httpd_index/test";
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_dir, logger));
+    CHECK(server.load_indexes(ix_prefix, logger));
 
     SearchConfig config;
     int listen_fd = unix_listen(sock_path);
@@ -315,7 +315,7 @@ static void test_backend_seqidlist_filter() {
     std::fprintf(stderr, "-- test_backend_seqidlist_filter\n");
 
     int k = 7;
-    std::string ix_dir = g_test_dir + "/httpd_index";
+    std::string ix_prefix = g_test_dir + "/httpd_index/test";
     std::string sock_path = g_test_dir + "/test_httpd_seqidlist.sock";
     ::unlink(sock_path.c_str());
 
@@ -327,7 +327,7 @@ static void test_backend_seqidlist_filter() {
     KsxReader ksx;
     char kk[4];
     std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string base = ix_dir + "/test.00." + std::string(kk) + "mer";
+    std::string base = ix_prefix + ".00." + std::string(kk) + "mer";
     CHECK(ksx.open(base + ".ksx"));
 
     std::string target_acc;
@@ -338,7 +338,7 @@ static void test_backend_seqidlist_filter() {
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_dir, logger));
+    CHECK(server.load_indexes(ix_prefix, logger));
 
     SearchConfig config;
     int listen_fd = unix_listen(sock_path);

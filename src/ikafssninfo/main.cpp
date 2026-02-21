@@ -24,7 +24,7 @@ static void print_usage(const char* prog) {
         "Usage: %s [options]\n"
         "\n"
         "Required:\n"
-        "  -ix <dir>               Index directory\n"
+        "  -ix <prefix>            Index prefix (like blastn -db)\n"
         "\n"
         "Options:\n"
         "  -db <path>              BLAST DB prefix (show DB info as well)\n"
@@ -42,19 +42,29 @@ struct VolumeFiles {
     int k;
 };
 
-static std::vector<VolumeFiles> discover_volumes(const std::string& ix_dir) {
+static std::vector<VolumeFiles> discover_volumes(const std::string& ix_prefix) {
     std::vector<VolumeFiles> volumes;
-    std::regex kix_pattern(R"((.+)\.(\d+)\.(\d+)mer\.kix)");
 
-    for (const auto& entry : std::filesystem::directory_iterator(ix_dir)) {
+    std::filesystem::path prefix_path(ix_prefix);
+    std::string parent_dir = prefix_path.parent_path().string();
+    std::string db_name = prefix_path.filename().string();
+    if (parent_dir.empty()) parent_dir = ".";
+
+    std::regex suffix_pattern(R"((\d+)\.(\d+)mer\.kix)");
+
+    std::string prefix_dot = db_name + ".";
+    for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
         if (!entry.is_regular_file()) continue;
         std::string fname = entry.path().filename().string();
+        if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
+            continue;
+        std::string suffix = fname.substr(prefix_dot.size());
         std::smatch m;
-        if (std::regex_match(fname, m, kix_pattern)) {
+        if (std::regex_match(suffix, m, suffix_pattern)) {
             VolumeFiles vf;
-            vf.volume_index = static_cast<uint16_t>(std::stoi(m[2].str()));
-            vf.k = std::stoi(m[3].str());
-            std::string base = ix_dir + "/" + m[1].str() + "." + m[2].str() + "." + m[3].str() + "mer";
+            vf.volume_index = static_cast<uint16_t>(std::stoi(m[1].str()));
+            vf.k = std::stoi(m[2].str());
+            std::string base = parent_dir + "/" + db_name + "." + m[1].str() + "." + m[2].str() + "mer";
             vf.kix_path = base + ".kix";
             vf.kpx_path = base + ".kpx";
             vf.ksx_path = base + ".ksx";
@@ -202,14 +212,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::string ix_dir = cli.get_string("-ix");
+    std::string ix_prefix = cli.get_string("-ix");
     std::string db_path = cli.get_string("-db");
     bool verbose = cli.has("-v") || cli.has("--verbose");
 
     // Discover volumes
-    auto vol_files = discover_volumes(ix_dir);
+    auto vol_files = discover_volumes(ix_prefix);
     if (vol_files.empty()) {
-        std::fprintf(stderr, "Error: no index files found in %s\n", ix_dir.c_str());
+        std::fprintf(stderr, "Error: no index files found for prefix %s\n", ix_prefix.c_str());
         return 1;
     }
 
@@ -278,7 +288,7 @@ int main(int argc, char* argv[]) {
 
     // --- Print index information ---
     std::printf("=== ikafssn Index Information ===\n\n");
-    std::printf("Index directory:   %s\n", ix_dir.c_str());
+    std::printf("Index prefix:      %s\n", ix_prefix.c_str());
     std::printf("K-mer length (k):  %d\n", k);
     std::printf("K-mer integer type: %s\n", k < K_TYPE_THRESHOLD ? "uint16" : "uint32");
     std::printf("Table size (4^k):  %lu\n", static_cast<unsigned long>(tbl_size));

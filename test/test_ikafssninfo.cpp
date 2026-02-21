@@ -19,7 +19,8 @@ using namespace ikafssn;
 using namespace ssu_fixture;
 
 static std::string g_testdb_path;
-static std::string g_index_dir;
+static std::string g_index_dir;   // directory containing index files
+static std::string g_index_prefix; // prefix for -ix (e.g. dir + "/testdb")
 static std::string g_build_dir;
 
 static void setup() {
@@ -27,6 +28,7 @@ static void setup() {
 
     g_testdb_path = ssu_db_prefix();
     g_index_dir = "/tmp/ikafssn_info_test_index";
+    g_index_prefix = g_index_dir + "/testdb";
     g_build_dir = std::string(SOURCE_DIR) + "/build/src";
 
     // Create output directory
@@ -85,7 +87,7 @@ static int run_ikafssninfo_exit(const std::string& args, bool capture_stderr = f
 static void test_basic_info() {
     std::fprintf(stderr, "-- test_basic_info\n");
 
-    std::string output = run_ikafssninfo("-ix " + g_index_dir);
+    std::string output = run_ikafssninfo("-ix " + g_index_prefix);
     CHECK(!output.empty());
 
     // Check that key information is present
@@ -106,7 +108,7 @@ static void test_basic_info() {
 static void test_verbose_info() {
     std::fprintf(stderr, "-- test_verbose_info\n");
 
-    std::string output = run_ikafssninfo("-ix " + g_index_dir + " -v");
+    std::string output = run_ikafssninfo("-ix " + g_index_prefix + " -v");
     CHECK(!output.empty());
 
     // Verbose mode should show frequency distribution
@@ -122,7 +124,7 @@ static void test_verbose_info() {
 static void test_db_info() {
     std::fprintf(stderr, "-- test_db_info\n");
 
-    std::string output = run_ikafssninfo("-ix " + g_index_dir + " -db " + g_testdb_path);
+    std::string output = run_ikafssninfo("-ix " + g_index_prefix + " -db " + g_testdb_path);
     CHECK(!output.empty());
 
     // DB info section should be present
@@ -157,7 +159,7 @@ static void test_consistency_with_reader() {
     }
 
     // Now run ikafssninfo and verify the totals match
-    std::string output = run_ikafssninfo("-ix " + g_index_dir);
+    std::string output = run_ikafssninfo("-ix " + g_index_prefix);
     std::string seq_str = "Total sequences:   " + std::to_string(found_seqs);
     CHECK(output.find(seq_str) != std::string::npos);
 }

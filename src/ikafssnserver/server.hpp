@@ -13,7 +13,7 @@
 namespace ikafssn {
 
 struct ServerConfig {
-    std::string ix_dir;
+    std::string ix_prefix;
     std::string unix_socket_path;
     std::string tcp_addr;           // "host:port"
     std::string pid_file;
@@ -30,8 +30,8 @@ public:
     Server() = default;
     ~Server();
 
-    // Load indexes from the directory.
-    bool load_indexes(const std::string& ix_dir, const Logger& logger);
+    // Load indexes matching the given prefix.
+    bool load_indexes(const std::string& ix_prefix, const Logger& logger);
 
     // Run the server (blocking). Returns exit code.
     int run(const ServerConfig& config);

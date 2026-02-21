@@ -19,7 +19,7 @@ static void print_usage(const char* prog) {
         "Usage: %s [options]\n"
         "\n"
         "Required:\n"
-        "  -ix <dir>                Index directory\n"
+        "  -ix <prefix>             Index prefix (like blastn -db)\n"
         "\n"
         "Listener (at least one required):\n"
         "  -socket <path>           UNIX domain socket path\n"
@@ -63,7 +63,7 @@ int main(int argc, char* argv[]) {
     }
 
     ServerConfig config;
-    config.ix_dir = cli.get_string("-ix");
+    config.ix_prefix = cli.get_string("-ix");
     config.unix_socket_path = cli.get_string("-socket");
     config.tcp_addr = cli.get_string("-tcp");
     config.pid_file = cli.get_string("-pid");

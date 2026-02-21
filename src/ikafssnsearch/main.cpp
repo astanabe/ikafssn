@@ -21,6 +21,7 @@
 #include <iostream>
 #include <mutex>
 #include <regex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -35,10 +36,11 @@ static void print_usage(const char* prog) {
         "Usage: %s [options]\n"
         "\n"
         "Required:\n"
-        "  -ix <dir>                Index directory\n"
+        "  -ix <prefix>             Index prefix (like blastn -db)\n"
         "  -query <path>            Query FASTA file (- for stdin)\n"
         "\n"
         "Options:\n"
+        "  -k <int>                 K-mer size to use (required if multiple k values exist)\n"
         "  -o <path>                Output file (default: stdout)\n"
         "  -threads <int>           Parallel search threads (default: all cores)\n"
         "  -mode <1|2>              1=Stage1 only, 2=Stage1+Stage2 (default: 2)\n"
@@ -69,19 +71,32 @@ struct VolumeFiles {
     int k;
 };
 
-static std::vector<VolumeFiles> discover_volumes(const std::string& ix_dir) {
+static std::vector<VolumeFiles> discover_volumes(const std::string& ix_prefix, int filter_k = 0) {
     std::vector<VolumeFiles> volumes;
-    std::regex kix_pattern(R"((.+)\.(\d+)\.(\d+)mer\.kix)");
 
-    for (const auto& entry : std::filesystem::directory_iterator(ix_dir)) {
+    std::filesystem::path prefix_path(ix_prefix);
+    std::string parent_dir = prefix_path.parent_path().string();
+    std::string db_name = prefix_path.filename().string();
+    if (parent_dir.empty()) parent_dir = ".";
+
+    // Match files: <db_name>.<vol_idx>.<k>mer.kix
+    std::regex suffix_pattern(R"((\d+)\.(\d+)mer\.kix)");
+
+    std::string prefix_dot = db_name + ".";
+    for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
         if (!entry.is_regular_file()) continue;
         std::string fname = entry.path().filename().string();
+        if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
+            continue;
+        std::string suffix = fname.substr(prefix_dot.size());
         std::smatch m;
-        if (std::regex_match(fname, m, kix_pattern)) {
+        if (std::regex_match(suffix, m, suffix_pattern)) {
+            int k = std::stoi(m[2].str());
+            if (filter_k > 0 && k != filter_k) continue;
             VolumeFiles vf;
-            vf.volume_index = static_cast<uint16_t>(std::stoi(m[2].str()));
-            vf.k = std::stoi(m[3].str());
-            std::string base = ix_dir + "/" + m[1].str() + "." + m[2].str() + "." + m[3].str() + "mer";
+            vf.volume_index = static_cast<uint16_t>(std::stoi(m[1].str()));
+            vf.k = k;
+            std::string base = parent_dir + "/" + db_name + "." + m[1].str() + "." + m[2].str() + "mer";
             vf.kix_path = base + ".kix";
             vf.kpx_path = base + ".kpx";
             vf.ksx_path = base + ".ksx";
@@ -132,8 +147,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::string ix_dir = cli.get_string("-ix");
+    std::string ix_prefix = cli.get_string("-ix");
     std::string query_path = cli.get_string("-query");
+    int filter_k = cli.get_int("-k", 0);
     std::string output_path = cli.get_string("-o");
     bool verbose = cli.has("-v") || cli.has("--verbose");
 
@@ -214,13 +230,38 @@ int main(int argc, char* argv[]) {
     }
 
     // Discover volumes
-    auto vol_files = discover_volumes(ix_dir);
+    auto vol_files = discover_volumes(ix_prefix, filter_k);
     if (vol_files.empty()) {
-        std::fprintf(stderr, "Error: no index files found in %s\n", ix_dir.c_str());
+        if (filter_k > 0) {
+            std::fprintf(stderr, "Error: no index files found for prefix %s with k=%d\n",
+                         ix_prefix.c_str(), filter_k);
+        } else {
+            std::fprintf(stderr, "Error: no index files found for prefix %s\n", ix_prefix.c_str());
+        }
         return 1;
     }
 
-    int k = vol_files[0].k;
+    // Determine k: if -k was specified, use it; otherwise require exactly one k value
+    int k;
+    if (filter_k > 0) {
+        k = filter_k;
+    } else {
+        std::set<int> k_values;
+        for (const auto& vf : vol_files) k_values.insert(vf.k);
+        if (k_values.size() == 1) {
+            k = *k_values.begin();
+        } else {
+            std::fprintf(stderr, "Error: multiple k-mer sizes found (");
+            bool first = true;
+            for (int kv : k_values) {
+                if (!first) std::fprintf(stderr, ", ");
+                std::fprintf(stderr, "%d", kv);
+                first = false;
+            }
+            std::fprintf(stderr, "); specify -k to select one\n");
+            return 1;
+        }
+    }
     logger.info("Found %zu volume(s), k=%d, threads=%d", vol_files.size(), k, num_threads);
 
     // Read query FASTA

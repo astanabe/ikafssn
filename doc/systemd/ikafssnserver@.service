@@ -8,7 +8,7 @@
 #     sudo systemctl enable --now ikafssnserver@nt
 #
 # Configuration file example (/etc/ikafssn/nt.conf):
-#   IX_DIR=/data/ikafssn/nt_index
+#   IX_DIR=/data/ikafssn/nt_index/nt
 #   SOCKET_PATH=/run/ikafssn/nt.sock
 #   THREADS=16
 #   EXTRA_OPTS=
