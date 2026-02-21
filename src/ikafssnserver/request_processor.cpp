@@ -97,6 +97,12 @@ SearchResponse process_search_request(
         auto& qr = resp.results[qi];
         qr.query_id = query.query_id;
 
+        // Check for degenerate bases
+        if (req.accept_qdegen == 0 && contains_degenerate_base(query.sequence)) {
+            qr.skipped = 1;
+            continue;
+        }
+
         // Collect hits from all volumes
         for (const auto& vol : group.volumes) {
             // Build per-volume OID filter

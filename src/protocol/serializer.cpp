@@ -129,6 +129,9 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     // Backward-compatible trailer: fractional min_stage1_score
     put_u16(buf, req.min_stage1_score_frac_x10000);
 
+    // Backward-compatible trailer: accept_qdegen
+    put_u8(buf, req.accept_qdegen);
+
     return buf;
 }
 
@@ -181,6 +184,11 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
         r.get_u16(req.min_stage1_score_frac_x10000);
     }
 
+    // Backward-compatible trailer: accept_qdegen
+    if (r.remaining() >= 1) {
+        r.get_u8(req.accept_qdegen);
+    }
+
     return true;
 }
 
@@ -210,6 +218,11 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
             put_u16(buf, hit.stage1_score);
             put_u16(buf, hit.volume);
         }
+    }
+
+    // Backward-compatible trailer: per-query skipped flags
+    for (const auto& qr : resp.results) {
+        put_u8(buf, qr.skipped);
     }
 
     return buf;
@@ -246,6 +259,13 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
             if (!r.get_u16(hit.score)) return false;
             if (!r.get_u16(hit.stage1_score)) return false;
             if (!r.get_u16(hit.volume)) return false;
+        }
+    }
+
+    // Backward-compatible trailer: per-query skipped flags
+    if (r.remaining() >= num_queries) {
+        for (uint16_t qi = 0; qi < num_queries; qi++) {
+            r.get_u8(resp.results[qi].skipped);
         }
     }
 

@@ -34,6 +34,7 @@ struct SearchRequest {
     uint8_t  mode = 0;              // 0 = server default, 1 = stage1 only, 2 = stage1+stage2
     uint8_t  stage1_score_type = 0; // 0 = server default, 1 = coverscore, 2 = matchscore
     uint8_t  sort_score = 0;        // 0 = server default, 1 = stage1 score, 2 = chainscore
+    uint8_t  accept_qdegen = 0;     // 0 = reject degenerate queries, 1 = accept
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
 };
@@ -55,6 +56,7 @@ struct ResponseHit {
 struct QueryResult {
     std::string query_id;
     std::vector<ResponseHit> hits;
+    uint8_t skipped = 0;  // 0 = normal, 1 = skipped (degenerate bases)
 };
 
 // Search response message (server -> client)

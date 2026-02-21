@@ -31,6 +31,7 @@ static std::string build_request_json(const SearchRequest& req) {
     root["mode"] = req.mode;
     root["stage1_score"] = req.stage1_score_type;
     root["sort_score"] = req.sort_score;
+    root["accept_qdegen"] = req.accept_qdegen;
 
     switch (req.seqidlist_mode) {
     case SeqidlistMode::kInclude:
@@ -103,6 +104,9 @@ static bool parse_response_json(const std::string& body,
     for (const auto& qr : results) {
         QueryResult query_result;
         query_result.query_id = qr.get("query_id", "").asString();
+        if (qr.get("skipped", false).asBool()) {
+            query_result.skipped = 1;
+        }
 
         const auto& hits = qr["hits"];
         if (hits.isArray()) {

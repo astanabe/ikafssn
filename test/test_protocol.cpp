@@ -407,6 +407,120 @@ static void test_frame_full_round_trip() {
     std::printf(" OK\n");
 }
 
+static void test_search_request_accept_qdegen() {
+    std::printf("  test_search_request_accept_qdegen...");
+
+    SearchRequest req;
+    req.k = 9;
+    req.accept_qdegen = 1;
+    req.queries.push_back({"q1", "ACGTRYSWKM"});
+
+    auto data = serialize(req);
+    SearchRequest req2;
+    assert(deserialize(data, req2));
+
+    assert(req2.accept_qdegen == 1);
+
+    // Also test with accept_qdegen = 0
+    req.accept_qdegen = 0;
+    data = serialize(req);
+    SearchRequest req3;
+    assert(deserialize(data, req3));
+    assert(req3.accept_qdegen == 0);
+
+    std::printf(" OK\n");
+}
+
+static void test_search_response_skipped() {
+    std::printf("  test_search_response_skipped...");
+
+    SearchResponse resp;
+    resp.status = 0;
+    resp.k = 9;
+
+    QueryResult qr1;
+    qr1.query_id = "q1";
+    qr1.skipped = 1;
+    resp.results.push_back(qr1);
+
+    QueryResult qr2;
+    qr2.query_id = "q2";
+    qr2.skipped = 0;
+    ResponseHit hit;
+    hit.accession = "ACC001";
+    hit.strand = 0;
+    hit.q_start = 0;
+    hit.q_end = 100;
+    hit.s_start = 0;
+    hit.s_end = 100;
+    hit.score = 10;
+    hit.stage1_score = 5;
+    hit.volume = 0;
+    qr2.hits.push_back(hit);
+    resp.results.push_back(qr2);
+
+    auto data = serialize(resp);
+    SearchResponse resp2;
+    assert(deserialize(data, resp2));
+
+    assert(resp2.results.size() == 2);
+    assert(resp2.results[0].query_id == "q1");
+    assert(resp2.results[0].skipped == 1);
+    assert(resp2.results[0].hits.empty());
+    assert(resp2.results[1].query_id == "q2");
+    assert(resp2.results[1].skipped == 0);
+    assert(resp2.results[1].hits.size() == 1);
+
+    std::printf(" OK\n");
+}
+
+static void test_search_request_backward_compat_no_accept_qdegen() {
+    std::printf("  test_search_request_backward_compat_no_accept_qdegen...");
+
+    // Simulate old format: serialize without the accept_qdegen trailer
+    // by serializing and then trimming the last byte
+    SearchRequest req;
+    req.k = 9;
+    req.accept_qdegen = 0;
+    req.queries.push_back({"q1", "ACGT"});
+
+    auto data = serialize(req);
+    // Remove the last byte (accept_qdegen trailer)
+    data.pop_back();
+
+    SearchRequest req2;
+    assert(deserialize(data, req2));
+    // Should default to 0
+    assert(req2.accept_qdegen == 0);
+
+    std::printf(" OK\n");
+}
+
+static void test_search_response_backward_compat_no_skipped() {
+    std::printf("  test_search_response_backward_compat_no_skipped...");
+
+    // Simulate old format: serialize a response, remove the skipped trailer
+    SearchResponse resp;
+    resp.status = 0;
+    resp.k = 9;
+
+    QueryResult qr;
+    qr.query_id = "q1";
+    qr.skipped = 1; // Will be serialized
+    resp.results.push_back(qr);
+
+    auto data = serialize(resp);
+    // Remove the last byte (skipped trailer for 1 query)
+    data.pop_back();
+
+    SearchResponse resp2;
+    assert(deserialize(data, resp2));
+    // Should default to 0
+    assert(resp2.results[0].skipped == 0);
+
+    std::printf(" OK\n");
+}
+
 int main() {
     std::printf("test_protocol:\n");
 
@@ -424,6 +538,10 @@ int main() {
     test_info_response_serialize();
     test_info_response_empty();
     test_frame_full_round_trip();
+    test_search_request_accept_qdegen();
+    test_search_response_skipped();
+    test_search_request_backward_compat_no_accept_qdegen();
+    test_search_response_backward_compat_no_skipped();
 
     std::printf("All protocol tests passed.\n");
     return 0;

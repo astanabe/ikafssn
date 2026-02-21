@@ -70,6 +70,7 @@ void HttpController::search(
     sreq.mode = static_cast<uint8_t>(j.get("mode", 0).asUInt());
     sreq.stage1_score_type = static_cast<uint8_t>(j.get("stage1_score", 0).asUInt());
     sreq.sort_score = static_cast<uint8_t>(j.get("sort_score", 0).asUInt());
+    sreq.accept_qdegen = static_cast<uint8_t>(j.get("accept_qdegen", 0).asUInt());
 
     // Seqidlist mode
     std::string mode_str = j.get("seqidlist_mode", "none").asString();
@@ -160,6 +161,9 @@ void HttpController::search(
                 hits_arr.append(std::move(hobj));
             }
             qobj["hits"] = std::move(hits_arr);
+            if (qr.skipped != 0) {
+                qobj["skipped"] = true;
+            }
             results_arr.append(std::move(qobj));
         }
         result["results"] = std::move(results_arr);

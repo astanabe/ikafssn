@@ -171,6 +171,44 @@ static void test_scanner_k13_u32() {
     }
 }
 
+static void test_contains_degenerate_base() {
+    // ACGT only should return false
+    CHECK(!contains_degenerate_base("ACGT"));
+    CHECK(!contains_degenerate_base("acgt"));
+    CHECK(!contains_degenerate_base("ACGTACGTACGT"));
+    CHECK(!contains_degenerate_base(""));
+
+    // Each IUPAC ambiguity code should return true
+    CHECK(contains_degenerate_base("ACGTR"));  // R
+    CHECK(contains_degenerate_base("ACGTY"));  // Y
+    CHECK(contains_degenerate_base("ACGTS"));  // S
+    CHECK(contains_degenerate_base("ACGTW"));  // W
+    CHECK(contains_degenerate_base("ACGTK"));  // K
+    CHECK(contains_degenerate_base("ACGTM"));  // M
+    CHECK(contains_degenerate_base("ACGTB"));  // B
+    CHECK(contains_degenerate_base("ACGTD"));  // D
+    CHECK(contains_degenerate_base("ACGTH"));  // H
+    CHECK(contains_degenerate_base("ACGTV"));  // V
+    CHECK(contains_degenerate_base("ACGTN"));  // N
+
+    // Lowercase
+    CHECK(contains_degenerate_base("acgtr"));
+    CHECK(contains_degenerate_base("acgty"));
+    CHECK(contains_degenerate_base("acgts"));
+    CHECK(contains_degenerate_base("acgtw"));
+    CHECK(contains_degenerate_base("acgtk"));
+    CHECK(contains_degenerate_base("acgtm"));
+    CHECK(contains_degenerate_base("acgtb"));
+    CHECK(contains_degenerate_base("acgtd"));
+    CHECK(contains_degenerate_base("acgth"));
+    CHECK(contains_degenerate_base("acgtv"));
+    CHECK(contains_degenerate_base("acgtn"));
+
+    // Single degenerate character
+    CHECK(contains_degenerate_base("N"));
+    CHECK(contains_degenerate_base("R"));
+}
+
 int main() {
     test_base_encoding();
     test_known_kmer();
@@ -182,6 +220,7 @@ int main() {
     test_scanner_k8_boundary();
     test_scanner_k9_u32();
     test_scanner_k13_u32();
+    test_contains_degenerate_base();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

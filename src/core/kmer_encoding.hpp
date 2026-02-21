@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <functional>
+#include <string>
 #include "core/config.hpp"
 
 namespace ikafssn {
@@ -62,6 +63,46 @@ inline KmerInt kmer_revcomp(KmerInt kmer, int k) {
     // Shift out unused high bits
     rc >>= (W - 2 * k);
     return rc;
+}
+
+// 256-element LUT: true for IUPAC ambiguity codes (R,Y,S,W,K,M,B,D,H,V,N)
+inline const bool* degenerate_base_table() {
+    static const bool table[256] = {
+        // 0x00-0x3F: all false
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        // 0x40-0x5F: uppercase letters
+        // @=0 A=0 B=1 C=0 D=1 E=0 F=0 G=0 H=1 I=0 J=0 K=1 L=0 M=1 N=1 O=0
+        // P=0 Q=0 R=1 S=1 T=0 U=0 V=1 W=1 X=0 Y=1 Z=0 [=0 \=0 ]=0 ^=0 _=0
+        0,0,1,0,1,0,0,0,1,0,0,1,0,1,1,0,
+        0,0,1,1,0,0,1,1,0,1,0,0,0,0,0,0,
+        // 0x60-0x7F: lowercase letters
+        // `=0 a=0 b=1 c=0 d=1 e=0 f=0 g=0 h=1 i=0 j=0 k=1 l=0 m=1 n=1 o=0
+        // p=0 q=0 r=1 s=1 t=0 u=0 v=1 w=1 x=0 y=1 z=0 {=0 |=0 }=0 ~=0 DEL=0
+        0,0,1,0,1,0,0,0,1,0,0,1,0,1,1,0,
+        0,0,1,1,0,0,1,1,0,1,0,0,0,0,0,0,
+        // 0x80-0xFF: all false
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    };
+    return table;
+}
+
+// Check if a sequence contains any IUPAC degenerate bases
+inline bool contains_degenerate_base(const std::string& seq) {
+    const bool* tbl = degenerate_base_table();
+    for (char c : seq) {
+        if (tbl[static_cast<uint8_t>(c)]) return true;
+    }
+    return false;
 }
 
 // Sliding window k-mer scanner with N counter.

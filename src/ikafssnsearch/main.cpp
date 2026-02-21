@@ -53,6 +53,7 @@ static void print_usage(const char* prog) {
         "  -num_results <int>       Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
+        "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)\n"
         "  -outfmt <tab|json>       Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
@@ -194,6 +195,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    int accept_qdegen = cli.get_int("-accept_qdegen", 0);
+
     // Output format
     OutputFormat outfmt = OutputFormat::kTab;
     std::string outfmt_str = cli.get_string("-outfmt", "tab");
@@ -221,6 +224,20 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     logger.info("Read %zu query sequence(s)", queries.size());
+
+    // Check for degenerate bases if accept_qdegen == 0
+    std::vector<bool> query_skipped(queries.size(), false);
+    bool has_skipped = false;
+    if (accept_qdegen == 0) {
+        for (size_t qi = 0; qi < queries.size(); qi++) {
+            if (contains_degenerate_base(queries[qi].sequence)) {
+                query_skipped[qi] = true;
+                has_skipped = true;
+                std::fprintf(stderr, "Warning: query '%s' contains degenerate bases, skipping\n",
+                             queries[qi].id.c_str());
+            }
+        }
+    }
 
     // Read seqidlist if specified
     std::vector<std::string> seqidlist;
@@ -263,10 +280,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Build job list: (query, volume) pairs
+    // Build job list: (query, volume) pairs, skipping degenerate queries
     std::vector<SearchJob> jobs;
     jobs.reserve(queries.size() * vol_data.size());
     for (size_t qi = 0; qi < queries.size(); qi++) {
+        if (query_skipped[qi]) continue;
         for (size_t vi = 0; vi < vol_data.size(); vi++) {
             jobs.push_back({qi, vi});
         }
@@ -374,5 +392,5 @@ int main(int argc, char* argv[]) {
     }
 
     logger.info("Done. %zu hit(s) reported.", all_hits.size());
-    return 0;
+    return has_skipped ? 2 : 0;
 }

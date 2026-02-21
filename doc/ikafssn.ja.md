@@ -115,9 +115,12 @@ ikafssnsearch [options]
                            1=Stage 1 スコア、2=chainscore
   -seqidlist <path>       検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
+  -accept_qdegen <0|1>    縮重塩基を含むクエリを許可 (デフォルト: 0)
   -outfmt <tab|json>      出力形式 (デフォルト: tab)
   -v, --verbose           詳細ログ出力
 ```
+
+`-accept_qdegen` が 0 (デフォルト) の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは警告付きでスキップされ、終了コードは 2 になります。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます (縮重塩基の位置は k-mer スキャン時に無効として扱われスキップされます)。
 
 `-seqidlist` と `-negative_seqidlist` は排他的 (同時指定不可) です。ファイル形式はテキスト (1 行 1 アクセッション) と `blastdb_aliastool -seqid_file_in` で生成されるバイナリ形式の両方を受け付け、先頭のマジックバイトで自動判別します。
 
@@ -319,6 +322,7 @@ ikafssnclient [options]
   -sort_score <1|2>        結果のソート基準 (デフォルト: サーバ側デフォルト)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
+  -accept_qdegen <0|1>     縮重塩基を含むクエリを許可 (デフォルト: 0)
   -outfmt <tab|json>       出力形式 (デフォルト: tab)
   -v, --verbose            詳細ログ出力
 ```

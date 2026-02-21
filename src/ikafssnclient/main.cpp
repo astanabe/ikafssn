@@ -47,6 +47,7 @@ static void print_usage(const char* prog) {
         "  -num_results <int>       Max results per query (default: server default)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
+        "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)\n"
         "  -outfmt <tab|json>       Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
@@ -132,6 +133,7 @@ int main(int argc, char* argv[]) {
     req.mode = static_cast<uint8_t>(cli.get_int("-mode", 0));
     req.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
     req.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 0));
+    req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 0));
 
     // Seqidlist
     if (cli.has("-seqidlist")) {
@@ -200,9 +202,20 @@ int main(int argc, char* argv[]) {
 
     logger.info("Received response: k=%d, %zu query result(s)", resp.k, resp.results.size());
 
+    // Check for skipped queries
+    bool has_skipped = false;
+    for (const auto& qr : resp.results) {
+        if (qr.skipped != 0) {
+            has_skipped = true;
+            std::fprintf(stderr, "Warning: query '%s' was skipped (degenerate bases)\n",
+                         qr.query_id.c_str());
+        }
+    }
+
     // Convert response to OutputHit format
     std::vector<OutputHit> all_hits;
     for (const auto& qr : resp.results) {
+        if (qr.skipped != 0) continue;
         for (const auto& hit : qr.hits) {
             OutputHit oh;
             oh.query_id = qr.query_id;
@@ -234,5 +247,5 @@ int main(int argc, char* argv[]) {
     }
 
     logger.info("Done. %zu hit(s) reported.", all_hits.size());
-    return 0;
+    return has_skipped ? 2 : 0;
 }
