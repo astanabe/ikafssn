@@ -6,6 +6,7 @@
 #include "core/ambiguity_parser.hpp"
 #include "core/varint.hpp"
 #include "index/ksx_writer.hpp"
+#include "index/khx_writer.hpp"
 #include "index/kix_format.hpp"
 #include "index/kpx_format.hpp"
 #include "util/logger.hpp"
@@ -89,9 +90,11 @@ bool build_index(BlastDbReader& db,
     std::string ksx_tmp = output_prefix + ".ksx.tmp";
     std::string kix_tmp = output_prefix + ".kix.tmp";
     std::string kpx_tmp = output_prefix + ".kpx.tmp";
+    std::string khx_tmp = output_prefix + ".khx.tmp";
     std::string ksx_final = output_prefix + ".ksx";
     std::string kix_final = output_prefix + ".kix";
     std::string kpx_final = output_prefix + ".kpx";
+    std::string khx_final = output_prefix + ".khx";
 
     // =========== Phase 0: Metadata collection -> .ksx ===========
     logger.info("Phase 0: collecting metadata...");
@@ -185,6 +188,14 @@ bool build_index(BlastDbReader& db,
         } else {
             freq_threshold = static_cast<uint64_t>(config.max_freq_build);
         }
+
+        // Write .khx before zeroing counts
+        if (!write_khx(khx_tmp, k, counts, freq_threshold, logger)) {
+            logger.error("Failed to write %s", khx_tmp.c_str());
+            std::remove(ksx_tmp.c_str());
+            return false;
+        }
+
         uint64_t excluded = 0;
         for (uint64_t i = 0; i < tbl_size; i++) {
             if (counts[i] > freq_threshold) {
@@ -465,8 +476,16 @@ bool build_index(BlastDbReader& db,
         logger.error("Failed to rename %s -> %s", kpx_tmp.c_str(), kpx_final.c_str());
         return false;
     }
+    // Rename .khx if it was created (only when max_freq_build > 0)
+    if (freq_threshold > 0) {
+        if (std::rename(khx_tmp.c_str(), khx_final.c_str()) != 0) {
+            logger.error("Failed to rename %s -> %s", khx_tmp.c_str(), khx_final.c_str());
+            return false;
+        }
+    }
 
-    logger.info("Index built: %s (.kix, .kpx, .ksx)", output_prefix.c_str());
+    logger.info("Index built: %s (.kix, .kpx, .ksx%s)", output_prefix.c_str(),
+                freq_threshold > 0 ? ", .khx" : "");
     return true;
 }
 

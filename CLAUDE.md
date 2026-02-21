@@ -65,8 +65,8 @@ Each command links only its required dependencies to allow lightweight deploymen
 ### Shared library layers (`src/`)
 
 - **`core/`** — Fundamental types (`Hit`, `ChainResult`), constants, k-mer 2-bit encoding/revcomp (templates parameterized on `KmerInt` = `uint16_t` for k<=8, `uint32_t` for k=9-13), LEB128 varint
-- **`index/`** — Reader/writer for three index file formats (`.kix` main index, `.kpx` position data, `.ksx` sequence metadata), index builder with partition+buffer strategy
-- **`search/`** — Two-stage search pipeline: Stage 1 (ID posting scan with OID filter, coverscore or matchscore) -> Stage 2 (position-aware chaining DP with diagonal filter, chainscore). Mode 1 skips Stage 2 entirely. Configurable sort_score (stage1 score or chainscore), stage1_topn=0/num_results=0 for unlimited with sort skip
+- **`index/`** — Reader/writer for four index file formats (`.kix` main index, `.kpx` position data, `.ksx` sequence metadata, `.khx` build-time exclusion bitset), index builder with partition+buffer strategy
+- **`search/`** — Two-stage search pipeline: Stage 1 (ID posting scan with OID filter, coverscore or matchscore) -> Stage 2 (position-aware chaining DP with diagonal filter, chainscore). Mode 1 skips Stage 2 entirely. Configurable sort_score (stage1 score or chainscore). Defaults: stage1_topn=0 (unlimited, no sort), num_results=0 (unlimited, no sort), min_stage1_score=0.5 (fractional), min_score=1 — speed-first defaults that skip sorting. Set positive stage1_topn/num_results to enable sorting. Fractional min_stage1_score (0 < P < 1) resolves per-query threshold as `ceil(Nqkmer * P) - Nhighfreq`, using `.khx` for build-time exclusion awareness
 - **`protocol/`** — Length-prefixed binary protocol for client-server communication (frame header + typed messages)
 - **`io/`** — BLAST DB reader (CSeqDB wrapper), FASTA reader, mmap RAII wrapper, seqidlist reader (text/binary auto-detect), result writer/reader
 - **`util/`** — CLI parser, size string parser ("8G"), socket utilities, progress display, logger
@@ -78,6 +78,7 @@ Per BLAST DB volume, three files are generated with naming pattern `<db_prefix>.
 - **`.kix`** — Header + direct-address table (offsets[4^k], counts[4^k]) + delta-compressed ID postings
 - **`.kpx`** — Header + pos_offsets[4^k] + delta-compressed position postings (correlated with .kix ID postings)
 - **`.ksx`** — Header + seq_lengths[] + accession string table (enables standalone result display without BLAST DB)
+- **`.khx`** — Header (32B, magic "KMHX") + bitset (ceil(4^k / 8) bytes). Generated only when `-max_freq_build` is used. Records which k-mers were excluded during index build (bit i = 1 means k-mer i was excluded). Used at search time for fractional `-min_stage1_score` threshold adjustment
 
 ID and position postings are in separate files so Stage 1 never touches `.kpx`, maximizing page cache efficiency.
 

@@ -17,8 +17,8 @@ struct Stage1Candidate {
 
 struct Stage1Config {
     uint32_t max_freq = 0;          // 0 = auto-calculate
-    uint32_t stage1_topn = 500;     // 0 = unlimited (skip sort)
-    uint32_t min_stage1_score = 2;
+    uint32_t stage1_topn = 0;       // 0 = unlimited (skip sort)
+    uint32_t min_stage1_score = 1;
     uint8_t  stage1_score_type = 1; // 1 = coverscore, 2 = matchscore
 };
 

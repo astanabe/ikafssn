@@ -28,13 +28,13 @@ static void print_usage(const char* prog) {
         "Options:\n"
         "  -threads <int>           Worker threads (default: all cores)\n"
         "  -pid <path>              PID file path\n"
-        "  -min_score <int>         Default minimum chain score (default: 3)\n"
+        "  -min_score <int>         Default minimum chain score (default: 1)\n"
         "  -max_gap <int>           Default chaining gap tolerance (default: 100)\n"
         "  -max_freq <int>          Default high-freq k-mer skip threshold (default: auto)\n"
         "  -min_diag_hits <int>     Default diagonal filter min hits (default: 2)\n"
-        "  -stage1_topn <int>       Default Stage 1 candidate limit (default: 500)\n"
-        "  -min_stage1_score <int>  Default Stage 1 minimum score (default: 2)\n"
-        "  -num_results <int>       Default max results per query (default: 50)\n"
+        "  -stage1_topn <int>       Default Stage 1 candidate limit (default: 0)\n"
+        "  -min_stage1_score <num>  Default Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
+        "  -num_results <int>       Default max results per query (default: 0)\n"
         "  -shutdown_timeout <int>  Graceful shutdown timeout in seconds (default: 30)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
@@ -74,17 +74,23 @@ int main(int argc, char* argv[]) {
     config.search_config.stage1.max_freq =
         static_cast<uint32_t>(cli.get_int("-max_freq", 0));
     config.search_config.stage1.stage1_topn =
-        static_cast<uint32_t>(cli.get_int("-stage1_topn", 500));
-    config.search_config.stage1.min_stage1_score =
-        static_cast<uint32_t>(cli.get_int("-min_stage1_score", 2));
+        static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
+    {
+        double min_s1 = cli.get_double("-min_stage1_score", 0.5);
+        if (min_s1 > 0 && min_s1 < 1.0) {
+            config.search_config.min_stage1_score_frac = min_s1;
+        } else {
+            config.search_config.stage1.min_stage1_score = static_cast<uint32_t>(min_s1);
+        }
+    }
     config.search_config.stage2.max_gap =
         static_cast<uint32_t>(cli.get_int("-max_gap", 100));
     config.search_config.stage2.min_diag_hits =
         static_cast<uint32_t>(cli.get_int("-min_diag_hits", 2));
     config.search_config.stage2.min_score =
-        static_cast<uint32_t>(cli.get_int("-min_score", 3));
+        static_cast<uint32_t>(cli.get_int("-min_score", 1));
     config.search_config.num_results =
-        static_cast<uint32_t>(cli.get_int("-num_results", 50));
+        static_cast<uint32_t>(cli.get_int("-num_results", 0));
 
     Server server;
     g_server = &server;

@@ -3,6 +3,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "index/khx_reader.hpp"
 #include "io/blastdb_reader.hpp"
 #include "util/cli_parser.hpp"
 #include "util/logger.hpp"
@@ -36,6 +37,7 @@ struct VolumeFiles {
     std::string kix_path;
     std::string kpx_path;
     std::string ksx_path;
+    std::string khx_path;
     uint16_t volume_index;
     int k;
 };
@@ -56,6 +58,7 @@ static std::vector<VolumeFiles> discover_volumes(const std::string& ix_dir) {
             vf.kix_path = base + ".kix";
             vf.kpx_path = base + ".kpx";
             vf.ksx_path = base + ".ksx";
+            vf.khx_path = base + ".khx";
             volumes.push_back(vf);
         }
     }
@@ -98,6 +101,9 @@ struct VolumeStats {
     uint64_t kix_size;
     uint64_t kpx_size;
     uint64_t ksx_size;
+    uint64_t khx_size;
+    uint64_t khx_excluded;  // number of excluded k-mers (0 if no .khx)
+    bool has_khx;
     // Per-volume counts array (for verbose stats)
     std::vector<uint32_t> counts;
 };
@@ -219,6 +225,7 @@ int main(int argc, char* argv[]) {
     uint64_t total_kix_size = 0;
     uint64_t total_kpx_size = 0;
     uint64_t total_ksx_size = 0;
+    uint64_t total_khx_size = 0;
 
     // Aggregated counts across all volumes (for frequency distribution)
     std::vector<uint64_t> aggregated_counts(tbl_size, 0);
@@ -238,6 +245,18 @@ int main(int argc, char* argv[]) {
         vs.kpx_size = file_size(vf.kpx_path);
         vs.ksx_size = file_size(vf.ksx_path);
 
+        // Try to open .khx
+        KhxReader khx;
+        vs.has_khx = khx.open(vf.khx_path);
+        if (vs.has_khx) {
+            vs.khx_size = file_size(vf.khx_path);
+            vs.khx_excluded = khx.count_excluded();
+            khx.close();
+        } else {
+            vs.khx_size = 0;
+            vs.khx_excluded = 0;
+        }
+
         // Read per-kmer counts for frequency analysis
         const uint32_t* cts = kix.counts();
         vs.counts.assign(cts, cts + tbl_size);
@@ -251,6 +270,7 @@ int main(int argc, char* argv[]) {
         total_kix_size += vs.kix_size;
         total_kpx_size += vs.kpx_size;
         total_ksx_size += vs.ksx_size;
+        total_khx_size += vs.khx_size;
 
         vol_stats.push_back(std::move(vs));
         kix.close();
@@ -281,7 +301,13 @@ int main(int argc, char* argv[]) {
         std::printf("    .ksx:          %s (%lu bytes)\n",
                     format_size(vs.ksx_size).c_str(),
                     static_cast<unsigned long>(vs.ksx_size));
-        uint64_t vol_total = vs.kix_size + vs.kpx_size + vs.ksx_size;
+        if (vs.has_khx) {
+            std::printf("    .khx:          %s (%lu bytes, %lu excluded k-mers)\n",
+                        format_size(vs.khx_size).c_str(),
+                        static_cast<unsigned long>(vs.khx_size),
+                        static_cast<unsigned long>(vs.khx_excluded));
+        }
+        uint64_t vol_total = vs.kix_size + vs.kpx_size + vs.ksx_size + vs.khx_size;
         std::printf("    Total:         %s (%lu bytes)\n",
                     format_size(vol_total).c_str(),
                     static_cast<unsigned long>(vol_total));
@@ -297,13 +323,16 @@ int main(int argc, char* argv[]) {
     std::printf("--- Overall Statistics ---\n\n");
     std::printf("Total sequences:   %lu\n", static_cast<unsigned long>(total_sequences));
     std::printf("Total postings:    %lu\n", static_cast<unsigned long>(total_postings));
-    uint64_t total_index_size = total_kix_size + total_kpx_size + total_ksx_size;
+    uint64_t total_index_size = total_kix_size + total_kpx_size + total_ksx_size + total_khx_size;
     std::printf("Total index size:  %s (%lu bytes)\n",
                 format_size(total_index_size).c_str(),
                 static_cast<unsigned long>(total_index_size));
     std::printf("  .kix total:      %s\n", format_size(total_kix_size).c_str());
     std::printf("  .kpx total:      %s\n", format_size(total_kpx_size).c_str());
     std::printf("  .ksx total:      %s\n", format_size(total_ksx_size).c_str());
+    if (total_khx_size > 0) {
+        std::printf("  .khx total:      %s\n", format_size(total_khx_size).c_str());
+    }
 
     // Compression ratio: compare delta-compressed posting size vs uncompressed
     // Uncompressed ID posting: total_postings * sizeof(uint32_t) = 4 bytes each

@@ -126,6 +126,9 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
         buf.insert(buf.end(), q.sequence.begin(), q.sequence.end());
     }
 
+    // Backward-compatible trailer: fractional min_stage1_score
+    put_u16(buf, req.min_stage1_score_frac_x10000);
+
     return buf;
 }
 
@@ -171,6 +174,11 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
             reinterpret_cast<const char*>(data.data() + (data.size() - r.remaining())),
             seq_len);
         if (!r.skip(seq_len)) return false;
+    }
+
+    // Backward-compatible trailer: fractional min_stage1_score
+    if (r.remaining() >= 2) {
+        r.get_u16(req.min_stage1_score_frac_x10000);
     }
 
     return true;

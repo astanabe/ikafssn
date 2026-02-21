@@ -75,6 +75,8 @@ bool Server::load_indexes(const std::string& ix_dir, const Logger& logger) {
             logger.error("Cannot open %s.ksx", vf.base_path.c_str());
             return false;
         }
+        // Try to open .khx (non-fatal if missing)
+        svd.khx.open(vf.base_path + ".khx");
 
         group.volumes.push_back(std::move(svd));
     }

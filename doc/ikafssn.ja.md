@@ -38,7 +38,7 @@ ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db mydb > matche
 
 ### ikafssnindex
 
-BLAST DB から k-mer 転置インデックスを構築します。各ボリュームに対して `.kix` (ID ポスティング)、`.kpx` (位置ポスティング)、`.ksx` (配列メタデータ) の 3 ファイルを生成します。
+BLAST DB から k-mer 転置インデックスを構築します。各ボリュームに対して `.kix` (ID ポスティング)、`.kpx` (位置ポスティング)、`.ksx` (配列メタデータ) の 3 ファイルを生成します。`-max_freq_build` 使用時は `.khx` (構築時除外ビットセット) も生成されます。
 
 ```
 ikafssnindex [options]
@@ -97,13 +97,16 @@ ikafssnsearch [options]
 オプション:
   -o <path>               出力ファイル (デフォルト: 標準出力)
   -threads <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
-  -min_score <int>        最小スコア (デフォルト: 3)
+  -min_score <int>        最小スコア (デフォルト: 1)
   -max_gap <int>          チェイニング対角線ずれ許容幅 (デフォルト: 100)
   -max_freq <int>         高頻度 k-mer スキップ閾値 (デフォルト: 自動計算)
   -min_diag_hits <int>    対角線フィルタ最小ヒット数 (デフォルト: 2)
-  -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 500)
-  -min_stage1_score <int> Stage 1 最小スコア閾値 (デフォルト: 2)
-  -num_results <int>      最終出力件数、0=無制限 (デフォルト: 50)
+  -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 0)
+  -min_stage1_score <num> Stage 1 最小スコア閾値 (デフォルト: 0.5)
+                          整数 (>= 1): 絶対閾値
+                          小数 (0 < P < 1): クエリ k-mer に対する割合
+                            クエリごとに ceil(Nqkmer * P) - Nhighfreq に解決
+  -num_results <int>      最終出力件数、0=無制限 (デフォルト: 0)
   -mode <1|2>              検索モード (デフォルト: 2)
                            1=Stage 1 のみ、2=Stage 1 + Stage 2
   -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: 1)
@@ -133,6 +136,9 @@ ikafssnsearch -ix ./index -query query.fasta -seqidlist targets.txt
 
 # negative_seqidlist で特定配列を除外
 ikafssnsearch -ix ./index -query query.fasta -negative_seqidlist exclude.txt
+
+# 割合指定の Stage 1 閾値 (クエリ k-mer の 50%)
+ikafssnsearch -ix ./index -query query.fasta -min_stage1_score 0.5
 
 # パイプラインで ikafssnretrieve に接続
 ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -207,13 +213,14 @@ ikafssnserver [options]
 オプション:
   -threads <int>          ワーカースレッド数 (デフォルト: 利用可能な全コア)
   -pid <path>             PID ファイルパス
-  -min_score <int>        デフォルト最小チェインスコア (デフォルト: 3)
+  -min_score <int>        デフォルト最小チェインスコア (デフォルト: 1)
   -max_gap <int>          デフォルトチェイニング対角線ずれ許容幅 (デフォルト: 100)
   -max_freq <int>         デフォルト高頻度 k-mer スキップ閾値 (デフォルト: 自動計算)
   -min_diag_hits <int>    デフォルト対角線フィルタ最小ヒット数 (デフォルト: 2)
-  -stage1_topn <int>      デフォルト Stage 1 候補数上限 (デフォルト: 500)
-  -min_stage1_score <int> デフォルト Stage 1 最小スコア閾値 (デフォルト: 2)
-  -num_results <int>      デフォルト最終出力件数 (デフォルト: 50)
+  -stage1_topn <int>      デフォルト Stage 1 候補数上限 (デフォルト: 0)
+  -min_stage1_score <num> デフォルト Stage 1 最小スコア閾値 (デフォルト: 0.5)
+                          整数 (>= 1) または小数 (0 < P < 1)
+  -num_results <int>      デフォルト最終出力件数 (デフォルト: 0)
   -shutdown_timeout <int> グレースフルシャットダウンのタイムアウト秒数 (デフォルト: 30)
   -v, --verbose           詳細ログ出力
 ```
@@ -304,7 +311,8 @@ ikafssnclient [options]
   -max_freq <int>          高頻度 k-mer スキップ閾値 (デフォルト: サーバ側デフォルト)
   -min_diag_hits <int>     対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
   -stage1_topn <int>       Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
-  -min_stage1_score <int>  Stage 1 最小スコア閾値 (デフォルト: サーバ側デフォルト)
+  -min_stage1_score <num>  Stage 1 最小スコア閾値 (デフォルト: サーバ側デフォルト)
+                           整数 (>= 1) または小数 (0 < P < 1)
   -num_results <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
   -mode <1|2>              検索モード (デフォルト: サーバ側デフォルト)
   -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: サーバ側デフォルト)
@@ -356,7 +364,7 @@ ikafssninfo [options]
 
 - k-mer 長 (k) および k-mer 整数型 (uint16/uint32)
 - ボリューム数
-- 各ボリュームの配列数、総ポスティング数、ファイルサイズ
+- 各ボリュームの配列数、総ポスティング数、ファイルサイズ、除外 k-mer 数 (`.khx` 存在時)
 - 全体統計: 総配列数、総ポスティング数、総インデックスサイズ、圧縮率
 - `-v` 指定時: k-mer 出現頻度分布 (min, max, mean, パーセンタイル)
 - `-db` 指定時: BLAST DB のタイトル、配列数、総塩基数、ボリューム構成
@@ -378,7 +386,9 @@ ikafssninfo -ix ./index -v
 
 ikafssn は 2 段階の検索パイプラインを使用します。
 
-1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとにスコアを集計します。スコア種別は 2 種類あります: **coverscore** (配列にマッチしたクエリ k-mer の種類数) と **matchscore** (クエリ k-mer と参照配列位置の総マッチ数)。`min_stage1_score` 以上のスコアを持つ配列を候補として選出します。`stage1_topn > 0` の場合はスコア順にソートして切り詰めます。`stage1_topn = 0` の場合は全候補をソートせずに返します。
+デフォルトパラメータはスループットを優先しています。`stage1_topn=0` と `num_results=0` によりソートを省略し、`min_stage1_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。ランク付けされた出力が必要な場合は `-stage1_topn` や `-num_results` に正の値を設定してください。ソートが有効になりますが、結果件数が多い場合は速度が低下する可能性があります。
+
+1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとにスコアを集計します。スコア種別は 2 種類あります: **coverscore** (配列にマッチしたクエリ k-mer の種類数) と **matchscore** (クエリ k-mer と参照配列位置の総マッチ数)。`min_stage1_score` 以上のスコアを持つ配列を候補として選出します。`stage1_topn > 0` の場合はスコア順にソートして切り詰めます。`stage1_topn = 0` (デフォルト) の場合は全候補をソートせずに返します。
 
 2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= min_score` のチェインが結果に含まれます。
 
@@ -396,6 +406,24 @@ max_freq = mean_count * 10    ([1000, 100000] に制限)
 ```
 
 この値はボリュームごとに `.kix` ヘッダから算出されます。
+
+**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。除外された k-mer は `.khx` ファイルに記録されます。検索時に割合指定の `-min_stage1_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算から差し引かれます。
+
+### 割合指定の Stage 1 閾値
+
+`-min_stage1_score` を小数 (0 < P < 1) で指定すると、閾値はクエリごとに以下の式で解決されます:
+
+```
+threshold = ceil(Nqkmer * P) - Nhighfreq
+```
+
+各変数の意味:
+- **Nqkmer**: クエリ k-mer の数 (coverscore では種類数、matchscore では総位置数)
+- **Nhighfreq**: 除外されるクエリ k-mer の数。以下を合算:
+  - 検索時除外: カウント > `max_freq` の k-mer
+  - 構築時除外: `.khx` に記録された k-mer (存在する場合)
+
+解決された閾値が 0 以下の場合、その鎖は警告付きでスキップされます。
 
 ### スコア種別
 
@@ -514,15 +542,18 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 
 ## インデックスファイル形式
 
-BLAST DB ボリュームごとに 3 つのファイルが生成されます:
+BLAST DB ボリュームごとに 3 つのファイル (およびオプションで 4 つ目) が生成されます:
 
 ```
 <db_prefix>.<volume_index>.<kk>mer.kix   — ID ポスティング (直接アドレステーブル + デルタ圧縮)
 <db_prefix>.<volume_index>.<kk>mer.kpx   — 位置ポスティング (デルタ圧縮)
 <db_prefix>.<volume_index>.<kk>mer.ksx   — 配列メタデータ (配列長 + アクセッション)
+<db_prefix>.<volume_index>.<kk>mer.khx   — 構築時除外ビットセット (-max_freq_build 使用時のみ)
 ```
 
 例: `nt.00.11mer.kix`, `nt.01.11mer.kpx`
+
+`.khx` ファイルは 32 バイトヘッダ (マジック "KMHX"、フォーマットバージョン、k) に続き、`ceil(4^k / 8)` バイトのビットセットで構成されます。ビット *i* = 1 は k-mer *i* がインデックス構築時に除外されたことを示します。
 
 ID ポスティングと位置ポスティングは別ファイルに格納されるため、Stage 1 フィルタリングが `.kpx` にアクセスすることはなく、ページキャッシュ効率が最大化されます。
 

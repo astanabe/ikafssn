@@ -10,7 +10,7 @@ namespace ikafssn {
 struct Stage2Config {
     uint32_t max_gap = 100;         // max diagonal deviation between consecutive chain hits
     uint32_t min_diag_hits = 2;     // diagonal filter threshold
-    uint32_t min_score = 3;         // minimum chain score to report
+    uint32_t min_score = 1;         // minimum chain score to report
 };
 
 // Run Stage 2 chaining on hits for a single candidate sequence.

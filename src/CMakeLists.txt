@@ -12,6 +12,8 @@ add_library(ikafssn_index STATIC
     index/kix_reader.cpp
     index/kpx_writer.cpp
     index/kpx_reader.cpp
+    index/khx_writer.cpp
+    index/khx_reader.cpp
 )
 target_link_libraries(ikafssn_index PUBLIC ikafssn_core ikafssn_io)
 

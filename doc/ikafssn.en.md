@@ -38,7 +38,7 @@ ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db mydb > matche
 
 ### ikafssnindex
 
-Build a k-mer inverted index from a BLAST database. For each volume, three index files are generated: `.kix` (ID postings), `.kpx` (position postings), and `.ksx` (sequence metadata).
+Build a k-mer inverted index from a BLAST database. For each volume, three index files are generated: `.kix` (ID postings), `.kpx` (position postings), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a `.khx` file (build-time exclusion bitset) is also generated.
 
 ```
 ikafssnindex [options]
@@ -97,13 +97,16 @@ Required:
 Options:
   -o <path>               Output file (default: stdout)
   -threads <int>          Parallel search threads (default: all cores)
-  -min_score <int>        Minimum score (default: 3)
+  -min_score <int>        Minimum score (default: 1)
   -max_gap <int>          Chaining diagonal gap tolerance (default: 100)
   -max_freq <int>         High-frequency k-mer skip threshold (default: auto)
   -min_diag_hits <int>    Diagonal filter min hits (default: 2)
-  -stage1_topn <int>      Stage 1 candidate limit, 0=unlimited (default: 500)
-  -min_stage1_score <int> Stage 1 minimum score (default: 2)
-  -num_results <int>      Max results per query, 0=unlimited (default: 50)
+  -stage1_topn <int>      Stage 1 candidate limit, 0=unlimited (default: 0)
+  -min_stage1_score <num> Stage 1 minimum score (default: 0.5)
+                          Integer (>= 1): absolute threshold
+                          Fraction (0 < P < 1): proportion of query k-mers,
+                            resolved per query as ceil(Nqkmer * P) - Nhighfreq
+  -num_results <int>      Max results per query, 0=unlimited (default: 0)
   -mode <1|2>             Search mode (default: 2)
                           1=Stage 1 only, 2=Stage 1 + Stage 2
   -stage1_score <1|2>     Stage 1 score type (default: 1)
@@ -133,6 +136,9 @@ ikafssnsearch -ix ./index -query query.fasta -seqidlist targets.txt
 
 # Exclude specific accessions
 ikafssnsearch -ix ./index -query query.fasta -negative_seqidlist exclude.txt
+
+# Fractional Stage 1 threshold (50% of query k-mers)
+ikafssnsearch -ix ./index -query query.fasta -min_stage1_score 0.5
 
 # Pipe to ikafssnretrieve
 ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -207,13 +213,14 @@ Listener (at least one required):
 Options:
   -threads <int>          Worker threads (default: all cores)
   -pid <path>             PID file path
-  -min_score <int>        Default minimum chain score (default: 3)
+  -min_score <int>        Default minimum chain score (default: 1)
   -max_gap <int>          Default chaining gap tolerance (default: 100)
   -max_freq <int>         Default high-freq k-mer skip threshold (default: auto)
   -min_diag_hits <int>    Default diagonal filter min hits (default: 2)
-  -stage1_topn <int>      Default Stage 1 candidate limit (default: 500)
-  -min_stage1_score <int> Default Stage 1 minimum score (default: 2)
-  -num_results <int>      Default max results per query (default: 50)
+  -stage1_topn <int>      Default Stage 1 candidate limit (default: 0)
+  -min_stage1_score <num> Default Stage 1 minimum score (default: 0.5)
+                          Integer (>= 1) or fraction (0 < P < 1)
+  -num_results <int>      Default max results per query (default: 0)
   -shutdown_timeout <int> Graceful shutdown timeout in seconds (default: 30)
   -v, --verbose           Verbose logging
 ```
@@ -304,7 +311,8 @@ Options:
   -max_freq <int>          High-freq k-mer skip threshold (default: server default)
   -min_diag_hits <int>     Diagonal filter min hits (default: server default)
   -stage1_topn <int>       Stage 1 candidate limit (default: server default)
-  -min_stage1_score <int>  Stage 1 minimum score (default: server default)
+  -min_stage1_score <num>  Stage 1 minimum score (default: server default)
+                           Integer (>= 1) or fraction (0 < P < 1)
   -num_results <int>       Max results per query (default: server default)
   -mode <1|2>              Search mode (default: server default)
   -stage1_score <1|2>      Stage 1 score type (default: server default)
@@ -356,7 +364,7 @@ Options:
 
 - K-mer length (k) and integer type (uint16/uint32)
 - Number of volumes
-- Per-volume statistics: sequence count, total postings, file sizes
+- Per-volume statistics: sequence count, total postings, file sizes, excluded k-mer count (if `.khx` present)
 - Overall statistics: total sequences, total postings, total index size, compression ratio
 - With `-v`: k-mer frequency distribution (min, max, mean, percentiles)
 - With `-db`: BLAST DB title, sequence count, total bases, volume paths
@@ -378,7 +386,9 @@ ikafssninfo -ix ./index -v
 
 ikafssn uses a two-stage search pipeline:
 
-1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `min_stage1_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0`, all qualifying candidates are returned without sorting.
+The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0` disable sorting, and `min_stage1_score=0.5` (fractional) filters candidates by requiring at least 50% of query k-mers to match. To get ranked output, set positive values for `-stage1_topn` and/or `-num_results`, which triggers sorting but may reduce speed for large result sets.
+
+1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `min_stage1_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0` (default), all qualifying candidates are returned without sorting.
 
 2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= min_score` are reported.
 
@@ -396,6 +406,24 @@ where mean_count = total_postings / 4^k
 ```
 
 This is computed per volume from the `.kix` header.
+
+**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. A `.khx` file records which k-mers were excluded. At search time, when fractional `-min_stage1_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation.
+
+### Fractional Stage 1 Threshold
+
+When `-min_stage1_score` is specified as a fraction (0 < P < 1), the threshold is resolved per query as:
+
+```
+threshold = ceil(Nqkmer * P) - Nhighfreq
+```
+
+Where:
+- **Nqkmer**: number of query k-mers (distinct for coverscore, total positions for matchscore)
+- **Nhighfreq**: number of query k-mers that are excluded, combining:
+  - Search-time exclusion: k-mers with count > `max_freq`
+  - Build-time exclusion: k-mers marked in `.khx` (if present)
+
+If the resolved threshold is <= 0, the query strand is skipped with a warning.
 
 ### Score Types
 
@@ -514,15 +542,18 @@ Sample systemd unit files are provided in `doc/systemd/`. See the files for conf
 
 ## Index File Formats
 
-Per BLAST DB volume, three files are generated:
+Per BLAST DB volume, three files are generated (plus an optional fourth):
 
 ```
 <db_prefix>.<volume_index>.<kk>mer.kix   — ID postings (direct-address table + delta-compressed)
 <db_prefix>.<volume_index>.<kk>mer.kpx   — Position postings (delta-compressed)
 <db_prefix>.<volume_index>.<kk>mer.ksx   — Sequence metadata (lengths + accessions)
+<db_prefix>.<volume_index>.<kk>mer.khx   — Build-time exclusion bitset (only when -max_freq_build is used)
 ```
 
 Example: `nt.00.11mer.kix`, `nt.01.11mer.kpx`
+
+The `.khx` file contains a 32-byte header (magic "KMHX", format version, k) followed by a bitset of `ceil(4^k / 8)` bytes. Bit *i* = 1 indicates that k-mer *i* was excluded during index build.
 
 ID and position postings are stored in separate files so that Stage 1 filtering never touches `.kpx`, maximizing page cache efficiency.
 

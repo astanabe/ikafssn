@@ -9,6 +9,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "index/khx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/volume_searcher.hpp"
 #include "protocol/messages.hpp"
@@ -20,6 +21,7 @@ struct ServerVolumeData {
     KixReader kix;
     KpxReader kpx;
     KsxReader ksx;
+    KhxReader khx;
     uint16_t volume_index;
 };
 

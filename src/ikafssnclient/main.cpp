@@ -43,7 +43,7 @@ static void print_usage(const char* prog) {
         "  -max_freq <int>          High-freq k-mer skip threshold (default: server default)\n"
         "  -min_diag_hits <int>     Diagonal filter min hits (default: server default)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit (default: server default)\n"
-        "  -min_stage1_score <int>  Stage 1 minimum score (default: server default)\n"
+        "  -min_stage1_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: server default)\n"
         "  -num_results <int>       Max results per query (default: server default)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
@@ -119,7 +119,15 @@ int main(int argc, char* argv[]) {
     req.max_freq = static_cast<uint32_t>(cli.get_int("-max_freq", 0));
     req.min_diag_hits = static_cast<uint8_t>(cli.get_int("-min_diag_hits", 0));
     req.stage1_topn = static_cast<uint16_t>(cli.get_int("-stage1_topn", 0));
-    req.min_stage1_score = static_cast<uint16_t>(cli.get_int("-min_stage1_score", 0));
+    {
+        double min_s1 = cli.get_double("-min_stage1_score", 0.0);
+        if (min_s1 > 0 && min_s1 < 1.0) {
+            req.min_stage1_score_frac_x10000 =
+                static_cast<uint16_t>(min_s1 * 10000.0);
+        } else {
+            req.min_stage1_score = static_cast<uint16_t>(min_s1);
+        }
+    }
     req.num_results = static_cast<uint16_t>(cli.get_int("-num_results", 0));
     req.mode = static_cast<uint8_t>(cli.get_int("-mode", 0));
     req.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));

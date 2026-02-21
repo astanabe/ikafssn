@@ -42,8 +42,12 @@ SearchResponse process_search_request(
         config.stage2.min_diag_hits = req.min_diag_hits;
     if (req.stage1_topn != 0)
         config.stage1.stage1_topn = req.stage1_topn;
-    if (req.min_stage1_score != 0)
+    if (req.min_stage1_score_frac_x10000 != 0) {
+        config.min_stage1_score_frac =
+            static_cast<double>(req.min_stage1_score_frac_x10000) / 10000.0;
+    } else if (req.min_stage1_score != 0) {
         config.stage1.min_stage1_score = req.min_stage1_score;
+    }
     if (req.num_results != 0)
         config.num_results = req.num_results;
     if (req.mode != 0)
@@ -101,15 +105,17 @@ SearchResponse process_search_request(
                 oid_filter.build(req.seqids, vol.ksx, filter_mode);
             }
 
+            const KhxReader* khx_ptr = vol.khx.is_open() ? &vol.khx : nullptr;
+
             SearchResult sr;
             if (group.kmer_type == 0) {
                 sr = search_volume<uint16_t>(
                     query.query_id, query.sequence, k,
-                    vol.kix, vol.kpx, vol.ksx, oid_filter, config);
+                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, khx_ptr);
             } else {
                 sr = search_volume<uint32_t>(
                     query.query_id, query.sequence, k,
-                    vol.kix, vol.kpx, vol.ksx, oid_filter, config);
+                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, khx_ptr);
             }
 
             for (const auto& cr : sr.hits) {

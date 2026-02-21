@@ -10,6 +10,8 @@ add_ikafssn_test(test_kmer_encoding test_kmer_encoding.cpp)
 add_ikafssn_test(test_ksx_io test_ksx_io.cpp)
 add_ikafssn_test(test_kix_io test_kix_io.cpp)
 add_ikafssn_test(test_kpx_io test_kpx_io.cpp)
+add_ikafssn_test(test_khx_io test_khx_io.cpp)
+target_link_libraries(test_khx_io PRIVATE ikafssn_util)
 
 # Builder integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_builder test_builder.cpp)

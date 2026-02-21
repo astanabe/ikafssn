@@ -4,6 +4,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "index/khx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/volume_searcher.hpp"
 #include "io/fasta_reader.hpp"
@@ -43,13 +44,13 @@ static void print_usage(const char* prog) {
         "  -mode <1|2>              1=Stage1 only, 2=Stage1+Stage2 (default: 2)\n"
         "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: 1)\n"
         "  -sort_score <1|2>        1=stage1 score, 2=chainscore (default: 2)\n"
-        "  -min_score <int>         Minimum score (default: 3)\n"
+        "  -min_score <int>         Minimum score (default: 1)\n"
         "  -max_gap <int>           Chaining diagonal gap tolerance (default: 100)\n"
         "  -max_freq <int>          High-frequency k-mer skip threshold (default: auto)\n"
         "  -min_diag_hits <int>     Diagonal filter min hits (default: 2)\n"
-        "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 500)\n"
-        "  -min_stage1_score <int>  Stage 1 minimum score (default: 2)\n"
-        "  -num_results <int>       Max results per query, 0=unlimited (default: 50)\n"
+        "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
+        "  -min_stage1_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
+        "  -num_results <int>       Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -outfmt <tab|json>       Output format (default: tab)\n"
@@ -61,6 +62,7 @@ struct VolumeFiles {
     std::string kix_path;
     std::string kpx_path;
     std::string ksx_path;
+    std::string khx_path;
     uint16_t volume_index;
     int k;
 };
@@ -81,6 +83,7 @@ static std::vector<VolumeFiles> discover_volumes(const std::string& ix_dir) {
             vf.kix_path = base + ".kix";
             vf.kpx_path = base + ".kpx";
             vf.ksx_path = base + ".ksx";
+            vf.khx_path = base + ".khx";
             volumes.push_back(vf);
         }
     }
@@ -97,6 +100,7 @@ struct VolumeData {
     KixReader kix;
     KpxReader kpx;
     KsxReader ksx;
+    KhxReader khx;
     OidFilter filter;
     uint16_t volume_index;
 };
@@ -142,33 +146,51 @@ int main(int argc, char* argv[]) {
     // Search config
     SearchConfig config;
     config.stage1.max_freq = static_cast<uint32_t>(cli.get_int("-max_freq", 0));
-    config.stage1.stage1_topn = static_cast<uint32_t>(cli.get_int("-stage1_topn", 500));
-    config.stage1.min_stage1_score = static_cast<uint32_t>(cli.get_int("-min_stage1_score", 2));
+    config.stage1.stage1_topn = static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
     config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-max_gap", 100));
     config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-min_diag_hits", 2));
-    config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-min_score", 3));
-    config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 50));
+    config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-min_score", 1));
+    config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 0));
     config.mode = static_cast<uint8_t>(cli.get_int("-mode", 2));
     config.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 2));
+
+    // Parse -min_stage1_score as double to support fractional values
+    {
+        double min_s1 = cli.get_double("-min_stage1_score", 0.5);
+        if (min_s1 > 0 && min_s1 < 1.0) {
+            config.min_stage1_score_frac = min_s1;
+            // Leave stage1.min_stage1_score at default (will be overridden per-query)
+        } else {
+            config.stage1.min_stage1_score = static_cast<uint32_t>(min_s1);
+        }
+    }
 
     // Mode 1: force sort_score=1
     if (config.mode == 1) {
         config.sort_score = 1;
 
+        // Consistency check: fractional + -min_score in mode 1
+        if (config.min_stage1_score_frac > 0 && cli.has("-min_score")) {
+            std::fprintf(stderr, "Error: -min_score and fractional -min_stage1_score cannot both be specified in -mode 1\n");
+            return 1;
+        }
+
         // Consistency check: -min_score and -min_stage1_score in mode 1
         bool has_min_score = cli.has("-min_score");
         bool has_min_stage1_score = cli.has("-min_stage1_score");
-        if (has_min_score && has_min_stage1_score &&
-            config.stage2.min_score != config.stage1.min_stage1_score) {
-            std::fprintf(stderr, "Error: -min_score and -min_stage1_score must be the same in -mode 1\n");
-            return 1;
-        }
-        if (has_min_score && !has_min_stage1_score) {
-            config.stage1.min_stage1_score = config.stage2.min_score;
-        }
-        if (!has_min_score && has_min_stage1_score) {
-            config.stage2.min_score = config.stage1.min_stage1_score;
+        if (config.min_stage1_score_frac == 0) {
+            if (has_min_score && has_min_stage1_score &&
+                config.stage2.min_score != config.stage1.min_stage1_score) {
+                std::fprintf(stderr, "Error: -min_score and -min_stage1_score must be the same in -mode 1\n");
+                return 1;
+            }
+            if (has_min_score && !has_min_stage1_score) {
+                config.stage1.min_stage1_score = config.stage2.min_score;
+            }
+            if (!has_min_score && has_min_stage1_score) {
+                config.stage2.min_score = config.stage1.min_stage1_score;
+            }
         }
     }
 
@@ -231,6 +253,8 @@ int main(int argc, char* argv[]) {
             std::fprintf(stderr, "Error: cannot open %s\n", vf.ksx_path.c_str());
             return 1;
         }
+        // Try to open .khx (non-fatal if missing)
+        vol_data[vi].khx.open(vf.khx_path);
         vol_data[vi].volume_index = vf.volume_index;
 
         // Build per-volume OID filter
@@ -262,15 +286,17 @@ int main(int argc, char* argv[]) {
                 const auto& query = queries[job.query_idx];
                 const auto& vd = vol_data[job.volume_idx];
 
+                const KhxReader* khx_ptr = vd.khx.is_open() ? &vd.khx : nullptr;
+
                 SearchResult sr;
                 if (k < K_TYPE_THRESHOLD) {
                     sr = search_volume<uint16_t>(
                         query.id, query.sequence, k,
-                        vd.kix, vd.kpx, vd.ksx, vd.filter, config);
+                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, khx_ptr);
                 } else {
                     sr = search_volume<uint32_t>(
                         query.id, query.sequence, k,
-                        vd.kix, vd.kpx, vd.ksx, vd.filter, config);
+                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, khx_ptr);
                 }
 
                 // Convert to OutputHit and collect

@@ -7,9 +7,12 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "index/khx_reader.hpp"
 #include "core/kmer_encoding.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -56,10 +59,80 @@ search_one_strand(const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
                   const KixReader& kix,
                   const KpxReader& kpx,
                   const OidFilter& filter,
-                  const SearchConfig& config) {
+                  const SearchConfig& config,
+                  const KhxReader* khx) {
+
+    // Resolve fractional min_stage1_score if active
+    Stage1Config stage1_config = config.stage1;
+    if (config.min_stage1_score_frac > 0) {
+        const bool use_coverscore = (stage1_config.stage1_score_type == 1);
+
+        // Compute Nqkmer: number of query k-mers
+        uint32_t Nqkmer;
+        if (use_coverscore) {
+            // Count distinct k-mer values in query
+            std::unordered_set<uint64_t> distinct;
+            for (const auto& [pos, kmer] : query_kmers) {
+                distinct.insert(static_cast<uint64_t>(kmer));
+            }
+            Nqkmer = static_cast<uint32_t>(distinct.size());
+        } else {
+            // matchscore: total k-mer positions
+            Nqkmer = static_cast<uint32_t>(query_kmers.size());
+        }
+
+        // Compute effective max_freq
+        uint32_t max_freq = compute_effective_max_freq(
+            stage1_config.max_freq, kix.total_postings(), kix.table_size());
+
+        // Count Nhighfreq from query k-mers
+        const uint32_t* counts = kix.counts();
+        uint32_t Nhighfreq;
+        if (use_coverscore) {
+            // Count distinct high-freq k-mer values
+            std::unordered_set<uint64_t> highfreq_distinct;
+            for (const auto& [pos, kmer] : query_kmers) {
+                uint64_t kmer_idx = static_cast<uint64_t>(kmer);
+                bool is_highfreq = (counts[kmer_idx] > max_freq) ||
+                    (khx != nullptr && khx->is_excluded(kmer_idx));
+                if (is_highfreq) {
+                    highfreq_distinct.insert(kmer_idx);
+                }
+            }
+            Nhighfreq = static_cast<uint32_t>(highfreq_distinct.size());
+        } else {
+            // Count all occurrences of high-freq k-mers
+            Nhighfreq = 0;
+            for (const auto& [pos, kmer] : query_kmers) {
+                uint64_t kmer_idx = static_cast<uint64_t>(kmer);
+                bool is_highfreq = (counts[kmer_idx] > max_freq) ||
+                    (khx != nullptr && khx->is_excluded(kmer_idx));
+                if (is_highfreq) {
+                    Nhighfreq++;
+                }
+            }
+        }
+
+        // Compute threshold
+        int32_t threshold = static_cast<int32_t>(
+            std::ceil(static_cast<double>(Nqkmer) * config.min_stage1_score_frac))
+            - static_cast<int32_t>(Nhighfreq);
+
+        if (threshold <= 0) {
+            // Threshold is non-positive: skip this strand
+            std::fprintf(stderr,
+                "Warning: fractional min_stage1_score threshold <= 0 "
+                "(strand=%s, Nqkmer=%u, Nhighfreq=%u, P=%.4f)\n",
+                is_reverse ? "rc" : "fwd", Nqkmer, Nhighfreq,
+                config.min_stage1_score_frac);
+            return {};
+        }
+
+        stage1_config.min_stage1_score = static_cast<uint32_t>(threshold);
+    }
 
     // Stage 1: candidate selection
-    auto candidates = stage1_filter(query_kmers, kix, filter, config.stage1);
+    auto candidates = stage1_filter(query_kmers, kix, filter, stage1_config);
     if (candidates.empty()) return {};
 
     // Mode 1: Stage 1 only — return candidates directly
@@ -134,7 +207,8 @@ SearchResult search_volume(
     const KpxReader& kpx,
     const KsxReader& ksx,
     const OidFilter& filter,
-    const SearchConfig& config) {
+    const SearchConfig& config,
+    const KhxReader* khx) {
 
     SearchResult result;
     result.query_id = query_id;
@@ -143,7 +217,7 @@ SearchResult search_volume(
     auto fwd_kmers = extract_kmers<KmerInt>(query_seq, k);
 
     // Search forward strand
-    auto fwd_results = search_one_strand(fwd_kmers, k, false, kix, kpx, filter, config);
+    auto fwd_results = search_one_strand(fwd_kmers, k, false, kix, kpx, filter, config, khx);
     result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
 
     // Generate reverse complement k-mers
@@ -157,7 +231,7 @@ SearchResult search_volume(
     }
 
     // Search reverse complement
-    auto rc_results = search_one_strand(rc_kmers, k, true, kix, kpx, filter, config);
+    auto rc_results = search_one_strand(rc_kmers, k, true, kix, kpx, filter, config, khx);
     result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
 
     if (config.num_results > 0) {
@@ -186,10 +260,10 @@ SearchResult search_volume(
 template SearchResult search_volume<uint16_t>(
     const std::string&, const std::string&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&);
+    const OidFilter&, const SearchConfig&, const KhxReader*);
 template SearchResult search_volume<uint32_t>(
     const std::string&, const std::string&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&);
+    const OidFilter&, const SearchConfig&, const KhxReader*);
 
 } // namespace ikafssn

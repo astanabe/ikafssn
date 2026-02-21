@@ -27,6 +27,7 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t
 inline constexpr uint16_t KIX_FORMAT_VERSION = 1;
 inline constexpr uint16_t KPX_FORMAT_VERSION = 1;
 inline constexpr uint16_t KSX_FORMAT_VERSION = 1;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 1;
 
 // Direct-address table size for k-mer value k: 4^k
 inline constexpr uint64_t table_size(int k) {
