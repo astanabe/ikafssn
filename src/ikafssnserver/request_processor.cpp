@@ -9,8 +9,9 @@
 #include "search/query_preprocessor.hpp"
 
 #include <algorithm>
-#include <mutex>
 
+#include <tbb/combinable.h>
+#include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for_each.h>
 
 namespace ikafssn {
@@ -196,8 +197,22 @@ SearchResponse process_search_request(
         }
     }
 
+    // Thread-local Stage1Buffer to avoid per-job allocation
+    uint32_t max_num_seqs = 0;
+    for (const auto& vol : group.volumes)
+        max_num_seqs = std::max(max_num_seqs, vol.kix.num_sequences());
+
+    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(
+        [max_num_seqs]() {
+            Stage1Buffer buf;
+            buf.score_per_seq.resize(max_num_seqs, 0);
+            return buf;
+        });
+
+    // Thread-local hit collection: (result_idx, ResponseHit) pairs
+    tbb::combinable<std::vector<std::pair<size_t, ResponseHit>>> tls_hits;
+
     // Parallel execution using preprocessed data
-    std::mutex hits_mutex;
     arena.execute([&] {
         tbb::parallel_for_each(jobs.begin(), jobs.end(),
             [&](const SearchJob& job) {
@@ -211,20 +226,21 @@ SearchResponse process_search_request(
                     oid_filter.build(req.seqids, vol.ksx, filter_mode);
                 }
 
+                auto& buf = tls_bufs.local();
+
                 SearchResult sr;
                 if (group.kmer_type == 0) {
                     sr = search_volume<uint16_t>(
                         query.query_id, pp16[pp_idx].qdata, k,
-                        vol.kix, vol.kpx, vol.ksx, oid_filter, config);
+                        vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
                 } else {
                     sr = search_volume<uint32_t>(
                         query.query_id, pp32[pp_idx].qdata, k,
-                        vol.kix, vol.kpx, vol.ksx, oid_filter, config);
+                        vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
                 }
 
                 if (!sr.hits.empty()) {
-                    std::vector<ResponseHit> local_hits;
-                    local_hits.reserve(sr.hits.size());
+                    auto& local_hits = tls_hits.local();
                     for (const auto& cr : sr.hits) {
                         ResponseHit rh;
                         rh.accession = std::string(vol.ksx.accession(cr.seq_id));
@@ -236,14 +252,17 @@ SearchResponse process_search_request(
                         rh.score = static_cast<uint16_t>(cr.score);
                         rh.stage1_score = static_cast<uint16_t>(cr.stage1_score);
                         rh.volume = vol.volume_index;
-                        local_hits.push_back(rh);
+                        local_hits.emplace_back(job.result_idx, rh);
                     }
-
-                    std::lock_guard<std::mutex> lock(hits_mutex);
-                    auto& hits = resp.results[job.result_idx].hits;
-                    hits.insert(hits.end(), local_hits.begin(), local_hits.end());
                 }
             });
+    });
+
+    // Merge thread-local hits into resp.results
+    tls_hits.combine_each([&resp](std::vector<std::pair<size_t, ResponseHit>>& local) {
+        for (auto& [idx, rh] : local) {
+            resp.results[idx].hits.push_back(std::move(rh));
+        }
     });
 
     // Release permits

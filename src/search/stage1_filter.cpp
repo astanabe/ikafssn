@@ -28,19 +28,65 @@ std::vector<Stage1Candidate> stage1_filter(
     const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
     const KixReader& kix,
     const OidFilter& filter,
-    const Stage1Config& config) {
+    const Stage1Config& config,
+    Stage1Buffer* buf) {
 
     uint32_t num_seqs = kix.num_sequences();
     if (num_seqs == 0) return {};
-
-    // score_per_seq: hit count per OID
-    std::vector<uint32_t> score_per_seq(num_seqs, 0);
 
     const uint64_t* offsets = kix.offsets();
     const uint32_t* counts = kix.counts();
     const uint8_t* posting_data = kix.posting_data();
 
     const bool use_coverscore = (config.stage1_score_type == 1);
+
+    if (buf) {
+        // Reusable buffer path: dirty list avoids full-array alloc/clear
+        buf->ensure_capacity(num_seqs);
+
+        for (const auto& [q_pos, kmer] : query_kmers) {
+            uint64_t kmer_idx = static_cast<uint64_t>(kmer);
+            uint32_t cnt = counts[kmer_idx];
+            if (cnt == 0) continue;
+
+            SeqIdDecoder decoder(posting_data + offsets[kmer_idx]);
+            for (uint32_t i = 0; i < cnt; i++) {
+                SeqId sid = decoder.next();
+                if (use_coverscore && !decoder.was_new_seq()) continue;
+                if (!filter.pass(sid)) continue;
+                if (buf->score_per_seq[sid] == 0) buf->dirty.push_back(sid);
+                buf->score_per_seq[sid]++;
+            }
+        }
+
+        // Collect candidates from dirty list only
+        std::vector<Stage1Candidate> candidates;
+        for (uint32_t sid : buf->dirty) {
+            if (buf->score_per_seq[sid] >= config.min_stage1_score) {
+                candidates.push_back({sid, buf->score_per_seq[sid]});
+            }
+        }
+
+        buf->clear_dirty();
+
+        if (config.stage1_topn == 0) {
+            return candidates;
+        }
+
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const Stage1Candidate& a, const Stage1Candidate& b) {
+                      return a.score > b.score;
+                  });
+
+        if (candidates.size() > config.stage1_topn) {
+            candidates.resize(config.stage1_topn);
+        }
+
+        return candidates;
+    }
+
+    // Fallback: allocate local buffer (existing behavior)
+    std::vector<uint32_t> score_per_seq(num_seqs, 0);
 
     for (const auto& [q_pos, kmer] : query_kmers) {
         uint64_t kmer_idx = static_cast<uint64_t>(kmer);
@@ -86,9 +132,11 @@ std::vector<Stage1Candidate> stage1_filter(
 // Explicit template instantiations
 template std::vector<Stage1Candidate> stage1_filter<uint16_t>(
     const std::vector<std::pair<uint32_t, uint16_t>>&,
-    const KixReader&, const OidFilter&, const Stage1Config&);
+    const KixReader&, const OidFilter&, const Stage1Config&,
+    Stage1Buffer*);
 template std::vector<Stage1Candidate> stage1_filter<uint32_t>(
     const std::vector<std::pair<uint32_t, uint32_t>>&,
-    const KixReader&, const OidFilter&, const Stage1Config&);
+    const KixReader&, const OidFilter&, const Stage1Config&,
+    Stage1Buffer*);
 
 } // namespace ikafssn

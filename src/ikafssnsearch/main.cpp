@@ -22,13 +22,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <mutex>
 #include <regex>
 #include <set>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include <tbb/combinable.h>
+#include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for_each.h>
 #include <tbb/task_arena.h>
 
@@ -407,9 +408,20 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Collect results with mutex protection
-    std::vector<OutputHit> all_hits;
-    std::mutex hits_mutex;
+    // Thread-local Stage1Buffer to avoid per-job allocation
+    uint32_t max_num_seqs = 0;
+    for (const auto& vd : vol_data)
+        max_num_seqs = std::max(max_num_seqs, vd.kix.num_sequences());
+
+    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(
+        [max_num_seqs]() {
+            Stage1Buffer buf;
+            buf.score_per_seq.resize(max_num_seqs, 0);
+            return buf;
+        });
+
+    // Thread-local hit collection (no mutex needed)
+    tbb::combinable<std::vector<OutputHit>> tls_hits;
 
     logger.info("Launching %zu search job(s)...", jobs.size());
 
@@ -422,21 +434,22 @@ int main(int argc, char* argv[]) {
                 const auto& vd = vol_data[job.volume_idx];
                 size_t pp_idx = query_pp_idx[job.query_idx];
 
+                auto& buf = tls_bufs.local();
+
                 SearchResult sr;
                 if (k < K_TYPE_THRESHOLD) {
                     sr = search_volume<uint16_t>(
                         query.id, pp16[pp_idx].qdata, k,
-                        vd.kix, vd.kpx, vd.ksx, vd.filter, config);
+                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
                 } else {
                     sr = search_volume<uint32_t>(
                         query.id, pp32[pp_idx].qdata, k,
-                        vd.kix, vd.kpx, vd.ksx, vd.filter, config);
+                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
                 }
 
-                // Convert to OutputHit and collect
+                // Convert to OutputHit and collect (lock-free)
                 if (!sr.hits.empty()) {
-                    std::vector<OutputHit> local_hits;
-                    local_hits.reserve(sr.hits.size());
+                    auto& local_hits = tls_hits.local();
                     for (const auto& cr : sr.hits) {
                         OutputHit oh;
                         oh.query_id = sr.query_id;
@@ -451,11 +464,16 @@ int main(int argc, char* argv[]) {
                         oh.volume = vd.volume_index;
                         local_hits.push_back(oh);
                     }
-
-                    std::lock_guard<std::mutex> lock(hits_mutex);
-                    all_hits.insert(all_hits.end(), local_hits.begin(), local_hits.end());
                 }
             });
+    });
+
+    // Merge thread-local hits
+    std::vector<OutputHit> all_hits;
+    tls_hits.combine_each([&all_hits](std::vector<OutputHit>& local) {
+        all_hits.insert(all_hits.end(),
+            std::make_move_iterator(local.begin()),
+            std::make_move_iterator(local.end()));
     });
 
     // Sort and truncate final results across volumes (per query)

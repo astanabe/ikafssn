@@ -10,6 +10,24 @@ namespace ikafssn {
 class KixReader;
 class OidFilter;
 
+struct Stage1Buffer {
+    std::vector<uint32_t> score_per_seq;
+    std::vector<uint32_t> dirty;
+
+    void ensure_capacity(uint32_t num_seqs) {
+        if (score_per_seq.size() < num_seqs) {
+            score_per_seq.resize(num_seqs, 0);
+        }
+    }
+
+    void clear_dirty() {
+        for (uint32_t idx : dirty) {
+            score_per_seq[idx] = 0;
+        }
+        dirty.clear();
+    }
+};
+
 struct Stage1Candidate {
     SeqId id;
     uint32_t score;
@@ -44,14 +62,17 @@ std::vector<Stage1Candidate> stage1_filter(
     const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
     const KixReader& kix,
     const OidFilter& filter,
-    const Stage1Config& config);
+    const Stage1Config& config,
+    Stage1Buffer* buf = nullptr);
 
 // Explicit instantiations declared
 extern template std::vector<Stage1Candidate> stage1_filter<uint16_t>(
     const std::vector<std::pair<uint32_t, uint16_t>>&,
-    const KixReader&, const OidFilter&, const Stage1Config&);
+    const KixReader&, const OidFilter&, const Stage1Config&,
+    Stage1Buffer*);
 extern template std::vector<Stage1Candidate> stage1_filter<uint32_t>(
     const std::vector<std::pair<uint32_t, uint32_t>>&,
-    const KixReader&, const OidFilter&, const Stage1Config&);
+    const KixReader&, const OidFilter&, const Stage1Config&,
+    Stage1Buffer*);
 
 } // namespace ikafssn

@@ -65,7 +65,8 @@ search_one_strand_preprocessed(
     const OidFilter& filter,
     const SearchConfig& config,
     uint32_t resolved_threshold,
-    uint32_t effective_min_score) {
+    uint32_t effective_min_score,
+    Stage1Buffer* buf) {
 
     if (resolved_threshold == 0) return {};  // threshold was non-positive
 
@@ -73,7 +74,7 @@ search_one_strand_preprocessed(
     Stage1Config stage1_config = config.stage1;
     stage1_config.min_stage1_score = resolved_threshold;
 
-    auto candidates = stage1_filter(query_kmers, kix, filter, stage1_config);
+    auto candidates = stage1_filter(query_kmers, kix, filter, stage1_config, buf);
     if (candidates.empty()) return {};
 
     // Mode 1: Stage 1 only — return candidates directly
@@ -148,7 +149,8 @@ search_one_strand(const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
                   const KpxReader& kpx,
                   const OidFilter& filter,
                   const SearchConfig& config,
-                  const KhxReader* khx) {
+                  const KhxReader* khx,
+                  Stage1Buffer* buf) {
 
     // Resolve fractional min_stage1_score if active
     Stage1Config stage1_config = config.stage1;
@@ -220,7 +222,7 @@ search_one_strand(const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
     }
 
     // Stage 1: candidate selection
-    auto candidates = stage1_filter(query_kmers, kix, filter, stage1_config);
+    auto candidates = stage1_filter(query_kmers, kix, filter, stage1_config, buf);
     if (candidates.empty()) return {};
 
     // Mode 1: Stage 1 only — return candidates directly
@@ -319,7 +321,8 @@ SearchResult search_volume(
     const KsxReader& ksx,
     const OidFilter& filter,
     const SearchConfig& config,
-    const KhxReader* khx) {
+    const KhxReader* khx,
+    Stage1Buffer* buf) {
 
     SearchResult result;
     result.query_id = query_id;
@@ -329,7 +332,7 @@ SearchResult search_volume(
 
     // Search forward strand
     if (config.strand == 2 || config.strand == 1) {
-        auto fwd_results = search_one_strand(fwd_kmers, k, false, kix, kpx, filter, config, khx);
+        auto fwd_results = search_one_strand(fwd_kmers, k, false, kix, kpx, filter, config, khx, buf);
         result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
     }
 
@@ -342,7 +345,7 @@ SearchResult search_volume(
             rc_kmers.emplace_back(pos, rc);
         }
 
-        auto rc_results = search_one_strand(rc_kmers, k, true, kix, kpx, filter, config, khx);
+        auto rc_results = search_one_strand(rc_kmers, k, true, kix, kpx, filter, config, khx, buf);
         result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
     }
 
@@ -360,7 +363,8 @@ SearchResult search_volume(
     const KpxReader& kpx,
     const KsxReader& ksx,
     const OidFilter& filter,
-    const SearchConfig& config) {
+    const SearchConfig& config,
+    Stage1Buffer* buf) {
 
     SearchResult result;
     result.query_id = query_id;
@@ -369,7 +373,7 @@ SearchResult search_volume(
     if (config.strand == 2 || config.strand == 1) {
         auto fwd_results = search_one_strand_preprocessed(
             qdata.fwd_kmers, k, false, kix, kpx, filter, config,
-            qdata.resolved_threshold_fwd, qdata.effective_min_score_fwd);
+            qdata.resolved_threshold_fwd, qdata.effective_min_score_fwd, buf);
         result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
     }
 
@@ -377,7 +381,7 @@ SearchResult search_volume(
     if (config.strand == 2 || config.strand == -1) {
         auto rc_results = search_one_strand_preprocessed(
             qdata.rc_kmers, k, true, kix, kpx, filter, config,
-            qdata.resolved_threshold_rc, qdata.effective_min_score_rc);
+            qdata.resolved_threshold_rc, qdata.effective_min_score_rc, buf);
         result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
     }
 
@@ -389,20 +393,22 @@ SearchResult search_volume(
 template SearchResult search_volume<uint16_t>(
     const std::string&, const std::string&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&, const KhxReader*);
+    const OidFilter&, const SearchConfig&, const KhxReader*,
+    Stage1Buffer*);
 template SearchResult search_volume<uint32_t>(
     const std::string&, const std::string&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&, const KhxReader*);
+    const OidFilter&, const SearchConfig&, const KhxReader*,
+    Stage1Buffer*);
 
 // Explicit template instantiations for new overload
 template SearchResult search_volume<uint16_t>(
     const std::string&, const QueryKmerData<uint16_t>&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&);
+    const OidFilter&, const SearchConfig&, Stage1Buffer*);
 template SearchResult search_volume<uint32_t>(
     const std::string&, const QueryKmerData<uint32_t>&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&);
+    const OidFilter&, const SearchConfig&, Stage1Buffer*);
 
 } // namespace ikafssn
