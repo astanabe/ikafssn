@@ -20,6 +20,7 @@ struct QueryKmerData {
     uint32_t resolved_threshold_rc = 0;   // resolved Stage 1 absolute threshold (rc)
     uint32_t effective_min_score_fwd = 0;  // for Stage 2 (fwd)
     uint32_t effective_min_score_rc = 0;   // for Stage 2 (rc)
+    bool has_multi_degen = false;  // true if any k-mer had 2+ degenerate bases (skipped)
 };
 
 // Pre-process a query sequence: extract k-mers, determine global high-freq

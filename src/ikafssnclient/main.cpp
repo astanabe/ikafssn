@@ -312,6 +312,12 @@ int main(int argc, char* argv[]) {
                              qr.query_id.c_str());
                 continue;
             }
+            if (qr.warnings & kWarnMultiDegen) {
+                std::fprintf(stderr,
+                    "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
+                    "those k-mers are ignored and not used in the search\n",
+                    qr.query_id.c_str());
+            }
             for (const auto& hit : qr.hits) {
                 OutputHit oh;
                 oh.query_id = qr.query_id;

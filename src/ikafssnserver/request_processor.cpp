@@ -182,19 +182,25 @@ SearchResponse process_search_request(
         if (!is_accepted[qi]) continue; // rejected, skip
 
         // Preprocess this accepted query
+        bool multi_degen = false;
         if (group.kmer_type == 0) {
             query_pp_idx[qi] = pp16.size();
             pp16.push_back({preprocess_query<uint16_t>(
                 req.queries[qi].sequence, k, all_kix, khx_ptr, config)});
+            multi_degen = pp16.back().qdata.has_multi_degen;
         } else {
             query_pp_idx[qi] = pp32.size();
             pp32.push_back({preprocess_query<uint32_t>(
                 req.queries[qi].sequence, k, all_kix, khx_ptr, config)});
+            multi_degen = pp32.back().qdata.has_multi_degen;
         }
 
         size_t result_idx = resp.results.size();
         QueryResult qr;
         qr.query_id = req.queries[qi].query_id;
+        if (multi_degen) {
+            qr.warnings |= kWarnMultiDegen;
+        }
         resp.results.push_back(std::move(qr));
 
         accepted_queries.push_back({result_idx, qi});

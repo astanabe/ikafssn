@@ -176,6 +176,13 @@ void HttpController::search(
             if (qr.skipped != 0) {
                 qobj["skipped"] = true;
             }
+            if (qr.warnings != 0) {
+                Json::Value warn_arr(Json::arrayValue);
+                if (qr.warnings & kWarnMultiDegen) {
+                    warn_arr.append("multi_degen");
+                }
+                qobj["warnings"] = std::move(warn_arr);
+            }
             results_arr.append(std::move(qobj));
         }
         result["results"] = std::move(results_arr);

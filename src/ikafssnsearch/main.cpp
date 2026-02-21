@@ -391,6 +391,12 @@ int main(int argc, char* argv[]) {
             query_pp_idx[qi] = pp16.size();
             pp16.push_back({preprocess_query<uint16_t>(
                 queries[qi].sequence, k, all_kix, khx_ptr, config)});
+            if (pp16.back().qdata.has_multi_degen) {
+                std::fprintf(stderr,
+                    "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
+                    "those k-mers are ignored and not used in the search\n",
+                    queries[qi].id.c_str());
+            }
         }
     } else {
         pp32.reserve(queries.size());
@@ -399,6 +405,12 @@ int main(int argc, char* argv[]) {
             query_pp_idx[qi] = pp32.size();
             pp32.push_back({preprocess_query<uint32_t>(
                 queries[qi].sequence, k, all_kix, khx_ptr, config)});
+            if (pp32.back().qdata.has_multi_degen) {
+                std::fprintf(stderr,
+                    "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
+                    "those k-mers are ignored and not used in the search\n",
+                    queries[qi].id.c_str());
+            }
         }
     }
 

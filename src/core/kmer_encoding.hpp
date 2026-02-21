@@ -198,9 +198,11 @@ public:
     // ambig_callback(uint32_t pos, KmerInt base_kmer, uint8_t ncbi4na, int bit_offset):
     //   k-mer with exactly one degenerate base. Caller should use expand_ambig_kmer().
     // K-mers with 2+ degenerate bases are skipped.
+    // has_multi_degen: if non-null, set to true when any k-mer with 2+ degenerate bases is encountered.
     template <typename Callback, typename AmbigCallback>
     void scan_ambig(const char* seq, size_t len,
-                    Callback&& callback, AmbigCallback&& ambig_callback) const {
+                    Callback&& callback, AmbigCallback&& ambig_callback,
+                    bool* has_multi_degen = nullptr) const {
         if (static_cast<int>(len) < k_) return;
 
         const uint8_t* ncbi4na_tbl = degenerate_ncbi4na_table();
@@ -269,8 +271,10 @@ public:
                         break;
                     }
                 }
+            } else if (has_multi_degen) {
+                // degen_count >= 2: skip, but flag it
+                *has_multi_degen = true;
             }
-            // degen_count >= 2: skip
         }
     }
 

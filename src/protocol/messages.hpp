@@ -56,11 +56,17 @@ struct ResponseHit {
     uint16_t volume;
 };
 
+// Per-query warning flags (bitmask)
+enum QueryWarning : uint8_t {
+    kWarnMultiDegen = 0x01,  // k-mers with 2+ degenerate bases were skipped
+};
+
 // Per-query result in the search response
 struct QueryResult {
     std::string query_id;
     std::vector<ResponseHit> hits;
-    uint8_t skipped = 0;  // 0 = normal, 1 = skipped (degenerate bases)
+    uint8_t skipped = 0;   // 0 = normal, 1 = skipped (degenerate bases)
+    uint8_t warnings = 0;  // bitmask of QueryWarning flags
 };
 
 // Search response message (server -> client)

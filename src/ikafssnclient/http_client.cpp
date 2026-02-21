@@ -115,6 +115,13 @@ static bool parse_response_json(const std::string& body,
         if (qr.get("skipped", false).asBool()) {
             query_result.skipped = 1;
         }
+        if (qr.isMember("warnings") && qr["warnings"].isArray()) {
+            for (const auto& w : qr["warnings"]) {
+                if (w.asString() == "multi_degen") {
+                    query_result.warnings |= kWarnMultiDegen;
+                }
+            }
+        }
 
         const auto& hits = qr["hits"];
         if (hits.isArray()) {
