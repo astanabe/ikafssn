@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **重要**: ユーザーとの画面上のやり取りには**常に日本語**を使用すること。ただし、作成・編集するファイルは日本語ファイルと指定されない限り英語で記述する。このリポジトリで日本語ファイルは `doc/ikafssn.ja.md` のみ。
+
 ## Project Overview
 
 ikafssn (Independent programs of K-mer-based Alignment-Free Similarity Search for Nucleotide sequences) builds a complete inverted index over NCBI BLAST DB nucleotide sequences and performs alignment-free similarity search using k-mer matching and collinear chaining.
@@ -103,6 +105,17 @@ Usage documentation is maintained in two languages:
 ## Test structure
 
 Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eukaryote_rRNA` is used for all BLAST-DB-dependent tests. `test/scripts/setup_ssu_testdata.sh` generates derived test data (ambig DB, multi-volume DBs, queries) in `/tmp/ikafssn_ssu_test/`. Shared fixture: `test/ssu_test_fixture.hpp`.
+
+## Plan Mode Rules
+
+- プランモードには**自発的に入らない**。ユーザーからの明示的な指示があった場合のみ入ること。
+- 通常のワークフロー:
+  1. プランモード外でユーザーと相談しながら方針を練る。
+  2. 方針が十分に固まった段階で、ユーザーが以下のいずれかで計画立案を指示する:
+     - 「プランモードに入って上記方針に基づいてプランを立てて提示するように」等の明示的な指示
+     - `/plan` でプランモードに入った後、「上記方針に基づいてプランを立てて提示するように」等の指示
+  3. この明示的な指示を受けて初めて計画立案を開始する。
+- 計画を提示する際は、プランファイル（`.md`）の**絶対パス**を表示すること。
 
 ## Development Environment Rules
 
