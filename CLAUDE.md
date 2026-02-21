@@ -92,7 +92,7 @@ ID and position postings are in separate files so Stage 1 never touches `.kpx`, 
 - Delta encoding uses LEB128 varint; position deltas reset at sequence boundaries (detected by checking if the corresponding ID delta is non-zero)
 - N-containing k-mers are skipped via an N-counter (shared logic between indexing and query scanning)
 - Reverse complement: index stores forward strand only; search generates both forward and revcomp of query
-- Parallelization via Intel TBB: indexing uses `parallel_for` + `combinable` for counting and partition scan, `parallel_sort` for posting buffer, `task_group` for volume-level parallelism; search uses `parallel_for_each` for (query, volume) jobs. Thread count is controlled centrally via `tbb::global_control` in each main binary
+- Parallelization via Intel TBB: indexing uses `parallel_for` + `combinable` for counting and partition scan, `parallel_sort` for posting buffer, `task_group` for volume-level parallelism; `ikafssnsearch` adaptively selects `parallel_for` (query-level, when queries > threads*2 or single volume) or `parallel_for_each` (query×volume, for few queries with multiple volumes); `ikafssnserver` always uses `parallel_for` (query-level) to preserve CPU headroom. Thread count is controlled centrally via `tbb::global_control` in each main binary
 - mmap is read-only and shared across threads; `score_per_seq` arrays are thread-local
 - One server process serves one BLAST DB; multiple DBs require multiple processes
 
