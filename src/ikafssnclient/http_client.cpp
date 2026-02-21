@@ -28,6 +28,9 @@ static std::string build_request_json(const SearchRequest& req) {
     root["stage1_topn"] = req.stage1_topn;
     root["min_stage1_score"] = req.min_stage1_score;
     root["num_results"] = req.num_results;
+    root["mode"] = req.mode;
+    root["stage1_score"] = req.stage1_score_type;
+    root["sort_score"] = req.sort_score;
 
     switch (req.seqidlist_mode) {
     case SeqidlistMode::kInclude:
@@ -85,6 +88,11 @@ static bool parse_response_json(const std::string& body,
     std::string status = root.get("status", "").asString();
     resp.status = (status == "success") ? 0 : 1;
     resp.k = static_cast<uint8_t>(root.get("k", 0).asUInt());
+    resp.mode = static_cast<uint8_t>(root.get("mode", 2).asUInt());
+    resp.stage1_score_type = static_cast<uint8_t>(root.get("stage1_score_type", 1).asUInt());
+
+    // Determine stage1 score field name
+    const char* s1name = (resp.stage1_score_type == 2) ? "matchscore" : "coverscore";
 
     const auto& results = root["results"];
     if (!results.isArray()) {
@@ -103,11 +111,14 @@ static bool parse_response_json(const std::string& body,
                 hit.accession = h.get("accession", "").asString();
                 std::string strand = h.get("strand", "+").asString();
                 hit.strand = (strand == "-") ? 1 : 0;
-                hit.q_start = h.get("q_start", 0).asUInt();
-                hit.q_end = h.get("q_end", 0).asUInt();
-                hit.s_start = h.get("s_start", 0).asUInt();
-                hit.s_end = h.get("s_end", 0).asUInt();
-                hit.score = static_cast<uint16_t>(h.get("score", 0).asUInt());
+                if (resp.mode != 1) {
+                    hit.q_start = h.get("q_start", 0).asUInt();
+                    hit.q_end = h.get("q_end", 0).asUInt();
+                    hit.s_start = h.get("s_start", 0).asUInt();
+                    hit.s_end = h.get("s_end", 0).asUInt();
+                    hit.score = static_cast<uint16_t>(h.get("chainscore", 0).asUInt());
+                }
+                hit.stage1_score = static_cast<uint16_t>(h.get(s1name, 0).asUInt());
                 hit.volume = static_cast<uint16_t>(h.get("volume", 0).asUInt());
                 query_result.hits.push_back(std::move(hit));
             }

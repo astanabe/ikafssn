@@ -35,7 +35,10 @@ static void print_usage(const char* prog) {
         "Options:\n"
         "  -o <path>                Output file (default: stdout)\n"
         "  -k <int>                 K-mer size (default: server default)\n"
-        "  -min_score <int>         Minimum chain score (default: server default)\n"
+        "  -mode <1|2>              1=Stage1 only, 2=Stage1+Stage2 (default: server default)\n"
+        "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: server default)\n"
+        "  -sort_score <1|2>        1=stage1 score, 2=chainscore (default: server default)\n"
+        "  -min_score <int>         Minimum score (default: server default)\n"
         "  -max_gap <int>           Chaining gap tolerance (default: server default)\n"
         "  -max_freq <int>          High-freq k-mer skip threshold (default: server default)\n"
         "  -min_diag_hits <int>     Diagonal filter min hits (default: server default)\n"
@@ -118,6 +121,9 @@ int main(int argc, char* argv[]) {
     req.stage1_topn = static_cast<uint16_t>(cli.get_int("-stage1_topn", 0));
     req.min_stage1_score = static_cast<uint16_t>(cli.get_int("-min_stage1_score", 0));
     req.num_results = static_cast<uint16_t>(cli.get_int("-num_results", 0));
+    req.mode = static_cast<uint8_t>(cli.get_int("-mode", 0));
+    req.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
+    req.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 0));
 
     // Seqidlist
     if (cli.has("-seqidlist")) {
@@ -199,21 +205,24 @@ int main(int argc, char* argv[]) {
             oh.s_start = hit.s_start;
             oh.s_end = hit.s_end;
             oh.score = hit.score;
+            oh.stage1_score = hit.stage1_score;
             oh.volume = hit.volume;
             all_hits.push_back(oh);
         }
     }
 
-    // Write output
+    // Write output using mode/stage1_score_type from response
     if (output_path.empty()) {
-        write_results(std::cout, all_hits, outfmt);
+        write_results(std::cout, all_hits, outfmt,
+                      resp.mode, resp.stage1_score_type);
     } else {
         std::ofstream out(output_path);
         if (!out.is_open()) {
             std::fprintf(stderr, "Error: cannot open output file %s\n", output_path.c_str());
             return 1;
         }
-        write_results(out, all_hits, outfmt);
+        write_results(out, all_hits, outfmt,
+                      resp.mode, resp.stage1_score_type);
     }
 
     logger.info("Done. %zu hit(s) reported.", all_hits.size());

@@ -60,8 +60,8 @@ static void test_stage1_basic() {
     // Should find FJ876973.1 OID in candidates
     CHECK(!candidates.empty());
     bool found_fj = false;
-    for (SeqId id : candidates) {
-        if (id == g_fj_oid) found_fj = true;
+    for (const auto& c : candidates) {
+        if (c.id == g_fj_oid) found_fj = true;
     }
     CHECK(found_fj);
 
@@ -150,12 +150,98 @@ static void test_stage1_with_oid_filter() {
     auto candidates = stage1_filter(query_kmers, kix, filter, config);
 
     // FJ876973.1 OID should NOT be in results
-    for (SeqId id : candidates) {
-        CHECK(id != g_fj_oid);
+    for (const auto& c : candidates) {
+        CHECK(c.id != g_fj_oid);
     }
 
     kix.close();
     ksx.close();
+}
+
+static void test_stage1_coverscore_vs_matchscore() {
+    std::fprintf(stderr, "-- test_stage1_coverscore_vs_matchscore\n");
+
+    KixReader kix;
+    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
+
+    std::vector<std::pair<uint32_t, uint16_t>> query_kmers;
+    KmerScanner<uint16_t> scanner(7);
+    scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
+        query_kmers.emplace_back(pos, kmer);
+    });
+
+    OidFilter filter;
+
+    // Coverscore mode (default, type=1)
+    Stage1Config config_cover;
+    config_cover.max_freq = 100000;
+    config_cover.stage1_topn = 100;
+    config_cover.min_stage1_score = 1;
+    config_cover.stage1_score_type = 1;
+    auto cover_candidates = stage1_filter(query_kmers, kix, filter, config_cover);
+
+    // Matchscore mode (type=2)
+    Stage1Config config_match;
+    config_match.max_freq = 100000;
+    config_match.stage1_topn = 100;
+    config_match.min_stage1_score = 1;
+    config_match.stage1_score_type = 2;
+    auto match_candidates = stage1_filter(query_kmers, kix, filter, config_match);
+
+    // Both should find FJ876973.1
+    bool cover_found = false, match_found = false;
+    uint32_t cover_score = 0, match_score = 0;
+    for (const auto& c : cover_candidates) {
+        if (c.id == g_fj_oid) { cover_found = true; cover_score = c.score; }
+    }
+    for (const auto& c : match_candidates) {
+        if (c.id == g_fj_oid) { match_found = true; match_score = c.score; }
+    }
+    CHECK(cover_found);
+    CHECK(match_found);
+
+    // Matchscore >= coverscore always (matchscore counts all postings,
+    // coverscore counts only distinct query k-mers)
+    CHECK(match_score >= cover_score);
+
+    kix.close();
+}
+
+static void test_stage1_topn_zero() {
+    std::fprintf(stderr, "-- test_stage1_topn_zero\n");
+
+    KixReader kix;
+    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
+
+    std::vector<std::pair<uint32_t, uint16_t>> query_kmers;
+    KmerScanner<uint16_t> scanner(7);
+    scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
+        query_kmers.emplace_back(pos, kmer);
+    });
+
+    OidFilter filter;
+
+    // topn=0 (unlimited)
+    Stage1Config config_unlimited;
+    config_unlimited.max_freq = 100000;
+    config_unlimited.stage1_topn = 0;
+    config_unlimited.min_stage1_score = 1;
+    auto unlimited = stage1_filter(query_kmers, kix, filter, config_unlimited);
+
+    // topn=2 (limited)
+    Stage1Config config_limited;
+    config_limited.max_freq = 100000;
+    config_limited.stage1_topn = 2;
+    config_limited.min_stage1_score = 1;
+    auto limited = stage1_filter(query_kmers, kix, filter, config_limited);
+
+    // Unlimited should return >= limited count
+    CHECK(unlimited.size() >= limited.size());
+
+    // Limited should return at most 2
+    CHECK(limited.size() <= 2);
+
+    kix.close();
 }
 
 int main() {
@@ -182,6 +268,8 @@ int main() {
     test_stage1_max_freq_skip();
     test_stage1_min_score();
     test_stage1_with_oid_filter();
+    test_stage1_coverscore_vs_matchscore();
+    test_stage1_topn_zero();
 
     std::filesystem::remove_all(g_index_dir);
 

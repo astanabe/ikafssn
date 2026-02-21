@@ -66,7 +66,7 @@ Each command links only its required dependencies to allow lightweight deploymen
 
 - **`core/`** — Fundamental types (`Hit`, `ChainResult`), constants, k-mer 2-bit encoding/revcomp (templates parameterized on `KmerInt` = `uint16_t` for k<=8, `uint32_t` for k=9-13), LEB128 varint
 - **`index/`** — Reader/writer for three index file formats (`.kix` main index, `.kpx` position data, `.ksx` sequence metadata), index builder with partition+buffer strategy
-- **`search/`** — Two-stage search pipeline: Stage 1 (ID posting scan with OID filter) -> Stage 2 (position-aware chaining DP with diagonal filter)
+- **`search/`** — Two-stage search pipeline: Stage 1 (ID posting scan with OID filter, coverscore or matchscore) -> Stage 2 (position-aware chaining DP with diagonal filter, chainscore). Mode 1 skips Stage 2 entirely. Configurable sort_score (stage1 score or chainscore), stage1_topn=0/num_results=0 for unlimited with sort skip
 - **`protocol/`** — Length-prefixed binary protocol for client-server communication (frame header + typed messages)
 - **`io/`** — BLAST DB reader (CSeqDB wrapper), FASTA reader, mmap RAII wrapper, seqidlist reader (text/binary auto-detect), result writer/reader
 - **`util/`** — CLI parser, size string parser ("8G"), socket utilities, progress display, logger

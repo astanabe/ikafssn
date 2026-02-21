@@ -24,7 +24,7 @@ uint32_t compute_effective_max_freq(uint32_t config_max_freq,
 }
 
 template <typename KmerInt>
-std::vector<SeqId> stage1_filter(
+std::vector<Stage1Candidate> stage1_filter(
     const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
     const KixReader& kix,
     const OidFilter& filter,
@@ -44,6 +44,8 @@ std::vector<SeqId> stage1_filter(
     const uint32_t* counts = kix.counts();
     const uint8_t* posting_data = kix.posting_data();
 
+    const bool use_coverscore = (config.stage1_score_type == 1);
+
     for (const auto& [q_pos, kmer] : query_kmers) {
         uint64_t kmer_idx = static_cast<uint64_t>(kmer);
         uint32_t cnt = counts[kmer_idx];
@@ -52,26 +54,28 @@ std::vector<SeqId> stage1_filter(
         SeqIdDecoder decoder(posting_data + offsets[kmer_idx]);
         for (uint32_t i = 0; i < cnt; i++) {
             SeqId sid = decoder.next();
+            if (use_coverscore && !decoder.was_new_seq()) continue;
             if (!filter.pass(sid)) continue;
             score_per_seq[sid]++;
         }
     }
 
     // Collect candidates with min_stage1_score
-    struct Candidate {
-        SeqId id;
-        uint32_t score;
-    };
-    std::vector<Candidate> candidates;
+    std::vector<Stage1Candidate> candidates;
     for (uint32_t oid = 0; oid < num_seqs; oid++) {
         if (score_per_seq[oid] >= config.min_stage1_score) {
             candidates.push_back({oid, score_per_seq[oid]});
         }
     }
 
+    if (config.stage1_topn == 0) {
+        // Unlimited: return all candidates, skip sort
+        return candidates;
+    }
+
     // Sort by score descending
     std::sort(candidates.begin(), candidates.end(),
-              [](const Candidate& a, const Candidate& b) {
+              [](const Stage1Candidate& a, const Stage1Candidate& b) {
                   return a.score > b.score;
               });
 
@@ -80,20 +84,14 @@ std::vector<SeqId> stage1_filter(
         candidates.resize(config.stage1_topn);
     }
 
-    // Extract seq_ids
-    std::vector<SeqId> result;
-    result.reserve(candidates.size());
-    for (const auto& c : candidates) {
-        result.push_back(c.id);
-    }
-    return result;
+    return candidates;
 }
 
 // Explicit template instantiations
-template std::vector<SeqId> stage1_filter<uint16_t>(
+template std::vector<Stage1Candidate> stage1_filter<uint16_t>(
     const std::vector<std::pair<uint32_t, uint16_t>>&,
     const KixReader&, const OidFilter&, const Stage1Config&);
-template std::vector<SeqId> stage1_filter<uint32_t>(
+template std::vector<Stage1Candidate> stage1_filter<uint32_t>(
     const std::vector<std::pair<uint32_t, uint32_t>>&,
     const KixReader&, const OidFilter&, const Stage1Config&);
 

@@ -5,7 +5,7 @@
 ## Features
 
 - Builds a k-mer inverted index directly from NCBI BLAST databases
-- Two-stage search pipeline: fast candidate filtering followed by position-aware collinear chaining
+- Two-stage search pipeline: fast candidate filtering (Stage 1) followed by position-aware collinear chaining (Stage 2), with configurable scoring (coverscore/matchscore/chainscore) and optional Stage 1-only mode
 - Client-server architecture with UNIX/TCP socket and HTTP REST API support
 - Handles IUPAC ambiguous bases by expanding single-ambiguity k-mers during indexing
 - Parallel indexing and search via Intel TBB

@@ -8,8 +8,10 @@
 namespace ikafssn {
 
 static bool parse_line(const std::string& line, OutputHit& hit) {
-    // Expected: query_id \t accession \t strand \t q_start \t q_end \t s_start \t s_end \t score \t volume
-    // Split by tabs
+    // Supported formats:
+    //   10 fields (mode 2): query_id accession strand q_start q_end s_start s_end stage1_score chainscore volume
+    //    5 fields (mode 1): query_id accession strand stage1_score volume
+    //    9 fields (legacy):  query_id accession strand q_start q_end s_start s_end score volume
     std::vector<std::string> fields;
     std::string::size_type start = 0;
     while (true) {
@@ -22,7 +24,7 @@ static bool parse_line(const std::string& line, OutputHit& hit) {
         start = pos + 1;
     }
 
-    if (fields.size() < 9) return false;
+    if (fields.size() < 5) return false;
 
     hit.query_id = fields[0];
     hit.accession = fields[1];
@@ -32,12 +34,33 @@ static bool parse_line(const std::string& line, OutputHit& hit) {
     hit.strand = fields[2][0];
 
     try {
-        hit.q_start = static_cast<uint32_t>(std::stoul(fields[3]));
-        hit.q_end = static_cast<uint32_t>(std::stoul(fields[4]));
-        hit.s_start = static_cast<uint32_t>(std::stoul(fields[5]));
-        hit.s_end = static_cast<uint32_t>(std::stoul(fields[6]));
-        hit.score = static_cast<uint32_t>(std::stoul(fields[7]));
-        hit.volume = static_cast<uint16_t>(std::stoul(fields[8]));
+        if (fields.size() >= 10) {
+            // Mode 2 (10-column format)
+            hit.q_start = static_cast<uint32_t>(std::stoul(fields[3]));
+            hit.q_end = static_cast<uint32_t>(std::stoul(fields[4]));
+            hit.s_start = static_cast<uint32_t>(std::stoul(fields[5]));
+            hit.s_end = static_cast<uint32_t>(std::stoul(fields[6]));
+            hit.stage1_score = static_cast<uint32_t>(std::stoul(fields[7]));
+            hit.score = static_cast<uint32_t>(std::stoul(fields[8]));
+            hit.volume = static_cast<uint16_t>(std::stoul(fields[9]));
+        } else if (fields.size() >= 9) {
+            // Legacy 9-column format (no stage1_score)
+            hit.q_start = static_cast<uint32_t>(std::stoul(fields[3]));
+            hit.q_end = static_cast<uint32_t>(std::stoul(fields[4]));
+            hit.s_start = static_cast<uint32_t>(std::stoul(fields[5]));
+            hit.s_end = static_cast<uint32_t>(std::stoul(fields[6]));
+            hit.score = static_cast<uint32_t>(std::stoul(fields[7]));
+            hit.volume = static_cast<uint16_t>(std::stoul(fields[8]));
+        } else if (fields.size() >= 5) {
+            // Mode 1 (5-column format)
+            hit.q_start = 0;
+            hit.q_end = 0;
+            hit.s_start = 0;
+            hit.s_end = 0;
+            hit.stage1_score = static_cast<uint32_t>(std::stoul(fields[3]));
+            hit.score = 0;
+            hit.volume = static_cast<uint16_t>(std::stoul(fields[4]));
+        }
     } catch (...) {
         return false;
     }

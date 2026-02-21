@@ -10,6 +10,7 @@
 #include "core/kmer_encoding.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace ikafssn {
@@ -25,6 +26,28 @@ extract_kmers(const std::string& seq, int k) {
     return kmers;
 }
 
+// Stage 1 only: return candidates as ChainResult with stage1_score, no chaining.
+static std::vector<ChainResult>
+stage1_only_results(const std::vector<Stage1Candidate>& candidates,
+                    bool is_reverse,
+                    uint32_t min_score) {
+    std::vector<ChainResult> results;
+    for (const auto& c : candidates) {
+        if (c.score < min_score) continue;
+        ChainResult cr{};
+        cr.seq_id = c.id;
+        cr.score = 0;
+        cr.stage1_score = c.score;
+        cr.q_start = 0;
+        cr.q_end = 0;
+        cr.s_start = 0;
+        cr.s_end = 0;
+        cr.is_reverse = is_reverse;
+        results.push_back(cr);
+    }
+    return results;
+}
+
 template <typename KmerInt>
 static std::vector<ChainResult>
 search_one_strand(const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
@@ -36,11 +59,24 @@ search_one_strand(const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
                   const SearchConfig& config) {
 
     // Stage 1: candidate selection
-    std::vector<SeqId> candidates = stage1_filter(query_kmers, kix, filter, config.stage1);
+    auto candidates = stage1_filter(query_kmers, kix, filter, config.stage1);
     if (candidates.empty()) return {};
 
-    // Build candidate set for fast lookup
-    std::unordered_set<SeqId> candidate_set(candidates.begin(), candidates.end());
+    // Mode 1: Stage 1 only — return candidates directly
+    if (config.mode == 1) {
+        return stage1_only_results(candidates, is_reverse,
+                                   config.stage2.min_score);
+    }
+
+    // Build candidate set for fast lookup and score map
+    std::unordered_set<SeqId> candidate_set;
+    std::unordered_map<SeqId, uint32_t> stage1_scores;
+    candidate_set.reserve(candidates.size());
+    stage1_scores.reserve(candidates.size());
+    for (const auto& c : candidates) {
+        candidate_set.insert(c.id);
+        stage1_scores[c.id] = c.score;
+    }
 
     // Compute effective max_freq (same as Stage 1)
     uint32_t max_freq = compute_effective_max_freq(
@@ -75,12 +111,13 @@ search_one_strand(const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
 
     // Chain hits for each candidate
     std::vector<ChainResult> results;
-    for (SeqId sid : candidates) {
-        auto it = hits_per_seq.find(sid);
+    for (const auto& c : candidates) {
+        auto it = hits_per_seq.find(c.id);
         if (it == hits_per_seq.end()) continue;
 
-        ChainResult cr = chain_hits(it->second, sid, k, is_reverse, config.stage2);
+        ChainResult cr = chain_hits(it->second, c.id, k, is_reverse, config.stage2);
         if (cr.score >= config.stage2.min_score) {
+            cr.stage1_score = c.score;
             results.push_back(cr);
         }
     }
@@ -123,16 +160,25 @@ SearchResult search_volume(
     auto rc_results = search_one_strand(rc_kmers, k, true, kix, kpx, filter, config);
     result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
 
-    // Sort all hits by score descending
-    std::sort(result.hits.begin(), result.hits.end(),
-              [](const ChainResult& a, const ChainResult& b) {
-                  return a.score > b.score;
-              });
+    if (config.num_results > 0) {
+        // Sort and truncate
+        if (config.sort_score == 1) {
+            std::sort(result.hits.begin(), result.hits.end(),
+                      [](const ChainResult& a, const ChainResult& b) {
+                          return a.stage1_score > b.stage1_score;
+                      });
+        } else {
+            std::sort(result.hits.begin(), result.hits.end(),
+                      [](const ChainResult& a, const ChainResult& b) {
+                          return a.score > b.score;
+                      });
+        }
 
-    // Truncate to num_results
-    if (result.hits.size() > config.num_results) {
-        result.hits.resize(config.num_results);
+        if (result.hits.size() > config.num_results) {
+            result.hits.resize(config.num_results);
+        }
     }
+    // num_results == 0: unlimited, skip sort and truncation
 
     return result;
 }

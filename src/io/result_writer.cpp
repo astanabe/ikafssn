@@ -4,19 +4,40 @@
 
 namespace ikafssn {
 
+static const char* stage1_score_name(uint8_t stage1_score_type) {
+    return (stage1_score_type == 2) ? "matchscore" : "coverscore";
+}
+
 void write_results_tab(std::ostream& out,
-                       const std::vector<OutputHit>& hits) {
-    out << "# query_id\taccession\tstrand\tq_start\tq_end\ts_start\ts_end\tscore\tvolume\n";
-    for (const auto& h : hits) {
-        out << h.query_id << '\t'
-            << h.accession << '\t'
-            << h.strand << '\t'
-            << h.q_start << '\t'
-            << h.q_end << '\t'
-            << h.s_start << '\t'
-            << h.s_end << '\t'
-            << h.score << '\t'
-            << h.volume << '\n';
+                       const std::vector<OutputHit>& hits,
+                       uint8_t mode,
+                       uint8_t stage1_score_type) {
+    const char* s1name = stage1_score_name(stage1_score_type);
+
+    if (mode == 1) {
+        out << "# query_id\taccession\tstrand\t" << s1name << "\tvolume\n";
+        for (const auto& h : hits) {
+            out << h.query_id << '\t'
+                << h.accession << '\t'
+                << h.strand << '\t'
+                << h.stage1_score << '\t'
+                << h.volume << '\n';
+        }
+    } else {
+        out << "# query_id\taccession\tstrand\tq_start\tq_end\ts_start\ts_end\t"
+            << s1name << "\tchainscore\tvolume\n";
+        for (const auto& h : hits) {
+            out << h.query_id << '\t'
+                << h.accession << '\t'
+                << h.strand << '\t'
+                << h.q_start << '\t'
+                << h.q_end << '\t'
+                << h.s_start << '\t'
+                << h.s_end << '\t'
+                << h.stage1_score << '\t'
+                << h.score << '\t'
+                << h.volume << '\n';
+        }
     }
 }
 
@@ -36,7 +57,11 @@ static void json_escape(std::ostream& out, const std::string& s) {
 }
 
 void write_results_json(std::ostream& out,
-                        const std::vector<OutputHit>& hits) {
+                        const std::vector<OutputHit>& hits,
+                        uint8_t mode,
+                        uint8_t stage1_score_type) {
+    const char* s1name = stage1_score_name(stage1_score_type);
+
     // Group hits by query_id (preserve order of first appearance)
     std::vector<std::string> query_order;
     std::map<std::string, std::vector<const OutputHit*>> by_query;
@@ -59,11 +84,16 @@ void write_results_json(std::ostream& out,
             out << "        {\n";
             out << "          \"accession\": "; json_escape(out, h->accession); out << ",\n";
             out << "          \"strand\": \"" << h->strand << "\",\n";
-            out << "          \"q_start\": " << h->q_start << ",\n";
-            out << "          \"q_end\": " << h->q_end << ",\n";
-            out << "          \"s_start\": " << h->s_start << ",\n";
-            out << "          \"s_end\": " << h->s_end << ",\n";
-            out << "          \"score\": " << h->score << ",\n";
+            if (mode != 1) {
+                out << "          \"q_start\": " << h->q_start << ",\n";
+                out << "          \"q_end\": " << h->q_end << ",\n";
+                out << "          \"s_start\": " << h->s_start << ",\n";
+                out << "          \"s_end\": " << h->s_end << ",\n";
+            }
+            out << "          \"" << s1name << "\": " << h->stage1_score << ",\n";
+            if (mode != 1) {
+                out << "          \"chainscore\": " << h->score << ",\n";
+            }
             out << "          \"volume\": " << h->volume << "\n";
             out << "        }";
             if (hi + 1 < qhits.size()) out << ',';
@@ -78,13 +108,15 @@ void write_results_json(std::ostream& out,
 
 void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,
-                   OutputFormat fmt) {
+                   OutputFormat fmt,
+                   uint8_t mode,
+                   uint8_t stage1_score_type) {
     switch (fmt) {
         case OutputFormat::kTab:
-            write_results_tab(out, hits);
+            write_results_tab(out, hits, mode, stage1_score_type);
             break;
         case OutputFormat::kJson:
-            write_results_json(out, hits);
+            write_results_json(out, hits, mode, stage1_score_type);
             break;
     }
 }

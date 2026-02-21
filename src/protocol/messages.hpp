@@ -30,6 +30,9 @@ struct SearchRequest {
     uint16_t min_stage1_score = 0;   // 0 = server default
     uint16_t num_results = 0;        // 0 = server default
     SeqidlistMode seqidlist_mode = SeqidlistMode::kNone;
+    uint8_t  mode = 0;              // 0 = server default, 1 = stage1 only, 2 = stage1+stage2
+    uint8_t  stage1_score_type = 0; // 0 = server default, 1 = coverscore, 2 = matchscore
+    uint8_t  sort_score = 0;        // 0 = server default, 1 = stage1 score, 2 = chainscore
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
 };
@@ -43,6 +46,7 @@ struct ResponseHit {
     uint32_t s_start;
     uint32_t s_end;
     uint16_t score;
+    uint16_t stage1_score;
     uint16_t volume;
 };
 
@@ -56,6 +60,8 @@ struct QueryResult {
 struct SearchResponse {
     uint8_t  status = 0;  // 0 = success
     uint8_t  k = 0;
+    uint8_t  mode = 2;              // 1 = stage1 only, 2 = stage1+stage2
+    uint8_t  stage1_score_type = 1; // 1 = coverscore, 2 = matchscore
     std::vector<QueryResult> results;
 };
 

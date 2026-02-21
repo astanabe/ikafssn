@@ -20,6 +20,7 @@ struct OutputHit {
     uint32_t s_start;
     uint32_t s_end;
     uint32_t score;
+    uint32_t stage1_score = 0;
     uint16_t volume;
 };
 
@@ -27,15 +28,21 @@ enum class OutputFormat { kTab, kJson };
 
 // Write results in tab-delimited format.
 void write_results_tab(std::ostream& out,
-                       const std::vector<OutputHit>& hits);
+                       const std::vector<OutputHit>& hits,
+                       uint8_t mode = 2,
+                       uint8_t stage1_score_type = 1);
 
 // Write results in JSON format.
 void write_results_json(std::ostream& out,
-                        const std::vector<OutputHit>& hits);
+                        const std::vector<OutputHit>& hits,
+                        uint8_t mode = 2,
+                        uint8_t stage1_score_type = 1);
 
 // Write results in the specified format.
 void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,
-                   OutputFormat fmt);
+                   OutputFormat fmt,
+                   uint8_t mode = 2,
+                   uint8_t stage1_score_type = 1);
 
 } // namespace ikafssn

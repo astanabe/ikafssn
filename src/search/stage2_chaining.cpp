@@ -36,6 +36,9 @@ ChainResult chain_hits(const std::vector<Hit>& raw_hits,
     for (size_t i = 1; i < n; i++) {
         for (size_t j = 0; j < i; j++) {
             // Collinearity constraint: q_pos[j] < q_pos[i] and s_pos[j] < s_pos[i]
+            // Both must strictly increase to ensure each chain element comes
+            // from a distinct query k-mer position.
+            if (hits[j].q_pos >= hits[i].q_pos) continue;
             if (hits[j].s_pos >= hits[i].s_pos) continue;
 
             // Gap constraint

@@ -67,6 +67,9 @@ void HttpController::search(
     sreq.stage1_topn = static_cast<uint16_t>(j.get("stage1_topn", 0).asUInt());
     sreq.min_stage1_score = static_cast<uint16_t>(j.get("min_stage1_score", 0).asUInt());
     sreq.num_results = static_cast<uint16_t>(j.get("num_results", 0).asUInt());
+    sreq.mode = static_cast<uint8_t>(j.get("mode", 0).asUInt());
+    sreq.stage1_score_type = static_cast<uint8_t>(j.get("stage1_score", 0).asUInt());
+    sreq.sort_score = static_cast<uint8_t>(j.get("sort_score", 0).asUInt());
 
     // Seqidlist mode
     std::string mode_str = j.get("seqidlist_mode", "none").asString();
@@ -129,6 +132,9 @@ void HttpController::search(
         Json::Value result;
         result["status"] = (sresp.status == 0) ? "success" : "error";
         result["k"] = sresp.k;
+        result["mode"] = sresp.mode;
+        result["stage1_score_type"] = sresp.stage1_score_type;
+        const char* s1name = (sresp.stage1_score_type == 2) ? "matchscore" : "coverscore";
 
         Json::Value results_arr(Json::arrayValue);
         for (const auto& qr : sresp.results) {
@@ -140,11 +146,16 @@ void HttpController::search(
                 Json::Value hobj;
                 hobj["accession"] = hit.accession;
                 hobj["strand"] = (hit.strand == 0) ? "+" : "-";
-                hobj["q_start"] = hit.q_start;
-                hobj["q_end"] = hit.q_end;
-                hobj["s_start"] = hit.s_start;
-                hobj["s_end"] = hit.s_end;
-                hobj["score"] = hit.score;
+                if (sresp.mode != 1) {
+                    hobj["q_start"] = hit.q_start;
+                    hobj["q_end"] = hit.q_end;
+                    hobj["s_start"] = hit.s_start;
+                    hobj["s_end"] = hit.s_end;
+                }
+                hobj[s1name] = hit.stage1_score;
+                if (sresp.mode != 1) {
+                    hobj["chainscore"] = hit.score;
+                }
                 hobj["volume"] = hit.volume;
                 hits_arr.append(std::move(hobj));
             }

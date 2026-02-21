@@ -46,6 +46,36 @@ SearchResponse process_search_request(
         config.stage1.min_stage1_score = req.min_stage1_score;
     if (req.num_results != 0)
         config.num_results = req.num_results;
+    if (req.mode != 0)
+        config.mode = req.mode;
+    if (req.stage1_score_type != 0)
+        config.stage1.stage1_score_type = req.stage1_score_type;
+    if (req.sort_score != 0)
+        config.sort_score = req.sort_score;
+
+    // Mode 1: force sort_score=1
+    if (config.mode == 1) {
+        config.sort_score = 1;
+
+        // Consistency check: min_score and min_stage1_score
+        bool has_min_score = (req.min_score != 0);
+        bool has_min_stage1_score = (req.min_stage1_score != 0);
+        if (has_min_score && has_min_stage1_score &&
+            config.stage2.min_score != config.stage1.min_stage1_score) {
+            resp.status = 2; // parameter conflict
+            return resp;
+        }
+        if (has_min_score && !has_min_stage1_score) {
+            config.stage1.min_stage1_score = config.stage2.min_score;
+        }
+        if (!has_min_score && has_min_stage1_score) {
+            config.stage2.min_score = config.stage1.min_stage1_score;
+        }
+    }
+
+    // Set response metadata
+    resp.mode = config.mode;
+    resp.stage1_score_type = config.stage1.stage1_score_type;
 
     // Build seqidlist filter mode
     OidFilterMode filter_mode = OidFilterMode::kNone;
@@ -64,8 +94,6 @@ SearchResponse process_search_request(
         qr.query_id = query.query_id;
 
         // Collect hits from all volumes
-        std::vector<OutputHit> all_hits;
-
         for (const auto& vol : group.volumes) {
             // Build per-volume OID filter
             OidFilter oid_filter;
@@ -93,22 +121,32 @@ SearchResponse process_search_request(
                 rh.s_start = cr.s_start;
                 rh.s_end = cr.s_end;
                 rh.score = static_cast<uint16_t>(cr.score);
+                rh.stage1_score = static_cast<uint16_t>(cr.stage1_score);
                 rh.volume = vol.volume_index;
                 qr.hits.push_back(rh);
             }
         }
 
-        // Sort by score descending
-        std::sort(qr.hits.begin(), qr.hits.end(),
-                  [](const ResponseHit& a, const ResponseHit& b) {
-                      return a.score > b.score;
-                  });
+        if (config.num_results > 0) {
+            // Sort by sort_score descending
+            if (config.sort_score == 1) {
+                std::sort(qr.hits.begin(), qr.hits.end(),
+                          [](const ResponseHit& a, const ResponseHit& b) {
+                              return a.stage1_score > b.stage1_score;
+                          });
+            } else {
+                std::sort(qr.hits.begin(), qr.hits.end(),
+                          [](const ResponseHit& a, const ResponseHit& b) {
+                              return a.score > b.score;
+                          });
+            }
 
-        // Truncate to num_results
-        uint32_t num_results = config.num_results;
-        if (qr.hits.size() > num_results) {
-            qr.hits.resize(num_results);
+            // Truncate to num_results
+            if (qr.hits.size() > config.num_results) {
+                qr.hits.resize(config.num_results);
+            }
         }
+        // num_results == 0: unlimited, skip sort and truncation
     }
 
     return resp;

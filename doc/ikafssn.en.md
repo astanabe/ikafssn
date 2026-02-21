@@ -97,13 +97,19 @@ Required:
 Options:
   -o <path>               Output file (default: stdout)
   -threads <int>          Parallel search threads (default: all cores)
-  -min_score <int>        Minimum chain score (default: 3)
+  -min_score <int>        Minimum score (default: 3)
   -max_gap <int>          Chaining diagonal gap tolerance (default: 100)
   -max_freq <int>         High-frequency k-mer skip threshold (default: auto)
   -min_diag_hits <int>    Diagonal filter min hits (default: 2)
-  -stage1_topn <int>      Stage 1 candidate limit (default: 500)
+  -stage1_topn <int>      Stage 1 candidate limit, 0=unlimited (default: 500)
   -min_stage1_score <int> Stage 1 minimum score (default: 2)
-  -num_results <int>      Max results per query (default: 50)
+  -num_results <int>      Max results per query, 0=unlimited (default: 50)
+  -mode <1|2>             Search mode (default: 2)
+                          1=Stage 1 only, 2=Stage 1 + Stage 2
+  -stage1_score <1|2>     Stage 1 score type (default: 1)
+                          1=coverscore, 2=matchscore
+  -sort_score <1|2>       Sort key for results (default: 2)
+                          1=stage1 score, 2=chainscore
   -seqidlist <path>       Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
   -outfmt <tab|json>      Output format (default: tab)
@@ -293,13 +299,16 @@ Required:
 Options:
   -o <path>                Output file (default: stdout)
   -k <int>                 K-mer size (default: server default)
-  -min_score <int>         Minimum chain score (default: server default)
+  -min_score <int>         Minimum score (default: server default)
   -max_gap <int>           Chaining gap tolerance (default: server default)
   -max_freq <int>          High-freq k-mer skip threshold (default: server default)
   -min_diag_hits <int>     Diagonal filter min hits (default: server default)
   -stage1_topn <int>       Stage 1 candidate limit (default: server default)
   -min_stage1_score <int>  Stage 1 minimum score (default: server default)
   -num_results <int>       Max results per query (default: server default)
+  -mode <1|2>              Search mode (default: server default)
+  -stage1_score <1|2>      Stage 1 score type (default: server default)
+  -sort_score <1|2>        Sort key for results (default: server default)
   -seqidlist <path>        Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
   -outfmt <tab|json>       Output format (default: tab)
@@ -369,9 +378,11 @@ ikafssninfo -ix ./index -v
 
 ikafssn uses a two-stage search pipeline:
 
-1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates hit counts per sequence. Sequences exceeding `min_stage1_score` are selected as candidates, sorted by score, and truncated to `stage1_topn`.
+1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `min_stage1_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0`, all qualifying candidates are returned without sorting.
 
-2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. Chains with `score >= min_score` are reported.
+2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= min_score` are reported.
+
+**Mode 1 (Stage 1 only):** When `-mode 1` is specified, Stage 2 is skipped entirely. The `.kpx` file is not accessed, saving I/O and memory. Results contain only Stage 1 scores; position fields (q_start, q_end, s_start, s_end) and chainscore are omitted. In mode 1, `-min_score` applies to the Stage 1 score, and `-sort_score` is forced to 1 (stage1 score).
 
 Both forward and reverse complement strands of the query are searched.
 
@@ -386,17 +397,41 @@ where mean_count = total_postings / 4^k
 
 This is computed per volume from the `.kix` header.
 
+### Score Types
+
+ikafssn computes three types of scores:
+
+| Score | Description | Computed in |
+|---|---|---|
+| **coverscore** | Number of distinct query k-mers that match the subject sequence. Each query k-mer is counted at most once per subject, regardless of how many positions it matches. | Stage 1 |
+| **matchscore** | Total number of (query k-mer, subject position) matches. A single query k-mer matching multiple positions in the subject counts multiple times. | Stage 1 |
+| **chainscore** | Length (number of k-mer hits) of the best collinear chain found by the chaining DP. Requires position data from `.kpx`. | Stage 2 |
+
+- `-stage1_score` selects which score type Stage 1 uses (1=coverscore, 2=matchscore). This affects candidate ranking and the stage1 score reported in output.
+- `-sort_score` selects which score is used for final result sorting (1=stage1 score, 2=chainscore).
+- In `-mode 1`, only Stage 1 scores are available; chainscore is not computed.
+
 ## Output Format
 
 ### Tab Format (default)
 
-Tab-separated columns:
+**Mode 2** (default):
+
+Tab-separated columns, where `coverscore` is replaced by `matchscore` when `-stage1_score 2`:
 
 ```
-query_id  accession  strand  q_start  q_end  s_start  s_end  score  volume
+# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  volume
+```
+
+**Mode 1** (`-mode 1`):
+
+```
+# query_id  accession  strand  coverscore  volume
 ```
 
 ### JSON Format
+
+**Mode 2** (default):
 
 ```json
 {
@@ -411,7 +446,28 @@ query_id  accession  strand  q_start  q_end  s_start  s_end  score  volume
           "q_end": 150,
           "s_start": 1000,
           "s_end": 1150,
-          "score": 12,
+          "coverscore": 8,
+          "chainscore": 12,
+          "volume": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Mode 1** (`-mode 1`):
+
+```json
+{
+  "results": [
+    {
+      "query_id": "query1",
+      "hits": [
+        {
+          "accession": "NC_001234.5",
+          "strand": "+",
+          "coverscore": 8,
           "volume": 0
         }
       ]

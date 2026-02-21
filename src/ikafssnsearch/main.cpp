@@ -40,13 +40,16 @@ static void print_usage(const char* prog) {
         "Options:\n"
         "  -o <path>                Output file (default: stdout)\n"
         "  -threads <int>           Parallel search threads (default: all cores)\n"
-        "  -min_score <int>         Minimum chain score (default: 3)\n"
+        "  -mode <1|2>              1=Stage1 only, 2=Stage1+Stage2 (default: 2)\n"
+        "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: 1)\n"
+        "  -sort_score <1|2>        1=stage1 score, 2=chainscore (default: 2)\n"
+        "  -min_score <int>         Minimum score (default: 3)\n"
         "  -max_gap <int>           Chaining diagonal gap tolerance (default: 100)\n"
         "  -max_freq <int>          High-frequency k-mer skip threshold (default: auto)\n"
         "  -min_diag_hits <int>     Diagonal filter min hits (default: 2)\n"
-        "  -stage1_topn <int>       Stage 1 candidate limit (default: 500)\n"
+        "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 500)\n"
         "  -min_stage1_score <int>  Stage 1 minimum score (default: 2)\n"
-        "  -num_results <int>       Max results per query (default: 50)\n"
+        "  -num_results <int>       Max results per query, 0=unlimited (default: 50)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -outfmt <tab|json>       Output format (default: tab)\n"
@@ -141,10 +144,33 @@ int main(int argc, char* argv[]) {
     config.stage1.max_freq = static_cast<uint32_t>(cli.get_int("-max_freq", 0));
     config.stage1.stage1_topn = static_cast<uint32_t>(cli.get_int("-stage1_topn", 500));
     config.stage1.min_stage1_score = static_cast<uint32_t>(cli.get_int("-min_stage1_score", 2));
+    config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-max_gap", 100));
     config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-min_diag_hits", 2));
     config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-min_score", 3));
     config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 50));
+    config.mode = static_cast<uint8_t>(cli.get_int("-mode", 2));
+    config.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 2));
+
+    // Mode 1: force sort_score=1
+    if (config.mode == 1) {
+        config.sort_score = 1;
+
+        // Consistency check: -min_score and -min_stage1_score in mode 1
+        bool has_min_score = cli.has("-min_score");
+        bool has_min_stage1_score = cli.has("-min_stage1_score");
+        if (has_min_score && has_min_stage1_score &&
+            config.stage2.min_score != config.stage1.min_stage1_score) {
+            std::fprintf(stderr, "Error: -min_score and -min_stage1_score must be the same in -mode 1\n");
+            return 1;
+        }
+        if (has_min_score && !has_min_stage1_score) {
+            config.stage1.min_stage1_score = config.stage2.min_score;
+        }
+        if (!has_min_score && has_min_stage1_score) {
+            config.stage2.min_score = config.stage1.min_stage1_score;
+        }
+    }
 
     // Output format
     OutputFormat outfmt = OutputFormat::kTab;
@@ -187,7 +213,7 @@ int main(int argc, char* argv[]) {
         logger.info("Loaded %zu accessions from seqidlist (exclude mode)", seqidlist.size());
     }
 
-    // Pre-open all volumes (mmap kix/kpx, load ksx)
+    // Pre-open all volumes (mmap kix, optionally kpx, load ksx)
     std::vector<VolumeData> vol_data(vol_files.size());
     for (size_t vi = 0; vi < vol_files.size(); vi++) {
         const auto& vf = vol_files[vi];
@@ -195,9 +221,11 @@ int main(int argc, char* argv[]) {
             std::fprintf(stderr, "Error: cannot open %s\n", vf.kix_path.c_str());
             return 1;
         }
-        if (!vol_data[vi].kpx.open(vf.kpx_path)) {
-            std::fprintf(stderr, "Error: cannot open %s\n", vf.kpx_path.c_str());
-            return 1;
+        if (config.mode != 1) {
+            if (!vol_data[vi].kpx.open(vf.kpx_path)) {
+                std::fprintf(stderr, "Error: cannot open %s\n", vf.kpx_path.c_str());
+                return 1;
+            }
         }
         if (!vol_data[vi].ksx.open(vf.ksx_path)) {
             std::fprintf(stderr, "Error: cannot open %s\n", vf.ksx_path.c_str());
@@ -259,6 +287,7 @@ int main(int argc, char* argv[]) {
                         oh.s_start = cr.s_start;
                         oh.s_end = cr.s_end;
                         oh.score = cr.score;
+                        oh.stage1_score = cr.stage1_score;
                         oh.volume = vd.volume_index;
                         local_hits.push_back(oh);
                     }
@@ -269,15 +298,24 @@ int main(int argc, char* argv[]) {
             });
     });
 
-    // Sort final results by (query_id, score desc)
-    std::sort(all_hits.begin(), all_hits.end(),
-              [](const OutputHit& a, const OutputHit& b) {
-                  if (a.query_id != b.query_id) return a.query_id < b.query_id;
-                  return a.score > b.score;
-              });
+    // Sort and truncate final results across volumes (per query)
+    if (config.num_results > 0) {
+        // Sort by (query_id, sort_score desc)
+        if (config.sort_score == 1) {
+            std::sort(all_hits.begin(), all_hits.end(),
+                      [](const OutputHit& a, const OutputHit& b) {
+                          if (a.query_id != b.query_id) return a.query_id < b.query_id;
+                          return a.stage1_score > b.stage1_score;
+                      });
+        } else {
+            std::sort(all_hits.begin(), all_hits.end(),
+                      [](const OutputHit& a, const OutputHit& b) {
+                          if (a.query_id != b.query_id) return a.query_id < b.query_id;
+                          return a.score > b.score;
+                      });
+        }
 
-    // Truncate per query
-    {
+        // Truncate per query
         std::vector<OutputHit> truncated;
         std::string cur_qid;
         uint32_t cur_count = 0;
@@ -293,17 +331,20 @@ int main(int argc, char* argv[]) {
         }
         all_hits = std::move(truncated);
     }
+    // num_results == 0: unlimited, skip sort and truncation
 
     // Write output
     if (output_path.empty()) {
-        write_results(std::cout, all_hits, outfmt);
+        write_results(std::cout, all_hits, outfmt,
+                      config.mode, config.stage1.stage1_score_type);
     } else {
         std::ofstream out(output_path);
         if (!out.is_open()) {
             std::fprintf(stderr, "Error: cannot open output file %s\n", output_path.c_str());
             return 1;
         }
-        write_results(out, all_hits, outfmt);
+        write_results(out, all_hits, outfmt,
+                      config.mode, config.stage1.stage1_score_type);
     }
 
     logger.info("Done. %zu hit(s) reported.", all_hits.size());

@@ -221,27 +221,46 @@ static void test_result_output_tab() {
     std::fprintf(stderr, "-- test_result_output_tab\n");
 
     std::vector<OutputHit> hits = {
-        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 42, 0},
-        {"query1", "XM_005678", '-', 15, 430, 8050, 8465, 38, 2},
+        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 42, 10, 0},
+        {"query1", "XM_005678", '-', 15, 430, 8050, 8465, 38, 8, 2},
     };
 
     std::ostringstream oss;
     write_results_tab(oss, hits);
     std::string output = oss.str();
 
-    // Check header
+    // Check header (mode 2 default: includes coverscore and chainscore)
     CHECK(output.find("# query_id") != std::string::npos);
+    CHECK(output.find("coverscore") != std::string::npos);
+    CHECK(output.find("chainscore") != std::string::npos);
     // Check data
     CHECK(output.find("NM_001234") != std::string::npos);
     CHECK(output.find("XM_005678") != std::string::npos);
     CHECK(output.find("42") != std::string::npos);
 }
 
+static void test_result_output_tab_mode1() {
+    std::fprintf(stderr, "-- test_result_output_tab_mode1\n");
+
+    std::vector<OutputHit> hits = {
+        {"query1", "NM_001234", '+', 0, 0, 0, 0, 0, 10, 0},
+    };
+
+    std::ostringstream oss;
+    write_results_tab(oss, hits, 1, 1);
+    std::string output = oss.str();
+
+    // Mode 1: no q_start/q_end/s_start/s_end/chainscore columns
+    CHECK(output.find("coverscore") != std::string::npos);
+    CHECK(output.find("chainscore") == std::string::npos);
+    CHECK(output.find("q_start") == std::string::npos);
+}
+
 static void test_result_output_json() {
     std::fprintf(stderr, "-- test_result_output_json\n");
 
     std::vector<OutputHit> hits = {
-        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 42, 0},
+        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 42, 10, 0},
     };
 
     std::ostringstream oss;
@@ -251,7 +270,8 @@ static void test_result_output_json() {
     CHECK(output.find("\"results\"") != std::string::npos);
     CHECK(output.find("\"query_id\"") != std::string::npos);
     CHECK(output.find("\"NM_001234\"") != std::string::npos);
-    CHECK(output.find("\"score\": 42") != std::string::npos);
+    CHECK(output.find("\"chainscore\": 42") != std::string::npos);
+    CHECK(output.find("\"coverscore\": 10") != std::string::npos);
 }
 
 static void test_fasta_reader() {
@@ -325,6 +345,104 @@ static void test_search_k9() {
     ksx.close();
 }
 
+static void test_search_mode1() {
+    std::fprintf(stderr, "-- test_search_mode1\n");
+
+    std::string prefix = g_test_dir + "/test.00.07mer";
+
+    KixReader kix;
+    KpxReader kpx; // not opened — mode 1 doesn't use kpx
+    KsxReader ksx;
+    CHECK(kix.open(prefix + ".kix"));
+    CHECK(ksx.open(prefix + ".ksx"));
+
+    OidFilter filter;
+    SearchConfig config;
+    config.stage1.max_freq = 100000;
+    config.stage1.stage1_topn = 100;
+    config.stage1.min_stage1_score = 1;
+    config.stage2.max_gap = 100;
+    config.stage2.min_diag_hits = 1;
+    config.stage2.min_score = 1;
+    config.num_results = 50;
+    config.mode = 1;         // stage1 only
+    config.sort_score = 1;   // sort by stage1 score
+
+    auto result = search_volume<uint16_t>(
+        "mode1_query", g_query_seq, 7, kix, kpx, ksx, filter, config);
+
+    CHECK(result.query_id == "mode1_query");
+    CHECK(!result.hits.empty());
+
+    // In mode 1, hits have stage1_score > 0 and chain fields zeroed
+    bool found_fj = false;
+    for (const auto& cr : result.hits) {
+        CHECK(cr.stage1_score >= 1);
+        if (cr.seq_id == g_fj_oid && !cr.is_reverse) {
+            found_fj = true;
+            // Chain fields should be 0 in mode 1
+            CHECK_EQ(cr.q_start, 0u);
+            CHECK_EQ(cr.q_end, 0u);
+            CHECK_EQ(cr.s_start, 0u);
+            CHECK_EQ(cr.s_end, 0u);
+        }
+    }
+    CHECK(found_fj);
+
+    kix.close();
+    ksx.close();
+}
+
+static void test_search_num_results_zero() {
+    std::fprintf(stderr, "-- test_search_num_results_zero\n");
+
+    std::string prefix = g_test_dir + "/test.00.07mer";
+
+    KixReader kix;
+    KpxReader kpx;
+    KsxReader ksx;
+    CHECK(kix.open(prefix + ".kix"));
+    CHECK(kpx.open(prefix + ".kpx"));
+    CHECK(ksx.open(prefix + ".ksx"));
+
+    OidFilter filter;
+
+    // num_results=50 (limited)
+    SearchConfig config_limited;
+    config_limited.stage1.max_freq = 100000;
+    config_limited.stage1.stage1_topn = 100;
+    config_limited.stage1.min_stage1_score = 1;
+    config_limited.stage2.max_gap = 100;
+    config_limited.stage2.min_diag_hits = 1;
+    config_limited.stage2.min_score = 1;
+    config_limited.num_results = 2;
+
+    auto result_limited = search_volume<uint16_t>(
+        "q_lim", g_query_seq, 7, kix, kpx, ksx, filter, config_limited);
+
+    // num_results=0 (unlimited)
+    SearchConfig config_unlimited;
+    config_unlimited.stage1.max_freq = 100000;
+    config_unlimited.stage1.stage1_topn = 100;
+    config_unlimited.stage1.min_stage1_score = 1;
+    config_unlimited.stage2.max_gap = 100;
+    config_unlimited.stage2.min_diag_hits = 1;
+    config_unlimited.stage2.min_score = 1;
+    config_unlimited.num_results = 0;
+
+    auto result_unlimited = search_volume<uint16_t>(
+        "q_unlim", g_query_seq, 7, kix, kpx, ksx, filter, config_unlimited);
+
+    // Limited should have at most 2
+    CHECK(result_limited.hits.size() <= 2);
+    // Unlimited should have >= limited
+    CHECK(result_unlimited.hits.size() >= result_limited.hits.size());
+
+    kix.close();
+    kpx.close();
+    ksx.close();
+}
+
 int main() {
     check_ssu_available();
 
@@ -345,12 +463,15 @@ int main() {
 
     test_fasta_reader();
     test_result_output_tab();
+    test_result_output_tab_mode1();
     test_result_output_json();
     test_build_and_search();
     test_revcomp_search();
     test_seqidlist_filter();
     test_negative_seqidlist();
     test_search_k9();
+    test_search_mode1();
+    test_search_num_results_zero();
 
     std::filesystem::remove_all(g_test_dir);
 

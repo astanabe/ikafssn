@@ -97,13 +97,19 @@ ikafssnsearch [options]
 オプション:
   -o <path>               出力ファイル (デフォルト: 標準出力)
   -threads <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
-  -min_score <int>        最小チェインスコア (デフォルト: 3)
+  -min_score <int>        最小スコア (デフォルト: 3)
   -max_gap <int>          チェイニング対角線ずれ許容幅 (デフォルト: 100)
   -max_freq <int>         高頻度 k-mer スキップ閾値 (デフォルト: 自動計算)
   -min_diag_hits <int>    対角線フィルタ最小ヒット数 (デフォルト: 2)
-  -stage1_topn <int>      Stage 1 候補数上限 (デフォルト: 500)
+  -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 500)
   -min_stage1_score <int> Stage 1 最小スコア閾値 (デフォルト: 2)
-  -num_results <int>      最終出力件数 (デフォルト: 50)
+  -num_results <int>      最終出力件数、0=無制限 (デフォルト: 50)
+  -mode <1|2>              検索モード (デフォルト: 2)
+                           1=Stage 1 のみ、2=Stage 1 + Stage 2
+  -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: 1)
+                           1=coverscore、2=matchscore
+  -sort_score <1|2>        結果のソート基準 (デフォルト: 2)
+                           1=Stage 1 スコア、2=chainscore
   -seqidlist <path>       検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -outfmt <tab|json>      出力形式 (デフォルト: tab)
@@ -293,13 +299,16 @@ ikafssnclient [options]
 オプション:
   -o <path>                出力ファイル (デフォルト: 標準出力)
   -k <int>                 使用する k-mer サイズ (デフォルト: サーバ側デフォルト)
-  -min_score <int>         最小チェインスコア (デフォルト: サーバ側デフォルト)
+  -min_score <int>         最小スコア (デフォルト: サーバ側デフォルト)
   -max_gap <int>           チェイニング対角線ずれ許容幅 (デフォルト: サーバ側デフォルト)
   -max_freq <int>          高頻度 k-mer スキップ閾値 (デフォルト: サーバ側デフォルト)
   -min_diag_hits <int>     対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
   -stage1_topn <int>       Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
   -min_stage1_score <int>  Stage 1 最小スコア閾値 (デフォルト: サーバ側デフォルト)
   -num_results <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
+  -mode <1|2>              検索モード (デフォルト: サーバ側デフォルト)
+  -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: サーバ側デフォルト)
+  -sort_score <1|2>        結果のソート基準 (デフォルト: サーバ側デフォルト)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -outfmt <tab|json>       出力形式 (デフォルト: tab)
@@ -369,9 +378,11 @@ ikafssninfo -ix ./index -v
 
 ikafssn は 2 段階の検索パイプラインを使用します。
 
-1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとにヒット数を集計します。`min_stage1_score` 以上のスコアを持つ配列を候補として選出し、スコア順にソートして `stage1_topn` に切り詰めます。
+1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとにスコアを集計します。スコア種別は 2 種類あります: **coverscore** (配列にマッチしたクエリ k-mer の種類数) と **matchscore** (クエリ k-mer と参照配列位置の総マッチ数)。`min_stage1_score` 以上のスコアを持つ配列を候補として選出します。`stage1_topn > 0` の場合はスコア順にソートして切り詰めます。`stage1_topn = 0` の場合は全候補をソートせずに返します。
 
-2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。`score >= min_score` のチェインが結果として報告されます。
+2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= min_score` のチェインが結果に含まれます。
+
+**Mode 1 (Stage 1 のみ):** `-mode 1` を指定すると Stage 2 が省略されます。`.kpx` ファイルへのアクセスが不要となり、I/O とメモリを節約できます。結果には Stage 1 スコアのみが含まれ、位置フィールド (q_start, q_end, s_start, s_end) と chainscore は省略されます。Mode 1 では `-min_score` は Stage 1 スコアに適用され、`-sort_score` は 1 (Stage 1 スコア) に強制されます。
 
 クエリのフォワード鎖とリバースコンプリメント鎖の両方を検索します。
 
@@ -386,17 +397,41 @@ max_freq = mean_count * 10    ([1000, 100000] に制限)
 
 この値はボリュームごとに `.kix` ヘッダから算出されます。
 
+### スコア種別
+
+ikafssn は 3 種類のスコアを計算します。
+
+| スコア | 説明 | 計算ステージ |
+|---|---|---|
+| **coverscore** | 参照配列にマッチしたクエリ k-mer の種類数。各クエリ k-mer は参照配列あたり最大 1 回カウントされます (複数位置にマッチしても重複計上されません)。 | Stage 1 |
+| **matchscore** | (クエリ k-mer, 参照配列位置) の総マッチ数。1 つのクエリ k-mer が参照配列の複数位置にマッチした場合、その分だけ加算されます。 | Stage 1 |
+| **chainscore** | チェイニング DP が求めた最良コリニアチェインの長さ (k-mer ヒット数)。`.kpx` の位置データを使用します。 | Stage 2 |
+
+- `-stage1_score` で Stage 1 が使用するスコア種別を選択します (1=coverscore, 2=matchscore)。候補のランキングと出力される Stage 1 スコアに影響します。
+- `-sort_score` で最終結果のソートに使用するスコアを選択します (1=Stage 1 スコア, 2=chainscore)。
+- `-mode 1` では Stage 1 スコアのみが利用可能で、chainscore は計算されません。
+
 ## 出力形式
 
 ### Tab 形式 (デフォルト)
 
-タブ区切りのカラム:
+**Mode 2** (デフォルト):
+
+タブ区切りのカラムです。`-stage1_score 2` のとき `coverscore` が `matchscore` に置き換わります。
 
 ```
-query_id  accession  strand  q_start  q_end  s_start  s_end  score  volume
+# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  volume
+```
+
+**Mode 1** (`-mode 1`):
+
+```
+# query_id  accession  strand  coverscore  volume
 ```
 
 ### JSON 形式
+
+**Mode 2** (デフォルト):
 
 ```json
 {
@@ -411,7 +446,28 @@ query_id  accession  strand  q_start  q_end  s_start  s_end  score  volume
           "q_end": 150,
           "s_start": 1000,
           "s_end": 1150,
-          "score": 12,
+          "coverscore": 8,
+          "chainscore": 12,
+          "volume": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Mode 1** (`-mode 1`):
+
+```json
+{
+  "results": [
+    {
+      "query_id": "query1",
+      "hits": [
+        {
+          "accession": "NC_001234.5",
+          "strand": "+",
+          "coverscore": 8,
           "volume": 0
         }
       ]

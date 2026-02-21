@@ -111,8 +111,8 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     put_u16(buf, req.min_stage1_score);
     put_u16(buf, req.num_results);
     put_u8(buf, static_cast<uint8_t>(req.seqidlist_mode));
-    put_u8(buf, 0); // reserved[0]
-    put_u8(buf, 0); // reserved[1]
+    put_u8(buf, req.mode);
+    put_u8(buf, static_cast<uint8_t>(req.stage1_score_type | (req.sort_score << 4)));
 
     put_u32(buf, static_cast<uint32_t>(req.seqids.size()));
     for (const auto& acc : req.seqids) {
@@ -141,12 +141,16 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u16(req.min_stage1_score)) return false;
     if (!r.get_u16(req.num_results)) return false;
 
-    uint8_t mode;
-    if (!r.get_u8(mode)) return false;
-    if (mode > 2) return false;
-    req.seqidlist_mode = static_cast<SeqidlistMode>(mode);
+    uint8_t seqidlist_mode;
+    if (!r.get_u8(seqidlist_mode)) return false;
+    if (seqidlist_mode > 2) return false;
+    req.seqidlist_mode = static_cast<SeqidlistMode>(seqidlist_mode);
 
-    if (!r.skip(2)) return false; // reserved
+    if (!r.get_u8(req.mode)) return false;
+    uint8_t packed;
+    if (!r.get_u8(packed)) return false;
+    req.stage1_score_type = packed & 0x0F;
+    req.sort_score = (packed >> 4) & 0x0F;
 
     uint32_t num_seqids;
     if (!r.get_u32(num_seqids)) return false;
@@ -180,6 +184,8 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
 
     put_u8(buf, resp.status);
     put_u8(buf, resp.k);
+    put_u8(buf, resp.mode);
+    put_u8(buf, resp.stage1_score_type);
     put_u16(buf, static_cast<uint16_t>(resp.results.size()));
 
     for (const auto& qr : resp.results) {
@@ -193,6 +199,7 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
             put_u32(buf, hit.s_start);
             put_u32(buf, hit.s_end);
             put_u16(buf, hit.score);
+            put_u16(buf, hit.stage1_score);
             put_u16(buf, hit.volume);
         }
     }
@@ -205,6 +212,8 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
 
     if (!r.get_u8(resp.status)) return false;
     if (!r.get_u8(resp.k)) return false;
+    if (!r.get_u8(resp.mode)) return false;
+    if (!r.get_u8(resp.stage1_score_type)) return false;
 
     uint16_t num_queries;
     if (!r.get_u16(num_queries)) return false;
@@ -227,6 +236,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
             if (!r.get_u32(hit.s_start)) return false;
             if (!r.get_u32(hit.s_end)) return false;
             if (!r.get_u16(hit.score)) return false;
+            if (!r.get_u16(hit.stage1_score)) return false;
             if (!r.get_u16(hit.volume)) return false;
         }
     }

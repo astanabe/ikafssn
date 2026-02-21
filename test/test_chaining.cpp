@@ -119,6 +119,43 @@ static void test_non_collinear_hits() {
     CHECK_EQ(cr.score, 1u);
 }
 
+static void test_same_qpos_not_chained() {
+    std::fprintf(stderr, "-- test_same_qpos_not_chained\n");
+
+    // Multiple hits at the same q_pos (a single query k-mer matching
+    // several subject positions). These must NOT inflate the chain score.
+    std::vector<Hit> hits = {
+        {10, 100}, {10, 110}, {10, 120}, {10, 130}
+    };
+    Stage2Config config;
+    config.min_diag_hits = 1;
+    config.min_score = 1;
+    config.max_gap = 100;
+
+    ChainResult cr = chain_hits(hits, 0, 7, false, config);
+    // Only one distinct q_pos, so the longest chain must be 1
+    CHECK_EQ(cr.score, 1u);
+}
+
+static void test_same_qpos_mixed_with_distinct() {
+    std::fprintf(stderr, "-- test_same_qpos_mixed_with_distinct\n");
+
+    // Two distinct q_pos values (0 and 20), each with multiple s_pos hits.
+    // The chain should use at most one hit per q_pos.
+    std::vector<Hit> hits = {
+        {0, 100}, {0, 110}, {0, 120},
+        {20, 200}, {20, 210}, {20, 220}
+    };
+    Stage2Config config;
+    config.min_diag_hits = 1;
+    config.min_score = 1;
+    config.max_gap = 100;
+
+    ChainResult cr = chain_hits(hits, 0, 7, false, config);
+    // Best chain: pick one hit from q_pos=0 and one from q_pos=20 → score 2
+    CHECK_EQ(cr.score, 2u);
+}
+
 static void test_empty_hits() {
     std::fprintf(stderr, "-- test_empty_hits\n");
 
@@ -140,6 +177,8 @@ int main() {
     test_min_score_filter();
     test_reverse_strand_flag();
     test_non_collinear_hits();
+    test_same_qpos_not_chained();
+    test_same_qpos_mixed_with_distinct();
     test_empty_hits();
 
     TEST_SUMMARY();
