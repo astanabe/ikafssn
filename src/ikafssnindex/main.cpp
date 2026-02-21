@@ -1,5 +1,6 @@
 #include "io/blastdb_reader.hpp"
 #include "index/index_builder.hpp"
+#include "index/index_filter.hpp"
 #include "core/config.hpp"
 #include "core/types.hpp"
 #include "util/cli_parser.hpp"
@@ -44,9 +45,10 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "Options:\n"
         "  -memory_limit <size>   Memory limit (default: %s = half of RAM)\n"
         "                         Accepts K, M, G suffixes\n"
-        "  -max_freq_build <num>  Exclude k-mers with count > threshold\n"
+        "  -max_freq_build <num>  Exclude k-mers with cross-volume count > threshold\n"
         "                         >= 1: absolute count threshold\n"
         "                         0 < x < 1: fraction of total NSEQ across all volumes\n"
+        "                         Counts are aggregated across all volumes before filtering\n"
         "                         (default: 0 = no exclusion)\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
@@ -168,29 +170,48 @@ int main(int argc, char* argv[]) {
     config.memory_limit = memory_limit / static_cast<uint64_t>(openvol);
     config.threads = threads;
     config.verbose = verbose;
+    // When max_freq_build is active, keep .tmp files for cross-volume filtering
+    config.keep_tmp = (max_freq_build > 0);
 
-    // Resolve fractional -max_freq_build using total NSEQ across all volumes
-    if (max_freq_build > 0 && max_freq_build < 1.0) {
-        uint64_t total_nseq = 0;
-        for (const auto& vp : vol_paths) {
-            BlastDbReader tmp_db;
-            if (!tmp_db.open(vp)) {
-                std::fprintf(stderr, "Error: cannot open volume '%s' for NSEQ count\n",
-                             vp.c_str());
-                return 1;
+    // Resolve fractional -max_freq_build to absolute threshold
+    uint64_t freq_threshold = 0;
+    if (max_freq_build > 0) {
+        if (max_freq_build < 1.0) {
+            uint64_t total_nseq = 0;
+            for (const auto& vp : vol_paths) {
+                BlastDbReader tmp_db;
+                if (!tmp_db.open(vp)) {
+                    std::fprintf(stderr, "Error: cannot open volume '%s' for NSEQ count\n",
+                                 vp.c_str());
+                    return 1;
+                }
+                total_nseq += tmp_db.num_sequences();
             }
-            total_nseq += tmp_db.num_sequences();
+            double resolved = std::ceil(max_freq_build * total_nseq);
+            if (resolved < 1.0) resolved = 1.0;
+            freq_threshold = static_cast<uint64_t>(resolved);
+            logger.info("-max_freq_build=%.6g (fraction of total NSEQ=%lu) -> threshold=%lu",
+                        max_freq_build, static_cast<unsigned long>(total_nseq),
+                        static_cast<unsigned long>(freq_threshold));
+        } else {
+            freq_threshold = static_cast<uint64_t>(max_freq_build);
         }
-        double resolved = std::ceil(max_freq_build * total_nseq);
-        if (resolved < 1.0) resolved = 1.0;
-        logger.info("-max_freq_build=%.6g (fraction of total NSEQ=%lu) -> threshold=%.0f",
-                    max_freq_build, static_cast<unsigned long>(total_nseq), resolved);
-        config.max_freq_build = resolved;
-    } else {
-        config.max_freq_build = max_freq_build;
     }
 
     uint16_t total_volumes = static_cast<uint16_t>(vol_paths.size());
+
+    // Pre-compute per-volume output prefixes
+    std::vector<std::string> vol_prefixes(total_volumes);
+    {
+        char kk_str[8];
+        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+        for (uint16_t vi = 0; vi < total_volumes; vi++) {
+            char vol_str[8];
+            std::snprintf(vol_str, sizeof(vol_str), "%02d", vi);
+            vol_prefixes[vi] = out_dir + "/" + db_base + "." +
+                               vol_str + "." + kk_str + "mer";
+        }
+    }
 
     // Process volumes via TBB task_group with concurrency limited by -openvol.
     // The main thread gates submission: it waits until a slot is available
@@ -240,13 +261,7 @@ int main(int argc, char* argv[]) {
                 return;
             }
 
-            // Output prefix: <out_dir>/<db_base>.<vol_idx>.<kk>mer
-            char kk_str[8];
-            std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-            char vol_str[8];
-            std::snprintf(vol_str, sizeof(vol_str), "%02d", vi);
-            std::string prefix = out_dir + "/" + db_base + "." +
-                                 vol_str + "." + kk_str + "mer";
+            const std::string& prefix = vol_prefixes[vi];
 
             bool ok;
             if (k < K_TYPE_THRESHOLD) {
@@ -278,6 +293,19 @@ int main(int argc, char* argv[]) {
             }
         }
         return 1;
+    }
+
+    // Post-build cross-volume frequency filtering
+    if (max_freq_build > 0) {
+        char kk_str[8];
+        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+        std::string khx_path = out_dir + "/" + db_base + "." + kk_str + "mer.khx";
+
+        if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,
+                                         freq_threshold, logger)) {
+            std::fprintf(stderr, "Error: cross-volume filtering failed\n");
+            return 1;
+        }
     }
 
     logger.info("All volumes completed successfully.");

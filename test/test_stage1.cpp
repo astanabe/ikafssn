@@ -4,6 +4,7 @@
 #include "search/volume_searcher.hpp"
 #include "search/oid_filter.hpp"
 #include "index/index_builder.hpp"
+#include "index/index_filter.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
@@ -258,10 +259,20 @@ static bool build_maxfreq_index() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 7;
-    config.max_freq_build = 0.5; // exclude k-mers appearing in >50% of sequences
+    config.keep_tmp = true;
 
     std::string prefix = g_maxfreq_index_dir + "/test.00.07mer";
-    return build_index<uint16_t>(db, config, prefix, 0, 1, "test", logger);
+    if (!build_index<uint16_t>(db, config, prefix, 0, 1, "test", logger))
+        return false;
+
+    // Resolve fractional threshold: 0.5 * nseq
+    uint32_t nseq = db.num_sequences();
+    uint64_t freq_threshold = static_cast<uint64_t>(0.5 * nseq);
+    if (freq_threshold == 0) freq_threshold = 1;
+
+    // Apply cross-volume filter (single volume)
+    std::string khx_path = g_maxfreq_index_dir + "/test.07mer.khx";
+    return filter_volumes_cross_volume({prefix}, khx_path, 7, freq_threshold, logger);
 }
 
 static void test_stage1_fractional_threshold() {
@@ -318,8 +329,8 @@ static void test_stage1_fractional_with_highfreq() {
     // Build index with max_freq_build to create .khx file
     CHECK(build_maxfreq_index());
 
-    // Verify .khx was created
-    std::string khx_path = g_maxfreq_index_dir + "/test.00.07mer.khx";
+    // Verify .khx was created (shared path, no volume index)
+    std::string khx_path = g_maxfreq_index_dir + "/test.07mer.khx";
     KhxReader khx;
     CHECK(khx.open(khx_path));
     uint64_t excluded = khx.count_excluded();

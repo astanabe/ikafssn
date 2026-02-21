@@ -38,7 +38,7 @@ ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db mydb > m
 
 ### ikafssnindex
 
-Build a k-mer inverted index from a BLAST database. For each volume, three index files are generated: `.kix` (ID postings), `.kpx` (position postings), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a `.khx` file (build-time exclusion bitset) is also generated.
+Build a k-mer inverted index from a BLAST database. For each volume, three index files are generated: `.kix` (ID postings), `.kpx` (position postings), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a shared `.khx` file (build-time exclusion bitset) is also generated. The `.khx` file is shared across all volumes (one per k value, not per volume).
 
 ```
 ikafssnindex [options]
@@ -52,9 +52,10 @@ Options:
   -memory_limit <size>    Memory limit (default: half of physical RAM)
                           Accepts K, M, G suffixes
                           Partitions are auto-calculated to fit within this limit
-  -max_freq_build <num>   Exclude k-mers with count above this threshold
+  -max_freq_build <num>   Exclude k-mers with cross-volume count above this threshold
                           >= 1: absolute count threshold
                           0 < x < 1: fraction of total NSEQ across all volumes
+                          Counts are aggregated across all volumes before filtering
                           (default: 0 = no exclusion)
   -openvol <int>          Max volumes processed simultaneously (default: 1)
                           Controls peak memory usage for multi-volume DBs
@@ -461,7 +462,7 @@ where mean_count = total_postings / 4^k
 
 This auto mode is computed per volume from the `.kix` header.
 
-**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. A `.khx` file records which k-mers were excluded. When a fractional value (0 < x < 1) is specified, the threshold is resolved using the total NSEQ across all volumes (same as `-max_freq`). At search time, when fractional `-min_stage1_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation.
+**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. K-mer counts are aggregated across all volumes before applying the threshold, so a k-mer that is locally below the threshold in each volume but exceeds it globally will be correctly excluded. A single shared `.khx` file (per k value, not per volume) records which k-mers were excluded. When a fractional value (0 < x < 1) is specified, the threshold is resolved using the total NSEQ across all volumes (same as `-max_freq`). At search time, when fractional `-min_stage1_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation.
 
 ### Fractional Stage 1 Threshold
 
@@ -596,18 +597,23 @@ Sample systemd unit files are provided in `doc/systemd/`. See the files for conf
 
 ## Index File Formats
 
-Per BLAST DB volume, three files are generated (plus an optional fourth):
+Per BLAST DB volume, three files are generated:
 
 ```
 <db_prefix>.<volume_index>.<kk>mer.kix   — ID postings (direct-address table + delta-compressed)
 <db_prefix>.<volume_index>.<kk>mer.kpx   — Position postings (delta-compressed)
 <db_prefix>.<volume_index>.<kk>mer.ksx   — Sequence metadata (lengths + accessions)
-<db_prefix>.<volume_index>.<kk>mer.khx   — Build-time exclusion bitset (only when -max_freq_build is used)
 ```
 
-Example: `nt.00.11mer.kix`, `nt.01.11mer.kpx`
+When `-max_freq_build` is used, a shared exclusion bitset file is also generated (one per k value, shared across all volumes):
 
-The `.khx` file contains a 32-byte header (magic "KMHX", format version, k) followed by a bitset of `ceil(4^k / 8)` bytes. Bit *i* = 1 indicates that k-mer *i* was excluded during index build.
+```
+<db_prefix>.<kk>mer.khx                  — Build-time exclusion bitset (shared across volumes)
+```
+
+Example: `nt.00.11mer.kix`, `nt.01.11mer.kpx`, `nt.11mer.khx`
+
+The `.khx` file contains a 32-byte header (magic "KMHX", format version, k) followed by a bitset of `ceil(4^k / 8)` bytes. Bit *i* = 1 indicates that k-mer *i* was excluded during index build based on cross-volume aggregated counts.
 
 ID and position postings are stored in separate files so that Stage 1 filtering never touches `.kpx`, maximizing page cache efficiency.
 

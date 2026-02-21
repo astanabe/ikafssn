@@ -25,7 +25,6 @@ struct ServerVolumeData {
     KixReader kix;
     KpxReader kpx;
     KsxReader ksx;
-    KhxReader khx;
     uint16_t volume_index;
 };
 
@@ -34,6 +33,7 @@ struct KmerGroup {
     int k;
     uint8_t kmer_type; // 0 = uint16_t, 1 = uint32_t
     std::vector<ServerVolumeData> volumes;
+    KhxReader khx;  // shared .khx for this k-mer size
 };
 
 // Process a search request using loaded index data.

@@ -69,7 +69,6 @@ struct VolumeFiles {
     std::string kix_path;
     std::string kpx_path;
     std::string ksx_path;
-    std::string khx_path;
     uint16_t volume_index;
     int k;
 };
@@ -103,7 +102,6 @@ static std::vector<VolumeFiles> discover_volumes(const std::string& ix_prefix, i
             vf.kix_path = base + ".kix";
             vf.kpx_path = base + ".kpx";
             vf.ksx_path = base + ".ksx";
-            vf.khx_path = base + ".khx";
             volumes.push_back(vf);
         }
     }
@@ -120,7 +118,6 @@ struct VolumeData {
     KixReader kix;
     KpxReader kpx;
     KsxReader ksx;
-    KhxReader khx;
     OidFilter filter;
     uint16_t volume_index;
 };
@@ -320,14 +317,25 @@ int main(int argc, char* argv[]) {
             std::fprintf(stderr, "Error: cannot open %s\n", vf.ksx_path.c_str());
             return 1;
         }
-        // Try to open .khx (non-fatal if missing)
-        vol_data[vi].khx.open(vf.khx_path);
         vol_data[vi].volume_index = vf.volume_index;
 
         // Build per-volume OID filter
         if (filter_mode != OidFilterMode::kNone) {
             vol_data[vi].filter.build(seqidlist, vol_data[vi].ksx, filter_mode);
         }
+    }
+
+    // Open shared .khx (non-fatal if missing)
+    KhxReader shared_khx;
+    {
+        std::filesystem::path prefix_path(ix_prefix);
+        std::string parent_dir = prefix_path.parent_path().string();
+        std::string db_name = prefix_path.filename().string();
+        if (parent_dir.empty()) parent_dir = ".";
+        char kk_str[8];
+        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+        std::string khx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.khx";
+        shared_khx.open(khx_path); // non-fatal
     }
 
     // Resolve -max_freq: fraction -> absolute threshold using total NSEQ
@@ -368,7 +376,7 @@ int main(int argc, char* argv[]) {
                 const auto& query = queries[job.query_idx];
                 const auto& vd = vol_data[job.volume_idx];
 
-                const KhxReader* khx_ptr = vd.khx.is_open() ? &vd.khx : nullptr;
+                const KhxReader* khx_ptr = shared_khx.is_open() ? &shared_khx : nullptr;
 
                 SearchResult sr;
                 if (k < K_TYPE_THRESHOLD) {

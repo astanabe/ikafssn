@@ -6,7 +6,6 @@
 #include "core/ambiguity_parser.hpp"
 #include "core/varint.hpp"
 #include "index/ksx_writer.hpp"
-#include "index/khx_writer.hpp"
 #include "index/kix_format.hpp"
 #include "index/kpx_format.hpp"
 #include "util/logger.hpp"
@@ -86,15 +85,13 @@ bool build_index(BlastDbReader& db,
 
     logger.info("Building index: k=%d, sequences=%u", k, num_seqs);
 
-    // File paths (.tmp during construction)
+    // File paths (.tmp during construction, renamed to final on success)
     std::string ksx_tmp = output_prefix + ".ksx.tmp";
     std::string kix_tmp = output_prefix + ".kix.tmp";
     std::string kpx_tmp = output_prefix + ".kpx.tmp";
-    std::string khx_tmp = output_prefix + ".khx.tmp";
     std::string ksx_final = output_prefix + ".ksx";
     std::string kix_final = output_prefix + ".kix";
     std::string kpx_final = output_prefix + ".kpx";
-    std::string khx_final = output_prefix + ".khx";
 
     // =========== Phase 0: Metadata collection -> .ksx ===========
     logger.info("Phase 0: collecting metadata...");
@@ -173,41 +170,6 @@ bool build_index(BlastDbReader& db,
     counts64.shrink_to_fit();
 
     logger.info("Phase 1: total postings = %lu", static_cast<unsigned long>(total_postings));
-
-    // Apply max_freq_build exclusion
-    // Resolve threshold: if 0 < value < 1.0, treat as fraction of num_seqs
-    uint64_t freq_threshold = 0;
-    if (config.max_freq_build > 0) {
-        if (config.max_freq_build < 1.0) {
-            freq_threshold = static_cast<uint64_t>(config.max_freq_build * num_seqs);
-            if (freq_threshold == 0) freq_threshold = 1;
-            logger.info("Phase 1: max_freq_build=%.6g (fraction) -> threshold=%lu (nseq=%u)",
-                        config.max_freq_build,
-                        static_cast<unsigned long>(freq_threshold),
-                        num_seqs);
-        } else {
-            freq_threshold = static_cast<uint64_t>(config.max_freq_build);
-        }
-
-        // Write .khx before zeroing counts
-        if (!write_khx(khx_tmp, k, counts, freq_threshold, logger)) {
-            logger.error("Failed to write %s", khx_tmp.c_str());
-            std::remove(ksx_tmp.c_str());
-            return false;
-        }
-
-        uint64_t excluded = 0;
-        for (uint64_t i = 0; i < tbl_size; i++) {
-            if (counts[i] > freq_threshold) {
-                total_postings -= counts[i];
-                counts[i] = 0;
-                excluded++;
-            }
-        }
-        logger.info("Phase 1: excluded %lu high-frequency k-mers (threshold=%lu)",
-                    static_cast<unsigned long>(excluded),
-                    static_cast<unsigned long>(freq_threshold));
-    }
 
     // =========== Determine partition count from memory_limit ===========
     int num_partitions = 1;
@@ -463,29 +425,24 @@ bool build_index(BlastDbReader& db,
 
     std::fclose(kpx_fp);
 
-    // Rename .tmp files to final names
-    if (std::rename(ksx_tmp.c_str(), ksx_final.c_str()) != 0) {
-        logger.error("Failed to rename %s -> %s", ksx_tmp.c_str(), ksx_final.c_str());
-        return false;
-    }
-    if (std::rename(kix_tmp.c_str(), kix_final.c_str()) != 0) {
-        logger.error("Failed to rename %s -> %s", kix_tmp.c_str(), kix_final.c_str());
-        return false;
-    }
-    if (std::rename(kpx_tmp.c_str(), kpx_final.c_str()) != 0) {
-        logger.error("Failed to rename %s -> %s", kpx_tmp.c_str(), kpx_final.c_str());
-        return false;
-    }
-    // Rename .khx if it was created (only when max_freq_build > 0)
-    if (freq_threshold > 0) {
-        if (std::rename(khx_tmp.c_str(), khx_final.c_str()) != 0) {
-            logger.error("Failed to rename %s -> %s", khx_tmp.c_str(), khx_final.c_str());
+    // Rename .tmp files to final names (unless keep_tmp is set)
+    if (!config.keep_tmp) {
+        if (std::rename(ksx_tmp.c_str(), ksx_final.c_str()) != 0) {
+            logger.error("Failed to rename %s -> %s", ksx_tmp.c_str(), ksx_final.c_str());
+            return false;
+        }
+        if (std::rename(kix_tmp.c_str(), kix_final.c_str()) != 0) {
+            logger.error("Failed to rename %s -> %s", kix_tmp.c_str(), kix_final.c_str());
+            return false;
+        }
+        if (std::rename(kpx_tmp.c_str(), kpx_final.c_str()) != 0) {
+            logger.error("Failed to rename %s -> %s", kpx_tmp.c_str(), kpx_final.c_str());
             return false;
         }
     }
 
     logger.info("Index built: %s (.kix, .kpx, .ksx%s)", output_prefix.c_str(),
-                freq_threshold > 0 ? ", .khx" : "");
+                config.keep_tmp ? " [tmp]" : "");
     return true;
 }
 

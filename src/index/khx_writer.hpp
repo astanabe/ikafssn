@@ -17,4 +17,11 @@ bool write_khx(const std::string& path, int k,
                uint64_t freq_threshold,
                const Logger& logger);
 
+// Write a .khx file from a pre-computed exclusion bitset.
+// excluded[i] == true means k-mer i is excluded.
+// Returns true on success.
+bool write_khx_bitset(const std::string& path, int k,
+                      const std::vector<bool>& excluded,
+                      const Logger& logger);
+
 } // namespace ikafssn

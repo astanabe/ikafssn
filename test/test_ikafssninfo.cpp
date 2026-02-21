@@ -45,7 +45,6 @@ static void setup() {
     Logger logger(Logger::kError);
     IndexBuilderConfig config;
     config.k = 7;
-    config.max_freq_build = 0;
 
     std::string prefix = g_index_dir + "/testdb.00.07mer";
     bool ok = build_index<uint16_t>(db, config, prefix, 0, 1, "testdb", logger);

@@ -182,7 +182,7 @@ SearchResponse process_search_request(
                     oid_filter.build(req.seqids, vol.ksx, filter_mode);
                 }
 
-                const KhxReader* khx_ptr = vol.khx.is_open() ? &vol.khx : nullptr;
+                const KhxReader* khx_ptr = group.khx.is_open() ? &group.khx : nullptr;
 
                 SearchResult sr;
                 if (group.kmer_type == 0) {

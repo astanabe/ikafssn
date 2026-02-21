@@ -2,6 +2,7 @@
 #include "ssu_test_fixture.hpp"
 #include "io/blastdb_reader.hpp"
 #include "index/index_builder.hpp"
+#include "index/index_filter.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
@@ -247,21 +248,24 @@ static void test_build_with_max_freq_build() {
 
     Logger logger(Logger::kError);
 
-    // Build without exclusion
+    // Build without exclusion (reference)
     IndexBuilderConfig config1;
     config1.k = 7;
-    config1.max_freq_build = 0;
 
     std::string prefix1 = g_output_dir + "/freq_test1.00.07mer";
     CHECK(build_index<uint16_t>(db, config1, prefix1, 0, 1, "test", logger));
 
-    // Build with max_freq_build=3 (exclude kmers with count > 3)
+    // Build with keep_tmp=true, then apply cross-volume filter with threshold=3
     IndexBuilderConfig config2;
     config2.k = 7;
-    config2.max_freq_build = 3;
+    config2.keep_tmp = true;
 
     std::string prefix2 = g_output_dir + "/freq_test2.00.07mer";
     CHECK(build_index<uint16_t>(db, config2, prefix2, 0, 1, "test", logger));
+
+    // Apply cross-volume filtering (single volume, threshold=3)
+    std::string khx_path2 = g_output_dir + "/freq_test2.07mer.khx";
+    CHECK(filter_volumes_cross_volume({prefix2}, khx_path2, 7, 3, logger));
 
     // The filtered index should have fewer or equal total postings
     KixReader kix1, kix2;
@@ -280,17 +284,20 @@ static void test_build_with_max_freq_build() {
     kix1.close();
     kix2.close();
 
-    // Build with fractional max_freq_build (e.g., 0.5 = exclude kmers in > 50% of seqs)
+    // Build with keep_tmp=true, then apply cross-volume filter with fractional threshold
     uint32_t nseqs = db.num_sequences();
     uint64_t frac_threshold = static_cast<uint64_t>(0.5 * nseqs);
     if (frac_threshold == 0) frac_threshold = 1;
 
     IndexBuilderConfig config3;
     config3.k = 7;
-    config3.max_freq_build = 0.5;  // fraction of NSEQ
+    config3.keep_tmp = true;
 
     std::string prefix3 = g_output_dir + "/freq_test3.00.07mer";
     CHECK(build_index<uint16_t>(db, config3, prefix3, 0, 1, "test", logger));
+
+    std::string khx_path3 = g_output_dir + "/freq_test3.07mer.khx";
+    CHECK(filter_volumes_cross_volume({prefix3}, khx_path3, 7, frac_threshold, logger));
 
     // Re-open kix1 for comparison with fractional-threshold build
     CHECK(kix1.open(prefix1 + ".kix"));

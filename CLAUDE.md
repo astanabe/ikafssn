@@ -78,7 +78,7 @@ Per BLAST DB volume, three files are generated with naming pattern `<db_prefix>.
 - **`.kix`** — Header + direct-address table (offsets[4^k], counts[4^k]) + delta-compressed ID postings
 - **`.kpx`** — Header + pos_offsets[4^k] + delta-compressed position postings (correlated with .kix ID postings)
 - **`.ksx`** — Header + seq_lengths[] + accession string table (enables standalone result display without BLAST DB)
-- **`.khx`** — Header (32B, magic "KMHX") + bitset (ceil(4^k / 8) bytes). Generated only when `-max_freq_build` is used. Records which k-mers were excluded during index build (bit i = 1 means k-mer i was excluded). Used at search time for fractional `-min_stage1_score` threshold adjustment
+- **`.khx`** — Header (32B, magic "KMHX") + bitset (ceil(4^k / 8) bytes). Shared across all volumes (one per k value, naming: `<db_prefix>.<kk>mer.khx`). Generated only when `-max_freq_build` is used. K-mer counts are aggregated across all volumes before applying the threshold. Records which k-mers were excluded during index build (bit i = 1 means k-mer i was excluded). Used at search time for fractional `-min_stage1_score` threshold adjustment
 
 ID and position postings are in separate files so Stage 1 never touches `.kpx`, maximizing page cache efficiency.
 

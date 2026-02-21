@@ -12,9 +12,7 @@ class Logger;
 struct IndexBuilderConfig {
     int k = 11;                         // k-mer length
     uint64_t memory_limit = uint64_t(8) << 30; // per-volume memory budget (default: 8 GB)
-    double max_freq_build = 0;          // 0 = no exclusion
-                                        // Fraction resolved by caller to absolute threshold
-                                        // x >= 1.0: absolute count threshold
+    bool keep_tmp = false;              // true: keep .tmp files (skip rename to final)
     int threads = 1;                    // threads (counting + partition scan + sort)
     bool verbose = false;
 };

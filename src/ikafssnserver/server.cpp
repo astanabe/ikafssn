@@ -85,18 +85,22 @@ bool Server::load_indexes(const std::string& ix_prefix, const Logger& logger) {
             logger.error("Cannot open %s.ksx", vf.base_path.c_str());
             return false;
         }
-        // Try to open .khx (non-fatal if missing)
-        svd.khx.open(vf.base_path + ".khx");
 
         group.volumes.push_back(std::move(svd));
     }
 
-    // Sort volumes within each group
+    // Sort volumes within each group, then open shared .khx per group
     for (auto& [k, group] : kmer_groups_) {
         std::sort(group.volumes.begin(), group.volumes.end(),
                   [](const ServerVolumeData& a, const ServerVolumeData& b) {
                       return a.volume_index < b.volume_index;
                   });
+
+        // Open shared .khx for this k-mer group (non-fatal if missing)
+        char kk_str[8];
+        std::snprintf(kk_str, sizeof(kk_str), "%02d", group.k);
+        std::string khx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.khx";
+        group.khx.open(khx_path); // non-fatal
     }
 
     // Default k = largest available

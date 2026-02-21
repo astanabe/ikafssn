@@ -14,8 +14,9 @@ add_library(ikafssn_index STATIC
     index/kpx_reader.cpp
     index/khx_writer.cpp
     index/khx_reader.cpp
+    index/index_filter.cpp
 )
-target_link_libraries(ikafssn_index PUBLIC ikafssn_core ikafssn_io)
+target_link_libraries(ikafssn_index PUBLIC ikafssn_core ikafssn_io TBB::tbb)
 
 # Index builder library (requires NCBI via blastdb)
 add_library(ikafssn_builder STATIC
