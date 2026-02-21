@@ -103,6 +103,7 @@ Options:
                           0 = use resolved Stage 1 threshold as minimum
                           >= 1: absolute minimum chain score
   -max_gap <int>          Chaining diagonal gap tolerance (default: 100)
+  -chain_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)
   -max_freq <num>         High-frequency k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
                           >= 1: absolute count threshold; 0 = auto
@@ -246,6 +247,7 @@ Options:
   -pid <path>             PID file path
   -min_score <int>        Default minimum chain score (default: 0 = adaptive)
   -max_gap <int>          Default chaining gap tolerance (default: 100)
+  -chain_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)
   -max_freq <num>         Default high-freq k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
                           >= 1: absolute count threshold; 0 = auto
@@ -343,6 +345,7 @@ Options:
   -min_score <int>         Minimum score (default: server default)
                            0 = explicitly request adaptive mode
   -max_gap <int>           Chaining gap tolerance (default: server default)
+  -chain_max_lookback <int>  Chaining DP lookback window (default: server default)
   -max_freq <num>          High-freq k-mer skip threshold (default: server default)
                            0 < x < 1: fraction of total NSEQ across all volumes
                            >= 1: absolute count threshold
@@ -444,7 +447,7 @@ The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0
 
 1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `min_stage1_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0` (default), all qualifying candidates are returned without sorting.
 
-2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= min_score` are reported.
+2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= min_score` are reported. The DP inner loop is limited by `-chain_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior).
 
 **Adaptive `-min_score` (default):** When `-min_score 0` (the default), the minimum chain score is set adaptively per query to the resolved Stage 1 threshold. With fractional `-min_stage1_score` (e.g. `0.5`), this means each query gets a per-query adaptive threshold based on its k-mer composition. With absolute `-min_stage1_score`, the configured value is used. Set `-min_score` to a positive integer to override this behavior with a fixed threshold.
 

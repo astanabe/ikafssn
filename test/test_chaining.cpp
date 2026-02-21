@@ -156,6 +156,75 @@ static void test_same_qpos_mixed_with_distinct() {
     CHECK_EQ(cr.score, 2u);
 }
 
+static void test_chain_max_lookback_basic() {
+    std::fprintf(stderr, "-- test_chain_max_lookback_basic\n");
+
+    // 5 collinear hits on diagonal 90, all within lookback window B=4
+    std::vector<Hit> hits = {
+        {0, 90}, {7, 97}, {14, 104}, {21, 111}, {28, 118}
+    };
+    Stage2Config config;
+    config.min_diag_hits = 1;
+    config.min_score = 1;
+    config.max_gap = 100;
+    config.chain_max_lookback = 4;
+
+    ChainResult cr = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(cr.score, 5u);
+}
+
+static void test_chain_max_lookback_interleaved() {
+    std::fprintf(stderr, "-- test_chain_max_lookback_interleaved\n");
+
+    // Two interleaved chains on different diagonals:
+    // Chain A (diag 90): {0,90}, {14,104}, {28,118}
+    // Chain B (diag 50): {7,57}, {21,71}
+    // Sorted by q_pos: {0,90}, {7,57}, {14,104}, {21,71}, {28,118}
+    std::vector<Hit> hits = {
+        {0, 90}, {7, 57}, {14, 104}, {21, 71}, {28, 118}
+    };
+    Stage2Config config;
+    config.min_diag_hits = 1;
+    config.min_score = 1;
+    config.max_gap = 100;
+
+    // B=1: each hit can only look back 1 position.
+    // Index 0: dp=1
+    // Index 1: looks at [0] only -> diag diff |57-7-(90-0)|=|50-90|=40 <=100, but s needs increase: 57<90? No 57<90 -> s_pos[1]=57 < s_pos[0]=90, skip. dp=1
+    // Index 2: looks at [1] only -> s_pos[2]=104>57 yes, gap check: gap_q=14-7=7, gap_s=104-57=47, diag_diff=40<=100. dp=2
+    // Index 3: looks at [2] only -> s_pos[3]=71 < s_pos[2]=104, skip. dp=1
+    // Index 4: looks at [3] only -> s_pos[4]=118>71 yes, gap_q=28-21=7, gap_s=118-71=47, diag_diff=40<=100. dp=2
+    // Best = 2
+    config.chain_max_lookback = 1;
+    ChainResult cr1 = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(cr1.score, 2u);
+
+    // B=2: each hit looks back 2 positions.
+    // Index 2: looks at [0,1] -> from 0: s 104>90 yes, diag_diff=|104-14-(90-0)|=0<=100. dp=2
+    // Index 4: looks at [2,3] -> from 2: s 118>104 yes, diag_diff=|118-28-(104-14)|=0<=100. dp=3
+    // Best = 3 (chain A fully recovered)
+    config.chain_max_lookback = 2;
+    ChainResult cr2 = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(cr2.score, 3u);
+}
+
+static void test_chain_max_lookback_zero_unlimited() {
+    std::fprintf(stderr, "-- test_chain_max_lookback_zero_unlimited\n");
+
+    // Same as test_perfect_chain but with chain_max_lookback=0 (unlimited)
+    std::vector<Hit> hits = {
+        {0, 90}, {7, 97}, {14, 104}, {21, 111}, {28, 118}
+    };
+    Stage2Config config;
+    config.min_diag_hits = 1;
+    config.min_score = 1;
+    config.max_gap = 100;
+    config.chain_max_lookback = 0; // unlimited
+
+    ChainResult cr = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(cr.score, 5u);
+}
+
 static void test_empty_hits() {
     std::fprintf(stderr, "-- test_empty_hits\n");
 
@@ -179,6 +248,9 @@ int main() {
     test_non_collinear_hits();
     test_same_qpos_not_chained();
     test_same_qpos_mixed_with_distinct();
+    test_chain_max_lookback_basic();
+    test_chain_max_lookback_interleaved();
+    test_chain_max_lookback_zero_unlimited();
     test_empty_hits();
 
     TEST_SUMMARY();

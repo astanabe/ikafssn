@@ -141,6 +141,9 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     // Backward-compatible trailer: has_min_score
     put_u8(buf, req.has_min_score);
 
+    // Backward-compatible trailer: chain_max_lookback
+    put_u16(buf, req.chain_max_lookback);
+
     return buf;
 }
 
@@ -213,6 +216,11 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     // Backward-compatible trailer: has_min_score
     if (r.remaining() >= 1) {
         r.get_u8(req.has_min_score);
+    }
+
+    // Backward-compatible trailer: chain_max_lookback
+    if (r.remaining() >= 2) {
+        r.get_u16(req.chain_max_lookback);
     }
 
     return true;

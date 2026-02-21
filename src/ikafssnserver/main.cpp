@@ -33,6 +33,7 @@ static void print_usage(const char* prog) {
         "  -pid <path>              PID file path\n"
         "  -min_score <int>         Default minimum chain score (default: 0 = adaptive)\n"
         "  -max_gap <int>           Default chaining gap tolerance (default: 100)\n"
+        "  -chain_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -max_freq <num>          Default high-freq k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           >= 1: absolute count threshold; 0 = auto\n"
@@ -104,6 +105,8 @@ int main(int argc, char* argv[]) {
     }
     config.search_config.stage2.max_gap =
         static_cast<uint32_t>(cli.get_int("-max_gap", 100));
+    config.search_config.stage2.chain_max_lookback =
+        static_cast<uint32_t>(cli.get_int("-chain_max_lookback", 64));
     config.search_config.stage2.min_diag_hits =
         static_cast<uint32_t>(cli.get_int("-min_diag_hits", 2));
     config.search_config.stage2.min_score =

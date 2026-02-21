@@ -34,7 +34,9 @@ ChainResult chain_hits(const std::vector<Hit>& raw_hits,
     std::vector<int32_t> prev(n, -1);  // traceback pointers
 
     for (size_t i = 1; i < n; i++) {
-        for (size_t j = 0; j < i; j++) {
+        size_t j_start = (config.chain_max_lookback > 0 && i > config.chain_max_lookback)
+                          ? (i - config.chain_max_lookback) : 0;
+        for (size_t j = j_start; j < i; j++) {
             // Collinearity constraint: q_pos[j] < q_pos[i] and s_pos[j] < s_pos[i]
             // Both must strictly increase to ensure each chain element comes
             // from a distinct query k-mer position.

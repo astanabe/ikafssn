@@ -65,6 +65,7 @@ void HttpController::search(
         sreq.has_min_score = 1;
     }
     sreq.max_gap = static_cast<uint16_t>(j.get("max_gap", 0).asUInt());
+    sreq.chain_max_lookback = static_cast<uint16_t>(j.get("chain_max_lookback", 0).asUInt());
     if (j.isMember("max_freq_frac") && j["max_freq_frac"].isDouble()) {
         double frac = j["max_freq_frac"].asDouble();
         if (frac > 0 && frac < 1.0) {

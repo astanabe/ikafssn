@@ -562,6 +562,30 @@ static void test_search_response_rejected_query_ids() {
     std::printf(" OK\n");
 }
 
+static void test_search_request_chain_max_lookback() {
+    std::printf("  test_search_request_chain_max_lookback...");
+
+    SearchRequest req;
+    req.k = 9;
+    req.chain_max_lookback = 128;
+    req.queries.push_back({"q1", "ACGTACGT"});
+
+    auto data = serialize(req);
+    SearchRequest req2;
+    assert(deserialize(data, req2));
+
+    assert(req2.chain_max_lookback == 128);
+
+    // Also test with 0 (server default)
+    req.chain_max_lookback = 0;
+    data = serialize(req);
+    SearchRequest req3;
+    assert(deserialize(data, req3));
+    assert(req3.chain_max_lookback == 0);
+
+    std::printf(" OK\n");
+}
+
 static void test_search_response_backward_compat_no_rejected() {
     std::printf("  test_search_response_backward_compat_no_rejected...");
 
@@ -617,6 +641,7 @@ int main() {
     test_search_response_backward_compat_no_skipped();
     test_search_response_rejected_query_ids();
     test_search_response_backward_compat_no_rejected();
+    test_search_request_chain_max_lookback();
 
     std::printf("All protocol tests passed.\n");
     return 0;

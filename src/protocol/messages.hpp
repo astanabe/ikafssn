@@ -38,6 +38,7 @@ struct SearchRequest {
     uint8_t  accept_qdegen = 0;     // 0 = reject degenerate queries, 1 = accept
     int8_t   strand = 0;           // 0 = server default, 1 = plus, -1 = minus, 2 = both
     uint8_t  has_min_score = 0;    // 1 = min_score was explicitly set by client
+    uint16_t chain_max_lookback = 0;  // 0 = server default
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
 };

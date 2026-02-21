@@ -55,6 +55,7 @@ static void print_usage(const char* prog) {
         "  -min_score <int>         Minimum chain score (default: 0 = adaptive)\n"
         "                           0 = use resolved Stage 1 threshold\n"
         "  -max_gap <int>           Chaining diagonal gap tolerance (default: 100)\n"
+        "  -chain_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -max_freq <num>          High-frequency k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           >= 1: absolute count threshold; 0 = auto\n"
@@ -178,6 +179,7 @@ int main(int argc, char* argv[]) {
     config.stage1.stage1_topn = static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
     config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-max_gap", 100));
+    config.stage2.chain_max_lookback = static_cast<uint32_t>(cli.get_int("-chain_max_lookback", 64));
     config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-min_diag_hits", 2));
     config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-min_score", 0));
     config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 0));

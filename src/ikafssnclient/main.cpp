@@ -44,6 +44,7 @@ static void print_usage(const char* prog) {
         "  -sort_score <1|2>        1=stage1 score, 2=chainscore (default: server default)\n"
         "  -min_score <int>         Minimum score (default: server default)\n"
         "  -max_gap <int>           Chaining gap tolerance (default: server default)\n"
+        "  -chain_max_lookback <int>  Chaining DP lookback window (default: server default)\n"
         "  -max_freq <num>          High-freq k-mer skip threshold (default: server default)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           >= 1: absolute count threshold\n"
@@ -217,6 +218,7 @@ int main(int argc, char* argv[]) {
         base_req.has_min_score = 1;
     }
     base_req.max_gap = static_cast<uint16_t>(cli.get_int("-max_gap", 0));
+    base_req.chain_max_lookback = static_cast<uint16_t>(cli.get_int("-chain_max_lookback", 0));
     {
         double max_freq_val = cli.get_double("-max_freq", 0.0);
         if (max_freq_val > 0 && max_freq_val < 1.0) {

@@ -50,6 +50,8 @@ SearchResponse process_search_request(
         config.stage2.min_score = req.min_score;
     if (req.max_gap != 0)
         config.stage2.max_gap = req.max_gap;
+    if (req.chain_max_lookback != 0)
+        config.stage2.chain_max_lookback = req.chain_max_lookback;
     if (req.max_freq_frac_x10000 != 0) {
         double frac = static_cast<double>(req.max_freq_frac_x10000) / 10000.0;
         uint64_t total_nseq = 0;
