@@ -2,6 +2,7 @@
 #ifdef IKAFSSN_ENABLE_HTTP
 #include "ikafssnclient/http_client.hpp"
 #endif
+#include "core/version.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
@@ -127,6 +128,11 @@ static bool execute_search(
 
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
+
+    if (cli.has("--version")) {
+        std::fprintf(stderr, "ikafssnclient %s\n", IKAFSSN_VERSION);
+        return 0;
+    }
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);

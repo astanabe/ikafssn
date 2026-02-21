@@ -1,4 +1,5 @@
 #include "ikafssnserver/server.hpp"
+#include "core/version.hpp"
 #include "util/cli_parser.hpp"
 
 #include <csignal>
@@ -46,6 +47,11 @@ static void print_usage(const char* prog) {
 
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
+
+    if (cli.has("--version")) {
+        std::fprintf(stderr, "ikafssnserver %s\n", IKAFSSN_VERSION);
+        return 0;
+    }
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);

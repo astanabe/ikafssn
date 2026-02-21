@@ -1,5 +1,6 @@
 #include "core/config.hpp"
 #include "core/types.hpp"
+#include "core/version.hpp"
 #include "core/kmer_encoding.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
@@ -130,6 +131,11 @@ struct SearchJob {
 
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
+
+    if (cli.has("--version")) {
+        std::fprintf(stderr, "ikafssnsearch %s\n", IKAFSSN_VERSION);
+        return 0;
+    }
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);

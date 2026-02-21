@@ -2,6 +2,7 @@
 add_library(ikafssn_core INTERFACE)
 target_include_directories(ikafssn_core INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_BINARY_DIR}/generated"
 )
 
 # Index library (reader/writer without NCBI dependency)

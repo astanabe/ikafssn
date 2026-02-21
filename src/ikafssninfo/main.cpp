@@ -1,5 +1,6 @@
 #include "core/config.hpp"
 #include "core/types.hpp"
+#include "core/version.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
@@ -196,6 +197,11 @@ static void print_frequency_stats(const FrequencyStats& fs) {
 
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
+
+    if (cli.has("--version")) {
+        std::fprintf(stderr, "ikafssninfo %s\n", IKAFSSN_VERSION);
+        return 0;
+    }
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);

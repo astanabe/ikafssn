@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
-project(ikafssn VERSION 0.1.0 LANGUAGES C CXX)
+project(ikafssn LANGUAGES C CXX)
+
+set(IKAFSSN_VERSION "0.1.2026.02.21")
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/core/version.hpp.in"
+    "${CMAKE_BINARY_DIR}/generated/core/version.hpp"
+    @ONLY
+)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

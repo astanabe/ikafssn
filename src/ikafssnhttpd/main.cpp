@@ -1,5 +1,6 @@
 #include "ikafssnhttpd/http_controller.hpp"
 #include "ikafssnhttpd/backend_client.hpp"
+#include "core/version.hpp"
 #include "util/cli_parser.hpp"
 #include "util/logger.hpp"
 #include "util/socket_utils.hpp"
@@ -36,6 +37,11 @@ static void print_usage(const char* prog) {
 
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
+
+    if (cli.has("--version")) {
+        std::fprintf(stderr, "ikafssnhttpd %s\n", IKAFSSN_VERSION);
+        return 0;
+    }
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);

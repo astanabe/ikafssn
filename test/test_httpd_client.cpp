@@ -21,6 +21,7 @@
 #include <drogon/HttpAppFramework.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -95,7 +96,18 @@ static void test_http_client_search() {
     CHECK(kpx.open(base + ".kpx"));
     CHECK(ksx.open(base + ".ksx"));
 
+    // Build search config matching server defaults.
+    // ServerConfig.max_freq_raw defaults to 0.5 (fraction), which the server
+    // resolves to ceil(0.5 * total_nseq).  Use the same resolved value for
+    // the local reference search so results are comparable.
     SearchConfig config;
+    {
+        uint32_t total_nseq = ksx.num_sequences();
+        auto resolved = static_cast<uint32_t>(
+            std::ceil(0.5 * total_nseq));
+        if (resolved == 0) resolved = 1;
+        config.stage1.max_freq = resolved;
+    }
     OidFilter no_filter;
 
     std::vector<SearchResult> local_results;

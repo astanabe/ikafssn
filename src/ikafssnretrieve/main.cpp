@@ -1,6 +1,7 @@
 #include "io/result_reader.hpp"
 #include "io/result_writer.hpp"
 #include "ikafssnretrieve/local_retriever.hpp"
+#include "core/version.hpp"
 #include "util/cli_parser.hpp"
 #include "util/logger.hpp"
 
@@ -49,6 +50,11 @@ static void print_usage(const char* prog) {
 
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
+
+    if (cli.has("--version")) {
+        std::fprintf(stderr, "ikafssnretrieve %s\n", IKAFSSN_VERSION);
+        return 0;
+    }
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);

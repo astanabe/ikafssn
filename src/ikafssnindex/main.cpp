@@ -3,6 +3,7 @@
 #include "index/index_filter.hpp"
 #include "core/config.hpp"
 #include "core/types.hpp"
+#include "core/version.hpp"
 #include "util/cli_parser.hpp"
 #include "util/size_parser.hpp"
 #include "util/logger.hpp"
@@ -67,6 +68,12 @@ int main(int argc, char* argv[]) {
         default_mem_str = std::to_string(default_mem >> 30) + "G";
     else
         default_mem_str = std::to_string(default_mem >> 20) + "M";
+
+    // Check for --version
+    if (cli.has("--version")) {
+        std::fprintf(stderr, "ikafssnindex %s\n", IKAFSSN_VERSION);
+        return 0;
+    }
 
     // Check for help
     if (cli.has("-h") || cli.has("--help") || argc < 2) {
