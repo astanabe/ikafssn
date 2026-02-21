@@ -18,9 +18,16 @@ static std::vector<std::pair<uint32_t, KmerInt>>
 extract_kmers(const std::string& seq, int k) {
     std::vector<std::pair<uint32_t, KmerInt>> kmers;
     KmerScanner<KmerInt> scanner(k);
-    scanner.scan(seq.data(), seq.size(), [&](uint32_t pos, KmerInt kmer) {
-        kmers.emplace_back(pos, kmer);
-    });
+    scanner.scan_ambig(seq.data(), seq.size(),
+        [&](uint32_t pos, KmerInt kmer) {
+            kmers.emplace_back(pos, kmer);
+        },
+        [&](uint32_t pos, KmerInt base_kmer, uint8_t ncbi4na, int bit_offset) {
+            expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                [&](KmerInt expanded) {
+                    kmers.emplace_back(pos, expanded);
+                });
+        });
     return kmers;
 }
 
@@ -116,43 +123,32 @@ QueryKmerData<KmerInt> preprocess_query(
     if (config.min_stage1_score_frac > 0) {
         // Fractional threshold resolution
 
-        // Count Nqkmer per strand (before high-freq removal, since the threshold
-        // formula accounts for high-freq via Nhighfreq subtraction)
+        // Count Nqkmer per strand: count distinct positions (handles degenerate expansion)
         auto count_nqkmer = [&](const std::vector<std::pair<uint32_t, KmerInt>>& kmers) -> uint32_t {
-            if (use_coverscore) {
-                std::unordered_set<uint64_t> distinct;
-                for (const auto& [pos, kmer] : kmers) {
-                    distinct.insert(static_cast<uint64_t>(kmer));
-                }
-                return static_cast<uint32_t>(distinct.size());
-            } else {
-                return static_cast<uint32_t>(kmers.size());
-            }
+            std::unordered_set<uint32_t> positions;
+            for (const auto& [pos, kmer] : kmers) positions.insert(pos);
+            return static_cast<uint32_t>(positions.size());
         };
 
         uint32_t Nqkmer_fwd = count_nqkmer(fwd_kmers);
         uint32_t Nqkmer_rc = count_nqkmer(rc_kmers);
 
-        // Count Nhighfreq per strand
+        // Count Nhighfreq per strand: count position only if ALL expanded
+        // k-mers at that position are high-freq (adjacency guaranteed by extract_kmers)
         auto count_nhighfreq = [&](const std::vector<std::pair<uint32_t, KmerInt>>& kmers) -> uint32_t {
-            if (use_coverscore) {
-                std::unordered_set<uint64_t> hf_distinct;
-                for (const auto& [pos, kmer] : kmers) {
-                    uint64_t idx = static_cast<uint64_t>(kmer);
-                    if (highfreq_set.count(idx)) {
-                        hf_distinct.insert(idx);
-                    }
+            uint32_t count = 0;
+            size_t i = 0;
+            while (i < kmers.size()) {
+                uint32_t cur_pos = kmers[i].first;
+                bool all_highfreq = true;
+                while (i < kmers.size() && kmers[i].first == cur_pos) {
+                    if (highfreq_set.count(static_cast<uint64_t>(kmers[i].second)) == 0)
+                        all_highfreq = false;
+                    i++;
                 }
-                return static_cast<uint32_t>(hf_distinct.size());
-            } else {
-                uint32_t count = 0;
-                for (const auto& [pos, kmer] : kmers) {
-                    if (highfreq_set.count(static_cast<uint64_t>(kmer))) {
-                        count++;
-                    }
-                }
-                return count;
+                if (all_highfreq) count++;
             }
+            return count;
         };
 
         uint32_t Nhighfreq_fwd = count_nhighfreq(fwd_kmers);

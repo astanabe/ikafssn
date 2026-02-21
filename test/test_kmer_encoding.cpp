@@ -209,6 +209,211 @@ static void test_contains_degenerate_base() {
     CHECK(contains_degenerate_base("R"));
 }
 
+static void test_degenerate_ncbi4na() {
+    // All 11 IUPAC degenerate codes
+    CHECK_EQ(degenerate_ncbi4na('R'), 0x05u); // A|G
+    CHECK_EQ(degenerate_ncbi4na('Y'), 0x0Au); // C|T
+    CHECK_EQ(degenerate_ncbi4na('S'), 0x06u); // G|C
+    CHECK_EQ(degenerate_ncbi4na('W'), 0x09u); // A|T
+    CHECK_EQ(degenerate_ncbi4na('K'), 0x0Cu); // G|T
+    CHECK_EQ(degenerate_ncbi4na('M'), 0x03u); // A|C
+    CHECK_EQ(degenerate_ncbi4na('B'), 0x0Eu); // C|G|T
+    CHECK_EQ(degenerate_ncbi4na('D'), 0x0Du); // A|G|T
+    CHECK_EQ(degenerate_ncbi4na('H'), 0x0Bu); // A|C|T
+    CHECK_EQ(degenerate_ncbi4na('V'), 0x07u); // A|C|G
+    CHECK_EQ(degenerate_ncbi4na('N'), 0x0Fu); // A|C|G|T
+
+    // Lowercase
+    CHECK_EQ(degenerate_ncbi4na('r'), 0x05u);
+    CHECK_EQ(degenerate_ncbi4na('y'), 0x0Au);
+    CHECK_EQ(degenerate_ncbi4na('n'), 0x0Fu);
+
+    // Normal bases return 0 (not degenerate)
+    CHECK_EQ(degenerate_ncbi4na('A'), 0u);
+    CHECK_EQ(degenerate_ncbi4na('C'), 0u);
+    CHECK_EQ(degenerate_ncbi4na('G'), 0u);
+    CHECK_EQ(degenerate_ncbi4na('T'), 0u);
+    CHECK_EQ(degenerate_ncbi4na('a'), 0u);
+}
+
+static void test_scan_ambig_no_degen() {
+    // Pure ACGT sequence should produce same results as scan()
+    std::string seq = "ACGTACGT";
+    int k = 5;
+
+    std::vector<std::pair<uint32_t, uint16_t>> scan_results;
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan(seq.c_str(), seq.size(), [&](uint32_t pos, uint16_t kmer) {
+        scan_results.push_back({pos, kmer});
+    });
+
+    std::vector<std::pair<uint32_t, uint16_t>> ambig_results;
+    int ambig_count = 0;
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) {
+            ambig_results.push_back({pos, kmer});
+        },
+        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+            ambig_count++;
+        });
+
+    CHECK_EQ(ambig_count, 0);
+    CHECK_EQ(ambig_results.size(), scan_results.size());
+    for (size_t i = 0; i < scan_results.size(); i++) {
+        CHECK_EQ(ambig_results[i].first, scan_results[i].first);
+        CHECK_EQ(ambig_results[i].second, scan_results[i].second);
+    }
+}
+
+static void test_scan_ambig_single_R() {
+    // "ACGTR" k=5 -> single degenerate base R at position 4
+    std::string seq = "ACGTR";
+    int k = 5;
+
+    int normal_count = 0;
+    int ambig_count = 0;
+    uint8_t got_ncbi4na = 0;
+
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) { normal_count++; },
+        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+            ambig_count++;
+            got_ncbi4na = ncbi4na;
+            CHECK_EQ(pos, 0u); // k-mer starts at position 0
+            CHECK_EQ(bit_offset, 0); // R is at the last (rightmost) position
+        });
+
+    CHECK_EQ(normal_count, 0);
+    CHECK_EQ(ambig_count, 1);
+    CHECK_EQ(got_ncbi4na, 0x05u); // R = A|G
+}
+
+static void test_scan_ambig_two_degen_skip() {
+    // "ACRSW" k=5 -> 2 degenerate bases in the window -> skip
+    std::string seq = "ACRSW";
+    int k = 5;
+
+    int normal_count = 0;
+    int ambig_count = 0;
+
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) { normal_count++; },
+        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+            ambig_count++;
+        });
+
+    CHECK_EQ(normal_count, 0);
+    CHECK_EQ(ambig_count, 0);
+}
+
+static void test_scan_ambig_expand_correct_kmers() {
+    // "ACGTR" k=5: R -> A,G
+    // ACGTA: A=00,C=01,G=10,T=11,A=00 -> 0b0001101100 = 0x6C
+    // ACGTG: A=00,C=01,G=10,T=11,G=10 -> 0b0001101110 = 0x6E
+    std::string seq = "ACGTR";
+    int k = 5;
+
+    std::vector<uint16_t> expanded;
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) {},
+        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+            expand_ambig_kmer<uint16_t>(base_kmer, ncbi4na, bit_offset,
+                [&](uint16_t exp) { expanded.push_back(exp); });
+        });
+
+    CHECK_EQ(expanded.size(), 2u);
+    // R = A|G -> bit0=A, bit2=G
+    // A=00 at bit_offset=0: 0x6C (ACGTA)
+    // G=10 at bit_offset=0: 0x6E (ACGTG)
+    CHECK_EQ(expanded[0], uint16_t(0x6C));
+    CHECK_EQ(expanded[1], uint16_t(0x6E));
+}
+
+static void test_scan_ambig_N_expansion() {
+    // "ACGTN" k=5 -> N expands to 4 variants (A,C,G,T)
+    std::string seq = "ACGTN";
+    int k = 5;
+
+    std::vector<uint16_t> expanded;
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) {},
+        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+            CHECK_EQ(ncbi4na, 0x0Fu); // N = A|C|G|T
+            expand_ambig_kmer<uint16_t>(base_kmer, ncbi4na, bit_offset,
+                [&](uint16_t exp) { expanded.push_back(exp); });
+        });
+
+    CHECK_EQ(expanded.size(), 4u);
+}
+
+static void test_scan_ambig_degen_at_start() {
+    // "RACGT" k=5 -> R at start (position 0 of the window)
+    // bit_offset should be (k-1)*2 = 8 for the first base in the window
+    std::string seq = "RACGT";
+    int k = 5;
+
+    int ambig_count = 0;
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) {},
+        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+            ambig_count++;
+            CHECK_EQ(pos, 0u);
+            CHECK_EQ(bit_offset, 8); // (5-1-0)*2 = 8... but depends on slot mapping
+        });
+
+    CHECK_EQ(ambig_count, 1);
+}
+
+static void test_expand_ambig_kmer_shared() {
+    // Verify the shared expand_ambig_kmer produces correct results
+    // base_kmer: 5-mer with placeholder A (00) at bit_offset=4 (bits 5-4)
+    // Encoding: bits 9-8=A(00), 7-6=C(01), 5-4=A(00, placeholder), 3-2=G(10), 1-0=T(11)
+    // = 0b00_01_00_10_11 = 0x4B = 75
+    uint16_t base_kmer = 0x4B;
+    uint8_t ncbi4na = 0x05; // R = A|G
+    int bit_offset = 4;
+
+    std::vector<uint16_t> results;
+    expand_ambig_kmer<uint16_t>(base_kmer, ncbi4na, bit_offset,
+        [&](uint16_t exp) { results.push_back(exp); });
+
+    CHECK_EQ(results.size(), 2u);
+    // A(00) at bit_offset=4: cleared | (0<<4) = 0x4B (placeholder was already A)
+    CHECK_EQ(results[0], uint16_t(0x4B));
+    // G(10) at bit_offset=4: cleared | (2<<4) = 0x4B & ~0x30 | 0x20 = 0x6B
+    CHECK_EQ(results[1], uint16_t(0x6B));
+}
+
+static void test_scan_ambig_sliding_window() {
+    // Test that degenerate base correctly exits the window as it slides
+    // "RACGTACGT" k=5:
+    // pos 0: RACGT -> 1 degen (R) -> ambig_callback
+    // pos 1: ACGTA -> 0 degen -> normal callback
+    // pos 2: CGTAC -> 0 degen -> normal callback
+    // pos 3: GTACG -> 0 degen -> normal callback
+    // pos 4: TACGT -> 0 degen -> normal callback
+    std::string seq = "RACGTACGT";
+    int k = 5;
+
+    int normal_count = 0;
+    int ambig_count = 0;
+
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) { normal_count++; },
+        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+            ambig_count++;
+        });
+
+    CHECK_EQ(ambig_count, 1); // only pos 0
+    CHECK_EQ(normal_count, 4); // pos 1,2,3,4
+}
+
 int main() {
     test_base_encoding();
     test_known_kmer();
@@ -221,6 +426,15 @@ int main() {
     test_scanner_k9_u32();
     test_scanner_k13_u32();
     test_contains_degenerate_base();
+    test_degenerate_ncbi4na();
+    test_scan_ambig_no_degen();
+    test_scan_ambig_single_R();
+    test_scan_ambig_two_degen_skip();
+    test_scan_ambig_expand_correct_kmers();
+    test_scan_ambig_N_expansion();
+    test_scan_ambig_degen_at_start();
+    test_expand_ambig_kmer_shared();
+    test_scan_ambig_sliding_window();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

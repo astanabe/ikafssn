@@ -2,6 +2,7 @@
 #include "io/blastdb_reader.hpp"
 #include "core/config.hpp"
 #include "core/types.hpp"
+#include "core/kmer_encoding.hpp"
 #include "core/packed_kmer_scanner.hpp"
 #include "core/ambiguity_parser.hpp"
 #include "core/varint.hpp"
@@ -50,24 +51,6 @@ static inline int log2_ceil(int n) {
     int v = n - 1;
     while (v > 0) { v >>= 1; bits++; }
     return bits;
-}
-
-// Expand a single ambiguous base in a k-mer and invoke action for each expansion.
-// base_kmer: k-mer with the placeholder ncbi2na value at the ambiguous position
-// ncbi4na: the ambiguity code (which bases it represents)
-// bit_offset: 2-bit position in the k-mer integer of the ambiguous base
-// action: called with each expanded KmerInt value
-template <typename KmerInt, typename Action>
-static inline void expand_ambig_kmer(KmerInt base_kmer, uint8_t ncbi4na,
-                                     int bit_offset, Action&& action) {
-    KmerInt clear_mask = ~(KmerInt(0x03) << bit_offset);
-    KmerInt cleared = base_kmer & clear_mask;
-    for (uint8_t b = 0; b < 4; b++) {
-        if (ncbi4na & (1u << b)) {
-            KmerInt expanded = cleared | (KmerInt(b) << bit_offset);
-            action(expanded);
-        }
-    }
 }
 
 template <typename KmerInt>

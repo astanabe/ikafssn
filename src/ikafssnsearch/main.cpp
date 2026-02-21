@@ -59,14 +59,14 @@ static void print_usage(const char* prog) {
         "  -max_freq <num>          High-frequency k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           >= 1: absolute count threshold; 0 = auto\n"
-        "  -min_diag_hits <int>     Diagonal filter min hits (default: 2)\n"
+        "  -min_diag_hits <int>     Diagonal filter min hits (default: 1)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
         "  -min_stage1_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
         "  -num_results <int>       Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: 2)\n"
-        "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)\n"
+        "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
         "  -outfmt <tab|json>       Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
@@ -180,7 +180,7 @@ int main(int argc, char* argv[]) {
     config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-max_gap", 100));
     config.stage2.chain_max_lookback = static_cast<uint32_t>(cli.get_int("-chain_max_lookback", 64));
-    config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-min_diag_hits", 2));
+    config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-min_diag_hits", 1));
     config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-min_score", 0));
     config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 0));
     config.mode = static_cast<uint8_t>(cli.get_int("-mode", 2));
@@ -232,7 +232,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    int accept_qdegen = cli.get_int("-accept_qdegen", 0);
+    int accept_qdegen = cli.get_int("-accept_qdegen", 1);
 
     // Output format
     OutputFormat outfmt = OutputFormat::kTab;
@@ -410,7 +410,7 @@ int main(int argc, char* argv[]) {
     tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(
         [max_num_seqs]() {
             Stage1Buffer buf;
-            buf.score_per_seq.resize(max_num_seqs, 0);
+            buf.ensure_capacity(max_num_seqs);
             return buf;
         });
 

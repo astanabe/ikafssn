@@ -19,14 +19,21 @@ ChainResult chain_hits(const std::vector<Hit>& raw_hits,
 
     if (raw_hits.empty()) return result;
 
-    // Step 1: diagonal filter
-    std::vector<Hit> hits = diagonal_filter(raw_hits, config.min_diag_hits);
-    if (hits.empty()) return result;
-
-    // Step 2: sort by q_pos ascending (then s_pos ascending)
-    std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
+    // Step 1: deduplicate (q_pos, s_pos) pairs from degenerate base expansion
+    std::vector<Hit> deduped = raw_hits;
+    std::sort(deduped.begin(), deduped.end(), [](const Hit& a, const Hit& b) {
         return a.q_pos < b.q_pos || (a.q_pos == b.q_pos && a.s_pos < b.s_pos);
     });
+    deduped.erase(std::unique(deduped.begin(), deduped.end(),
+        [](const Hit& a, const Hit& b) {
+            return a.q_pos == b.q_pos && a.s_pos == b.s_pos;
+        }), deduped.end());
+
+    // Step 2: diagonal filter
+    std::vector<Hit> hits = diagonal_filter(deduped, config.min_diag_hits);
+    if (hits.empty()) return result;
+
+    // Already sorted by (q_pos, s_pos) from dedup step
 
     // Step 3: O(n^2) chaining DP
     size_t n = hits.size();

@@ -24,6 +24,7 @@ struct SearchConfig {
     uint8_t  mode = 2;          // 1 = stage1 only, 2 = stage1+stage2
     uint8_t  sort_score = 2;    // 1 = stage1 score, 2 = chainscore
     int8_t   strand = 2;       // 1 = plus only, -1 = minus only, 2 = both
+    uint8_t  accept_qdegen = 1; // 0 = skip queries with degenerate bases, 1 = accept (expand)
     double min_stage1_score_frac = 0; // 0 = disabled, 0 < P < 1 = fractional mode
 };
 

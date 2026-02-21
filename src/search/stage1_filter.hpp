@@ -12,17 +12,20 @@ class OidFilter;
 
 struct Stage1Buffer {
     std::vector<uint32_t> score_per_seq;
+    std::vector<uint32_t> last_scored_pos;  // per-position dedup for degenerate expansion
     std::vector<uint32_t> dirty;
 
     void ensure_capacity(uint32_t num_seqs) {
         if (score_per_seq.size() < num_seqs) {
             score_per_seq.resize(num_seqs, 0);
+            last_scored_pos.resize(num_seqs, UINT32_MAX);
         }
     }
 
     void clear_dirty() {
         for (uint32_t idx : dirty) {
             score_per_seq[idx] = 0;
+            last_scored_pos[idx] = UINT32_MAX;
         }
         dirty.clear();
     }

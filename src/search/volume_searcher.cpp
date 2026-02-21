@@ -24,9 +24,16 @@ static std::vector<std::pair<uint32_t, KmerInt>>
 extract_kmers(const std::string& seq, int k) {
     std::vector<std::pair<uint32_t, KmerInt>> kmers;
     KmerScanner<KmerInt> scanner(k);
-    scanner.scan(seq.data(), seq.size(), [&](uint32_t pos, KmerInt kmer) {
-        kmers.emplace_back(pos, kmer);
-    });
+    scanner.scan_ambig(seq.data(), seq.size(),
+        [&](uint32_t pos, KmerInt kmer) {
+            kmers.emplace_back(pos, kmer);
+        },
+        [&](uint32_t pos, KmerInt base_kmer, uint8_t ncbi4na, int bit_offset) {
+            expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                [&](KmerInt expanded) {
+                    kmers.emplace_back(pos, expanded);
+                });
+        });
     return kmers;
 }
 
@@ -157,49 +164,35 @@ search_one_strand(const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
     if (config.min_stage1_score_frac > 0) {
         const bool use_coverscore = (stage1_config.stage1_score_type == 1);
 
-        // Compute Nqkmer: number of query k-mers
+        // Compute Nqkmer: count distinct positions (handles degenerate expansion)
         uint32_t Nqkmer;
-        if (use_coverscore) {
-            // Count distinct k-mer values in query
-            std::unordered_set<uint64_t> distinct;
-            for (const auto& [pos, kmer] : query_kmers) {
-                distinct.insert(static_cast<uint64_t>(kmer));
-            }
-            Nqkmer = static_cast<uint32_t>(distinct.size());
-        } else {
-            // matchscore: total k-mer positions
-            Nqkmer = static_cast<uint32_t>(query_kmers.size());
+        {
+            std::unordered_set<uint32_t> positions;
+            for (const auto& [pos, kmer] : query_kmers) positions.insert(pos);
+            Nqkmer = static_cast<uint32_t>(positions.size());
         }
 
         // Compute effective max_freq
         uint32_t max_freq = compute_effective_max_freq(
             stage1_config.max_freq, kix.total_postings(), kix.table_size());
 
-        // Count Nhighfreq from query k-mers
+        // Count Nhighfreq from query k-mers: count position only if ALL
+        // expanded k-mers at that position are high-freq
         const uint32_t* counts = kix.counts();
-        uint32_t Nhighfreq;
-        if (use_coverscore) {
-            // Count distinct high-freq k-mer values
-            std::unordered_set<uint64_t> highfreq_distinct;
-            for (const auto& [pos, kmer] : query_kmers) {
-                uint64_t kmer_idx = static_cast<uint64_t>(kmer);
-                bool is_highfreq = (counts[kmer_idx] > max_freq) ||
-                    (khx != nullptr && khx->is_excluded(kmer_idx));
-                if (is_highfreq) {
-                    highfreq_distinct.insert(kmer_idx);
+        uint32_t Nhighfreq = 0;
+        {
+            size_t qi = 0;
+            while (qi < query_kmers.size()) {
+                uint32_t cur_pos = query_kmers[qi].first;
+                bool all_highfreq = true;
+                while (qi < query_kmers.size() && query_kmers[qi].first == cur_pos) {
+                    uint64_t kmer_idx = static_cast<uint64_t>(query_kmers[qi].second);
+                    bool is_highfreq = (counts[kmer_idx] > max_freq) ||
+                        (khx != nullptr && khx->is_excluded(kmer_idx));
+                    if (!is_highfreq) all_highfreq = false;
+                    qi++;
                 }
-            }
-            Nhighfreq = static_cast<uint32_t>(highfreq_distinct.size());
-        } else {
-            // Count all occurrences of high-freq k-mers
-            Nhighfreq = 0;
-            for (const auto& [pos, kmer] : query_kmers) {
-                uint64_t kmer_idx = static_cast<uint64_t>(kmer);
-                bool is_highfreq = (counts[kmer_idx] > max_freq) ||
-                    (khx != nullptr && khx->is_excluded(kmer_idx));
-                if (is_highfreq) {
-                    Nhighfreq++;
-                }
+                if (all_highfreq) Nhighfreq++;
             }
         }
 

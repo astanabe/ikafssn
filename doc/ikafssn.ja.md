@@ -107,7 +107,7 @@ ikafssnsearch [options]
   -max_freq <num>         高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
                           0〜1 未満: 全ボリューム合計 NSEQ に対する割合
                           1 以上: 絶対カウント閾値; 0 = 自動計算
-  -min_diag_hits <int>    対角線フィルタ最小ヒット数 (デフォルト: 2)
+  -min_diag_hits <int>    対角線フィルタ最小ヒット数 (デフォルト: 1)
   -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 0)
   -min_stage1_score <num> Stage 1 最小スコア閾値 (デフォルト: 0.5)
                           整数 (>= 1): 絶対閾値
@@ -124,7 +124,7 @@ ikafssnsearch [options]
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>       検索する鎖 (デフォルト: 2)
                           1=プラス鎖のみ、-1=マイナス鎖のみ、2=両鎖
-  -accept_qdegen <0|1>    縮重塩基を含むクエリを許可 (デフォルト: 0)
+  -accept_qdegen <0|1>    縮重塩基を含むクエリを許可 (デフォルト: 1)
   -outfmt <tab|json>      出力形式 (デフォルト: tab)
   -v, --verbose           詳細ログ出力
 ```
@@ -144,7 +144,7 @@ ikafssnsearch [options]
 
 インデックスディレクトリに複数の k-mer サイズのインデックスが含まれる場合 (例: `nt.00.09mer.kix` と `nt.00.11mer.kix` の両方が存在する場合)、`-k` で使用するサイズを指定する必要があります。k-mer サイズが 1 種類のみの場合は `-k` を省略できます。
 
-`-accept_qdegen` が 0 (デフォルト) の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは警告付きでスキップされ、終了コードは 2 になります。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます (縮重塩基の位置は k-mer スキャン時に無効として扱われスキップされます)。
+`-accept_qdegen` が 0 の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは警告付きでスキップされ、終了コードは 2 になります。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます。1 文字の縮重塩基を含む k-mer は全可能バリアントに展開して検索に使用されます (例: R→A,G で 2 k-mer、N→A,C,G,T で 4 k-mer)。2 文字以上の縮重塩基を含む k-mer はスキップされます。この処理はインデックス構築時のサブジェクト配列に対する処理と同等です。
 
 `-seqidlist` と `-negative_seqidlist` は排他的 (同時指定不可) です。ファイル形式はテキスト (1 行 1 アクセッション) と `blastdb_aliastool -seqid_file_in` で生成されるバイナリ形式の両方を受け付け、先頭のマジックバイトで自動判別します。
 
@@ -251,11 +251,12 @@ ikafssnserver [options]
   -max_freq <num>         デフォルト高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
                           0〜1 未満: 全ボリューム合計 NSEQ に対する割合
                           1 以上: 絶対カウント閾値; 0 = 自動計算
-  -min_diag_hits <int>    デフォルト対角線フィルタ最小ヒット数 (デフォルト: 2)
+  -min_diag_hits <int>    デフォルト対角線フィルタ最小ヒット数 (デフォルト: 1)
   -stage1_topn <int>      デフォルト Stage 1 候補数上限 (デフォルト: 0)
   -min_stage1_score <num> デフォルト Stage 1 最小スコア閾値 (デフォルト: 0.5)
                           整数 (>= 1) または小数 (0 < P < 1)
   -num_results <int>      デフォルト最終出力件数 (デフォルト: 0)
+  -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
   -shutdown_timeout <int> グレースフルシャットダウンのタイムアウト秒数 (デフォルト: 30)
   -v, --verbose           詳細ログ出力
 ```

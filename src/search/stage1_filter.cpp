@@ -55,7 +55,10 @@ std::vector<Stage1Candidate> stage1_filter(
                 if (use_coverscore && !decoder.was_new_seq()) continue;
                 if (!filter.pass(sid)) continue;
                 if (buf->score_per_seq[sid] == 0) buf->dirty.push_back(sid);
-                buf->score_per_seq[sid]++;
+                if (buf->last_scored_pos[sid] != q_pos) {
+                    buf->score_per_seq[sid]++;
+                    buf->last_scored_pos[sid] = q_pos;
+                }
             }
         }
 
@@ -87,6 +90,7 @@ std::vector<Stage1Candidate> stage1_filter(
 
     // Fallback: allocate local buffer (existing behavior)
     std::vector<uint32_t> score_per_seq(num_seqs, 0);
+    std::vector<uint32_t> last_scored_pos(num_seqs, UINT32_MAX);
 
     for (const auto& [q_pos, kmer] : query_kmers) {
         uint64_t kmer_idx = static_cast<uint64_t>(kmer);
@@ -98,7 +102,10 @@ std::vector<Stage1Candidate> stage1_filter(
             SeqId sid = decoder.next();
             if (use_coverscore && !decoder.was_new_seq()) continue;
             if (!filter.pass(sid)) continue;
-            score_per_seq[sid]++;
+            if (last_scored_pos[sid] != q_pos) {
+                score_per_seq[sid]++;
+                last_scored_pos[sid] = q_pos;
+            }
         }
     }
 

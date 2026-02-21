@@ -114,11 +114,15 @@ SearchResponse process_search_request(
     else if (req.seqidlist_mode == SeqidlistMode::kExclude)
         filter_mode = OidFilterMode::kExclude;
 
+    // Resolve effective accept_qdegen: client non-zero overrides server default
+    uint8_t accept_qdegen = (req.accept_qdegen != 0)
+        ? req.accept_qdegen : config.accept_qdegen;
+
     // Classify queries: skipped (degenerate) vs valid
     std::vector<size_t> valid_indices;  // original indices of non-skipped queries
     std::vector<size_t> skipped_indices;
     for (size_t qi = 0; qi < req.queries.size(); qi++) {
-        if (req.accept_qdegen == 0 &&
+        if (accept_qdegen == 0 &&
             contains_degenerate_base(req.queries[qi].sequence)) {
             skipped_indices.push_back(qi);
         } else {
@@ -165,7 +169,7 @@ SearchResponse process_search_request(
 
     // Iterate in original order: include skipped and accepted, skip rejected
     for (size_t qi = 0; qi < req.queries.size(); qi++) {
-        bool skipped = (req.accept_qdegen == 0 &&
+        bool skipped = (accept_qdegen == 0 &&
                         contains_degenerate_base(req.queries[qi].sequence));
         if (skipped) {
             QueryResult qr;
@@ -204,7 +208,7 @@ SearchResponse process_search_request(
     tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(
         [max_num_seqs]() {
             Stage1Buffer buf;
-            buf.score_per_seq.resize(max_num_seqs, 0);
+            buf.ensure_capacity(max_num_seqs);
             return buf;
         });
 

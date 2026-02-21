@@ -9,7 +9,7 @@ namespace ikafssn {
 
 struct Stage2Config {
     uint32_t max_gap = 100;         // max diagonal deviation between consecutive chain hits
-    uint32_t min_diag_hits = 2;     // diagonal filter threshold
+    uint32_t min_diag_hits = 1;     // diagonal filter threshold (1 = disabled)
     uint32_t min_score = 0;         // minimum chain score to report (0 = adaptive)
     uint32_t chain_max_lookback = 64; // chaining DP lookback window (0 = unlimited O(n²))
 };

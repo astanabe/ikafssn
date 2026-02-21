@@ -238,6 +238,21 @@ static void test_empty_hits() {
     CHECK_EQ(cr.score, 0u);
 }
 
+static void test_duplicate_hits_dedup() {
+    std::fprintf(stderr, "-- test_duplicate_hits_dedup\n");
+
+    // Duplicate (q_pos, s_pos) pairs from degenerate base expansion
+    // should be deduplicated before chaining
+    std::vector<Hit> hits = {{10, 100}, {10, 100}, {20, 110}, {20, 110}, {20, 110}};
+    Stage2Config config;
+    config.min_diag_hits = 1;
+    config.min_score = 1;
+    config.max_gap = 100;
+
+    ChainResult cr = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(cr.score, 2u);  // 2 distinct positions, not 5
+}
+
 int main() {
     test_single_hit();
     test_perfect_chain();
@@ -252,6 +267,7 @@ int main() {
     test_chain_max_lookback_interleaved();
     test_chain_max_lookback_zero_unlimited();
     test_empty_hits();
+    test_duplicate_hits_dedup();
 
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
