@@ -6,6 +6,7 @@
 #include "util/size_parser.hpp"
 #include "util/logger.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -45,7 +46,7 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         Accepts K, M, G suffixes\n"
         "  -max_freq_build <num>  Exclude k-mers with count > threshold\n"
         "                         >= 1: absolute count threshold\n"
-        "                         0 < x < 1: fraction of NSEQ per volume\n"
+        "                         0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                         (default: 0 = no exclusion)\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
@@ -165,9 +166,29 @@ int main(int argc, char* argv[]) {
     IndexBuilderConfig config;
     config.k = k;
     config.memory_limit = memory_limit / static_cast<uint64_t>(openvol);
-    config.max_freq_build = max_freq_build;
     config.threads = threads;
     config.verbose = verbose;
+
+    // Resolve fractional -max_freq_build using total NSEQ across all volumes
+    if (max_freq_build > 0 && max_freq_build < 1.0) {
+        uint64_t total_nseq = 0;
+        for (const auto& vp : vol_paths) {
+            BlastDbReader tmp_db;
+            if (!tmp_db.open(vp)) {
+                std::fprintf(stderr, "Error: cannot open volume '%s' for NSEQ count\n",
+                             vp.c_str());
+                return 1;
+            }
+            total_nseq += tmp_db.num_sequences();
+        }
+        double resolved = std::ceil(max_freq_build * total_nseq);
+        if (resolved < 1.0) resolved = 1.0;
+        logger.info("-max_freq_build=%.6g (fraction of total NSEQ=%lu) -> threshold=%.0f",
+                    max_freq_build, static_cast<unsigned long>(total_nseq), resolved);
+        config.max_freq_build = resolved;
+    } else {
+        config.max_freq_build = max_freq_build;
+    }
 
     uint16_t total_volumes = static_cast<uint16_t>(vol_paths.size());
 

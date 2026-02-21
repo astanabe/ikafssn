@@ -54,7 +54,7 @@ ikafssnindex [options]
                           パーティション数はこの上限内に収まるよう自動決定
   -max_freq_build <num>   構築時高頻度 k-mer 除外閾値
                           1 以上: 絶対カウント閾値
-                          0〜1 未満: ボリュームあたり NSEQ に対する割合
+                          0〜1 未満: 全ボリューム合計 NSEQ に対する割合
                           (デフォルト: 0 = 除外なし)
   -openvol <int>          ボリューム同時処理数の上限 (デフォルト: 1)
                           マルチボリューム DB のピークメモリ使用量を制御
@@ -79,7 +79,7 @@ ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2
 # 高頻度 k-mer を除外して構築 (絶対値指定)
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
 
-# ボリュームあたり配列数の 1% を超える k-mer を除外
+# 全ボリューム合計配列数の 1% を超える k-mer を除外
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
 ```
 
@@ -100,7 +100,9 @@ ikafssnsearch [options]
   -threads <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
   -min_score <int>        最小スコア (デフォルト: 1)
   -max_gap <int>          チェイニング対角線ずれ許容幅 (デフォルト: 100)
-  -max_freq <int>         高頻度 k-mer スキップ閾値 (デフォルト: 自動計算)
+  -max_freq <num>         高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
+                          0〜1 未満: 全ボリューム合計 NSEQ に対する割合
+                          1 以上: 絶対カウント閾値; 0 = 自動計算
   -min_diag_hits <int>    対角線フィルタ最小ヒット数 (デフォルト: 2)
   -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 0)
   -min_stage1_score <num> Stage 1 最小スコア閾値 (デフォルト: 0.5)
@@ -241,7 +243,9 @@ ikafssnserver [options]
   -pid <path>             PID ファイルパス
   -min_score <int>        デフォルト最小チェインスコア (デフォルト: 1)
   -max_gap <int>          デフォルトチェイニング対角線ずれ許容幅 (デフォルト: 100)
-  -max_freq <int>         デフォルト高頻度 k-mer スキップ閾値 (デフォルト: 自動計算)
+  -max_freq <num>         デフォルト高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
+                          0〜1 未満: 全ボリューム合計 NSEQ に対する割合
+                          1 以上: 絶対カウント閾値; 0 = 自動計算
   -min_diag_hits <int>    デフォルト対角線フィルタ最小ヒット数 (デフォルト: 2)
   -stage1_topn <int>      デフォルト Stage 1 候補数上限 (デフォルト: 0)
   -min_stage1_score <num> デフォルト Stage 1 最小スコア閾値 (デフォルト: 0.5)
@@ -335,7 +339,9 @@ ikafssnclient [options]
   -k <int>                 使用する k-mer サイズ (デフォルト: サーバ側デフォルト)
   -min_score <int>         最小スコア (デフォルト: サーバ側デフォルト)
   -max_gap <int>           チェイニング対角線ずれ許容幅 (デフォルト: サーバ側デフォルト)
-  -max_freq <int>          高頻度 k-mer スキップ閾値 (デフォルト: サーバ側デフォルト)
+  -max_freq <num>          高頻度 k-mer スキップ閾値 (デフォルト: サーバ側デフォルト)
+                           0〜1 未満: 全ボリューム合計 NSEQ に対する割合
+                           1 以上: 絶対カウント閾値
   -min_diag_hits <int>     対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
   -stage1_topn <int>       Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
   -min_stage1_score <num>  Stage 1 最小スコア閾値 (デフォルト: サーバ側デフォルト)
@@ -442,16 +448,20 @@ ikafssn は 2 段階の検索パイプラインを使用します。
 
 ### 高頻度 k-mer フィルタリング
 
-`max_freq` 回を超えて出現する k-mer は両ステージでスキップされます。`max_freq` が未指定 (デフォルト) の場合、以下の式で自動計算されます:
+`max_freq` 回を超えて出現する k-mer は両ステージでスキップされます。
+
+`-max_freq` のデフォルト値は `0.5` で、全ボリューム合計配列数の 50% を超えて出現する k-mer がスキップされます。より一般に、小数値 (0 < x < 1) を指定すると、閾値は `ceil(x * total_NSEQ)` に解決されます (total_NSEQ は全ボリュームの配列数の合計)。整数値 (1 以上) はそのまま絶対カウント閾値として使用されます。
+
+`-max_freq 0` を明示的に指定すると、ボリュームごとに以下の式で自動計算されます:
 
 ```
 max_freq = mean_count * 10    ([1000, 100000] に制限)
 ここで mean_count = total_postings / 4^k
 ```
 
-この値はボリュームごとに `.kix` ヘッダから算出されます。
+この自動計算モードではボリュームごとに `.kix` ヘッダから値が算出されます。
 
-**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。除外された k-mer は `.khx` ファイルに記録されます。検索時に割合指定の `-min_stage1_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算から差し引かれます。
+**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。除外された k-mer は `.khx` ファイルに記録されます。小数値 (0 < x < 1) を指定した場合、閾値は全ボリューム合計 NSEQ に基づいて解決されます (`-max_freq` と同じ方式)。検索時に割合指定の `-min_stage1_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算から差し引かれます。
 
 ### 割合指定の Stage 1 閾値
 
@@ -621,7 +631,7 @@ NCBI C++ Toolkit 以外の依存パッケージを以下のコマンドでイン
 ```bash
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
     libcurl4-openssl-dev libjsoncpp-dev
-sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev
+sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev
 ```
 
 2 行目は Drogon および Ubuntu で `libdrogon-dev` が自動的に導入しない追加依存パッケージです。ikafssnhttpd が不要な場合は 2 行目を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。

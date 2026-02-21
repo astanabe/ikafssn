@@ -22,6 +22,7 @@ struct ServerConfig {
     int max_seqs_per_req = 0;       // 0 = default (same as resolved thread count). Per-request cap
     int shutdown_timeout = 30;      // seconds
     SearchConfig search_config;
+    double max_freq_raw = 0.5;          // raw -max_freq value (fraction or absolute)
     Logger::Level log_level = Logger::kInfo;
 };
 

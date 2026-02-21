@@ -54,7 +54,7 @@ Options:
                           Partitions are auto-calculated to fit within this limit
   -max_freq_build <num>   Exclude k-mers with count above this threshold
                           >= 1: absolute count threshold
-                          0 < x < 1: fraction of NSEQ per volume
+                          0 < x < 1: fraction of total NSEQ across all volumes
                           (default: 0 = no exclusion)
   -openvol <int>          Max volumes processed simultaneously (default: 1)
                           Controls peak memory usage for multi-volume DBs
@@ -79,7 +79,7 @@ ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2
 # Exclude high-frequency k-mers during build (absolute)
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
 
-# Exclude k-mers appearing in >1% of sequences per volume
+# Exclude k-mers appearing in >1% of total sequences across all volumes
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
 ```
 
@@ -100,7 +100,9 @@ Options:
   -threads <int>          Parallel search threads (default: all cores)
   -min_score <int>        Minimum score (default: 1)
   -max_gap <int>          Chaining diagonal gap tolerance (default: 100)
-  -max_freq <int>         High-frequency k-mer skip threshold (default: auto)
+  -max_freq <num>         High-frequency k-mer skip threshold (default: 0.5)
+                          0 < x < 1: fraction of total NSEQ across all volumes
+                          >= 1: absolute count threshold; 0 = auto
   -min_diag_hits <int>    Diagonal filter min hits (default: 2)
   -stage1_topn <int>      Stage 1 candidate limit, 0=unlimited (default: 0)
   -min_stage1_score <num> Stage 1 minimum score (default: 0.5)
@@ -241,7 +243,9 @@ Options:
   -pid <path>             PID file path
   -min_score <int>        Default minimum chain score (default: 1)
   -max_gap <int>          Default chaining gap tolerance (default: 100)
-  -max_freq <int>         Default high-freq k-mer skip threshold (default: auto)
+  -max_freq <num>         Default high-freq k-mer skip threshold (default: 0.5)
+                          0 < x < 1: fraction of total NSEQ across all volumes
+                          >= 1: absolute count threshold; 0 = auto
   -min_diag_hits <int>    Default diagonal filter min hits (default: 2)
   -stage1_topn <int>      Default Stage 1 candidate limit (default: 0)
   -min_stage1_score <num> Default Stage 1 minimum score (default: 0.5)
@@ -335,7 +339,9 @@ Options:
   -k <int>                 K-mer size (default: server default)
   -min_score <int>         Minimum score (default: server default)
   -max_gap <int>           Chaining gap tolerance (default: server default)
-  -max_freq <int>          High-freq k-mer skip threshold (default: server default)
+  -max_freq <num>          High-freq k-mer skip threshold (default: server default)
+                           0 < x < 1: fraction of total NSEQ across all volumes
+                           >= 1: absolute count threshold
   -min_diag_hits <int>     Diagonal filter min hits (default: server default)
   -stage1_topn <int>       Stage 1 candidate limit (default: server default)
   -min_stage1_score <num>  Stage 1 minimum score (default: server default)
@@ -442,16 +448,20 @@ By default, both forward and reverse complement strands of the query are searche
 
 ### High-Frequency K-mer Filtering
 
-K-mers occurring more than `max_freq` times are skipped during both stages. When `max_freq` is not specified (default), it is auto-calculated as:
+K-mers occurring more than `max_freq` times are skipped during both stages.
+
+The default value of `-max_freq` is `0.5`, meaning k-mers occurring in more than 50% of the total sequences across all volumes are skipped. More generally, when a fractional value (0 < x < 1) is specified, the threshold is resolved as `ceil(x * total_NSEQ)` where `total_NSEQ` is the sum of sequence counts across all volumes. An integer value (>= 1) is used as an absolute count threshold directly.
+
+When `-max_freq 0` is specified explicitly, the threshold is auto-calculated per volume as:
 
 ```
 max_freq = mean_count * 10    (clamped to [1000, 100000])
 where mean_count = total_postings / 4^k
 ```
 
-This is computed per volume from the `.kix` header.
+This auto mode is computed per volume from the `.kix` header.
 
-**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. A `.khx` file records which k-mers were excluded. At search time, when fractional `-min_stage1_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation.
+**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. A `.khx` file records which k-mers were excluded. When a fractional value (0 < x < 1) is specified, the threshold is resolved using the total NSEQ across all volumes (same as `-max_freq`). At search time, when fractional `-min_stage1_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation.
 
 ### Fractional Stage 1 Threshold
 
@@ -621,7 +631,7 @@ Install the required packages (excluding NCBI C++ Toolkit) with the following co
 ```bash
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
     libcurl4-openssl-dev libjsoncpp-dev
-sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev
+sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev
 ```
 
 The second line installs Drogon and its additional dependencies that are not automatically pulled in by `libdrogon-dev` on Ubuntu. If ikafssnhttpd is not needed, omit the second line and build with `-DBUILD_HTTPD=OFF`.

@@ -135,6 +135,9 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     // Backward-compatible trailer: strand
     put_u8(buf, static_cast<uint8_t>(req.strand));
 
+    // Backward-compatible trailer: max_freq fraction
+    put_u16(buf, req.max_freq_frac_x10000);
+
     return buf;
 }
 
@@ -197,6 +200,11 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
         uint8_t strand_raw;
         r.get_u8(strand_raw);
         req.strand = static_cast<int8_t>(strand_raw);
+    }
+
+    // Backward-compatible trailer: max_freq fraction
+    if (r.remaining() >= 2) {
+        r.get_u16(req.max_freq_frac_x10000);
     }
 
     return true;

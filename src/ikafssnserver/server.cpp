@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -184,12 +185,33 @@ void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger
     arena.execute([&] { tg.wait(); });
 }
 
-int Server::run(const ServerConfig& config) {
+int Server::run(const ServerConfig& config_in) {
+    // Mutable copy so we can resolve -max_freq fraction
+    ServerConfig config = config_in;
     Logger logger(config.log_level);
 
     // Load indexes
     if (!load_indexes(config.ix_prefix, logger)) {
         return 1;
+    }
+
+    // Resolve -max_freq fraction using total NSEQ from loaded indexes
+    if (config.max_freq_raw > 0 && config.max_freq_raw < 1.0) {
+        if (!kmer_groups_.empty()) {
+            uint64_t total_nseq = 0;
+            for (const auto& vol : kmer_groups_.begin()->second.volumes)
+                total_nseq += vol.ksx.num_sequences();
+            auto resolved = static_cast<uint32_t>(
+                std::ceil(config.max_freq_raw * total_nseq));
+            if (resolved == 0) resolved = 1;
+            config.search_config.stage1.max_freq = resolved;
+            logger.info("-max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
+                        config.max_freq_raw, resolved,
+                        static_cast<unsigned long>(total_nseq));
+        }
+    } else {
+        config.search_config.stage1.max_freq =
+            static_cast<uint32_t>(config.max_freq_raw);
     }
 
     // Write PID file if requested

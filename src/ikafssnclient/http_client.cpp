@@ -23,7 +23,11 @@ static std::string build_request_json(const SearchRequest& req) {
     root["k"] = req.k;
     root["min_score"] = req.min_score;
     root["max_gap"] = req.max_gap;
-    root["max_freq"] = req.max_freq;
+    if (req.max_freq_frac_x10000 != 0) {
+        root["max_freq_frac"] = static_cast<double>(req.max_freq_frac_x10000) / 10000.0;
+    } else {
+        root["max_freq"] = req.max_freq;
+    }
     root["min_diag_hits"] = req.min_diag_hits;
     root["stage1_topn"] = req.stage1_topn;
     root["min_stage1_score"] = req.min_stage1_score;

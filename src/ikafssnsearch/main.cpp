@@ -14,6 +14,7 @@
 #include "util/logger.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -48,7 +49,9 @@ static void print_usage(const char* prog) {
         "  -sort_score <1|2>        1=stage1 score, 2=chainscore (default: 2)\n"
         "  -min_score <int>         Minimum score (default: 1)\n"
         "  -max_gap <int>           Chaining diagonal gap tolerance (default: 100)\n"
-        "  -max_freq <int>          High-frequency k-mer skip threshold (default: auto)\n"
+        "  -max_freq <num>          High-frequency k-mer skip threshold (default: 0.5)\n"
+        "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
+        "                           >= 1: absolute count threshold; 0 = auto\n"
         "  -min_diag_hits <int>     Diagonal filter min hits (default: 2)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
         "  -min_stage1_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
@@ -163,7 +166,7 @@ int main(int argc, char* argv[]) {
 
     // Search config
     SearchConfig config;
-    config.stage1.max_freq = static_cast<uint32_t>(cli.get_int("-max_freq", 0));
+    double max_freq_raw = cli.get_double("-max_freq", 0.5);
     config.stage1.stage1_topn = static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
     config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-max_gap", 100));
@@ -325,6 +328,20 @@ int main(int argc, char* argv[]) {
         if (filter_mode != OidFilterMode::kNone) {
             vol_data[vi].filter.build(seqidlist, vol_data[vi].ksx, filter_mode);
         }
+    }
+
+    // Resolve -max_freq: fraction -> absolute threshold using total NSEQ
+    if (max_freq_raw > 0 && max_freq_raw < 1.0) {
+        uint64_t total_nseq = 0;
+        for (const auto& vd : vol_data) total_nseq += vd.ksx.num_sequences();
+        config.stage1.max_freq = static_cast<uint32_t>(
+            std::ceil(max_freq_raw * total_nseq));
+        if (config.stage1.max_freq == 0) config.stage1.max_freq = 1;
+        logger.info("-max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
+                    max_freq_raw, config.stage1.max_freq,
+                    static_cast<unsigned long>(total_nseq));
+    } else {
+        config.stage1.max_freq = static_cast<uint32_t>(max_freq_raw);
     }
 
     // Build job list: (query, volume) pairs, skipping degenerate queries

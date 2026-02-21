@@ -62,7 +62,14 @@ void HttpController::search(
     sreq.k = static_cast<uint8_t>(j.get("k", 0).asUInt());
     sreq.min_score = static_cast<uint16_t>(j.get("min_score", 0).asUInt());
     sreq.max_gap = static_cast<uint16_t>(j.get("max_gap", 0).asUInt());
-    sreq.max_freq = j.get("max_freq", 0).asUInt();
+    if (j.isMember("max_freq_frac") && j["max_freq_frac"].isDouble()) {
+        double frac = j["max_freq_frac"].asDouble();
+        if (frac > 0 && frac < 1.0) {
+            sreq.max_freq_frac_x10000 = static_cast<uint16_t>(frac * 10000.0);
+        }
+    } else {
+        sreq.max_freq = j.get("max_freq", 0).asUInt();
+    }
     sreq.min_diag_hits = static_cast<uint8_t>(j.get("min_diag_hits", 0).asUInt());
     sreq.stage1_topn = static_cast<uint16_t>(j.get("stage1_topn", 0).asUInt());
     sreq.min_stage1_score = static_cast<uint16_t>(j.get("min_stage1_score", 0).asUInt());

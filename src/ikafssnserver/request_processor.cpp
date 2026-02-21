@@ -3,6 +3,7 @@
 
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
+#include <cmath>
 #include "io/result_writer.hpp"
 #include "search/oid_filter.hpp"
 
@@ -47,8 +48,15 @@ SearchResponse process_search_request(
         config.stage2.min_score = req.min_score;
     if (req.max_gap != 0)
         config.stage2.max_gap = req.max_gap;
-    if (req.max_freq != 0)
+    if (req.max_freq_frac_x10000 != 0) {
+        double frac = static_cast<double>(req.max_freq_frac_x10000) / 10000.0;
+        uint64_t total_nseq = 0;
+        for (const auto& vol : group.volumes) total_nseq += vol.ksx.num_sequences();
+        config.stage1.max_freq = static_cast<uint32_t>(std::ceil(frac * total_nseq));
+        if (config.stage1.max_freq == 0) config.stage1.max_freq = 1;
+    } else if (req.max_freq != 0) {
         config.stage1.max_freq = req.max_freq;
+    }
     if (req.min_diag_hits != 0)
         config.stage2.min_diag_hits = req.min_diag_hits;
     if (req.stage1_topn != 0)
