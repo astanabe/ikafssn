@@ -28,8 +28,10 @@
 #include <thread>
 #include <vector>
 
+#include <tbb/blocked_range.h>
 #include <tbb/combinable.h>
 #include <tbb/enumerable_thread_specific.h>
+#include <tbb/parallel_for.h>
 #include <tbb/parallel_for_each.h>
 #include <tbb/task_arena.h>
 
@@ -398,16 +400,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Build job list: (query, volume) pairs, skipping degenerate queries
-    std::vector<SearchJob> jobs;
-    jobs.reserve(queries.size() * vol_data.size());
-    for (size_t qi = 0; qi < queries.size(); qi++) {
-        if (query_skipped[qi]) continue;
-        for (size_t vi = 0; vi < vol_data.size(); vi++) {
-            jobs.push_back({qi, vi});
-        }
-    }
-
     // Thread-local Stage1Buffer to avoid per-job allocation
     uint32_t max_num_seqs = 0;
     for (const auto& vd : vol_data)
@@ -423,50 +415,120 @@ int main(int argc, char* argv[]) {
     // Thread-local hit collection (no mutex needed)
     tbb::combinable<std::vector<OutputHit>> tls_hits;
 
-    logger.info("Launching %zu search job(s)...", jobs.size());
+    // Adaptive parallel granularity:
+    // - Many queries or single volume: parallel_for over queries (coarser tasks)
+    // - Few queries, multiple volumes: parallel_for_each over (query, volume) pairs
+    size_t non_skipped_count = (k < K_TYPE_THRESHOLD) ? pp16.size() : pp32.size();
+    bool use_query_level_parallel =
+        (non_skipped_count > static_cast<size_t>(num_threads) * 2) ||
+        (vol_data.size() == 1);
 
     // Phase 2: execute search jobs in parallel using preprocessed data
     tbb::task_arena arena(num_threads);
-    arena.execute([&] {
-        tbb::parallel_for_each(jobs.begin(), jobs.end(),
-            [&](const SearchJob& job) {
-                const auto& query = queries[job.query_idx];
-                const auto& vd = vol_data[job.volume_idx];
-                size_t pp_idx = query_pp_idx[job.query_idx];
 
-                auto& buf = tls_bufs.local();
-
-                SearchResult sr;
-                if (k < K_TYPE_THRESHOLD) {
-                    sr = search_volume<uint16_t>(
-                        query.id, pp16[pp_idx].qdata, k,
-                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
-                } else {
-                    sr = search_volume<uint32_t>(
-                        query.id, pp32[pp_idx].qdata, k,
-                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
-                }
-
-                // Convert to OutputHit and collect (lock-free)
-                if (!sr.hits.empty()) {
+    if (use_query_level_parallel) {
+        // Path A: query-level parallelism (parallel_for over queries)
+        logger.info("Launching query-level parallel search (%zu queries, %zu volumes)...",
+                    non_skipped_count, vol_data.size());
+        arena.execute([&] {
+            tbb::parallel_for(
+                tbb::blocked_range<size_t>(0, queries.size()),
+                [&](const tbb::blocked_range<size_t>& range) {
+                    auto& buf = tls_bufs.local();
                     auto& local_hits = tls_hits.local();
-                    for (const auto& cr : sr.hits) {
-                        OutputHit oh;
-                        oh.query_id = sr.query_id;
-                        oh.accession = std::string(vd.ksx.accession(cr.seq_id));
-                        oh.strand = cr.is_reverse ? '-' : '+';
-                        oh.q_start = cr.q_start;
-                        oh.q_end = cr.q_end;
-                        oh.s_start = cr.s_start;
-                        oh.s_end = cr.s_end;
-                        oh.score = cr.score;
-                        oh.stage1_score = cr.stage1_score;
-                        oh.volume = vd.volume_index;
-                        local_hits.push_back(oh);
+
+                    for (size_t qi = range.begin(); qi != range.end(); ++qi) {
+                        if (query_skipped[qi]) continue;
+                        const auto& query = queries[qi];
+                        size_t pp_idx = query_pp_idx[qi];
+
+                        for (size_t vi = 0; vi < vol_data.size(); vi++) {
+                            const auto& vd = vol_data[vi];
+
+                            SearchResult sr;
+                            if (k < K_TYPE_THRESHOLD) {
+                                sr = search_volume<uint16_t>(
+                                    query.id, pp16[pp_idx].qdata, k,
+                                    vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
+                            } else {
+                                sr = search_volume<uint32_t>(
+                                    query.id, pp32[pp_idx].qdata, k,
+                                    vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
+                            }
+
+                            if (!sr.hits.empty()) {
+                                for (const auto& cr : sr.hits) {
+                                    OutputHit oh;
+                                    oh.query_id = sr.query_id;
+                                    oh.accession = std::string(vd.ksx.accession(cr.seq_id));
+                                    oh.strand = cr.is_reverse ? '-' : '+';
+                                    oh.q_start = cr.q_start;
+                                    oh.q_end = cr.q_end;
+                                    oh.s_start = cr.s_start;
+                                    oh.s_end = cr.s_end;
+                                    oh.score = cr.score;
+                                    oh.stage1_score = cr.stage1_score;
+                                    oh.volume = vd.volume_index;
+                                    local_hits.push_back(oh);
+                                }
+                            }
+                        }
                     }
-                }
-            });
-    });
+                });
+        });
+    } else {
+        // Path B: fine-grained parallelism (parallel_for_each over query x volume)
+        std::vector<SearchJob> jobs;
+        jobs.reserve(queries.size() * vol_data.size());
+        for (size_t qi = 0; qi < queries.size(); qi++) {
+            if (query_skipped[qi]) continue;
+            for (size_t vi = 0; vi < vol_data.size(); vi++) {
+                jobs.push_back({qi, vi});
+            }
+        }
+
+        logger.info("Launching %zu search job(s) (fine-grained)...", jobs.size());
+        arena.execute([&] {
+            tbb::parallel_for_each(jobs.begin(), jobs.end(),
+                [&](const SearchJob& job) {
+                    const auto& query = queries[job.query_idx];
+                    const auto& vd = vol_data[job.volume_idx];
+                    size_t pp_idx = query_pp_idx[job.query_idx];
+
+                    auto& buf = tls_bufs.local();
+
+                    SearchResult sr;
+                    if (k < K_TYPE_THRESHOLD) {
+                        sr = search_volume<uint16_t>(
+                            query.id, pp16[pp_idx].qdata, k,
+                            vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
+                    } else {
+                        sr = search_volume<uint32_t>(
+                            query.id, pp32[pp_idx].qdata, k,
+                            vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
+                    }
+
+                    // Convert to OutputHit and collect (lock-free)
+                    if (!sr.hits.empty()) {
+                        auto& local_hits = tls_hits.local();
+                        for (const auto& cr : sr.hits) {
+                            OutputHit oh;
+                            oh.query_id = sr.query_id;
+                            oh.accession = std::string(vd.ksx.accession(cr.seq_id));
+                            oh.strand = cr.is_reverse ? '-' : '+';
+                            oh.q_start = cr.q_start;
+                            oh.q_end = cr.q_end;
+                            oh.s_start = cr.s_start;
+                            oh.s_end = cr.s_end;
+                            oh.score = cr.score;
+                            oh.stage1_score = cr.stage1_score;
+                            oh.volume = vd.volume_index;
+                            local_hits.push_back(oh);
+                        }
+                    }
+                });
+        });
+    }
 
     // Merge thread-local hits
     std::vector<OutputHit> all_hits;

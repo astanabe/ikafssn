@@ -10,15 +10,15 @@
 
 #include <algorithm>
 
+#include <tbb/blocked_range.h>
 #include <tbb/combinable.h>
 #include <tbb/enumerable_thread_specific.h>
-#include <tbb/parallel_for_each.h>
+#include <tbb/parallel_for.h>
 
 namespace ikafssn {
 
-struct SearchJob {
+struct AcceptedQuery {
     size_t result_idx;   // index into resp.results
-    size_t volume_idx;   // index into group.volumes
     size_t query_idx;    // index into req.queries (for sequence data)
 };
 
@@ -158,8 +158,8 @@ SearchResponse process_search_request(
     // Map from original query index to preprocessed index
     std::vector<size_t> query_pp_idx(req.queries.size(), SIZE_MAX);
 
-    std::vector<SearchJob> jobs;
-    jobs.reserve(static_cast<size_t>(acquired) * group.volumes.size());
+    std::vector<AcceptedQuery> accepted_queries;
+    accepted_queries.reserve(static_cast<size_t>(acquired));
 
     // Iterate in original order: include skipped and accepted, skip rejected
     for (size_t qi = 0; qi < req.queries.size(); qi++) {
@@ -191,10 +191,7 @@ SearchResponse process_search_request(
         qr.query_id = req.queries[qi].query_id;
         resp.results.push_back(std::move(qr));
 
-        // Create jobs for this accepted query
-        for (size_t vol_i = 0; vol_i < group.volumes.size(); vol_i++) {
-            jobs.push_back({result_idx, vol_i, qi});
-        }
+        accepted_queries.push_back({result_idx, qi});
     }
 
     // Thread-local Stage1Buffer to avoid per-job allocation
@@ -212,47 +209,54 @@ SearchResponse process_search_request(
     // Thread-local hit collection: (result_idx, ResponseHit) pairs
     tbb::combinable<std::vector<std::pair<size_t, ResponseHit>>> tls_hits;
 
-    // Parallel execution using preprocessed data
+    // Parallel execution using preprocessed data (query-level granularity)
     arena.execute([&] {
-        tbb::parallel_for_each(jobs.begin(), jobs.end(),
-            [&](const SearchJob& job) {
-                const auto& query = req.queries[job.query_idx];
-                const auto& vol = group.volumes[job.volume_idx];
-                size_t pp_idx = query_pp_idx[job.query_idx];
-
-                // Build per-volume OID filter
-                OidFilter oid_filter;
-                if (filter_mode != OidFilterMode::kNone) {
-                    oid_filter.build(req.seqids, vol.ksx, filter_mode);
-                }
-
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, accepted_queries.size()),
+            [&](const tbb::blocked_range<size_t>& range) {
                 auto& buf = tls_bufs.local();
+                auto& local_hits = tls_hits.local();
 
-                SearchResult sr;
-                if (group.kmer_type == 0) {
-                    sr = search_volume<uint16_t>(
-                        query.query_id, pp16[pp_idx].qdata, k,
-                        vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
-                } else {
-                    sr = search_volume<uint32_t>(
-                        query.query_id, pp32[pp_idx].qdata, k,
-                        vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
-                }
+                for (size_t i = range.begin(); i != range.end(); ++i) {
+                    const auto& aq = accepted_queries[i];
+                    const auto& query = req.queries[aq.query_idx];
+                    size_t pp_idx = query_pp_idx[aq.query_idx];
 
-                if (!sr.hits.empty()) {
-                    auto& local_hits = tls_hits.local();
-                    for (const auto& cr : sr.hits) {
-                        ResponseHit rh;
-                        rh.accession = std::string(vol.ksx.accession(cr.seq_id));
-                        rh.strand = cr.is_reverse ? 1 : 0;
-                        rh.q_start = cr.q_start;
-                        rh.q_end = cr.q_end;
-                        rh.s_start = cr.s_start;
-                        rh.s_end = cr.s_end;
-                        rh.score = static_cast<uint16_t>(cr.score);
-                        rh.stage1_score = static_cast<uint16_t>(cr.stage1_score);
-                        rh.volume = vol.volume_index;
-                        local_hits.emplace_back(job.result_idx, rh);
+                    for (size_t vol_i = 0; vol_i < group.volumes.size(); vol_i++) {
+                        const auto& vol = group.volumes[vol_i];
+
+                        // Build per-volume OID filter
+                        OidFilter oid_filter;
+                        if (filter_mode != OidFilterMode::kNone) {
+                            oid_filter.build(req.seqids, vol.ksx, filter_mode);
+                        }
+
+                        SearchResult sr;
+                        if (group.kmer_type == 0) {
+                            sr = search_volume<uint16_t>(
+                                query.query_id, pp16[pp_idx].qdata, k,
+                                vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
+                        } else {
+                            sr = search_volume<uint32_t>(
+                                query.query_id, pp32[pp_idx].qdata, k,
+                                vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
+                        }
+
+                        if (!sr.hits.empty()) {
+                            for (const auto& cr : sr.hits) {
+                                ResponseHit rh;
+                                rh.accession = std::string(vol.ksx.accession(cr.seq_id));
+                                rh.strand = cr.is_reverse ? 1 : 0;
+                                rh.q_start = cr.q_start;
+                                rh.q_end = cr.q_end;
+                                rh.s_start = cr.s_start;
+                                rh.s_end = cr.s_end;
+                                rh.score = static_cast<uint16_t>(cr.score);
+                                rh.stage1_score = static_cast<uint16_t>(cr.stage1_score);
+                                rh.volume = vol.volume_index;
+                                local_hits.emplace_back(aq.result_idx, rh);
+                            }
+                        }
                     }
                 }
             });
