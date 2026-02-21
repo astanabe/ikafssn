@@ -17,7 +17,7 @@ public:
     MmapFile(MmapFile&& other) noexcept;
     MmapFile& operator=(MmapFile&& other) noexcept;
 
-    bool open(const std::string& path);
+    bool open(const std::string& path, bool quiet = false);
     void close();
 
     bool is_open() const { return data_ != nullptr; }

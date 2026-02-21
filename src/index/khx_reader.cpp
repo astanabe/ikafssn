@@ -11,7 +11,7 @@ namespace ikafssn {
 bool KhxReader::open(const std::string& path) {
     close();
 
-    if (!mmap_.open(path))
+    if (!mmap_.open(path, /*quiet=*/true))
         return false;
 
     if (mmap_.size() < sizeof(KhxHeader)) {

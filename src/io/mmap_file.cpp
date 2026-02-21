@@ -31,26 +31,29 @@ MmapFile& MmapFile::operator=(MmapFile&& other) noexcept {
     return *this;
 }
 
-bool MmapFile::open(const std::string& path) {
+bool MmapFile::open(const std::string& path, bool quiet) {
     close();
 
     int fd = ::open(path.c_str(), O_RDONLY);
     if (fd < 0) {
-        std::fprintf(stderr, "MmapFile: cannot open '%s': %s\n",
-                     path.c_str(), strerror(errno));
+        if (!quiet)
+            std::fprintf(stderr, "MmapFile: cannot open '%s': %s\n",
+                         path.c_str(), strerror(errno));
         return false;
     }
 
     struct stat st;
     if (fstat(fd, &st) != 0) {
-        std::fprintf(stderr, "MmapFile: fstat failed for '%s': %s\n",
-                     path.c_str(), strerror(errno));
+        if (!quiet)
+            std::fprintf(stderr, "MmapFile: fstat failed for '%s': %s\n",
+                         path.c_str(), strerror(errno));
         ::close(fd);
         return false;
     }
 
     if (st.st_size == 0) {
-        std::fprintf(stderr, "MmapFile: file '%s' is empty\n", path.c_str());
+        if (!quiet)
+            std::fprintf(stderr, "MmapFile: file '%s' is empty\n", path.c_str());
         ::close(fd);
         return false;
     }
@@ -59,8 +62,9 @@ bool MmapFile::open(const std::string& path) {
     ::close(fd);
 
     if (mapped == MAP_FAILED) {
-        std::fprintf(stderr, "MmapFile: mmap failed for '%s': %s\n",
-                     path.c_str(), strerror(errno));
+        if (!quiet)
+            std::fprintf(stderr, "MmapFile: mmap failed for '%s': %s\n",
+                         path.c_str(), strerror(errno));
         return false;
     }
 
