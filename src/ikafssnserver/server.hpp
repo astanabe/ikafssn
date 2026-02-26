@@ -79,6 +79,9 @@ public:
     // Get max active sequences limit.
     int max_active_sequences() const { return max_active_sequences_; }
 
+    // Get per-request sequence cap.
+    int max_seqs_per_req() const { return max_seqs_per_req_; }
+
     // Get current active sequences count.
     int active_sequences() const { return active_sequences_; }
 

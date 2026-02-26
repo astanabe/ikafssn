@@ -147,6 +147,7 @@ struct InfoResponse {
     uint8_t  default_k = 0;       // global default (first DB's)
     int32_t  max_active_sequences = 0;
     int32_t  active_sequences = 0; // current in-use
+    int32_t  max_seqs_per_req = 0; // per-request sequence cap (0 = unlimited)
     std::vector<DatabaseInfo> databases;
 };
 

@@ -378,50 +378,36 @@ int main(int argc, char* argv[]) {
         query_map[q.id] = q.sequence;
     }
 
-    // Build initial request with all queries
-    SearchRequest req = base_req;
-    for (const auto& q : queries) {
-        req.queries.push_back({q.id, q.sequence});
+    // Determine batch size from server info
+    int batch_size = static_cast<int>(queries.size());
+    if (server_info.max_seqs_per_req > 0)
+        batch_size = std::min(batch_size, static_cast<int>(server_info.max_seqs_per_req));
+    if (server_info.max_active_sequences > 0) {
+        int available = server_info.max_active_sequences - server_info.active_sequences;
+        if (available > 0)
+            batch_size = std::min(batch_size, available);
     }
+    if (batch_size <= 0) batch_size = 1;
+    logger.debug("Batch size: %d (queries=%zu, max_seqs_per_req=%d, available=%d/%d)",
+                 batch_size, queries.size(), server_info.max_seqs_per_req,
+                 server_info.max_active_sequences - server_info.active_sequences,
+                 server_info.max_active_sequences);
 
-    // Accumulate results across retry attempts
+    // Accumulate results across batches and retry attempts
     std::vector<OutputHit> all_hits;
     bool has_skipped = false;
     uint8_t resp_mode = 0;
     uint8_t resp_stage1_score = 0;
     bool resp_stage3_traceback = false;
+    bool first_response = true;
 
     // Retry schedule: 30s, 60s, 120s, 120s, ...
     static constexpr int retry_delays[] = {30, 60, 120};
     static constexpr int num_retry_delays =
         static_cast<int>(sizeof(retry_delays) / sizeof(retry_delays[0]));
 
-    for (int attempt = 0; ; attempt++) {
-        SearchResponse resp;
-        if (!execute_search(cli, has_http, req, resp, logger
-#ifdef IKAFSSN_ENABLE_HTTP
-                , auth
-#endif
-                )) {
-            return 1;
-        }
-
-        if (resp.status != 0) {
-            std::fprintf(stderr, "Error: server returned status %d\n", resp.status);
-            return 1;
-        }
-
-        logger.info("Received response: k=%d, %zu query result(s), %zu rejected",
-                     resp.k, resp.results.size(), resp.rejected_query_ids.size());
-
-        // Save mode/score_type from first successful response
-        if (attempt == 0) {
-            resp_mode = resp.mode;
-            resp_stage1_score = resp.stage1_score;
-            resp_stage3_traceback = (resp.stage3_traceback != 0);
-        }
-
-        // Collect results from accepted queries
+    // Helper lambda to collect results from a response
+    auto collect_results = [&](const SearchResponse& resp) {
         for (const auto& qr : resp.results) {
             if (qr.skipped != 0) {
                 has_skipped = true;
@@ -459,27 +445,73 @@ int main(int argc, char* argv[]) {
                 all_hits.push_back(std::move(oh));
             }
         }
+    };
 
-        // If no rejected queries, we're done
-        if (resp.rejected_query_ids.empty()) break;
+    // Process queries in batches
+    size_t sent = 0;
+    while (sent < queries.size()) {
+        size_t batch_end = std::min(sent + static_cast<size_t>(batch_size), queries.size());
 
-        // Sleep before retry
-        int delay_idx = std::min(attempt, num_retry_delays - 1);
-        int delay = retry_delays[delay_idx];
-        logger.info("%zu queries rejected, retrying in %d seconds...",
-                    resp.rejected_query_ids.size(), delay);
-        std::this_thread::sleep_for(std::chrono::seconds(delay));
-
-        // Rebuild request with only rejected query IDs
-        req = base_req;
-        for (const auto& qid : resp.rejected_query_ids) {
-            auto it = query_map.find(qid);
-            if (it != query_map.end()) {
-                req.queries.push_back({qid, it->second});
-            }
+        // Build request for this batch
+        SearchRequest req = base_req;
+        for (size_t i = sent; i < batch_end; i++) {
+            req.queries.push_back({queries[i].id, queries[i].sequence});
         }
+        sent = batch_end;
 
-        if (req.queries.empty()) break; // all resolved
+        logger.info("Sending batch of %zu queries (%zu/%zu)",
+                     req.queries.size(), sent, queries.size());
+
+        // Retry loop for this batch (rejected = server busy)
+        for (int attempt = 0; ; attempt++) {
+            SearchResponse resp;
+            if (!execute_search(cli, has_http, req, resp, logger
+#ifdef IKAFSSN_ENABLE_HTTP
+                    , auth
+#endif
+                    )) {
+                return 1;
+            }
+
+            if (resp.status != 0) {
+                std::fprintf(stderr, "Error: server returned status %d\n", resp.status);
+                return 1;
+            }
+
+            logger.info("Received response: k=%d, %zu query result(s), %zu rejected",
+                         resp.k, resp.results.size(), resp.rejected_query_ids.size());
+
+            // Save mode/score_type from first successful response
+            if (first_response) {
+                resp_mode = resp.mode;
+                resp_stage1_score = resp.stage1_score;
+                resp_stage3_traceback = (resp.stage3_traceback != 0);
+                first_response = false;
+            }
+
+            collect_results(resp);
+
+            // If no rejected queries, this batch is done
+            if (resp.rejected_query_ids.empty()) break;
+
+            // Sleep before retry
+            int delay_idx = std::min(attempt, num_retry_delays - 1);
+            int delay = retry_delays[delay_idx];
+            logger.info("%zu queries rejected, retrying in %d seconds...",
+                        resp.rejected_query_ids.size(), delay);
+            std::this_thread::sleep_for(std::chrono::seconds(delay));
+
+            // Rebuild request with only rejected query IDs
+            req = base_req;
+            for (const auto& qid : resp.rejected_query_ids) {
+                auto it = query_map.find(qid);
+                if (it != query_map.end()) {
+                    req.queries.push_back({qid, it->second});
+                }
+            }
+
+            if (req.queries.empty()) break; // all resolved
+        }
     }
 
     // Write output using mode/stage1_score from response

@@ -332,6 +332,7 @@ static void test_info_response_serialize() {
     resp.default_k = 11;
     resp.max_active_sequences = 1024;
     resp.active_sequences = 42;
+    resp.max_seqs_per_req = 16;
 
     DatabaseInfo db1;
     db1.name = "testdb";
@@ -379,6 +380,7 @@ static void test_info_response_serialize() {
     assert(resp2.default_k == 11);
     assert(resp2.max_active_sequences == 1024);
     assert(resp2.active_sequences == 42);
+    assert(resp2.max_seqs_per_req == 16);
     assert(resp2.databases.size() == 1);
 
     const auto& rdb = resp2.databases[0];
@@ -417,6 +419,7 @@ static void test_info_response_empty() {
     resp.default_k = 9;
     resp.max_active_sequences = 512;
     resp.active_sequences = 0;
+    resp.max_seqs_per_req = 0;
     // No databases
 
     auto data = serialize(resp);
@@ -427,6 +430,7 @@ static void test_info_response_empty() {
     assert(resp2.default_k == 9);
     assert(resp2.max_active_sequences == 512);
     assert(resp2.active_sequences == 0);
+    assert(resp2.max_seqs_per_req == 0);
     assert(resp2.databases.empty());
 
     std::printf(" OK\n");

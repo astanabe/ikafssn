@@ -78,6 +78,7 @@ void handle_connection(
         iresp.default_k = static_cast<uint8_t>(server.default_k());
         iresp.max_active_sequences = server.max_active_sequences();
         iresp.active_sequences = server.active_sequences();
+        iresp.max_seqs_per_req = server.max_seqs_per_req();
 
         for (const auto& db : server.databases()) {
             DatabaseInfo dbi;

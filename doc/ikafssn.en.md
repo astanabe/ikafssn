@@ -343,7 +343,7 @@ On startup, it connects to all configured backends to cache their capabilities (
 **Routing and health:**
 
 - **Priority**: Backends are prioritized by CLI argument order (first = highest priority).
-- **Selection**: For each search request, the backend with the highest priority and available capacity (cached `active_sequences < max_active_sequences`) is selected. If all backends are full, the highest-priority one is used.
+- **Selection**: For each search request, the backend with the highest priority and available effective capacity is selected. Effective capacity considers both slot availability (`max_active_sequences - active_sequences`) and per-request cap (`max_seqs_per_req`), taking the minimum of the two. If all backends are full, the highest-priority one is used.
 - **Pre-check**: Before each search, a fresh info request is sent to the selected backend to verify connectivity.
 - **Exclusion**: If a backend fails to respond (connection error on info or search), it is excluded for `-exclusion_time` seconds. Excluded backends are automatically re-checked during heartbeat and re-enabled once reachable.
 - **Heartbeat**: A background thread refreshes all backends' info every `-heartbeat_interval` seconds.
@@ -374,7 +374,7 @@ Options:
 | GET | `/api/v1/info` | Aggregated index information from all backends |
 | GET | `/api/v1/health` | Health check (OK if any backend is reachable) |
 
-The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_active_sequences` and `active_sequences` across all serving backends.
+The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_active_sequences`, `active_sequences`, and `max_seqs_per_req` (computed as `sum(min(available_i, per_req_i))` across backends) across all serving backends. A top-level `max_seqs_per_req` field reports the minimum across all modes.
 
 **Examples:**
 
@@ -397,7 +397,7 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 ### ikafssnclient
 
-Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. Invalid parameters produce an error with available database listings before any query data is transmitted. If the server rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
+Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. Invalid parameters produce an error with available database listings before any query data is transmitted. The client uses the server's `max_seqs_per_req` and available slot count to automatically split queries into appropriately-sized batches, avoiding oversized requests that would be partially rejected. Within each batch, if the server still rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
 
 ```
 ikafssnclient [options]
@@ -837,7 +837,7 @@ ikafssnserver -ix ./rs_index -db refseq -socket /var/run/rs.sock
 ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
 ```
 
-When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that k-value sets, total sequence counts, and total bases are identical. Requests are routed to the highest-priority backend with available capacity. Note that capacity values (`max_active_sequences`, `active_sequences`) are shared per server across all databases served by that server.
+When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that k-value sets, total sequence counts, and total bases are identical. Requests are routed to the highest-priority backend with available effective capacity (considering both slot availability and `max_seqs_per_req`). Note that capacity values (`max_active_sequences`, `active_sequences`, `max_seqs_per_req`) are shared per server across all databases served by that server.
 
 Alternatively, separate processes with path-based HTTP routing:
 

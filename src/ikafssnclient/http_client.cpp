@@ -293,6 +293,7 @@ static bool parse_info_json(const std::string& body,
     resp.default_k = static_cast<uint8_t>(root.get("default_k", 0).asUInt());
     resp.max_active_sequences = root.get("max_active_sequences", 0).asInt();
     resp.active_sequences = root.get("active_sequences", 0).asInt();
+    resp.max_seqs_per_req = root.get("max_seqs_per_req", 0).asInt();
 
     if (root.isMember("databases") && root["databases"].isArray()) {
         for (const auto& dbj : root["databases"]) {

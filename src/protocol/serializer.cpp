@@ -462,6 +462,7 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 //   u8   default_k
 //   i32  max_active_sequences
 //   i32  active_sequences
+//   i32  max_seqs_per_req
 //   u16  num_databases
 //   for each database:
 //     str16 name
@@ -487,6 +488,7 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
     put_u8(buf, resp.default_k);
     put_i32(buf, resp.max_active_sequences);
     put_i32(buf, resp.active_sequences);
+    put_i32(buf, resp.max_seqs_per_req);
     put_u16(buf, static_cast<uint16_t>(resp.databases.size()));
 
     for (const auto& db : resp.databases) {
@@ -520,6 +522,7 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
     if (!r.get_u8(resp.default_k)) return false;
     if (!r.get_i32(resp.max_active_sequences)) return false;
     if (!r.get_i32(resp.active_sequences)) return false;
+    if (!r.get_i32(resp.max_seqs_per_req)) return false;
 
     uint16_t num_databases;
     if (!r.get_u16(num_databases)) return false;

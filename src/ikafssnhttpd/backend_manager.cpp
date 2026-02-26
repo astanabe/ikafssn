@@ -209,10 +209,13 @@ int BackendManager::select_backend(const std::string& db_name,
 
         if (!be.info_valid) continue;
 
-        // Check capacity
+        // Check capacity: consider both slot availability and per-request cap
+        int32_t available = be.cached_info.max_active_sequences - be.cached_info.active_sequences;
+        int32_t per_req = be.cached_info.max_seqs_per_req;
+        int32_t effective = std::min(std::max(static_cast<int32_t>(0), available),
+                                     per_req > 0 ? per_req : INT32_MAX);
         bool has_capacity = true;
-        if (be.cached_info.max_active_sequences > 0 &&
-            be.cached_info.active_sequences >= be.cached_info.max_active_sequences) {
+        if (be.cached_info.max_active_sequences > 0 && effective <= 0) {
             has_capacity = false;
         }
 
@@ -325,12 +328,17 @@ Json::Value BackendManager::build_info_json() const {
     result["status"] = "success";
 
     // Collect and merge databases
+    struct ModeCapInfo {
+        int64_t sum_max_active = 0;
+        int64_t sum_active = 0;
+        int64_t sum_effective_per_req = 0; // sum(min(available_i, per_req_i))
+    };
+
     struct MergedGroup {
         uint8_t k;
         uint8_t kmer_type;
         std::vector<VolumeInfo> volumes;
-        // Per-mode capacity: mode -> (sum_max_active, sum_active)
-        std::map<uint8_t, std::pair<int64_t, int64_t>> mode_capacity;
+        std::map<uint8_t, ModeCapInfo> mode_capacity;
     };
 
     struct MergedDb {
@@ -369,8 +377,14 @@ Json::Value BackendManager::build_info_json() const {
                 // Accumulate capacity per mode
                 for (uint8_t m = 1; m <= db.max_mode; m++) {
                     auto& cap = mg.mode_capacity[m];
-                    cap.first += be->cached_info.max_active_sequences;
-                    cap.second += be->cached_info.active_sequences;
+                    cap.sum_max_active += be->cached_info.max_active_sequences;
+                    cap.sum_active += be->cached_info.active_sequences;
+                    int32_t avail = be->cached_info.max_active_sequences
+                                  - be->cached_info.active_sequences;
+                    int32_t pr = be->cached_info.max_seqs_per_req;
+                    cap.sum_effective_per_req += std::min(
+                        std::max(static_cast<int32_t>(0), avail),
+                        pr > 0 ? pr : std::max(static_cast<int32_t>(0), avail));
                 }
             }
         }
@@ -418,8 +432,9 @@ Json::Value BackendManager::build_info_json() const {
             for (const auto& [m, cap] : mg.mode_capacity) {
                 Json::Value mobj;
                 mobj["mode"] = m;
-                mobj["max_active_sequences"] = static_cast<Json::Int64>(cap.first);
-                mobj["active_sequences"] = static_cast<Json::Int64>(cap.second);
+                mobj["max_active_sequences"] = static_cast<Json::Int64>(cap.sum_max_active);
+                mobj["active_sequences"] = static_cast<Json::Int64>(cap.sum_active);
+                mobj["max_seqs_per_req"] = static_cast<Json::Int64>(cap.sum_effective_per_req);
                 modes_arr.append(std::move(mobj));
             }
             gobj["modes"] = std::move(modes_arr);
@@ -429,6 +444,23 @@ Json::Value BackendManager::build_info_json() const {
         dbobj["kmer_groups"] = std::move(groups_arr);
         databases_arr.append(std::move(dbobj));
     }
+    // Top-level max_seqs_per_req: minimum across all modes of all databases
+    int64_t global_max_seqs_per_req = 0;
+    bool has_any_mode = false;
+    for (const auto& [name, mdb] : merged_dbs) {
+        for (const auto& [k, mg] : mdb.groups) {
+            for (const auto& [m, cap] : mg.mode_capacity) {
+                if (!has_any_mode) {
+                    global_max_seqs_per_req = cap.sum_effective_per_req;
+                    has_any_mode = true;
+                } else {
+                    global_max_seqs_per_req = std::min(global_max_seqs_per_req,
+                                                       cap.sum_effective_per_req);
+                }
+            }
+        }
+    }
+    result["max_seqs_per_req"] = static_cast<Json::Int64>(global_max_seqs_per_req);
     result["databases"] = std::move(databases_arr);
 
     return result;
