@@ -38,7 +38,7 @@ ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db mydb > m
 
 ### ikafssnindex
 
-BLAST DB から k-mer 転置インデックスを構築します。各ボリュームに対して `.kix` (ID ポスティング)、`.kpx` (位置ポスティング)、`.ksx` (配列メタデータ) の 3 ファイルを生成します。`-max_freq_build` 使用時は共有 `.khx` (構築時除外ビットセット) も生成されます。`.khx` ファイルは全ボリューム共通 (k 値ごとに 1 つ) です。
+BLAST DB から k-mer 転置インデックスを構築します。各ボリュームに対して `.kix` (ID ポスティング)、`.kpx` (位置ポスティング、`-mode 1` の場合は省略)、`.ksx` (配列メタデータ) のファイルを生成します。`-max_freq_build` 使用時は共有 `.khx` (構築時除外ビットセット) も生成されます。`.khx` ファイルは全ボリューム共通 (k 値ごとに 1 つ) です。
 
 ```
 ikafssnindex [options]
@@ -49,6 +49,10 @@ ikafssnindex [options]
   -o <dir>                出力ディレクトリ
 
 オプション:
+  -mode <1|2|3>           インデックスがサポートする検索モード (デフォルト: 2)
+                          1 = Stage 1 のみ (.kpx 生成スキップ、ディスク・時間節約)
+                          2 = Stage 1+2 (デフォルト)
+                          3 = Stage 1+2+3 (インデックス構築では 2 と同一動作)
   -memory_limit <size>    メモリ上限 (デフォルト: 物理メモリの半分)
                           接尾辞 K, M, G を認識
                           パーティション数はこの上限内に収まるよう自動決定
@@ -57,6 +61,9 @@ ikafssnindex [options]
                           0〜1 未満: 全ボリューム合計 NSEQ に対する割合
                           カウントは全ボリュームで合算後にフィルタリング
                           (デフォルト: 0 = 除外なし)
+  -highfreq_filter_threads <int>
+                          ボリューム横断高頻度フィルタリングのスレッド数
+                          (デフォルト: min(8, threads))
   -openvol <int>          ボリューム同時処理数の上限 (デフォルト: 1)
                           マルチボリューム DB のピークメモリ使用量を制御
   -threads <int>          使用スレッド数 (デフォルト: 利用可能な全コア)
@@ -82,6 +89,9 @@ ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
 
 # 全ボリューム合計配列数の 1% を超える k-mer を除外
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
+
+# mode 1 インデックスを構築 (Stage 1 のみ、.kpx なし)
+ikafssnindex -db mydb -k 11 -o ./index -mode 1
 ```
 
 ### ikafssnsearch

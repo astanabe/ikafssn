@@ -71,10 +71,13 @@ bool build_index(BlastDbReader& db,
     // File paths (.tmp during construction, renamed to final on success)
     std::string ksx_tmp = output_prefix + ".ksx.tmp";
     std::string kix_tmp = output_prefix + ".kix.tmp";
-    std::string kpx_tmp = output_prefix + ".kpx.tmp";
     std::string ksx_final = output_prefix + ".ksx";
     std::string kix_final = output_prefix + ".kix";
-    std::string kpx_final = output_prefix + ".kpx";
+    std::string kpx_tmp, kpx_final;
+    if (!config.skip_kpx) {
+        kpx_tmp = output_prefix + ".kpx.tmp";
+        kpx_final = output_prefix + ".kpx";
+    }
 
     // =========== Phase 0: Metadata collection -> .ksx ===========
     logger.info("Phase 0: collecting metadata...");
@@ -182,13 +185,16 @@ bool build_index(BlastDbReader& db,
         return false;
     }
 
-    // Open kpx file
-    FILE* kpx_fp = std::fopen(kpx_tmp.c_str(), "wb");
-    if (!kpx_fp) {
-        logger.error("Cannot open %s for writing", kpx_tmp.c_str());
-        std::fclose(kix_fp);
-        std::remove(ksx_tmp.c_str());
-        return false;
+    // Open kpx file (skip if mode 1)
+    FILE* kpx_fp = nullptr;
+    if (!config.skip_kpx) {
+        kpx_fp = std::fopen(kpx_tmp.c_str(), "wb");
+        if (!kpx_fp) {
+            logger.error("Cannot open %s for writing", kpx_tmp.c_str());
+            std::fclose(kix_fp);
+            std::remove(ksx_tmp.c_str());
+            return false;
+        }
     }
 
     // Write kix header placeholder (will be overwritten at finalize)
@@ -207,17 +213,16 @@ bool build_index(BlastDbReader& db,
     // kix posting data starts here
     const uint64_t kix_posting_start = kix_counts_pos + sizeof(uint32_t) * tbl_size;
 
-    // Write kpx header placeholder
+    // Write kpx header placeholder (skip if mode 1)
     KpxHeader kpx_hdr{};
-    std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
+    std::vector<uint64_t> kpx_offsets;
+    if (!config.skip_kpx) {
+        std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
 
-    // Reserve pos_offsets table
-    const uint64_t kpx_offsets_pos = sizeof(KpxHeader);
-    std::vector<uint64_t> kpx_offsets(tbl_size, 0);
-    std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
-
-    // kpx posting data starts here
-    const uint64_t kpx_posting_start = kpx_offsets_pos + sizeof(uint64_t) * tbl_size;
+        // Reserve pos_offsets table
+        kpx_offsets.resize(tbl_size, 0);
+        std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
+    }
 
     // Current write positions in posting data (relative to posting start)
     uint64_t kix_data_pos = 0;
@@ -323,7 +328,7 @@ bool build_index(BlastDbReader& db,
 
             // Record offsets for this kmer
             kix_offsets[cur_kmer] = kix_data_pos;
-            kpx_offsets[cur_kmer] = kpx_data_pos;
+            if (!config.skip_kpx) kpx_offsets[cur_kmer] = kpx_data_pos;
 
             // Write delta-compressed ID postings to kix
             {
@@ -338,9 +343,8 @@ bool build_index(BlastDbReader& db,
                 }
             }
 
-            // Write delta-compressed pos postings to kpx
-            // Position deltas reset at sequence boundaries
-            {
+            // Write delta-compressed pos postings to kpx (skip if mode 1)
+            if (!config.skip_kpx) {
                 uint32_t prev_id = UINT32_MAX; // force "new seq" on first
                 uint32_t prev_pos = 0;
                 for (size_t e = i; e < j; e++) {
@@ -394,19 +398,21 @@ bool build_index(BlastDbReader& db,
 
     std::fclose(kix_fp);
 
-    // Write kpx header
-    std::memcpy(kpx_hdr.magic, KPX_MAGIC, 4);
-    kpx_hdr.format_version = KPX_FORMAT_VERSION;
-    kpx_hdr.k = static_cast<uint8_t>(k);
-    kpx_hdr.total_postings = total_postings;
+    // Write kpx header (skip if mode 1)
+    if (!config.skip_kpx) {
+        std::memcpy(kpx_hdr.magic, KPX_MAGIC, 4);
+        kpx_hdr.format_version = KPX_FORMAT_VERSION;
+        kpx_hdr.k = static_cast<uint8_t>(k);
+        kpx_hdr.total_postings = total_postings;
 
-    std::fseek(kpx_fp, 0, SEEK_SET);
-    std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
+        std::fseek(kpx_fp, 0, SEEK_SET);
+        std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
 
-    // Write kpx offsets table
-    std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
+        // Write kpx offsets table
+        std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
 
-    std::fclose(kpx_fp);
+        std::fclose(kpx_fp);
+    }
 
     // Rename .tmp files to final names (unless keep_tmp is set)
     if (!config.keep_tmp) {
@@ -418,13 +424,16 @@ bool build_index(BlastDbReader& db,
             logger.error("Failed to rename %s -> %s", kix_tmp.c_str(), kix_final.c_str());
             return false;
         }
-        if (std::rename(kpx_tmp.c_str(), kpx_final.c_str()) != 0) {
-            logger.error("Failed to rename %s -> %s", kpx_tmp.c_str(), kpx_final.c_str());
-            return false;
+        if (!config.skip_kpx) {
+            if (std::rename(kpx_tmp.c_str(), kpx_final.c_str()) != 0) {
+                logger.error("Failed to rename %s -> %s", kpx_tmp.c_str(), kpx_final.c_str());
+                return false;
+            }
         }
     }
 
-    logger.info("Index built: %s (.kix, .kpx, .ksx%s)", output_prefix.c_str(),
+    logger.info("Index built: %s (.kix%s, .ksx%s)", output_prefix.c_str(),
+                config.skip_kpx ? "" : ", .kpx",
                 config.keep_tmp ? " [tmp]" : "");
     return true;
 }

@@ -265,7 +265,7 @@ static void test_build_with_max_freq_build() {
 
     // Apply cross-volume filtering (single volume, threshold=3)
     std::string khx_path2 = g_output_dir + "/freq_test2.07mer.khx";
-    CHECK(filter_volumes_cross_volume({prefix2}, khx_path2, 7, 3, logger));
+    CHECK(filter_volumes_cross_volume({prefix2}, khx_path2, 7, 3, 1, logger));
 
     // The filtered index should have fewer or equal total postings
     KixReader kix1, kix2;
@@ -297,7 +297,7 @@ static void test_build_with_max_freq_build() {
     CHECK(build_index<uint16_t>(db, config3, prefix3, 0, 1, "test", logger));
 
     std::string khx_path3 = g_output_dir + "/freq_test3.07mer.khx";
-    CHECK(filter_volumes_cross_volume({prefix3}, khx_path3, 7, frac_threshold, logger));
+    CHECK(filter_volumes_cross_volume({prefix3}, khx_path3, 7, frac_threshold, 1, logger));
 
     // Re-open kix1 for comparison with fractional-threshold build
     CHECK(kix1.open(prefix1 + ".kix"));

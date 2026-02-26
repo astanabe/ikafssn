@@ -277,7 +277,7 @@ static bool build_maxfreq_index() {
 
     // Apply cross-volume filter (single volume)
     std::string khx_path = g_maxfreq_index_dir + "/test.07mer.khx";
-    return filter_volumes_cross_volume({prefix}, khx_path, 7, freq_threshold, logger);
+    return filter_volumes_cross_volume({prefix}, khx_path, 7, freq_threshold, 1, logger);
 }
 
 static void test_stage1_fractional_threshold() {

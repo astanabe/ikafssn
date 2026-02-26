@@ -38,7 +38,7 @@ ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db mydb > m
 
 ### ikafssnindex
 
-Build a k-mer inverted index from a BLAST database. For each volume, three index files are generated: `.kix` (ID postings), `.kpx` (position postings), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a shared `.khx` file (build-time exclusion bitset) is also generated. The `.khx` file is shared across all volumes (one per k value, not per volume).
+Build a k-mer inverted index from a BLAST database. For each volume, index files are generated: `.kix` (ID postings), `.kpx` (position postings, unless `-mode 1`), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a shared `.khx` file (build-time exclusion bitset) is also generated. The `.khx` file is shared across all volumes (one per k value, not per volume).
 
 ```
 ikafssnindex [options]
@@ -49,6 +49,10 @@ Required:
   -o <dir>                Output directory
 
 Options:
+  -mode <1|2|3>           Search mode the index will support (default: 2)
+                          1 = Stage 1 only (skip .kpx generation, saves disk and time)
+                          2 = Stage 1+2 (default)
+                          3 = Stage 1+2+3 (same as 2 for index build)
   -memory_limit <size>    Memory limit (default: half of physical RAM)
                           Accepts K, M, G suffixes
                           Partitions are auto-calculated to fit within this limit
@@ -57,6 +61,9 @@ Options:
                           0 < x < 1: fraction of total NSEQ across all volumes
                           Counts are aggregated across all volumes before filtering
                           (default: 0 = no exclusion)
+  -highfreq_filter_threads <int>
+                          Threads for cross-volume high-frequency filtering
+                          (default: min(8, threads))
   -openvol <int>          Max volumes processed simultaneously (default: 1)
                           Controls peak memory usage for multi-volume DBs
   -threads <int>          Number of threads (default: all cores)
@@ -82,6 +89,9 @@ ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
 
 # Exclude k-mers appearing in >1% of total sequences across all volumes
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
+
+# Build mode 1 index (Stage 1 only, no .kpx files)
+ikafssnindex -db mydb -k 11 -o ./index -mode 1
 ```
 
 ### ikafssnsearch

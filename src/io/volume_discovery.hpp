@@ -12,6 +12,7 @@ struct DiscoveredVolume {
     std::string ksx_path;
     uint16_t volume_index;
     int k;
+    bool has_kpx = true;
 };
 
 // Split ix_prefix into parent directory and DB name.

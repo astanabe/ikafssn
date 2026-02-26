@@ -11,11 +11,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <thread>
 #include <vector>
 
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
+#include <tbb/task_arena.h>
 
 namespace ikafssn {
 
@@ -184,16 +186,22 @@ static bool filter_one_volume(
     std::string kpx_final = vol_prefix + ".kpx";
     std::string ksx_final = vol_prefix + ".ksx";
 
-    // Open .kix.tmp and .kpx.tmp via readers (mmap)
+    bool has_kpx_tmp = std::filesystem::exists(kpx_tmp);
+
+    // Open .kix.tmp via reader (mmap)
     KixReader kix_in;
     if (!kix_in.open(kix_tmp)) {
         logger.error("filter: cannot open %s", kix_tmp.c_str());
         return false;
     }
+
+    // Open .kpx.tmp if present
     KpxReader kpx_in;
-    if (!kpx_in.open(kpx_tmp)) {
-        logger.error("filter: cannot open %s", kpx_tmp.c_str());
-        return false;
+    if (has_kpx_tmp) {
+        if (!kpx_in.open(kpx_tmp)) {
+            logger.error("filter: cannot open %s", kpx_tmp.c_str());
+            return false;
+        }
     }
 
     const uint32_t* counts_in = kix_in.counts();
@@ -201,8 +209,12 @@ static bool filter_one_volume(
     // Compute posting byte sizes
     auto kix_sizes = compute_posting_sizes(
         kix_in.offsets(), counts_in, tbl_size, kix_in.posting_data_size());
-    auto kpx_sizes = compute_posting_sizes(
-        kpx_in.pos_offsets(), counts_in, tbl_size, kpx_in.posting_data_size());
+
+    std::vector<uint64_t> kpx_sizes;
+    if (has_kpx_tmp) {
+        kpx_sizes = compute_posting_sizes(
+            kpx_in.pos_offsets(), counts_in, tbl_size, kpx_in.posting_data_size());
+    }
 
     // Compute new totals
     uint64_t new_total_postings = 0;
@@ -212,21 +224,24 @@ static bool filter_one_volume(
         }
     }
 
-    // Write .kix and .kpx in parallel (two threads)
+    // Write .kix (and .kpx if present) in parallel
     bool kix_ok = false;
-    bool kpx_ok = false;
+    bool kpx_ok = !has_kpx_tmp; // skip = success
 
-    std::thread kpx_thread([&]() {
-        kpx_ok = write_filtered_kpx(
-            kpx_in, counts_in, kpx_final, excluded, kpx_sizes,
-            k, new_total_postings, logger);
-    });
+    std::thread kpx_thread;
+    if (has_kpx_tmp) {
+        kpx_thread = std::thread([&]() {
+            kpx_ok = write_filtered_kpx(
+                kpx_in, counts_in, kpx_final, excluded, kpx_sizes,
+                k, new_total_postings, logger);
+        });
+    }
 
     kix_ok = write_filtered_kix(
         kix_in, kix_final, excluded, kix_sizes,
         k, new_total_postings, logger);
 
-    kpx_thread.join();
+    if (has_kpx_tmp) kpx_thread.join();
 
     if (!kix_ok || !kpx_ok) {
         if (kix_ok) std::remove(kix_final.c_str());
@@ -236,7 +251,7 @@ static bool filter_one_volume(
 
     // Close mmapped readers before removing .tmp files
     kix_in.close();
-    kpx_in.close();
+    if (has_kpx_tmp) kpx_in.close();
 
     // Rename .ksx.tmp -> .ksx
     if (std::rename(ksx_tmp.c_str(), ksx_final.c_str()) != 0) {
@@ -246,7 +261,7 @@ static bool filter_one_volume(
 
     // Remove .tmp files
     std::remove(kix_tmp.c_str());
-    std::remove(kpx_tmp.c_str());
+    if (has_kpx_tmp) std::remove(kpx_tmp.c_str());
 
     logger.info("Filtered volume: %s (total_postings: %lu)",
                 vol_prefix.c_str(), static_cast<unsigned long>(new_total_postings));
@@ -258,6 +273,7 @@ bool filter_volumes_cross_volume(
     const std::string& khx_path,
     int k,
     uint64_t freq_threshold,
+    int filter_threads,
     const Logger& logger) {
 
     const uint64_t tbl_size = table_size(k);
@@ -302,13 +318,16 @@ bool filter_volumes_cross_volume(
     size_t num_vols = vol_prefixes.size();
     std::vector<bool> vol_ok(num_vols, false);
 
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, num_vols),
-        [&](const tbb::blocked_range<size_t>& range) {
-            for (size_t vi = range.begin(); vi < range.end(); vi++) {
-                vol_ok[vi] = filter_one_volume(vol_prefixes[vi], excluded, k, logger);
-            }
-        });
+    tbb::task_arena arena(filter_threads);
+    arena.execute([&] {
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, num_vols),
+            [&](const tbb::blocked_range<size_t>& range) {
+                for (size_t vi = range.begin(); vi < range.end(); vi++) {
+                    vol_ok[vi] = filter_one_volume(vol_prefixes[vi], excluded, k, logger);
+                }
+            });
+    });
 
     for (size_t vi = 0; vi < num_vols; vi++) {
         if (!vol_ok[vi]) {

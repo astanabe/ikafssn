@@ -58,7 +58,7 @@ Each command links only its required dependencies to allow lightweight deploymen
 
 | Command | Purpose | Key Dependencies |
 |---|---|---|
-| `ikafssnindex` | Build k-mer inverted index from BLAST DB | NCBI C++ Toolkit, TBB |
+| `ikafssnindex` | Build k-mer inverted index from BLAST DB (`-mode 1` skips `.kpx`) | NCBI C++ Toolkit, TBB |
 | `ikafssnsearch` | Local direct search (mmap index) | NCBI C++ Toolkit, TBB, Parasail (mode 3), htslib (SAM/BAM) |
 | `ikafssnretrieve` | Extract matched subsequences | NCBI C++ Toolkit, libcurl (remote) |
 | `ikafssnserver` | Search daemon (UNIX/TCP socket) | NCBI C++ Toolkit, TBB |
@@ -69,7 +69,7 @@ Each command links only its required dependencies to allow lightweight deploymen
 ### Shared library layers (`src/`)
 
 - **`core/`** — Fundamental types (`Hit`, `ChainResult`), constants, k-mer 2-bit encoding/revcomp (templates parameterized on `KmerInt` = `uint16_t` for k<=8, `uint32_t` for k=9-13), LEB128 varint
-- **`index/`** — Reader/writer for four index file formats (`.kix` main index, `.kpx` position data, `.ksx` sequence metadata, `.khx` build-time exclusion bitset), index builder with partition+buffer strategy
+- **`index/`** — Reader/writer for four index file formats (`.kix` main index, `.kpx` position data, `.ksx` sequence metadata, `.khx` build-time exclusion bitset), index builder with partition+buffer strategy (`skip_kpx` config flag omits `.kpx` for mode 1 indexes)
 - **`search/`** — Three-stage search pipeline: Stage 1 (ID posting scan with OID filter, coverscore or matchscore) -> Stage 2 (position-aware chaining DP with diagonal filter, chainscore) -> Stage 3 (Parasail pairwise alignment with BLAST DB subject retrieval, alnscore/pident/CIGAR). Mode 1 skips Stage 2+3, mode 2 skips Stage 3. The sort key is auto-determined by mode (1=stage1, 2=chainscore, 3=alnscore). Defaults: stage1_topn=0 (unlimited, no sort), num_results=0 (unlimited, no sort), stage1_min_score=0.5 (fractional), stage2_min_score=1 — speed-first defaults that skip sorting. Set positive stage1_topn/num_results to enable sorting. Fractional stage1_min_score (0 < P < 1) resolves per-query threshold as `ceil(Nqkmer * P) - Nhighfreq`, using `.khx` for build-time exclusion awareness. Query k-mers with exactly one IUPAC degenerate base are expanded to all variants (matching index-time subject handling); Stage 1 uses per-position dedup (`last_scored_pos`) to avoid inflating scores from expanded k-mers; Stage 2 deduplicates `(q_pos, s_pos)` hits before diagonal filter; Stage 3 uses parasail_sg semi-global alignment with nuc44 matrix, optional traceback for CIGAR/pident/q_seq/s_seq, context extension for subject subsequence retrieval, and volume-parallel BLAST DB prefetch
 - **`protocol/`** — Length-prefixed binary protocol (v3) for client-server communication. Frame header (12B, magic + payload_length + msg_type + msg_version=3 + reserved) + typed messages. SearchRequest/Response include `db_name` for multi-DB routing. InfoResponse contains per-database metadata (`DatabaseInfo` with name, default_k, max_mode, kmer groups; `VolumeInfo` with volume_index, num_sequences, total_postings, total_bases, db_name) plus server-level `max_active_sequences`/`active_sequences`/`max_seqs_per_req`. `ikafssnclient` uses `max_seqs_per_req` to split queries into batches before sending, avoiding oversized requests that would be partially rejected. `info_format.hpp/cpp` provides shared validation (`validate_info()` — checks db_name/k/mode against InfoResponse, returns error string with capability listing) and formatting (`format_server_info()`, `format_all_databases()`) used by ikafssnclient (pre-flight validation), ikafssnhttpd (merged-info validation), and ikafssninfo (remote display)
 - **`io/`** — BLAST DB reader (CSeqDB wrapper), FASTA reader, mmap RAII wrapper, seqidlist reader (text/binary auto-detect), result writer/reader (including output format parsing/validation and SAM/BAM dispatch), `.kvx` manifest reader, volume discovery (`discover_volumes()`, `index_file_stem()`, `khx_path_for()` — shared by search/server/info/index)
@@ -77,11 +77,11 @@ Each command links only its required dependencies to allow lightweight deploymen
 
 ### Index file formats
 
-Per BLAST DB volume, three files are generated with naming pattern `<vol_basename>.<kk>mer.{kix,kpx,ksx}` where `<vol_basename>` is the BLAST DB volume's own basename (from `FindVolumePaths()`) and `<kk>` is the zero-padded 2-digit k value (e.g. `nt.00.09mer.kix`, `nt.01.11mer.kpx` for standard multi-volume; `foo.09mer.kix`, `bar.09mer.kix` for aggregated DBs):
+Per BLAST DB volume, index files are generated with naming pattern `<vol_basename>.<kk>mer.{kix,kpx,ksx}` where `<vol_basename>` is the BLAST DB volume's own basename (from `FindVolumePaths()`) and `<kk>` is the zero-padded 2-digit k value (e.g. `nt.00.09mer.kix`, `nt.01.11mer.kpx` for standard multi-volume; `foo.09mer.kix`, `bar.09mer.kix` for aggregated DBs). When built with `-mode 1`, `.kpx` files are omitted:
 
 - **`.kvx`** — Text manifest file for volume discovery (naming: `<db_base>.<kk>mer.kvx`). Contains a `DBLIST` line listing volume basenames in order. Always generated by `ikafssnindex`. Readers use `.kvx` to discover volumes
 - **`.kix`** — Header + direct-address table (offsets[4^k], counts[4^k]) + delta-compressed ID postings
-- **`.kpx`** — Header + pos_offsets[4^k] + delta-compressed position postings (correlated with .kix ID postings)
+- **`.kpx`** — Header + pos_offsets[4^k] + delta-compressed position postings (correlated with .kix ID postings). Not generated when `ikafssnindex -mode 1` is used; `discover_volumes()` sets `has_kpx=false` for such indexes, and search/server/info commands handle the absence gracefully
 - **`.ksx`** — Header + seq_lengths[] + accession string table (enables standalone result display without BLAST DB)
 - **`.khx`** — Header (32B, magic "KMHX") + bitset (ceil(4^k / 8) bytes). Shared across all volumes (one per k value, naming: `<db_base>.<kk>mer.khx`). Generated only when `-max_freq_build` is used. K-mer counts are aggregated across all volumes before applying the threshold. Records which k-mers were excluded during index build (bit i = 1 means k-mer i was excluded). Used at search time for fractional `-stage1_min_score` threshold adjustment
 

@@ -15,6 +15,7 @@ struct IndexBuilderConfig {
     bool keep_tmp = false;              // true: keep .tmp files (skip rename to final)
     int threads = 1;                    // threads (counting + partition scan + sort)
     bool verbose = false;
+    bool skip_kpx = false;              // true: skip .kpx generation (mode 1 index)
 };
 
 // Build .kix, .kpx, .ksx index files for a single BLAST DB volume.

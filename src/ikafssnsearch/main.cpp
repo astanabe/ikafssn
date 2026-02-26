@@ -334,6 +334,13 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         if (config.mode != 1) {
+            if (!vf.has_kpx) {
+                std::fprintf(stderr,
+                    "Error: mode %d requires .kpx files, but %s was not found.\n"
+                    "This index was built with -mode 1 (stage 1 only).\n",
+                    config.mode, vf.kpx_path.c_str());
+                return 1;
+            }
             if (!vol_data[vi].kpx.open(vf.kpx_path)) {
                 std::fprintf(stderr, "Error: cannot open %s\n", vf.kpx_path.c_str());
                 return 1;

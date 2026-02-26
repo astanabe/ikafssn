@@ -49,6 +49,8 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
     entry.db_path = db_path;
     entry.max_mode = db_path.empty() ? 2 : 3;
 
+    bool all_have_kpx = true;
+
     // Group by k and open index files
     for (const auto& dv : discovered) {
         auto& group = entry.kmer_groups[dv.k];
@@ -62,9 +64,13 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
             logger.error("Cannot open %s", dv.kix_path.c_str());
             return false;
         }
-        if (!svd.kpx.open(dv.kpx_path)) {
-            logger.error("Cannot open %s", dv.kpx_path.c_str());
-            return false;
+        if (dv.has_kpx) {
+            if (!svd.kpx.open(dv.kpx_path)) {
+                logger.error("Cannot open %s", dv.kpx_path.c_str());
+                return false;
+            }
+        } else {
+            all_have_kpx = false;
         }
         if (!svd.ksx.open(dv.ksx_path)) {
             logger.error("Cannot open %s", dv.ksx_path.c_str());
@@ -77,6 +83,12 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
         }
 
         group.volumes.push_back(std::move(svd));
+    }
+
+    // Restrict max_mode if .kpx files are missing (mode 1 index)
+    if (!all_have_kpx) {
+        entry.max_mode = 1;
+        logger.info("DB '%s': .kpx files missing, max_mode restricted to 1", db_name.c_str());
     }
 
     // Sort volumes within each group, then open shared .khx per group
@@ -255,7 +267,10 @@ int Server::run(const ServerConfig& config_in) {
     size_t total_mmaps = 0;
     for (const auto& db : databases_) {
         for (const auto& [k, group] : db.kmer_groups) {
-            total_mmaps += group.volumes.size() * 3; // kix + kpx + ksx
+            for (const auto& vol : group.volumes) {
+                total_mmaps += 2; // kix + ksx always
+                if (vol.kpx.is_open()) total_mmaps++;
+            }
             if (group.khx.is_open()) total_mmaps++;
         }
     }

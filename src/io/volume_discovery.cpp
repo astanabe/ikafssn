@@ -52,6 +52,7 @@ static bool discover_from_kvx(const std::string& parent_dir,
         dv.kix_path = base + ".kix";
         dv.kpx_path = base + ".kpx";
         dv.ksx_path = base + ".ksx";
+        dv.has_kpx = std::filesystem::exists(dv.kpx_path);
         volumes.push_back(std::move(dv));
         found_any = true;
     }

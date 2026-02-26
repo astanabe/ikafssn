@@ -11,6 +11,7 @@ class KpxReader {
 public:
     bool open(const std::string& path);
     void close();
+    bool is_open() const { return mmap_.is_open(); }
 
     const KpxHeader& header() const { return *header_; }
     int k() const { return header_->k; }

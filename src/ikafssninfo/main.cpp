@@ -87,6 +87,7 @@ struct VolumeStats {
     uint64_t kix_size;
     uint64_t kpx_size;
     uint64_t ksx_size;
+    bool has_kpx;
     // Per-volume counts array (for verbose stats)
     std::vector<uint32_t> counts;
 };
@@ -328,8 +329,9 @@ int main(int argc, char* argv[]) {
         vs.num_sequences = kix.num_sequences();
         vs.total_postings = kix.total_postings();
         vs.kix_size = file_size(vf.kix_path);
-        vs.kpx_size = file_size(vf.kpx_path);
+        vs.kpx_size = vf.has_kpx ? file_size(vf.kpx_path) : 0;
         vs.ksx_size = file_size(vf.ksx_path);
+        vs.has_kpx = vf.has_kpx;
 
         // Read per-kmer counts for frequency analysis
         const uint32_t* cts = kix.counts();
@@ -368,9 +370,13 @@ int main(int argc, char* argv[]) {
         std::printf("    .kix:          %s (%lu bytes)\n",
                     format_size(vs.kix_size).c_str(),
                     static_cast<unsigned long>(vs.kix_size));
-        std::printf("    .kpx:          %s (%lu bytes)\n",
-                    format_size(vs.kpx_size).c_str(),
-                    static_cast<unsigned long>(vs.kpx_size));
+        if (vs.has_kpx) {
+            std::printf("    .kpx:          %s (%lu bytes)\n",
+                        format_size(vs.kpx_size).c_str(),
+                        static_cast<unsigned long>(vs.kpx_size));
+        } else {
+            std::printf("    .kpx:          (not built)\n");
+        }
         std::printf("    .ksx:          %s (%lu bytes)\n",
                     format_size(vs.ksx_size).c_str(),
                     static_cast<unsigned long>(vs.ksx_size));
@@ -413,7 +419,11 @@ int main(int argc, char* argv[]) {
                 format_size(total_index_size).c_str(),
                 static_cast<unsigned long>(total_index_size));
     std::printf("  .kix total:      %s\n", format_size(total_kix_size).c_str());
-    std::printf("  .kpx total:      %s\n", format_size(total_kpx_size).c_str());
+    if (total_kpx_size > 0) {
+        std::printf("  .kpx total:      %s\n", format_size(total_kpx_size).c_str());
+    } else {
+        std::printf("  .kpx total:      (not built)\n");
+    }
     std::printf("  .ksx total:      %s\n", format_size(total_ksx_size).c_str());
     if (has_khx) {
         std::printf("  .khx:            %s\n", format_size(khx_size).c_str());
@@ -422,15 +432,18 @@ int main(int argc, char* argv[]) {
     // Compression ratio: compare delta-compressed posting size vs uncompressed
     // Uncompressed ID posting: total_postings * sizeof(uint32_t) = 4 bytes each
     // Uncompressed pos posting: total_postings * sizeof(uint32_t) = 4 bytes each
-    // Total uncompressed posting data: total_postings * 8
-    // Actual compressed posting data: total file sizes minus headers and tables
-    uint64_t uncompressed_posting_size = total_postings * 8;  // 4 bytes id + 4 bytes pos per posting
+    // Total uncompressed posting data: total_postings * (4 or 8) depending on .kpx presence
+    bool has_any_kpx = (total_kpx_size > 0);
+    uint64_t bytes_per_posting = has_any_kpx ? 8 : 4;  // id + pos, or id only
+    uint64_t uncompressed_posting_size = total_postings * bytes_per_posting;
     if (uncompressed_posting_size > 0) {
         // Approximate compressed posting size: file sizes minus table overhead per volume
         // Per volume: kix header (64) + offsets (8*4^k) + counts (4*4^k) + posting data
-        //             kpx header (32) + pos_offsets (8*4^k) + posting data
-        uint64_t table_overhead_per_vol = 64 + tbl_size * 8 + tbl_size * 4  // kix
-                                        + 32 + tbl_size * 8;                // kpx
+        //             kpx (if present): header (32) + pos_offsets (8*4^k) + posting data
+        uint64_t table_overhead_per_vol = 64 + tbl_size * 8 + tbl_size * 4; // kix
+        if (has_any_kpx) {
+            table_overhead_per_vol += 32 + tbl_size * 8;                     // kpx
+        }
         uint64_t total_table_overhead = table_overhead_per_vol * vol_stats.size();
         uint64_t compressed_posting_size = (total_kix_size + total_kpx_size > total_table_overhead)
             ? (total_kix_size + total_kpx_size - total_table_overhead)

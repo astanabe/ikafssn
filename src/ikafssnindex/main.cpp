@@ -47,6 +47,10 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "  -k <int>               k-mer length (%d-%d)\n"
         "  -o <dir>               Output directory\n\n"
         "Options:\n"
+        "  -mode <1|2|3>          Search mode the index will support (default: 2)\n"
+        "                         1 = Stage 1 only (skip .kpx generation)\n"
+        "                         2 = Stage 1+2 (default)\n"
+        "                         3 = Stage 1+2+3 (same as 2 for index)\n"
         "  -memory_limit <size>   Memory limit (default: %s = half of RAM)\n"
         "                         Accepts K, M, G suffixes\n"
         "  -max_freq_build <num>  Exclude k-mers with cross-volume count > threshold\n"
@@ -54,6 +58,8 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                         Counts are aggregated across all volumes before filtering\n"
         "                         (default: 0 = no exclusion)\n"
+        "  -highfreq_filter_threads <int>\n"
+        "                         Threads for cross-volume filtering (default: min(8, threads))\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
         "  -threads <int>         Number of threads (default: all cores)\n"
@@ -107,6 +113,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Parse -mode (1, 2, or 3; default 2)
+    int index_mode = cli.get_int("-mode", 2);
+    if (index_mode < 1 || index_mode > 3) {
+        std::fprintf(stderr, "Error: -mode must be 1, 2, or 3\n");
+        return 1;
+    }
+
     // Optional arguments
     uint64_t memory_limit;
     std::string mem_limit_str;
@@ -152,12 +165,29 @@ int main(int argc, char* argv[]) {
 
     int threads = resolve_threads(cli);
 
+    int highfreq_filter_threads;
+    if (cli.has("-highfreq_filter_threads")) {
+        highfreq_filter_threads = cli.get_int("-highfreq_filter_threads", 8);
+        if (highfreq_filter_threads < 1) {
+            std::fprintf(stderr, "Error: -highfreq_filter_threads must be >= 1\n");
+            return 1;
+        }
+        if (highfreq_filter_threads > threads) {
+            std::fprintf(stderr,
+                "Error: -highfreq_filter_threads (%d) exceeds -threads (%d)\n",
+                highfreq_filter_threads, threads);
+            return 1;
+        }
+    } else {
+        highfreq_filter_threads = std::min(8, threads);
+    }
+
     int openvol = cli.get_int("-openvol", 1);
     if (openvol < 1) openvol = 1;
 
     logger.info("Database: %s (%zu volume(s))", db_path.c_str(), vol_paths.size());
-    logger.info("Parameters: k=%d, memory_limit=%s, openvol=%d, threads=%d",
-                k, mem_limit_str.c_str(), openvol, threads);
+    logger.info("Parameters: k=%d, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
+                k, index_mode, mem_limit_str.c_str(), openvol, threads);
 
     // Extract DB base name from path
     std::string db_base = std::filesystem::path(db_path).filename().string();
@@ -171,6 +201,7 @@ int main(int argc, char* argv[]) {
     config.memory_limit = memory_limit / static_cast<uint64_t>(openvol);
     config.threads = threads;
     config.verbose = verbose;
+    config.skip_kpx = (index_mode == 1);
     // When max_freq_build is active, keep .tmp files for cross-volume filtering
     config.keep_tmp = (max_freq_build > 0);
 
@@ -330,7 +361,8 @@ int main(int argc, char* argv[]) {
         std::string khx_path = khx_path_for(out_dir, db_base, k);
 
         if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,
-                                         freq_threshold, logger)) {
+                                         freq_threshold, highfreq_filter_threads,
+                                         logger)) {
             std::fprintf(stderr, "Error: cross-volume filtering failed\n");
             return 1;
         }

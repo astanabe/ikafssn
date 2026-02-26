@@ -28,6 +28,7 @@ bool filter_volumes_cross_volume(
     const std::string& khx_path,
     int k,
     uint64_t freq_threshold,
+    int filter_threads,
     const Logger& logger);
 
 } // namespace ikafssn
