@@ -62,7 +62,7 @@ jobs:
           HB=$(brew --prefix)
           echo "HOMEBREW_PREFIX=${HB}" >> "$GITHUB_ENV"
           {
-            echo "CMAKE_PREFIX_PATH=${HB};${HB}/opt/openssl@3;${HB}/opt/sqlite3;${HB}/opt/curl"
+            echo "CMAKE_PREFIX_PATH=${HB}:${HB}/opt/openssl@3:${HB}/opt/sqlite3:${HB}/opt/curl"
             echo "PKG_CONFIG_PATH=${HB}/opt/openssl@3/lib/pkgconfig:${HB}/opt/sqlite3/lib/pkgconfig:${HB}/opt/curl/lib/pkgconfig"
           } >> "$GITHUB_ENV"
 
@@ -125,9 +125,6 @@ jobs:
             https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
           tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
           cd ncbi-cxx-toolkit-public-release-30.0.0
-          if [ "$(uname)" = "Darwin" ]; then
-            export CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
-          fi
           ./cmake-configure \
             --without-debug \
             --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
@@ -153,9 +150,6 @@ jobs:
             -DNCBI_TOOLKIT_BUILD_TAG="${{ steps.ncbi.outputs.build_tag }}"
             -DBUILD_HTTPD=${{ matrix.build_httpd }}
           )
-          if [ "$(uname)" = "Darwin" ]; then
-            cmake_args+=(-DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}")
-          fi
           cmake -S . -B build "${cmake_args[@]}"
           cmake --build build -j"${NPROC}"
 
