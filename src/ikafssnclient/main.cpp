@@ -3,6 +3,7 @@
 #include "ikafssnclient/http_client.hpp"
 #endif
 #include "core/version.hpp"
+#include "protocol/info_format.hpp"
 #include "util/common_init.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/seqidlist_reader.hpp"
@@ -75,6 +76,62 @@ static void print_usage(const char* prog) {
 #endif
         ,
         prog);
+}
+
+// Execute an info request via socket or HTTP, returning true on success.
+static bool execute_info(
+    const CliParser& cli,
+    bool has_http,
+    InfoResponse& resp,
+    const Logger& logger
+#ifdef IKAFSSN_ENABLE_HTTP
+    , const HttpAuthConfig& auth
+#endif
+    ) {
+
+#ifdef IKAFSSN_ENABLE_HTTP
+    if (has_http) {
+        std::string http_url = cli.get_string("-http");
+        logger.debug("Fetching server info via HTTP from %s", http_url.c_str());
+
+        std::string error_msg;
+        if (!http_info(http_url, resp, error_msg, auth)) {
+            std::fprintf(stderr, "Error: failed to fetch server info: %s\n",
+                         error_msg.c_str());
+            return false;
+        }
+        return true;
+    }
+#else
+    (void)has_http;
+#endif
+
+    int fd = -1;
+    if (cli.has("-socket")) {
+        std::string sock_path = cli.get_string("-socket");
+        fd = unix_connect(sock_path);
+        if (fd < 0) {
+            std::fprintf(stderr, "Error: cannot connect to UNIX socket %s\n",
+                         sock_path.c_str());
+            return false;
+        }
+    } else {
+        std::string tcp_addr = cli.get_string("-tcp");
+        fd = tcp_connect(tcp_addr);
+        if (fd < 0) {
+            std::fprintf(stderr, "Error: cannot connect to TCP %s\n",
+                         tcp_addr.c_str());
+            return false;
+        }
+    }
+
+    if (!socket_info(fd, resp)) {
+        std::fprintf(stderr, "Error: info request failed\n");
+        close_fd(fd);
+        return false;
+    }
+    close_fd(fd);
+    return true;
 }
 
 // Execute a search request via socket or HTTP, returning true on success.
@@ -295,6 +352,25 @@ int main(int argc, char* argv[]) {
         base_req.seqids = read_seqidlist(cli.get_string("-negative_seqidlist"));
         logger.info("Loaded %zu accessions (exclude mode)", base_req.seqids.size());
     }
+
+    // Pre-flight validation
+    InfoResponse server_info;
+    if (!execute_info(cli, has_http, server_info, logger
+#ifdef IKAFSSN_ENABLE_HTTP
+                      , auth
+#endif
+                      )) {
+        return 1;
+    }
+    {
+        std::string err = validate_info(server_info, base_req.db_name,
+                                        base_req.k, base_req.mode, true);
+        if (!err.empty()) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+    }
+    logger.debug("Pre-flight validation passed");
 
     // Build query_id -> sequence lookup for retry
     std::unordered_map<std::string, std::string> query_map;

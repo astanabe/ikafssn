@@ -1,15 +1,49 @@
 #include "ikafssnhttpd/http_controller.hpp"
 
+#include <chrono>
 #include <climits>
 #include <thread>
 
 #include <drogon/HttpAppFramework.h>
 #include <json/json.h>
 
+#include "protocol/info_format.hpp"
+
 namespace ikafssn {
 
 HttpController::HttpController(std::shared_ptr<BackendClient> backend)
     : backend_(std::move(backend)) {}
+
+bool HttpController::init_cache(int timeout_seconds) {
+    auto start = std::chrono::steady_clock::now();
+    int delay = 1;  // exponential backoff: 1, 2, 4, 8, ...
+
+    while (true) {
+        InfoResponse info;
+        std::string error_msg;
+        if (backend_->info(info, error_msg)) {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            cached_info_ = std::move(info);
+            cache_valid_ = true;
+            return true;
+        }
+
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start).count();
+        if (elapsed >= timeout_seconds) {
+            return false;
+        }
+
+        std::this_thread::sleep_for(std::chrono::seconds(delay));
+        delay = std::min(delay * 2, 8);
+    }
+}
+
+void HttpController::update_cache(const InfoResponse& info) {
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    cached_info_ = info;
+    cache_valid_ = true;
+}
 
 void HttpController::register_routes(const std::string& path_prefix) {
     std::string prefix = path_prefix;
@@ -147,13 +181,43 @@ void HttpController::search(
         sreq.queries.push_back(std::move(entry));
     }
 
+    // Phase 1: cached validation (synchronous, on Drogon thread)
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        if (cache_valid_) {
+            std::string err = validate_info(cached_info_, sreq.db_name,
+                                            sreq.k, sreq.mode, false);
+            if (!err.empty()) {
+                callback(make_error_response(drogon::k400BadRequest, err));
+                return;
+            }
+        }
+    }
+
     // Offload blocking backend I/O to a worker thread.
     // Drogon event loop threads must not be blocked.
     auto backend = backend_;
+    auto self = this;
     auto cb = std::make_shared<std::function<void(const drogon::HttpResponsePtr&)>>(
         std::move(callback));
 
-    std::thread([backend, sreq = std::move(sreq), cb]() {
+    std::thread([self, backend, sreq = std::move(sreq), cb]() {
+        // Phase 2: fresh validation with slot check
+        {
+            InfoResponse fresh;
+            std::string info_err;
+            if (backend->info(fresh, info_err)) {
+                self->update_cache(fresh);
+                std::string err = validate_info(fresh, sreq.db_name,
+                                                sreq.k, sreq.mode, true);
+                if (!err.empty()) {
+                    (*cb)(make_error_response(drogon::k400BadRequest, err));
+                    return;
+                }
+            }
+        }
+
+        // Phase 3: actual search
         SearchResponse sresp;
         std::string error_msg;
         if (!backend->search(sreq, sresp, error_msg)) {

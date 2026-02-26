@@ -10,6 +10,12 @@
 #include "io/volume_discovery.hpp"
 #include "util/cli_parser.hpp"
 #include "util/logger.hpp"
+#include "util/socket_utils.hpp"
+#include "ikafssnclient/socket_client.hpp"
+#ifdef IKAFSSN_ENABLE_HTTP
+#include "ikafssnclient/http_client.hpp"
+#endif
+#include "protocol/info_format.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -25,13 +31,28 @@ static void print_usage(const char* prog) {
     std::fprintf(stderr,
         "Usage: %s [options]\n"
         "\n"
-        "Required:\n"
-        "  -ix <prefix>            Index prefix (like blastn -db)\n"
+        "Required (one of):\n"
+        "  -ix <prefix>             Index prefix [local mode]\n"
+        "  -socket <path>           UNIX socket to ikafssnserver [remote mode]\n"
+        "  -tcp <host>:<port>       TCP address of ikafssnserver [remote mode]\n"
+#ifdef IKAFSSN_ENABLE_HTTP
+        "  -http <url>              ikafssnhttpd URL [remote mode]\n"
+#endif
+        "\n"
+        "Local mode options:\n"
+        "  -db <path>               BLAST DB prefix (default: auto-detect from -ix)\n"
+#ifdef IKAFSSN_ENABLE_HTTP
+        "\n"
+        "Remote HTTP authentication:\n"
+        "  --user <user:password>   Credentials (curl-style)\n"
+        "  --http-user <USER>       Username (wget-style)\n"
+        "  --http-password <PASS>   Password (used with --http-user)\n"
+        "  --netrc-file <path>      .netrc file for credentials\n"
+#endif
         "\n"
         "Options:\n"
-        "  -db <path>              BLAST DB prefix (default: auto-detect from -ix)\n"
-        "  -v, --verbose           Verbose output (k-mer frequency distribution details)\n"
-        "  -h, --help              Show this help\n",
+        "  -v, --verbose            Verbose output\n"
+        "  -h, --help               Show this help\n",
         prog);
 }
 
@@ -151,6 +172,70 @@ static void print_frequency_stats(const FrequencyStats& fs) {
     std::printf("      99th:                %.1f\n", fs.p99);
 }
 
+static int run_remote_info(const CliParser& cli, bool verbose) {
+    InfoResponse info;
+
+    if (cli.has("-socket") || cli.has("-tcp")) {
+        int fd = -1;
+        if (cli.has("-socket")) {
+            std::string sock_path = cli.get_string("-socket");
+            fd = unix_connect(sock_path);
+            if (fd < 0) {
+                std::fprintf(stderr, "Error: cannot connect to UNIX socket %s\n",
+                             sock_path.c_str());
+                return 1;
+            }
+        } else {
+            std::string tcp_addr = cli.get_string("-tcp");
+            fd = tcp_connect(tcp_addr);
+            if (fd < 0) {
+                std::fprintf(stderr, "Error: cannot connect to TCP %s\n",
+                             tcp_addr.c_str());
+                return 1;
+            }
+        }
+
+        if (!socket_info(fd, info)) {
+            std::fprintf(stderr, "Error: info request failed\n");
+            close_fd(fd);
+            return 1;
+        }
+        close_fd(fd);
+    }
+#ifdef IKAFSSN_ENABLE_HTTP
+    else if (cli.has("-http")) {
+        HttpAuthConfig auth;
+        if (cli.has("--user") && cli.has("--http-user")) {
+            std::fprintf(stderr, "Error: --user and --http-user are mutually exclusive\n");
+            return 1;
+        }
+        if (cli.has("--user")) {
+            auth.userpwd = cli.get_string("--user");
+        } else if (cli.has("--http-user")) {
+            std::string user = cli.get_string("--http-user");
+            std::string pass = cli.get_string("--http-password", "");
+            auth.userpwd = user + ":" + pass;
+        }
+        if (cli.has("--netrc-file")) {
+            auth.netrc_file = cli.get_string("--netrc-file");
+        }
+
+        std::string error_msg;
+        if (!http_info(cli.get_string("-http"), info, error_msg, auth)) {
+            std::fprintf(stderr, "Error: %s\n", error_msg.c_str());
+            return 1;
+        }
+    }
+#endif
+    else {
+        std::fprintf(stderr, "Error: no remote connection specified\n");
+        return 1;
+    }
+
+    std::printf("%s", format_server_info(info, verbose).c_str());
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
@@ -161,14 +246,52 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (!cli.has("-ix")) {
+    bool has_ix = cli.has("-ix");
+    bool has_socket = cli.has("-socket");
+    bool has_tcp = cli.has("-tcp");
+    bool has_http = false;
+#ifdef IKAFSSN_ENABLE_HTTP
+    has_http = cli.has("-http");
+#endif
+    bool verbose = cli.has("-v") || cli.has("--verbose");
+
+    bool has_remote = has_socket || has_tcp || has_http;
+
+    if (!has_ix && !has_remote) {
         print_usage(argv[0]);
         return 1;
     }
 
+    // -ix and remote options are mutually exclusive
+    if (has_ix && has_remote) {
+        std::fprintf(stderr, "Error: -ix cannot be used with remote options "
+                     "(-socket, -tcp"
+#ifdef IKAFSSN_ENABLE_HTTP
+                     ", -http"
+#endif
+                     ")\n");
+        return 1;
+    }
+
+    // Only one remote option at a time
+    if ((has_socket ? 1 : 0) + (has_tcp ? 1 : 0) + (has_http ? 1 : 0) > 1) {
+        std::fprintf(stderr, "Error: only one remote option "
+                     "(-socket, -tcp"
+#ifdef IKAFSSN_ENABLE_HTTP
+                     ", -http"
+#endif
+                     ") may be specified\n");
+        return 1;
+    }
+
+    // Remote mode
+    if (has_remote) {
+        return run_remote_info(cli, verbose);
+    }
+
+    // Local mode
     std::string ix_prefix = cli.get_string("-ix");
     std::string db_path = cli.get_string("-db");
-    bool verbose = cli.has("-v") || cli.has("--verbose");
 
     // Discover volumes
     auto vol_files = discover_volumes(ix_prefix);

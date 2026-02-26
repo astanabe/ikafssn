@@ -96,6 +96,7 @@ target_link_libraries(ikafssn_util PUBLIC ikafssn_core)
 add_library(ikafssn_protocol STATIC
     protocol/frame.cpp
     protocol/serializer.cpp
+    protocol/info_format.cpp
 )
 target_link_libraries(ikafssn_protocol PUBLIC ikafssn_core)
 
@@ -195,6 +196,7 @@ target_include_directories(ikafssninfo PRIVATE
     "${NCBI_TOOLKIT_INCLUDE}"
 )
 target_link_libraries(ikafssninfo PRIVATE
+    ikafssn_client_lib
     ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
 )
 

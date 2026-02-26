@@ -17,7 +17,7 @@ ikafssn は 7 つの独立したコマンドラインプログラムで構成さ
 | `ikafssnserver` | 検索デーモン (UNIX/TCP ソケット) |
 | `ikafssnhttpd` | ikafssnserver の HTTP REST プロキシ |
 | `ikafssnclient` | クライアント (ソケットまたは HTTP) |
-| `ikafssninfo` | インデックス / DB 情報表示 |
+| `ikafssninfo` | インデックス / DB / サーバ情報表示 |
 
 各コマンドは必要な依存のみをリンクする独立した実行ファイルです。
 
@@ -336,7 +336,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 
 ### ikafssnhttpd
 
-HTTP REST API デーモンです。`ikafssnserver` に接続し、HTTP REST API として検索サービスを提供します。Drogon フレームワークを使用します。
+HTTP REST API デーモンです。`ikafssnserver` に接続し、HTTP REST API として検索サービスを提供します。Drogon フレームワークを使用します。起動時にバックエンドサーバに接続してサーバ能力情報をキャッシュします (最大 30 秒間、指数バックオフでリトライ)。検索リクエストは二段階で検証されます: まずキャッシュされた能力情報に対して同期的にチェック (バックエンドへの通信なし) し、明らかに無効なリクエストを即座に拒否します。次にワーカースレッド内で最新のサーバ状態 (スロット空き状況を含む) に対して検証した後、実際の検索を実行します。
 
 ```
 ikafssnhttpd [options]
@@ -380,7 +380,7 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 
 ### ikafssnclient
 
-クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。サーバが同時実行制限によりクエリ配列を拒否した場合、クライアントは拒否された配列を指数バックオフ (30 秒、60 秒、120 秒、120 秒、…) で自動リトライし、全配列の処理が完了するまで繰り返します。
+クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。クエリ送信前にサーバの能力情報を取得し、指定されたデータベース名・k-mer サイズ・モードの妥当性を事前検証 (プリフライトチェック) します。無効なパラメータが指定された場合は、クエリデータの送信前に利用可能なデータベース一覧を含むエラーメッセージが表示されます。サーバが同時実行制限によりクエリ配列を拒否した場合、クライアントは拒否された配列を指数バックオフ (30 秒、60 秒、120 秒、120 秒、…) で自動リトライし、全配列の処理が完了するまで繰り返します。
 
 ```
 ikafssnclient [options]
@@ -471,22 +471,35 @@ ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -s
 
 ### ikafssninfo
 
-インデックス情報表示コマンドです。インデックスファイルの統計情報を表示し、対応する BLAST DB が指定された場合は DB 情報も表示します。
+インデックス / データベース情報表示コマンドです。**ローカルモード** (インデックスファイルを直接読み取り) と**リモートモード** (稼働中の `ikafssnserver` または `ikafssnhttpd` に問い合わせ) の 2 つのモードをサポートします。
 
 ```
 ikafssninfo [options]
 
-必須:
-  -ix <prefix>            インデックスプレフィックス (blastn -db と同様)
+必須 (いずれか):
+  -ix <prefix>             インデックスプレフィックス [ローカルモード]
+  -socket <path>           ikafssnserver の UNIX ソケットパス [リモートモード]
+  -tcp <host>:<port>       ikafssnserver の TCP アドレス [リモートモード]
+  -http <url>              ikafssnhttpd の URL [リモートモード]
+
+ローカルモードオプション:
+  -db <path>               BLAST DB プレフィックス (デフォルト: -ix から自動検出)
+
+リモート HTTP 認証:
+  --user <user:password>   認証情報 (curl 形式)
+  --http-user <USER>       ユーザー名 (wget 形式)
+  --http-password <PASS>   パスワード (--http-user と併用)
+  --netrc-file <path>      .netrc ファイルのパス
 
 オプション:
-  -db <path>              BLAST DB プレフィックス (デフォルト: -ix から自動検出)
-  -v, --verbose           詳細ログ出力 (k-mer 頻度分布の詳細等)
+  -v, --verbose            詳細出力
 ```
 
-`-db` 未指定の場合、インデックスプレフィックスパスが有効な BLAST DB に対応するかを確認し、自動検出を試みます。
+`-ix` とリモートオプション (`-socket`、`-tcp`、`-http`) は排他的です。リモートオプションは同時に 1 つのみ指定可能です。
 
-**出力情報:**
+**ローカルモード:** インデックスファイルを直接読み取り、詳細な統計情報を表示します。`-db` 未指定の場合、インデックスプレフィックスパスが有効な BLAST DB に対応するかを確認し、自動検出を試みます。
+
+ローカルモードの出力情報:
 
 - k-mer 長 (k) および k-mer 整数型 (uint16/uint32)
 - ボリューム数
@@ -495,17 +508,40 @@ ikafssninfo [options]
 - `-v` 指定時: k-mer 出現頻度分布 (min, max, mean, パーセンタイル)
 - `-db` 指定時 (または自動検出時): BLAST DB のタイトル、配列数、総塩基数、ボリューム構成
 
+**リモートモード:** 稼働中のサーバに問い合わせ、サーバの能力情報を表示します。
+
+リモートモードの出力情報:
+
+- アクティブ / 最大配列スロット数
+- データベースごとの情報: 名前、デフォルト k、最大モード、k-mer グループ (ボリューム数・ポスティング数の統計)
+- `-v` 指定時: 各 k-mer グループ内のボリュームごとの詳細
+
 **使用例:**
 
 ```bash
-# 基本的なインデックス情報
+# ローカル: 基本的なインデックス情報
 ikafssninfo -ix ./index/mydb
 
-# BLAST DB 情報も表示
+# ローカル: BLAST DB 情報も表示
 ikafssninfo -ix ./index/mydb -db mydb
 
-# 詳細な頻度分布を表示
+# ローカル: 詳細な頻度分布を表示
 ikafssninfo -ix ./index/mydb -v
+
+# リモート: UNIX ソケット経由でサーバに問い合わせ
+ikafssninfo -socket /var/run/ikafssn.sock
+
+# リモート: TCP 経由でサーバに問い合わせ
+ikafssninfo -tcp 10.0.1.5:9100
+
+# リモート: HTTP 経由でサーバに問い合わせ
+ikafssninfo -http http://search.example.com:8080
+
+# リモート: 詳細出力 (ボリュームごとの情報を表示)
+ikafssninfo -socket /var/run/ikafssn.sock -v
+
+# リモート: HTTP 認証付き
+ikafssninfo -http http://search.example.com:8080 --user admin:secret
 ```
 
 ## 検索パイプライン

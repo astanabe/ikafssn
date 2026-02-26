@@ -73,6 +73,17 @@ int main(int argc, char* argv[]) {
 
     // Create HTTP controller and register routes
     HttpController controller(backend);
+
+    logger.info("Connecting to backend to fetch server capabilities...");
+    if (!controller.init_cache(30)) {
+        std::fprintf(stderr,
+            "Error: Failed to connect to backend server at %s "
+            "after 30 seconds. Ensure ikafssnserver is running.\n",
+            backend_addr.c_str());
+        return 1;
+    }
+    logger.info("Server capabilities cached successfully.");
+
     std::string path_prefix = cli.get_string("-path_prefix");
     controller.register_routes(path_prefix);
 

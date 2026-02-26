@@ -19,4 +19,9 @@ bool http_search(const std::string& base_url, const SearchRequest& req,
                  SearchResponse& resp, std::string& error_msg,
                  const HttpAuthConfig& auth = {});
 
+// Fetch server info via HTTP GET to ikafssnhttpd's /api/v1/info.
+// Returns true on success. On failure, error_msg is set.
+bool http_info(const std::string& base_url, InfoResponse& resp,
+               std::string& error_msg, const HttpAuthConfig& auth = {});
+
 } // namespace ikafssn

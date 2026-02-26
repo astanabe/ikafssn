@@ -21,7 +21,7 @@
 | `ikafssnserver` | Search daemon (UNIX/TCP socket) |
 | `ikafssnhttpd` | HTTP REST proxy to ikafssnserver |
 | `ikafssnclient` | Client (socket or HTTP) |
-| `ikafssninfo` | Index/DB information display |
+| `ikafssninfo` | Index/DB and server information display |
 
 ## Quick Start
 

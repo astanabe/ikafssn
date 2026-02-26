@@ -17,7 +17,7 @@ ikafssn consists of seven independent command-line programs:
 | `ikafssnserver` | Search daemon (UNIX/TCP socket) |
 | `ikafssnhttpd` | HTTP REST proxy to ikafssnserver |
 | `ikafssnclient` | Client (socket or HTTP) |
-| `ikafssninfo` | Index/DB information display |
+| `ikafssninfo` | Index/DB and server information display |
 
 Each command is a standalone executable that links only its required dependencies.
 
@@ -336,7 +336,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 
 ### ikafssnhttpd
 
-HTTP REST API daemon. Connects to `ikafssnserver` and exposes search as an HTTP API. Uses the Drogon framework.
+HTTP REST API daemon. Connects to `ikafssnserver` and exposes search as an HTTP API. Uses the Drogon framework. On startup, it connects to the backend server to cache its capabilities (retrying with exponential backoff for up to 30 seconds). Search requests are validated in two phases: first against the cached capabilities (synchronous, no backend round-trip) to reject obviously invalid requests immediately, then against fresh server state (including slot availability) before the actual search.
 
 ```
 ikafssnhttpd [options]
@@ -380,7 +380,7 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 
 ### ikafssnclient
 
-Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. If the server rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
+Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. Invalid parameters produce an error with available database listings before any query data is transmitted. If the server rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
 
 ```
 ikafssnclient [options]
@@ -471,22 +471,35 @@ ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -s
 
 ### ikafssninfo
 
-Display index statistics and optionally BLAST DB information.
+Display index/database information. Supports two modes: **local mode** (reads index files directly) and **remote mode** (queries a running `ikafssnserver` or `ikafssnhttpd`).
 
 ```
 ikafssninfo [options]
 
-Required:
-  -ix <prefix>            Index prefix (like blastn -db)
+Required (one of):
+  -ix <prefix>             Index prefix [local mode]
+  -socket <path>           UNIX socket to ikafssnserver [remote mode]
+  -tcp <host>:<port>       TCP address of ikafssnserver [remote mode]
+  -http <url>              ikafssnhttpd URL [remote mode]
+
+Local mode options:
+  -db <path>               BLAST DB prefix (default: auto-detect from -ix)
+
+Remote HTTP authentication:
+  --user <user:password>   Credentials (curl-style)
+  --http-user <USER>       Username (wget-style)
+  --http-password <PASS>   Password (used with --http-user)
+  --netrc-file <path>      .netrc file for credentials
 
 Options:
-  -db <path>              BLAST DB prefix (default: auto-detect from -ix)
-  -v, --verbose           Verbose output (k-mer frequency distribution, etc.)
+  -v, --verbose            Verbose output
 ```
 
-When `-db` is not specified, `ikafssninfo` attempts to auto-detect the BLAST DB by checking whether the index prefix path corresponds to a valid BLAST DB.
+`-ix` and remote options (`-socket`, `-tcp`, `-http`) are mutually exclusive. Only one remote option may be specified at a time.
 
-**Output includes:**
+**Local mode** reads index files directly and displays detailed statistics. When `-db` is not specified, `ikafssninfo` attempts to auto-detect the BLAST DB by checking whether the index prefix path corresponds to a valid BLAST DB.
+
+Local mode output includes:
 
 - K-mer length (k) and integer type (uint16/uint32)
 - Number of volumes
@@ -495,17 +508,40 @@ When `-db` is not specified, `ikafssninfo` attempts to auto-detect the BLAST DB 
 - With `-v`: k-mer frequency distribution (min, max, mean, percentiles)
 - With `-db` (or auto-detected): BLAST DB title, sequence count, total bases, volume paths
 
+**Remote mode** queries a running server and displays its capabilities.
+
+Remote mode output includes:
+
+- Active/max sequence slots
+- Per-database information: name, default k, max mode, k-mer groups with volume counts and posting statistics
+- With `-v`: per-volume details within each k-mer group
+
 **Examples:**
 
 ```bash
-# Basic index info
+# Local: basic index info
 ikafssninfo -ix ./index/mydb
 
-# Include BLAST DB info
+# Local: include BLAST DB info
 ikafssninfo -ix ./index/mydb -db mydb
 
-# Detailed frequency distribution
+# Local: detailed frequency distribution
 ikafssninfo -ix ./index/mydb -v
+
+# Remote: query server via UNIX socket
+ikafssninfo -socket /var/run/ikafssn.sock
+
+# Remote: query server via TCP
+ikafssninfo -tcp 10.0.1.5:9100
+
+# Remote: query server via HTTP
+ikafssninfo -http http://search.example.com:8080
+
+# Remote: verbose (show per-volume details)
+ikafssninfo -socket /var/run/ikafssn.sock -v
+
+# Remote: HTTP with authentication
+ikafssninfo -http http://search.example.com:8080 --user admin:secret
 ```
 
 ## Search Pipeline

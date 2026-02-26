@@ -269,4 +269,129 @@ bool http_search(const std::string& base_url, const SearchRequest& req,
     return parse_response_json(response_body, resp, error_msg);
 }
 
+// Parse JSON info response into InfoResponse.
+static bool parse_info_json(const std::string& body,
+                            InfoResponse& resp,
+                            std::string& error_msg) {
+    Json::CharReaderBuilder reader_builder;
+    std::unique_ptr<Json::CharReader> reader(reader_builder.newCharReader());
+
+    Json::Value root;
+    std::string parse_errors;
+    if (!reader->parse(body.c_str(), body.c_str() + body.size(),
+                       &root, &parse_errors)) {
+        error_msg = "Failed to parse JSON response: " + parse_errors;
+        return false;
+    }
+
+    if (root.isMember("error")) {
+        error_msg = "Server error: " + root["error"].asString();
+        return false;
+    }
+
+    resp.status = (root.get("status", "").asString() == "success") ? 0 : 1;
+    resp.default_k = static_cast<uint8_t>(root.get("default_k", 0).asUInt());
+    resp.max_active_sequences = root.get("max_active_sequences", 0).asInt();
+    resp.active_sequences = root.get("active_sequences", 0).asInt();
+
+    if (root.isMember("databases") && root["databases"].isArray()) {
+        for (const auto& dbj : root["databases"]) {
+            DatabaseInfo db;
+            db.name = dbj.get("name", "").asString();
+            db.default_k = static_cast<uint8_t>(dbj.get("default_k", 0).asUInt());
+            db.max_mode = static_cast<uint8_t>(dbj.get("max_mode", 2).asUInt());
+
+            if (dbj.isMember("kmer_groups") && dbj["kmer_groups"].isArray()) {
+                for (const auto& gj : dbj["kmer_groups"]) {
+                    KmerGroupInfo g;
+                    g.k = static_cast<uint8_t>(gj.get("k", 0).asUInt());
+                    std::string ktype = gj.get("kmer_type", "uint16").asString();
+                    g.kmer_type = (ktype == "uint32") ? 1 : 0;
+
+                    if (gj.isMember("volumes") && gj["volumes"].isArray()) {
+                        for (const auto& vj : gj["volumes"]) {
+                            VolumeInfo v;
+                            v.volume_index = static_cast<uint16_t>(vj.get("volume_index", 0).asUInt());
+                            v.num_sequences = vj.get("num_sequences", 0).asUInt();
+                            v.total_postings = vj.get("total_postings", 0).asUInt64();
+                            v.db_name = vj.get("db_name", "").asString();
+                            g.volumes.push_back(std::move(v));
+                        }
+                    }
+                    db.groups.push_back(std::move(g));
+                }
+            }
+            resp.databases.push_back(std::move(db));
+        }
+    }
+
+    return true;
+}
+
+bool http_info(const std::string& base_url, InfoResponse& resp,
+               std::string& error_msg, const HttpAuthConfig& auth) {
+    // Build URL
+    std::string url = base_url;
+    if (!url.empty() && url.back() == '/') {
+        url.pop_back();
+    }
+    url += "/api/v1/info";
+
+    // Initialize curl
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        error_msg = "Failed to initialize libcurl";
+        return false;
+    }
+
+    std::string response_body;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
+
+    // HTTP authentication
+    if (!auth.userpwd.empty()) {
+        curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+        curl_easy_setopt(curl, CURLOPT_USERPWD, auth.userpwd.c_str());
+    }
+    if (!auth.netrc_file.empty()) {
+        curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
+        curl_easy_setopt(curl, CURLOPT_NETRC_FILE, auth.netrc_file.c_str());
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+
+    if (res != CURLE_OK) {
+        error_msg = "HTTP request failed: ";
+        error_msg += curl_easy_strerror(res);
+        curl_easy_cleanup(curl);
+        return false;
+    }
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_easy_cleanup(curl);
+
+    if (http_code != 200) {
+        Json::CharReaderBuilder rb;
+        std::unique_ptr<Json::CharReader> r(rb.newCharReader());
+        Json::Value err_json;
+        std::string errs;
+        if (r->parse(response_body.c_str(),
+                     response_body.c_str() + response_body.size(),
+                     &err_json, &errs) &&
+            err_json.isMember("error")) {
+            error_msg = "HTTP " + std::to_string(http_code) + ": " +
+                        err_json["error"].asString();
+        } else {
+            error_msg = "HTTP " + std::to_string(http_code);
+        }
+        return false;
+    }
+
+    return parse_info_json(response_body, resp, error_msg);
+}
+
 } // namespace ikafssn

@@ -56,4 +56,34 @@ bool socket_health_check(int fd, HealthResponse& resp) {
     return deserialize(resp_payload, resp);
 }
 
+bool socket_info(int fd, InfoResponse& resp) {
+    InfoRequest ireq;
+    auto payload = serialize(ireq);
+    if (!write_frame(fd, MsgType::kInfoRequest, payload)) {
+        return false;
+    }
+
+    FrameHeader hdr;
+    std::vector<uint8_t> resp_payload;
+    if (!read_frame(fd, hdr, resp_payload)) {
+        return false;
+    }
+
+    MsgType type = static_cast<MsgType>(hdr.msg_type);
+
+    if (type == MsgType::kErrorResponse) {
+        ErrorResponse err;
+        if (deserialize(resp_payload, err)) {
+            std::fprintf(stderr, "Server error %u: %s\n", err.error_code, err.message.c_str());
+        }
+        return false;
+    }
+
+    if (type != MsgType::kInfoResponse) {
+        return false;
+    }
+
+    return deserialize(resp_payload, resp);
+}
+
 } // namespace ikafssn
