@@ -1,16 +1,14 @@
 #include "ikafssnserver/server.hpp"
 #include "ikafssnserver/connection_handler.hpp"
 #include "core/config.hpp"
-#include "io/kvx_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "util/socket_utils.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <filesystem>
 #include <fstream>
-#include <regex>
 #include <thread>
 
 #include <poll.h>
@@ -29,74 +27,33 @@ Server::~Server() {
 }
 
 bool Server::load_indexes(const std::string& ix_prefix, const Logger& logger) {
-    std::filesystem::path prefix_path(ix_prefix);
-    std::string parent_dir = prefix_path.parent_path().string();
-    std::string db_name = prefix_path.filename().string();
-    if (parent_dir.empty()) parent_dir = ".";
-
-    struct VolumeFile {
-        std::string base_path;
-        uint16_t volume_index;
-        int k;
-    };
-    std::vector<VolumeFile> vf_list;
-
-    // Discover volumes from .kvx manifests
-    {
-        std::regex kvx_pattern("(\\d+)mer\\.kvx");
-        std::string prefix_dot = db_name + ".";
-        for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
-            if (!entry.is_regular_file()) continue;
-            std::string fname = entry.path().filename().string();
-            if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
-                continue;
-            std::string suffix = fname.substr(prefix_dot.size());
-            std::smatch m;
-            if (std::regex_match(suffix, m, kvx_pattern)) {
-                int k = std::stoi(m[1].str());
-                char kk_str[8];
-                std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-                std::string kvx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.kvx";
-                auto kvx = read_kvx(kvx_path);
-                if (kvx) {
-                    for (uint16_t vi = 0; vi < kvx->volume_basenames.size(); vi++) {
-                        std::string base = parent_dir + "/" + kvx->volume_basenames[vi] + "." + kk_str + "mer";
-                        if (!std::filesystem::exists(base + ".kix")) continue;
-                        VolumeFile vf;
-                        vf.volume_index = vi;
-                        vf.k = k;
-                        vf.base_path = base;
-                        vf_list.push_back(vf);
-                    }
-                }
-            }
-        }
-    }
-
-    if (vf_list.empty()) {
+    auto discovered = discover_volumes(ix_prefix);
+    if (discovered.empty()) {
         logger.error("No index files found for prefix %s", ix_prefix.c_str());
         return false;
     }
 
-    // Group by k
-    for (const auto& vf : vf_list) {
-        auto& group = kmer_groups_[vf.k];
-        group.k = vf.k;
-        group.kmer_type = kmer_type_for_k(vf.k);
+    auto prefix_parts = parse_index_prefix(ix_prefix);
+
+    // Group by k and open index files
+    for (const auto& dv : discovered) {
+        auto& group = kmer_groups_[dv.k];
+        group.k = dv.k;
+        group.kmer_type = kmer_type_for_k(dv.k);
 
         ServerVolumeData svd;
-        svd.volume_index = vf.volume_index;
+        svd.volume_index = dv.volume_index;
 
-        if (!svd.kix.open(vf.base_path + ".kix")) {
-            logger.error("Cannot open %s.kix", vf.base_path.c_str());
+        if (!svd.kix.open(dv.kix_path)) {
+            logger.error("Cannot open %s", dv.kix_path.c_str());
             return false;
         }
-        if (!svd.kpx.open(vf.base_path + ".kpx")) {
-            logger.error("Cannot open %s.kpx", vf.base_path.c_str());
+        if (!svd.kpx.open(dv.kpx_path)) {
+            logger.error("Cannot open %s", dv.kpx_path.c_str());
             return false;
         }
-        if (!svd.ksx.open(vf.base_path + ".ksx")) {
-            logger.error("Cannot open %s.ksx", vf.base_path.c_str());
+        if (!svd.ksx.open(dv.ksx_path)) {
+            logger.error("Cannot open %s", dv.ksx_path.c_str());
             return false;
         }
 
@@ -111,10 +68,7 @@ bool Server::load_indexes(const std::string& ix_prefix, const Logger& logger) {
                   });
 
         // Open shared .khx for this k-mer group (non-fatal if missing)
-        char kk_str[8];
-        std::snprintf(kk_str, sizeof(kk_str), "%02d", group.k);
-        std::string khx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.khx";
-        group.khx.open(khx_path); // non-fatal
+        group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db_name, k)); // non-fatal
     }
 
     // Default k = largest available

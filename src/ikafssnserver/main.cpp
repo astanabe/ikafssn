@@ -1,6 +1,8 @@
 #include "ikafssnserver/server.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
+#include "util/common_init.hpp"
+#include "util/context_parser.hpp"
 
 #include <csignal>
 #include <cstdio>
@@ -58,10 +60,7 @@ static void print_usage(const char* prog) {
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
-    if (cli.has("--version")) {
-        std::fprintf(stderr, "ikafssnserver %s\n", IKAFSSN_VERSION);
-        return 0;
-    }
+    if (check_version(cli, "ikafssnserver")) return 0;
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);
@@ -98,8 +97,7 @@ int main(int argc, char* argv[]) {
     }
     config.shutdown_timeout = cli.get_int("-shutdown_timeout", 30);
 
-    bool verbose = cli.has("-v") || cli.has("--verbose");
-    config.log_level = verbose ? Logger::kDebug : Logger::kInfo;
+    config.log_level = make_logger(cli).level();
 
     // Search config (renamed options)
     config.max_freq_raw = cli.get_double("-stage1_max_freq", 0.5);
@@ -137,11 +135,7 @@ int main(int argc, char* argv[]) {
     config.stage3_config.min_nident = static_cast<uint32_t>(cli.get_int("-stage3_min_nident", 0));
 
     // Resolve fetch_threads after num_threads is known
-    int num_threads_resolved = config.num_threads;
-    if (num_threads_resolved <= 0) {
-        num_threads_resolved = static_cast<int>(std::thread::hardware_concurrency());
-        if (num_threads_resolved <= 0) num_threads_resolved = 1;
-    }
+    int num_threads_resolved = resolve_threads(cli);
     if (cli.has("-stage3_fetch_threads")) {
         config.stage3_config.fetch_threads = cli.get_int("-stage3_fetch_threads", 8);
         if (config.stage3_config.fetch_threads > num_threads_resolved) {
@@ -155,21 +149,16 @@ int main(int argc, char* argv[]) {
     }
 
     // Parse -context: integer (bases) or decimal (query length multiplier)
-    std::string context_str = cli.get_string("-context", "0");
-    if (context_str.find('.') != std::string::npos) {
-        config.context_is_ratio = true;
-        config.context_ratio = std::stod(context_str);
-        if (config.context_ratio < 0) {
-            std::fprintf(stderr, "Error: -context ratio must be >= 0\n");
+    {
+        ContextParam ctx_param;
+        std::string err;
+        if (!parse_context(cli.get_string("-context", "0"), ctx_param, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-    } else {
-        int ctx_val = std::stoi(context_str);
-        if (ctx_val < 0) {
-            std::fprintf(stderr, "Error: -context must be >= 0\n");
-            return 1;
-        }
-        config.context_abs = static_cast<uint32_t>(ctx_val);
+        config.context_is_ratio = ctx_param.is_ratio;
+        config.context_ratio = ctx_param.ratio;
+        config.context_abs = ctx_param.abs;
     }
 
     Server server;

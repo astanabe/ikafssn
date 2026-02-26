@@ -1,10 +1,12 @@
 #include "io/blastdb_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "index/index_builder.hpp"
 #include "index/index_filter.hpp"
 #include "core/config.hpp"
 #include "core/types.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
+#include "util/common_init.hpp"
 #include "util/size_parser.hpp"
 #include "util/logger.hpp"
 
@@ -70,11 +72,7 @@ int main(int argc, char* argv[]) {
     else
         default_mem_str = std::to_string(default_mem >> 20) + "M";
 
-    // Check for --version
-    if (cli.has("--version")) {
-        std::fprintf(stderr, "ikafssnindex %s\n", IKAFSSN_VERSION);
-        return 0;
-    }
+    if (check_version(cli, "ikafssnindex")) return 0;
 
     // Check for help
     if (cli.has("-h") || cli.has("--help") || argc < 2) {
@@ -133,9 +131,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    bool verbose = cli.has("-v") || cli.has("--verbose");
-
-    Logger logger(verbose ? Logger::kDebug : Logger::kInfo);
+    Logger logger = make_logger(cli);
+    bool verbose = logger.verbose();
 
     // Create output directory
     std::error_code ec;
@@ -153,11 +150,7 @@ int main(int argc, char* argv[]) {
         vol_paths.push_back(db_path);
     }
 
-    int threads = cli.get_int("-threads", 0);
-    if (threads <= 0) {
-        threads = static_cast<int>(std::thread::hardware_concurrency());
-        if (threads <= 0) threads = 1;
-    }
+    int threads = resolve_threads(cli);
 
     int openvol = cli.get_int("-openvol", 1);
     if (openvol < 1) openvol = 1;
@@ -227,12 +220,8 @@ int main(int argc, char* argv[]) {
 
     // Pre-compute per-volume output prefixes
     std::vector<std::string> vol_prefixes(total_volumes);
-    {
-        char kk_str[8];
-        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-        for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            vol_prefixes[vi] = out_dir + "/" + vol_basenames[vi] + "." + kk_str + "mer";
-        }
+    for (uint16_t vi = 0; vi < total_volumes; vi++) {
+        vol_prefixes[vi] = index_file_stem(out_dir, vol_basenames[vi], k);
     }
 
     // Process volumes via TBB task_group with concurrency limited by -openvol.
@@ -319,9 +308,7 @@ int main(int argc, char* argv[]) {
 
     // Write .kvx manifest
     {
-        char kk_str[8];
-        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-        std::string kvx_path = out_dir + "/" + db_base + "." + kk_str + "mer.kvx";
+        std::string kvx_path = index_file_stem(out_dir, db_base, k) + ".kvx";
         FILE* fp = std::fopen(kvx_path.c_str(), "w");
         if (!fp) {
             std::fprintf(stderr, "Error: cannot write %s\n", kvx_path.c_str());
@@ -340,9 +327,7 @@ int main(int argc, char* argv[]) {
 
     // Post-build cross-volume frequency filtering
     if (max_freq_build > 0) {
-        char kk_str[8];
-        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-        std::string khx_path = out_dir + "/" + db_base + "." + kk_str + "mer.khx";
+        std::string khx_path = khx_path_for(out_dir, db_base, k);
 
         if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,
                                          freq_threshold, logger)) {

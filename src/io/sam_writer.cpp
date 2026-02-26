@@ -1,7 +1,10 @@
 #include "io/sam_writer.hpp"
 #include "core/version.hpp"
 
+#include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iostream>
 #include <map>
 #include <set>
 #include <string>
@@ -156,6 +159,33 @@ void write_results_bam(const std::string& output_path,
                        const std::vector<OutputHit>& hits,
                        uint8_t stage1_score_type) {
     write_sam_bam_impl(output_path, hits, stage1_score_type, true);
+}
+
+bool write_all_results(const std::string& output_path,
+                       const std::vector<OutputHit>& hits,
+                       OutputFormat fmt,
+                       uint8_t mode,
+                       uint8_t stage1_score_type,
+                       bool stage3_traceback) {
+    if (fmt == OutputFormat::kSam) {
+        write_results_sam(output_path.empty() ? "-" : output_path,
+                          hits, stage1_score_type);
+    } else if (fmt == OutputFormat::kBam) {
+        write_results_bam(output_path, hits, stage1_score_type);
+    } else if (output_path.empty()) {
+        write_results(std::cout, hits, fmt, mode, stage1_score_type,
+                      stage3_traceback);
+    } else {
+        std::ofstream out(output_path);
+        if (!out.is_open()) {
+            std::fprintf(stderr, "Error: cannot open output file %s\n",
+                         output_path.c_str());
+            return false;
+        }
+        write_results(out, hits, fmt, mode, stage1_score_type,
+                      stage3_traceback);
+    }
+    return true;
 }
 
 } // namespace ikafssn

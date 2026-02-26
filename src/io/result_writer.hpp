@@ -37,6 +37,17 @@ struct OutputHit {
 
 enum class OutputFormat { kTab, kJson, kSam, kBam };
 
+// Parse an output format string ("tab", "json", "sam", "bam").
+// Returns true on success. On failure, out is unchanged and error_msg is set.
+bool parse_output_format(const std::string& str, OutputFormat& out,
+                         std::string& error_msg);
+
+// Validate that the output format is compatible with mode/traceback settings.
+// Returns true if valid. On failure, sets error_msg.
+bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
+                            const std::string& output_path,
+                            std::string& error_msg);
+
 // Write results in tab-delimited format.
 void write_results_tab(std::ostream& out,
                        const std::vector<OutputHit>& hits,

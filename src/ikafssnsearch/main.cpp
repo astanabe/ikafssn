@@ -12,21 +12,19 @@
 #include "search/stage3_alignment.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/blastdb_reader.hpp"
-#include "io/kvx_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
 #include "io/sam_writer.hpp"
 #include "util/cli_parser.hpp"
+#include "util/common_init.hpp"
+#include "util/context_parser.hpp"
 #include "util/logger.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <regex>
 #include <set>
 #include <string>
 #include <thread>
@@ -83,79 +81,6 @@ static void print_usage(const char* prog) {
         prog);
 }
 
-struct VolumeFiles {
-    std::string kix_path;
-    std::string kpx_path;
-    std::string ksx_path;
-    uint16_t volume_index;
-    int k;
-};
-
-// Discover volumes for a specific k value from a .kvx manifest.
-static bool discover_from_kvx(const std::string& parent_dir,
-                               const std::string& db_name,
-                               int k,
-                               std::vector<VolumeFiles>& volumes) {
-    char kk_str[8];
-    std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-    std::string kvx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.kvx";
-
-    auto kvx = read_kvx(kvx_path);
-    if (!kvx) return false;
-
-    for (uint16_t vi = 0; vi < kvx->volume_basenames.size(); vi++) {
-        const auto& bn = kvx->volume_basenames[vi];
-        std::string base = parent_dir + "/" + bn + "." + kk_str + "mer";
-
-        if (!std::filesystem::exists(base + ".kix")) continue;
-
-        VolumeFiles vf;
-        vf.volume_index = vi;
-        vf.k = k;
-        vf.kix_path = base + ".kix";
-        vf.kpx_path = base + ".kpx";
-        vf.ksx_path = base + ".ksx";
-        volumes.push_back(vf);
-    }
-    return !volumes.empty();
-}
-
-static std::vector<VolumeFiles> discover_volumes(const std::string& ix_prefix, int filter_k = 0) {
-    std::vector<VolumeFiles> volumes;
-
-    std::filesystem::path prefix_path(ix_prefix);
-    std::string parent_dir = prefix_path.parent_path().string();
-    std::string db_name = prefix_path.filename().string();
-    if (parent_dir.empty()) parent_dir = ".";
-
-    if (filter_k > 0) {
-        discover_from_kvx(parent_dir, db_name, filter_k, volumes);
-    } else {
-        // Scan directory for <db_name>.XXmer.kvx files to discover available k values
-        std::regex kvx_pattern("(\\d+)mer\\.kvx");
-        std::string prefix_dot = db_name + ".";
-        for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
-            if (!entry.is_regular_file()) continue;
-            std::string fname = entry.path().filename().string();
-            if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
-                continue;
-            std::string suffix = fname.substr(prefix_dot.size());
-            std::smatch m;
-            if (std::regex_match(suffix, m, kvx_pattern)) {
-                int k = std::stoi(m[1].str());
-                discover_from_kvx(parent_dir, db_name, k, volumes);
-            }
-        }
-    }
-
-    std::sort(volumes.begin(), volumes.end(),
-              [](const VolumeFiles& a, const VolumeFiles& b) {
-                  if (a.k != b.k) return a.k < b.k;
-                  return a.volume_index < b.volume_index;
-              });
-    return volumes;
-}
-
 // Pre-opened volume data shared across threads (read-only after init).
 struct VolumeData {
     KixReader kix;
@@ -174,10 +99,7 @@ struct SearchJob {
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
-    if (cli.has("--version")) {
-        std::fprintf(stderr, "ikafssnsearch %s\n", IKAFSSN_VERSION);
-        return 0;
-    }
+    if (check_version(cli, "ikafssnsearch")) return 0;
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);
@@ -199,15 +121,8 @@ int main(int argc, char* argv[]) {
     std::string query_path = cli.get_string("-query");
     int filter_k = cli.get_int("-k", 0);
     std::string output_path = cli.get_string("-o");
-    bool verbose = cli.has("-v") || cli.has("--verbose");
-
-    int num_threads = cli.get_int("-threads", 0);
-    if (num_threads <= 0) {
-        num_threads = static_cast<int>(std::thread::hardware_concurrency());
-        if (num_threads <= 0) num_threads = 1;
-    }
-
-    Logger logger(verbose ? Logger::kDebug : Logger::kInfo);
+    int num_threads = resolve_threads(cli);
+    Logger logger = make_logger(cli);
 
     // Search config
     SearchConfig config;
@@ -259,23 +174,13 @@ int main(int argc, char* argv[]) {
     }
 
     // Parse -context: integer (bases) or decimal (query length multiplier)
-    std::string context_str = cli.get_string("-context", "0");
-    bool context_is_ratio = (context_str.find('.') != std::string::npos);
-    double context_ratio = 0.0;
-    uint32_t context_abs = 0;
-    if (context_is_ratio) {
-        context_ratio = std::stod(context_str);
-        if (context_ratio < 0) {
-            std::fprintf(stderr, "Error: -context ratio must be >= 0\n");
+    ContextParam ctx_param;
+    {
+        std::string err;
+        if (!parse_context(cli.get_string("-context", "0"), ctx_param, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-    } else {
-        int ctx_val = std::stoi(context_str);
-        if (ctx_val < 0) {
-            std::fprintf(stderr, "Error: -context must be >= 0\n");
-            return 1;
-        }
-        context_abs = static_cast<uint32_t>(ctx_val);
     }
 
     // Parse -stage1_min_score as double to support fractional values
@@ -322,29 +227,23 @@ int main(int argc, char* argv[]) {
     int accept_qdegen = cli.get_int("-accept_qdegen", 1);
 
     // Output format
-    OutputFormat outfmt = OutputFormat::kTab;
-    std::string outfmt_str = cli.get_string("-outfmt", "tab");
-    if (outfmt_str == "json") {
-        outfmt = OutputFormat::kJson;
-    } else if (outfmt_str == "sam") {
-        outfmt = OutputFormat::kSam;
-    } else if (outfmt_str == "bam") {
-        outfmt = OutputFormat::kBam;
-    } else if (outfmt_str != "tab") {
-        std::fprintf(stderr, "Error: unknown output format '%s'\n", outfmt_str.c_str());
-        return 1;
+    OutputFormat outfmt;
+    {
+        std::string err;
+        if (!parse_output_format(cli.get_string("-outfmt", "tab"), outfmt, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
     }
 
-    // SAM/BAM requires mode 3 + traceback
-    if ((outfmt == OutputFormat::kSam || outfmt == OutputFormat::kBam) &&
-        (config.mode != 3 || !stage3_config.traceback)) {
-        std::fprintf(stderr, "Error: SAM/BAM output requires -mode 3 and -stage3_traceback 1\n");
-        return 1;
-    }
-    // BAM requires output file
-    if (outfmt == OutputFormat::kBam && output_path.empty()) {
-        std::fprintf(stderr, "Error: BAM output requires -o <path>\n");
-        return 1;
+    // Validate output format compatibility
+    {
+        std::string err;
+        if (!validate_output_format(outfmt, config.mode, stage3_config.traceback,
+                                    output_path, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
     }
     // mode 3 requires BLAST DB
     if (config.mode == 3) {
@@ -455,14 +354,8 @@ int main(int argc, char* argv[]) {
     // Open shared .khx (non-fatal if missing)
     KhxReader shared_khx;
     {
-        std::filesystem::path prefix_path(ix_prefix);
-        std::string parent_dir = prefix_path.parent_path().string();
-        std::string db_name = prefix_path.filename().string();
-        if (parent_dir.empty()) parent_dir = ".";
-        char kk_str[8];
-        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-        std::string khx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.khx";
-        shared_khx.open(khx_path); // non-fatal
+        auto parts = parse_index_prefix(ix_prefix);
+        shared_khx.open(khx_path_for(parts.parent_dir, parts.db_name, k)); // non-fatal
     }
 
     // Resolve -max_freq: fraction -> absolute threshold using total NSEQ
@@ -672,7 +565,7 @@ int main(int argc, char* argv[]) {
     if (config.mode == 3) {
         logger.info("Running Stage 3 alignment on %zu hits...", all_hits.size());
         all_hits = run_stage3(all_hits, queries, db_path, stage3_config,
-                              context_is_ratio, context_ratio, context_abs,
+                              ctx_param.is_ratio, ctx_param.ratio, ctx_param.abs,
                               logger);
         logger.info("Stage 3 complete: %zu hits after filtering.", all_hits.size());
     }
@@ -719,24 +612,10 @@ int main(int argc, char* argv[]) {
     // num_results == 0: unlimited, skip sort and truncation
 
     // Write output
-    if (outfmt == OutputFormat::kSam) {
-        write_results_sam(output_path.empty() ? "-" : output_path,
-                          all_hits, config.stage1.stage1_score_type);
-    } else if (outfmt == OutputFormat::kBam) {
-        write_results_bam(output_path, all_hits, config.stage1.stage1_score_type);
-    } else if (output_path.empty()) {
-        write_results(std::cout, all_hits, outfmt,
-                      config.mode, config.stage1.stage1_score_type,
-                      stage3_config.traceback);
-    } else {
-        std::ofstream out(output_path);
-        if (!out.is_open()) {
-            std::fprintf(stderr, "Error: cannot open output file %s\n", output_path.c_str());
-            return 1;
-        }
-        write_results(out, all_hits, outfmt,
-                      config.mode, config.stage1.stage1_score_type,
-                      stage3_config.traceback);
+    if (!write_all_results(output_path, all_hits, outfmt,
+                           config.mode, config.stage1.stage1_score_type,
+                           stage3_config.traceback)) {
+        return 1;
     }
 
     logger.info("Done. %zu hit(s) reported.", all_hits.size());

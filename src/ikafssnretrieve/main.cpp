@@ -3,6 +3,8 @@
 #include "ikafssnretrieve/local_retriever.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
+#include "util/common_init.hpp"
+#include "util/context_parser.hpp"
 #include "util/logger.hpp"
 
 #ifdef IKAFSSN_ENABLE_REMOTE
@@ -51,10 +53,7 @@ static void print_usage(const char* prog) {
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
-    if (cli.has("--version")) {
-        std::fprintf(stderr, "ikafssnretrieve %s\n", IKAFSSN_VERSION);
-        return 0;
-    }
+    if (check_version(cli, "ikafssnretrieve")) return 0;
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);
@@ -81,27 +80,16 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    bool verbose = cli.has("-v") || cli.has("--verbose");
-    Logger logger(verbose ? Logger::kDebug : Logger::kInfo);
+    Logger logger = make_logger(cli);
 
     // Parse -context: integer (bases) or decimal (query length multiplier)
-    std::string context_str = cli.get_string("-context", "0");
-    bool context_is_ratio = (context_str.find('.') != std::string::npos);
-    double context_ratio = 0.0;
-    uint32_t context_abs = 0;
-    if (context_is_ratio) {
-        context_ratio = std::stod(context_str);
-        if (context_ratio < 0) {
-            std::fprintf(stderr, "Error: -context ratio must be >= 0\n");
+    ContextParam ctx_param;
+    {
+        std::string err;
+        if (!parse_context(cli.get_string("-context", "0"), ctx_param, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-    } else {
-        int ctx_val = std::stoi(context_str);
-        if (ctx_val < 0) {
-            std::fprintf(stderr, "Error: -context must be >= 0\n");
-            return 1;
-        }
-        context_abs = static_cast<uint32_t>(ctx_val);
     }
 
     // Read search results
@@ -135,15 +123,15 @@ int main(int argc, char* argv[]) {
         // Local retrieval
         std::string db_path = cli.get_string("-db");
 
-        if (context_is_ratio) {
+        if (ctx_param.is_ratio) {
             // Per-hit context calculation using q_length
             // Set per-hit context in RetrieveOptions for each hit
             // We modify hits' context by setting a per-hit effective context,
             // passing each hit individually with its computed context
             logger.info("Retrieving from local BLAST DB: %s (context ratio=%.4f)",
-                        db_path.c_str(), context_ratio);
+                        db_path.c_str(), ctx_param.ratio);
             for (auto& hit : hits) {
-                uint32_t ctx = static_cast<uint32_t>(hit.q_length * context_ratio);
+                uint32_t ctx = static_cast<uint32_t>(hit.q_length * ctx_param.ratio);
                 // Temporarily store per-hit context using a single-hit retrieval approach
                 RetrieveOptions opts;
                 opts.context = ctx;
@@ -152,7 +140,7 @@ int main(int argc, char* argv[]) {
             }
         } else {
             RetrieveOptions opts;
-            opts.context = context_abs;
+            opts.context = ctx_param.abs;
             logger.info("Retrieving from local BLAST DB: %s", db_path.c_str());
             retrieved = retrieve_local(hits, db_path, opts, *out_ptr);
         }
@@ -161,20 +149,20 @@ int main(int argc, char* argv[]) {
     else if (has_remote) {
         // Remote retrieval via NCBI efetch
         EfetchOptions opts;
-        if (context_is_ratio) {
+        if (ctx_param.is_ratio) {
             // For remote, per-hit context: use max q_length * ratio as approximation
             // or handle per-hit in efetch_retriever
             // For simplicity, compute per-hit max context
             uint32_t max_ctx = 0;
             for (const auto& hit : hits) {
-                uint32_t ctx = static_cast<uint32_t>(hit.q_length * context_ratio);
+                uint32_t ctx = static_cast<uint32_t>(hit.q_length * ctx_param.ratio);
                 if (ctx > max_ctx) max_ctx = ctx;
             }
             opts.context = max_ctx;
             logger.info("Remote retrieval with context ratio=%.4f (max context=%u bases)",
-                        context_ratio, max_ctx);
+                        ctx_param.ratio, max_ctx);
         } else {
-            opts.context = context_abs;
+            opts.context = ctx_param.abs;
         }
         opts.batch_size = static_cast<uint32_t>(cli.get_int("-batch_size", 100));
         opts.retries = static_cast<uint32_t>(cli.get_int("-retries", 3));

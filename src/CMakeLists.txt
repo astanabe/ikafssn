@@ -36,6 +36,7 @@ add_library(ikafssn_io STATIC
     io/mmap_file.cpp
     io/fasta_reader.cpp
     io/kvx_reader.cpp
+    io/volume_discovery.cpp
     io/seqidlist_reader.cpp
     io/result_writer.cpp
     io/result_reader.cpp

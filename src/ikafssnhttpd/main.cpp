@@ -2,6 +2,7 @@
 #include "ikafssnhttpd/backend_client.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
+#include "util/common_init.hpp"
 #include "util/logger.hpp"
 #include "util/socket_utils.hpp"
 
@@ -38,10 +39,7 @@ static void print_usage(const char* prog) {
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
-    if (cli.has("--version")) {
-        std::fprintf(stderr, "ikafssnhttpd %s\n", IKAFSSN_VERSION);
-        return 0;
-    }
+    if (check_version(cli, "ikafssnhttpd")) return 0;
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);
@@ -55,8 +53,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    bool verbose = cli.has("-v") || cli.has("--verbose");
-    Logger logger(verbose ? Logger::kDebug : Logger::kInfo);
+    Logger logger = make_logger(cli);
+    bool verbose = logger.verbose();
 
     // Create backend client
     BackendMode mode;
@@ -89,11 +87,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    int threads = cli.get_int("-threads", 0);
-    if (threads <= 0) {
-        threads = static_cast<int>(std::thread::hardware_concurrency());
-        if (threads <= 0) threads = 1;
-    }
+    int threads = resolve_threads(cli);
 
     // Configure Drogon
     drogon::app()

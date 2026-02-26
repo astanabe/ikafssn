@@ -1,12 +1,13 @@
 #include "core/config.hpp"
 #include "core/types.hpp"
 #include "core/version.hpp"
+#include "util/common_init.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
 #include "index/khx_reader.hpp"
 #include "io/blastdb_reader.hpp"
-#include "io/kvx_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "util/cli_parser.hpp"
 #include "util/logger.hpp"
 
@@ -15,7 +16,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <numeric>
-#include <regex>
 #include <string>
 #include <vector>
 
@@ -33,61 +33,6 @@ static void print_usage(const char* prog) {
         "  -v, --verbose           Verbose output (k-mer frequency distribution details)\n"
         "  -h, --help              Show this help\n",
         prog);
-}
-
-struct VolumeFiles {
-    std::string kix_path;
-    std::string kpx_path;
-    std::string ksx_path;
-    uint16_t volume_index;
-    int k;
-};
-
-static std::vector<VolumeFiles> discover_volumes(const std::string& ix_prefix) {
-    std::vector<VolumeFiles> volumes;
-
-    std::filesystem::path prefix_path(ix_prefix);
-    std::string parent_dir = prefix_path.parent_path().string();
-    std::string db_name = prefix_path.filename().string();
-    if (parent_dir.empty()) parent_dir = ".";
-
-    // Discover volumes from .kvx manifests
-    std::regex kvx_pattern("(\\d+)mer\\.kvx");
-    std::string prefix_dot = db_name + ".";
-    for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
-        if (!entry.is_regular_file()) continue;
-        std::string fname = entry.path().filename().string();
-        if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
-            continue;
-        std::string suffix = fname.substr(prefix_dot.size());
-        std::smatch m;
-        if (std::regex_match(suffix, m, kvx_pattern)) {
-            int k = std::stoi(m[1].str());
-            char kk_str[8];
-            std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-            std::string kvx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.kvx";
-            auto kvx = read_kvx(kvx_path);
-            if (kvx) {
-                for (uint16_t vi = 0; vi < kvx->volume_basenames.size(); vi++) {
-                    std::string base = parent_dir + "/" + kvx->volume_basenames[vi] + "." + kk_str + "mer";
-                    if (!std::filesystem::exists(base + ".kix")) continue;
-                    VolumeFiles vf;
-                    vf.volume_index = vi;
-                    vf.k = k;
-                    vf.kix_path = base + ".kix";
-                    vf.kpx_path = base + ".kpx";
-                    vf.ksx_path = base + ".ksx";
-                    volumes.push_back(vf);
-                }
-            }
-        }
-    }
-
-    std::sort(volumes.begin(), volumes.end(),
-              [](const VolumeFiles& a, const VolumeFiles& b) {
-                  return a.volume_index < b.volume_index;
-              });
-    return volumes;
 }
 
 static std::string format_size(uint64_t bytes) {
@@ -209,10 +154,7 @@ static void print_frequency_stats(const FrequencyStats& fs) {
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
-    if (cli.has("--version")) {
-        std::fprintf(stderr, "ikafssninfo %s\n", IKAFSSN_VERSION);
-        return 0;
-    }
+    if (check_version(cli, "ikafssninfo")) return 0;
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);
@@ -322,13 +264,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Try to open shared .khx
-    std::filesystem::path prefix_path(ix_prefix);
-    std::string parent_dir_main = prefix_path.parent_path().string();
-    std::string db_name_main = prefix_path.filename().string();
-    if (parent_dir_main.empty()) parent_dir_main = ".";
-    char kk_str[8];
-    std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-    std::string khx_path = parent_dir_main + "/" + db_name_main + "." + kk_str + "mer.khx";
+    auto prefix_parts = parse_index_prefix(ix_prefix);
+    std::string khx_path = khx_path_for(prefix_parts.parent_dir, prefix_parts.db_name, k);
     KhxReader shared_khx;
     bool has_khx = shared_khx.open(khx_path);
     uint64_t khx_size = has_khx ? file_size(khx_path) : 0;

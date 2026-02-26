@@ -3,6 +3,7 @@
 #include "ikafssnclient/http_client.hpp"
 #endif
 #include "core/version.hpp"
+#include "util/common_init.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
@@ -16,8 +17,6 @@
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
-#include <iostream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -137,10 +136,7 @@ static bool execute_search(
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
-    if (cli.has("--version")) {
-        std::fprintf(stderr, "ikafssnclient %s\n", IKAFSSN_VERSION);
-        return 0;
-    }
+    if (check_version(cli, "ikafssnclient")) return 0;
 
     if (cli.has("-h") || cli.has("--help")) {
         print_usage(argv[0]);
@@ -174,8 +170,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    bool verbose = cli.has("-v") || cli.has("--verbose");
-    Logger logger(verbose ? Logger::kDebug : Logger::kInfo);
+    Logger logger = make_logger(cli);
 
 #ifdef IKAFSSN_ENABLE_HTTP
     // HTTP authentication resolution
@@ -200,17 +195,13 @@ int main(int argc, char* argv[]) {
     std::string output_path = cli.get_string("-o");
 
     // Output format
-    OutputFormat outfmt = OutputFormat::kTab;
-    std::string outfmt_str = cli.get_string("-outfmt", "tab");
-    if (outfmt_str == "json") {
-        outfmt = OutputFormat::kJson;
-    } else if (outfmt_str == "sam") {
-        outfmt = OutputFormat::kSam;
-    } else if (outfmt_str == "bam") {
-        outfmt = OutputFormat::kBam;
-    } else if (outfmt_str != "tab") {
-        std::fprintf(stderr, "Error: unknown output format '%s'\n", outfmt_str.c_str());
-        return 1;
+    OutputFormat outfmt;
+    {
+        std::string err;
+        if (!parse_output_format(cli.get_string("-outfmt", "tab"), outfmt, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
     }
 
     // Read query FASTA
@@ -281,16 +272,15 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // SAM/BAM requires mode 3 + traceback
-    if ((outfmt == OutputFormat::kSam || outfmt == OutputFormat::kBam) &&
-        (base_req.mode != 3 || base_req.stage3_traceback == 0)) {
-        std::fprintf(stderr, "Error: SAM/BAM output requires -mode 3 and -stage3_traceback 1\n");
-        return 1;
-    }
-    // BAM requires -o
-    if (outfmt == OutputFormat::kBam && output_path.empty()) {
-        std::fprintf(stderr, "Error: BAM output requires -o <path>\n");
-        return 1;
+    // Validate output format compatibility
+    {
+        std::string err;
+        if (!validate_output_format(outfmt, base_req.mode,
+                                    base_req.stage3_traceback != 0,
+                                    output_path, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
     }
 
     // Seqidlist
@@ -415,24 +405,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Write output using mode/stage1_score from response
-    if (outfmt == OutputFormat::kSam) {
-        write_results_sam(output_path.empty() ? "-" : output_path,
-                          all_hits, resp_stage1_score);
-    } else if (outfmt == OutputFormat::kBam) {
-        write_results_bam(output_path, all_hits, resp_stage1_score);
-    } else if (output_path.empty()) {
-        write_results(std::cout, all_hits, outfmt,
-                      resp_mode, resp_stage1_score,
-                      resp_stage3_traceback);
-    } else {
-        std::ofstream out(output_path);
-        if (!out.is_open()) {
-            std::fprintf(stderr, "Error: cannot open output file %s\n", output_path.c_str());
-            return 1;
-        }
-        write_results(out, all_hits, outfmt,
-                      resp_mode, resp_stage1_score,
-                      resp_stage3_traceback);
+    if (!write_all_results(output_path, all_hits, outfmt,
+                           resp_mode, resp_stage1_score,
+                           resp_stage3_traceback)) {
+        return 1;
     }
 
     logger.info("Done. %zu hit(s) reported.", all_hits.size());

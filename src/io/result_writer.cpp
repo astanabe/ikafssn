@@ -191,4 +191,36 @@ void write_results(std::ostream& out,
     }
 }
 
+bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
+                            const std::string& output_path,
+                            std::string& error_msg) {
+    if ((fmt == OutputFormat::kSam || fmt == OutputFormat::kBam) &&
+        (mode != 3 || !traceback)) {
+        error_msg = "Error: SAM/BAM output requires -mode 3 and -stage3_traceback 1";
+        return false;
+    }
+    if (fmt == OutputFormat::kBam && output_path.empty()) {
+        error_msg = "Error: BAM output requires -o <path>";
+        return false;
+    }
+    return true;
+}
+
+bool parse_output_format(const std::string& str, OutputFormat& out,
+                         std::string& error_msg) {
+    if (str == "tab") {
+        out = OutputFormat::kTab;
+    } else if (str == "json") {
+        out = OutputFormat::kJson;
+    } else if (str == "sam") {
+        out = OutputFormat::kSam;
+    } else if (str == "bam") {
+        out = OutputFormat::kBam;
+    } else {
+        error_msg = "Error: unknown output format '" + str + "'";
+        return false;
+    }
+    return true;
+}
+
 } // namespace ikafssn
