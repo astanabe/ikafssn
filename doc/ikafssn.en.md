@@ -737,10 +737,11 @@ Install the required packages (excluding NCBI C++ Toolkit) with the following co
 ```bash
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
     libcurl4-openssl-dev libjsoncpp-dev
+sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
 sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev
 ```
 
-The second line installs Drogon and its additional dependencies that are not automatically pulled in by `libdrogon-dev` on Ubuntu. If ikafssnhttpd is not needed, omit the second line and build with `-DBUILD_HTTPD=OFF`.
+The second line installs dependencies required for building Parasail and htslib from source. The third line installs Drogon and its additional dependencies that are not automatically pulled in by `libdrogon-dev` on Ubuntu. If ikafssnhttpd is not needed, omit the third line and build with `-DBUILD_HTTPD=OFF`.
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
@@ -750,7 +751,8 @@ sudo dnf install -y epel-release
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y libuuid-devel openssl-devel zlib-devel
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y libuuid-devel openssl-devel
 ```
 
 **Oracle Linux 9:**
@@ -761,7 +763,8 @@ sudo dnf install -y oracle-epel-release-el9
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y libuuid-devel openssl-devel zlib-devel
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y libuuid-devel openssl-devel
 ```
 
 **AlmaLinux 10 / Rocky Linux 10:**
@@ -771,7 +774,8 @@ sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y libuuid-devel openssl-devel zlib-devel
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y libuuid-devel openssl-devel
 ```
 
 **Oracle Linux 10:**
@@ -781,10 +785,48 @@ sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y libuuid-devel openssl-devel zlib-devel
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y libuuid-devel openssl-devel
 ```
 
-On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. Drogon is not packaged for EL9/EL10; the last line of each block installs dependencies needed to build Drogon from source. If ikafssnhttpd is not needed, omit the last line and build with `-DBUILD_HTTPD=OFF`.
+On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. The second-to-last line of each block installs dependencies required for building Parasail and htslib from source. The last line installs dependencies needed to build Drogon from source. If ikafssnhttpd is not needed, omit the last line and build with `-DBUILD_HTTPD=OFF`.
+
+### Parasail
+
+ikafssn uses the Parasail library for Stage 3 pairwise alignment. By default, CMake looks for Parasail at `./parasail` relative to the source root. If Parasail is installed elsewhere, specify the path with `-DPARASAIL_DIR`.
+
+To download, build, and install Parasail into `./parasail`, run the following from the ikafssn source root:
+
+```bash
+curl -L -o parasail-2.6.2.tar.gz \
+    https://github.com/jeffdaily/parasail/releases/download/v2.6.2/parasail-2.6.2.tar.gz
+tar xf parasail-2.6.2.tar.gz
+cd parasail-2.6.2
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/parasail" \
+    -DBUILD_SHARED_LIBS=OFF
+make -j$(nproc)
+make install
+cd ../..
+```
+
+### htslib
+
+ikafssn uses htslib for SAM/BAM output. By default, CMake looks for htslib at `./htslib` relative to the source root. If htslib is installed elsewhere, specify the path with `-DHTSLIB_DIR`.
+
+To download, build, and install htslib into `./htslib`, run the following from the ikafssn source root:
+
+```bash
+curl -L -o htslib-1.23.tar.bz2 \
+    https://github.com/samtools/htslib/releases/download/1.23/htslib-1.23.tar.bz2
+tar xf htslib-1.23.tar.bz2
+cd htslib-1.23
+autoreconf -i
+./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3
+make -j$(nproc)
+make install
+cd ..
+```
 
 ### NCBI C++ Toolkit
 

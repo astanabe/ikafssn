@@ -688,6 +688,8 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 - CMake >= 3.16
 - NCBI C++ Toolkit (BLAST DB アクセス用)
 - Intel TBB (並列化用)
+- Parasail >= 2.6 (Stage 3 ペアワイズアライメント用)
+- htslib >= 1.17 (SAM/BAM 出力用)
 - Drogon (ikafssnhttpd 用、オプション)
 - libcurl (HTTP クライアントモードおよびリモート取得用、オプション)
 
@@ -700,10 +702,11 @@ NCBI C++ Toolkit 以外の依存パッケージを以下のコマンドでイン
 ```bash
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
     libcurl4-openssl-dev libjsoncpp-dev
+sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
 sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev
 ```
 
-2 行目は Drogon および Ubuntu で `libdrogon-dev` が自動的に導入しない追加依存パッケージです。ikafssnhttpd が不要な場合は 2 行目を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。
+2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。3 行目は Drogon および Ubuntu で `libdrogon-dev` が自動的に導入しない追加依存パッケージです。ikafssnhttpd が不要な場合は 3 行目を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
@@ -713,7 +716,8 @@ sudo dnf install -y epel-release
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y libuuid-devel openssl-devel zlib-devel
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y libuuid-devel openssl-devel
 ```
 
 **Oracle Linux 9:**
@@ -724,7 +728,8 @@ sudo dnf install -y oracle-epel-release-el9
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y libuuid-devel openssl-devel zlib-devel
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y libuuid-devel openssl-devel
 ```
 
 **AlmaLinux 10 / Rocky Linux 10:**
@@ -734,7 +739,8 @@ sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y libuuid-devel openssl-devel zlib-devel
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y libuuid-devel openssl-devel
 ```
 
 **Oracle Linux 10:**
@@ -744,10 +750,48 @@ sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
 sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y libuuid-devel openssl-devel zlib-devel
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y libuuid-devel openssl-devel
 ```
 
-EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。Drogon は EL9/EL10 ではパッケージ提供されていないため、各ブロックの最終行で Drogon のソースビルドに必要な依存パッケージをインストールしています。ikafssnhttpd が不要な場合は最終行を省略し、`-DBUILD_HTTPD=OFF` でビルドしてください。
+EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。各ブロックの最後から 2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。最終行は Drogon のソースビルドに必要な依存パッケージです。ikafssnhttpd が不要な場合は最終行を省略し、`-DBUILD_HTTPD=OFF` でビルドしてください。
+
+### Parasail
+
+ikafssn は Stage 3 ペアワイズアライメントに Parasail ライブラリを使用します。デフォルトではソースルート直下の `./parasail` を参照します。別の場所にインストール済みの場合は `-DPARASAIL_DIR` で指定してください。
+
+Parasail のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
+
+```bash
+curl -L -o parasail-2.6.2.tar.gz \
+    https://github.com/jeffdaily/parasail/releases/download/v2.6.2/parasail-2.6.2.tar.gz
+tar xf parasail-2.6.2.tar.gz
+cd parasail-2.6.2
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/parasail" \
+    -DBUILD_SHARED_LIBS=OFF
+make -j$(nproc)
+make install
+cd ../..
+```
+
+### htslib
+
+ikafssn は SAM/BAM 出力に htslib を使用します。デフォルトではソースルート直下の `./htslib` を参照します。別の場所にインストール済みの場合は `-DHTSLIB_DIR` で指定してください。
+
+htslib のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
+
+```bash
+curl -L -o htslib-1.23.tar.bz2 \
+    https://github.com/samtools/htslib/releases/download/1.23/htslib-1.23.tar.bz2
+tar xf htslib-1.23.tar.bz2
+cd htslib-1.23
+autoreconf -i
+./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3
+make -j$(nproc)
+make install
+cd ..
+```
 
 ### NCBI C++ Toolkit
 
