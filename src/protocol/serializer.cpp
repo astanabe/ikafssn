@@ -457,7 +457,7 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format (v2):
+// Wire format (v3):
 //   u8   status
 //   u8   default_k
 //   i32  max_active_sequences
@@ -476,6 +476,7 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 //         u16 volume_index
 //         u32 num_sequences
 //         u64 total_postings
+//         u64 total_bases
 //         str16 db_name
 
 std::vector<uint8_t> serialize(const InfoResponse& resp) {
@@ -503,6 +504,7 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
                 put_u16(buf, v.volume_index);
                 put_u32(buf, v.num_sequences);
                 put_u64(buf, v.total_postings);
+                put_u64(buf, v.total_bases);
                 put_str16(buf, v.db_name);
             }
         }
@@ -547,6 +549,7 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
                 if (!r.get_u16(v.volume_index)) return false;
                 if (!r.get_u32(v.num_sequences)) return false;
                 if (!r.get_u64(v.total_postings)) return false;
+                if (!r.get_u64(v.total_bases)) return false;
                 if (!r.get_str16(v.db_name)) return false;
             }
         }

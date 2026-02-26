@@ -43,7 +43,7 @@ bool write_frame(int fd, MsgType type, const std::vector<uint8_t>& payload) {
     hdr.magic = FRAME_MAGIC;
     hdr.payload_length = static_cast<uint32_t>(payload.size());
     hdr.msg_type = static_cast<uint8_t>(type);
-    hdr.msg_version = 2;
+    hdr.msg_version = 3;
     hdr.reserved = 0;
 
     if (!write_all(fd, &hdr, sizeof(hdr))) return false;
@@ -57,7 +57,7 @@ bool read_frame(int fd, FrameHeader& header, std::vector<uint8_t>& payload) {
     if (!read_all(fd, &header, sizeof(header))) return false;
 
     if (header.magic != FRAME_MAGIC) return false;
-    if (header.msg_version != 2) return false;
+    if (header.msg_version != 3) return false;
     if (header.payload_length > MAX_PAYLOAD_SIZE) return false;
 
     payload.resize(header.payload_length);

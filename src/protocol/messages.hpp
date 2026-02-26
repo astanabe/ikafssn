@@ -122,6 +122,7 @@ struct VolumeInfo {
     uint16_t volume_index;
     uint32_t num_sequences;
     uint64_t total_postings;
+    uint64_t total_bases = 0;
     std::string db_name;
 };
 

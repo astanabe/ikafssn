@@ -11,39 +11,8 @@
 
 namespace ikafssn {
 
-HttpController::HttpController(std::shared_ptr<BackendClient> backend)
-    : backend_(std::move(backend)) {}
-
-bool HttpController::init_cache(int timeout_seconds) {
-    auto start = std::chrono::steady_clock::now();
-    int delay = 1;  // exponential backoff: 1, 2, 4, 8, ...
-
-    while (true) {
-        InfoResponse info;
-        std::string error_msg;
-        if (backend_->info(info, error_msg)) {
-            std::lock_guard<std::mutex> lock(cache_mutex_);
-            cached_info_ = std::move(info);
-            cache_valid_ = true;
-            return true;
-        }
-
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now() - start).count();
-        if (elapsed >= timeout_seconds) {
-            return false;
-        }
-
-        std::this_thread::sleep_for(std::chrono::seconds(delay));
-        delay = std::min(delay * 2, 8);
-    }
-}
-
-void HttpController::update_cache(const InfoResponse& info) {
-    std::lock_guard<std::mutex> lock(cache_mutex_);
-    cached_info_ = info;
-    cache_valid_ = true;
-}
+HttpController::HttpController(std::shared_ptr<BackendManager> manager)
+    : manager_(std::move(manager)) {}
 
 void HttpController::register_routes(const std::string& path_prefix) {
     std::string prefix = path_prefix;
@@ -183,44 +152,25 @@ void HttpController::search(
 
     // Phase 1: cached validation (synchronous, on Drogon thread)
     {
-        std::lock_guard<std::mutex> lock(cache_mutex_);
-        if (cache_valid_) {
-            std::string err = validate_info(cached_info_, sreq.db_name,
-                                            sreq.k, sreq.mode, false);
-            if (!err.empty()) {
-                callback(make_error_response(drogon::k400BadRequest, err));
-                return;
-            }
+        auto merged = manager_->merged_info();
+        std::string err = validate_info(merged, sreq.db_name,
+                                        sreq.k, sreq.mode, false);
+        if (!err.empty()) {
+            callback(make_error_response(drogon::k400BadRequest, err));
+            return;
         }
     }
 
     // Offload blocking backend I/O to a worker thread.
-    // Drogon event loop threads must not be blocked.
-    auto backend = backend_;
-    auto self = this;
+    auto manager = manager_;
     auto cb = std::make_shared<std::function<void(const drogon::HttpResponsePtr&)>>(
         std::move(callback));
 
-    std::thread([self, backend, sreq = std::move(sreq), cb]() {
-        // Phase 2: fresh validation with slot check
-        {
-            InfoResponse fresh;
-            std::string info_err;
-            if (backend->info(fresh, info_err)) {
-                self->update_cache(fresh);
-                std::string err = validate_info(fresh, sreq.db_name,
-                                                sreq.k, sreq.mode, true);
-                if (!err.empty()) {
-                    (*cb)(make_error_response(drogon::k400BadRequest, err));
-                    return;
-                }
-            }
-        }
-
-        // Phase 3: actual search
+    std::thread([manager, sreq = std::move(sreq), cb]() {
+        // Route search to best available backend
         SearchResponse sresp;
         std::string error_msg;
-        if (!backend->search(sreq, sresp, error_msg)) {
+        if (!manager->route_search(sreq, sresp, error_msg)) {
             (*cb)(make_error_response(drogon::k502BadGateway, error_msg));
             return;
         }
@@ -304,20 +254,19 @@ void HttpController::health(
     const drogon::HttpRequestPtr& req,
     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
 
-    auto backend = backend_;
+    auto manager = manager_;
     auto cb = std::make_shared<std::function<void(const drogon::HttpResponsePtr&)>>(
         std::move(callback));
 
-    std::thread([backend, cb]() {
-        HealthResponse hresp;
+    std::thread([manager, cb]() {
         std::string error_msg;
-        if (!backend->health_check(hresp, error_msg)) {
+        if (!manager->check_any_health(error_msg)) {
             (*cb)(make_error_response(drogon::k502BadGateway, error_msg));
             return;
         }
 
         Json::Value result;
-        result["status"] = (hresp.status == 0) ? "ok" : "error";
+        result["status"] = "ok";
 
         auto resp = drogon::HttpResponse::newHttpJsonResponse(std::move(result));
         (*cb)(resp);
@@ -328,62 +277,12 @@ void HttpController::info(
     const drogon::HttpRequestPtr& req,
     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
 
-    auto backend = backend_;
+    auto manager = manager_;
     auto cb = std::make_shared<std::function<void(const drogon::HttpResponsePtr&)>>(
         std::move(callback));
 
-    std::thread([backend, cb]() {
-        InfoResponse iresp;
-        std::string error_msg;
-        if (!backend->info(iresp, error_msg)) {
-            (*cb)(make_error_response(drogon::k502BadGateway, error_msg));
-            return;
-        }
-
-        Json::Value result;
-        result["status"] = (iresp.status == 0) ? "success" : "error";
-        result["default_k"] = iresp.default_k;
-        result["max_active_sequences"] = iresp.max_active_sequences;
-        result["active_sequences"] = iresp.active_sequences;
-
-        Json::Value databases_arr(Json::arrayValue);
-        for (const auto& db : iresp.databases) {
-            Json::Value dbobj;
-            dbobj["name"] = db.name;
-            dbobj["default_k"] = db.default_k;
-            dbobj["max_mode"] = db.max_mode;
-
-            Json::Value groups_arr(Json::arrayValue);
-            for (const auto& g : db.groups) {
-                Json::Value gobj;
-                gobj["k"] = g.k;
-                gobj["kmer_type"] = (g.kmer_type == 0) ? "uint16" : "uint32";
-
-                uint64_t group_total_sequences = 0;
-                uint64_t group_total_postings = 0;
-
-                Json::Value vols_arr(Json::arrayValue);
-                for (const auto& v : g.volumes) {
-                    Json::Value vobj;
-                    vobj["volume_index"] = v.volume_index;
-                    vobj["num_sequences"] = v.num_sequences;
-                    vobj["total_postings"] = static_cast<Json::UInt64>(v.total_postings);
-                    vobj["db_name"] = v.db_name;
-                    vols_arr.append(std::move(vobj));
-
-                    group_total_sequences += v.num_sequences;
-                    group_total_postings += v.total_postings;
-                }
-                gobj["volumes"] = std::move(vols_arr);
-                gobj["num_volumes"] = static_cast<Json::UInt>(g.volumes.size());
-                gobj["total_sequences"] = static_cast<Json::UInt64>(group_total_sequences);
-                gobj["total_postings"] = static_cast<Json::UInt64>(group_total_postings);
-                groups_arr.append(std::move(gobj));
-            }
-            dbobj["kmer_groups"] = std::move(groups_arr);
-            databases_arr.append(std::move(dbobj));
-        }
-        result["databases"] = std::move(databases_arr);
+    std::thread([manager, cb]() {
+        auto result = manager->build_info_json();
 
         auto resp = drogon::HttpResponse::newHttpJsonResponse(std::move(result));
         (*cb)(resp);

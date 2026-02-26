@@ -336,21 +336,34 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 
 ### ikafssnhttpd
 
-HTTP REST API daemon. Connects to `ikafssnserver` and exposes search as an HTTP API. Uses the Drogon framework. On startup, it connects to the backend server to cache its capabilities (retrying with exponential backoff for up to 30 seconds). Search requests are validated in two phases: first against the cached capabilities (synchronous, no backend round-trip) to reject obviously invalid requests immediately, then against fresh server state (including slot availability) before the actual search.
+HTTP REST API daemon. Connects to one or more `ikafssnserver` instances and exposes search as an HTTP API. Uses the Drogon framework. Multiple backends can be specified for multi-database support or load balancing of same-database replicas.
+
+On startup, it connects to all configured backends to cache their capabilities (retrying with exponential backoff for up to 30 seconds). If the same database name appears on multiple backends, cross-server validation ensures that k-value sets, total sequence counts, and total bases are identical; mismatches cause a startup error. Search requests are validated against the merged capabilities (synchronous, no backend round-trip) to reject obviously invalid requests immediately, then routed to the best available backend based on priority and slot availability.
+
+**Routing and health:**
+
+- **Priority**: Backends are prioritized by CLI argument order (first = highest priority).
+- **Selection**: For each search request, the backend with the highest priority and available capacity (cached `active_sequences < max_active_sequences`) is selected. If all backends are full, the highest-priority one is used.
+- **Pre-check**: Before each search, a fresh info request is sent to the selected backend to verify connectivity.
+- **Exclusion**: If a backend fails to respond (connection error on info or search), it is excluded for `-exclusion_time` seconds. Excluded backends are automatically re-checked during heartbeat and re-enabled once reachable.
+- **Heartbeat**: A background thread refreshes all backends' info every `-heartbeat_interval` seconds.
+- **No retry in httpd**: If a search request fails after backend selection, the error is returned to the client. `ikafssnclient` handles retry of rejected queries.
 
 ```
 ikafssnhttpd [options]
 
-Backend connection (one required):
+Backend connection (at least one required; order = priority):
   -server_socket <path>      UNIX socket path to ikafssnserver
   -server_tcp <host>:<port>  TCP address of ikafssnserver
 
 Options:
-  -listen <host>:<port>  HTTP listen address (default: 0.0.0.0:8080)
-  -path_prefix <prefix>  API path prefix (e.g., /nt)
-  -threads <int>         Drogon I/O threads (default: all cores)
-  -pid <path>            PID file path
-  -v, --verbose          Verbose logging
+  -listen <host>:<port>       HTTP listen address (default: 0.0.0.0:8080)
+  -path_prefix <prefix>       API path prefix (e.g., /nt)
+  -threads <int>              Drogon I/O threads (default: all cores)
+  -heartbeat_interval <int>   Heartbeat interval in seconds (default: 3600)
+  -exclusion_time <int>       Backend exclusion time in seconds (default: 3600)
+  -pid <path>                 PID file path
+  -v, --verbose               Verbose logging
 ```
 
 **REST API endpoints:**
@@ -358,24 +371,28 @@ Options:
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/v1/search` | Search request (query sequences in JSON body) |
-| GET | `/api/v1/info` | Index information |
-| GET | `/api/v1/health` | Health check |
+| GET | `/api/v1/info` | Aggregated index information from all backends |
+| GET | `/api/v1/health` | Health check (OK if any backend is reachable) |
+
+The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_active_sequences` and `active_sequences` across all serving backends.
 
 **Examples:**
 
 ```bash
-# Connect to local ikafssnserver via UNIX socket
+# Single backend via UNIX socket
 ikafssnhttpd -server_socket /var/run/ikafssn.sock -listen 0.0.0.0:8080
 
-# Connect to remote ikafssnserver via TCP
+# Single backend via TCP
 ikafssnhttpd -server_tcp 10.0.1.5:9100 -listen 0.0.0.0:8080
 
-# Multiple DBs: single ikafssnserver with multi-DB, one ikafssnhttpd
-ikafssnhttpd -server_socket /var/run/ikafssn.sock -listen 0.0.0.0:8080
+# Multiple backends for load balancing (same DB on two servers)
+ikafssnhttpd -server_tcp server1:9100 -server_tcp server2:9100 -listen :8080
 
-# Alternative: separate servers with path prefix (pair with nginx routing)
-ikafssnhttpd -server_socket /var/run/ikafssn_nt.sock -listen :8080 -path_prefix /nt
-ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix /rs
+# Multiple backends with different DBs
+ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
+
+# Mixed: primary + failover
+ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -listen :8080
 ```
 
 ### ikafssnclient
@@ -513,8 +530,8 @@ Local mode output includes:
 Remote mode output includes:
 
 - Active/max sequence slots
-- Per-database information: name, default k, max mode, k-mer groups with volume counts and posting statistics
-- With `-v`: per-volume details within each k-mer group
+- Per-database information: name, default k, max mode, k-mer groups with volume counts, sequence counts, total bases, and posting statistics
+- With `-v`: per-volume details (sequence count, total bases, postings) within each k-mer group
 
 **Examples:**
 
@@ -803,6 +820,24 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
 ikafssnclient -socket /var/run/ikafssn.sock -db refseq_genomic -query query.fasta
 ```
+
+### Multi-Backend (Load Balancing / Multi-Server)
+
+A single `ikafssnhttpd` can connect to multiple `ikafssnserver` instances:
+
+```
+# Load balancing: same DB on two servers, one httpd
+ikafssnserver -ix ./nt_index -db nt -tcp 0.0.0.0:9100   # Server A
+ikafssnserver -ix ./nt_index -db nt -tcp 0.0.0.0:9100   # Server B
+ikafssnhttpd -server_tcp A:9100 -server_tcp B:9100 -listen :8080
+
+# Different DBs on separate servers, unified through one httpd
+ikafssnserver -ix ./nt_index -db nt -socket /var/run/nt.sock
+ikafssnserver -ix ./rs_index -db refseq -socket /var/run/rs.sock
+ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
+```
+
+When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that k-value sets, total sequence counts, and total bases are identical. Requests are routed to the highest-priority backend with available capacity. Note that capacity values (`max_active_sequences`, `active_sequences`) are shared per server across all databases served by that server.
 
 Alternatively, separate processes with path-based HTTP routing:
 

@@ -314,6 +314,7 @@ static bool parse_info_json(const std::string& body,
                             v.volume_index = static_cast<uint16_t>(vj.get("volume_index", 0).asUInt());
                             v.num_sequences = vj.get("num_sequences", 0).asUInt();
                             v.total_postings = vj.get("total_postings", 0).asUInt64();
+                            v.total_bases = vj.get("total_bases", 0).asUInt64();
                             v.db_name = vj.get("db_name", "").asString();
                             g.volumes.push_back(std::move(v));
                         }

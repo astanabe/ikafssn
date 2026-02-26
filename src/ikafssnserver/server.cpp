@@ -71,6 +71,11 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
             return false;
         }
 
+        svd.total_bases = 0;
+        for (uint32_t oid = 0; oid < svd.ksx.num_sequences(); oid++) {
+            svd.total_bases += svd.ksx.seq_length(oid);
+        }
+
         group.volumes.push_back(std::move(svd));
     }
 

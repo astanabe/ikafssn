@@ -336,21 +336,34 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 
 ### ikafssnhttpd
 
-HTTP REST API デーモンです。`ikafssnserver` に接続し、HTTP REST API として検索サービスを提供します。Drogon フレームワークを使用します。起動時にバックエンドサーバに接続してサーバ能力情報をキャッシュします (最大 30 秒間、指数バックオフでリトライ)。検索リクエストは二段階で検証されます: まずキャッシュされた能力情報に対して同期的にチェック (バックエンドへの通信なし) し、明らかに無効なリクエストを即座に拒否します。次にワーカースレッド内で最新のサーバ状態 (スロット空き状況を含む) に対して検証した後、実際の検索を実行します。
+HTTP REST API デーモンです。1 つ以上の `ikafssnserver` インスタンスに接続し、HTTP REST API として検索サービスを提供します。Drogon フレームワークを使用します。複数のバックエンドを指定することで、マルチデータベース対応や同一 DB のレプリカ間の負荷分散が可能です。
+
+起動時にすべてのバックエンドに接続してサーバ能力情報をキャッシュします (最大 30 秒間、指数バックオフでリトライ)。同じデータベース名が複数のバックエンドに存在する場合、k 値セット・合計配列数・合計塩基数の一致をクロスサーバ検証し、不一致があれば起動エラーとなります。検索リクエストはまず統合された能力情報に対して同期的にチェック (バックエンドへの通信なし) し、明らかに無効なリクエストを即座に拒否します。その後、優先度と空きスロット状況に基づいて最適なバックエンドにルーティングします。
+
+**ルーティングとヘルスチェック:**
+
+- **優先度**: バックエンドは CLI 引数の順序で優先度が決まります (先 = 最高優先度)。
+- **選択**: 検索リクエストごとに、最高優先度かつ空きスロットがある (キャッシュされた `active_sequences < max_active_sequences`) バックエンドを選択します。全バックエンドが満杯の場合は、最高優先度のバックエンドが使用されます。
+- **事前チェック**: 検索前に選択されたバックエンドへ最新の info リクエストを送信し、接続を確認します。
+- **除外**: バックエンドが応答しない場合 (info/search の接続エラー)、`-exclusion_time` 秒間除外されます。除外されたバックエンドはハートビート時に自動的に再チェックされ、到達可能になれば再有効化されます。
+- **ハートビート**: バックグラウンドスレッドが `-heartbeat_interval` 秒ごとにすべてのバックエンドの info を更新します。
+- **httpd はリトライしない**: 検索リクエストがバックエンド選択後に失敗した場合、エラーはクライアントに返されます。拒否されたクエリのリトライは `ikafssnclient` が行います。
 
 ```
 ikafssnhttpd [options]
 
-バックエンド接続 (いずれか必須):
+バックエンド接続 (1 つ以上必須、指定順 = 優先度):
   -server_socket <path>      ikafssnserver の UNIX ソケットパス
   -server_tcp <host>:<port>  ikafssnserver の TCP アドレス
 
 オプション:
-  -listen <host>:<port>  HTTP リスニングアドレス (デフォルト: 0.0.0.0:8080)
-  -path_prefix <prefix>  API パスプレフィックス (例: /nt)
-  -threads <int>         Drogon I/O スレッド数 (デフォルト: 利用可能な全コア)
-  -pid <path>            PID ファイルパス
-  -v, --verbose          詳細ログ出力
+  -listen <host>:<port>       HTTP リスニングアドレス (デフォルト: 0.0.0.0:8080)
+  -path_prefix <prefix>       API パスプレフィックス (例: /nt)
+  -threads <int>              Drogon I/O スレッド数 (デフォルト: 利用可能な全コア)
+  -heartbeat_interval <int>   ハートビート間隔 (秒、デフォルト: 3600)
+  -exclusion_time <int>       バックエンド除外時間 (秒、デフォルト: 3600)
+  -pid <path>                 PID ファイルパス
+  -v, --verbose               詳細ログ出力
 ```
 
 **REST API エンドポイント:**
@@ -358,24 +371,28 @@ ikafssnhttpd [options]
 | メソッド | パス | 説明 |
 |---|---|---|
 | POST | `/api/v1/search` | 検索リクエスト (クエリ配列を JSON ボディで送信) |
-| GET | `/api/v1/info` | インデックス情報の取得 |
-| GET | `/api/v1/health` | ヘルスチェック |
+| GET | `/api/v1/info` | 全バックエンドの統合インデックス情報 |
+| GET | `/api/v1/health` | ヘルスチェック (いずれかのバックエンドが到達可能なら OK) |
+
+`/api/v1/info` レスポンスは全 healthy バックエンドのデータベースを統合して返します。複数バックエンドで提供されるデータベースの場合、容量情報は kmer_group 内の `modes` 配列にモードごとに集約され、全提供バックエンドの `max_active_sequences` と `active_sequences` の合計が表示されます。
 
 **使用例:**
 
 ```bash
-# ローカルの ikafssnserver に UNIX ソケットで接続
+# 単一バックエンド: UNIX ソケット
 ikafssnhttpd -server_socket /var/run/ikafssn.sock -listen 0.0.0.0:8080
 
-# リモートの ikafssnserver に TCP で接続
+# 単一バックエンド: TCP
 ikafssnhttpd -server_tcp 10.0.1.5:9100 -listen 0.0.0.0:8080
 
-# 複数 DB: マルチ DB の ikafssnserver に接続する場合は 1 つの ikafssnhttpd で十分
-ikafssnhttpd -server_socket /var/run/ikafssn.sock -listen 0.0.0.0:8080
+# 複数バックエンドで負荷分散 (同じ DB を 2 台のサーバで提供)
+ikafssnhttpd -server_tcp server1:9100 -server_tcp server2:9100 -listen :8080
 
-# 代替構成: 別プロセスのサーバにパスプレフィックスでルーティング (nginx と組み合わせ)
-ikafssnhttpd -server_socket /var/run/ikafssn_nt.sock -listen :8080 -path_prefix /nt
-ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix /rs
+# 異なる DB を持つ複数バックエンド
+ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
+
+# ミックス構成: プライマリ + フェイルオーバー
+ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -listen :8080
 ```
 
 ### ikafssnclient
@@ -513,8 +530,8 @@ ikafssninfo [options]
 リモートモードの出力情報:
 
 - アクティブ / 最大配列スロット数
-- データベースごとの情報: 名前、デフォルト k、最大モード、k-mer グループ (ボリューム数・ポスティング数の統計)
-- `-v` 指定時: 各 k-mer グループ内のボリュームごとの詳細
+- データベースごとの情報: 名前、デフォルト k、最大モード、k-mer グループ (ボリューム数・配列数・総塩基数・ポスティング数の統計)
+- `-v` 指定時: 各 k-mer グループ内のボリュームごとの詳細 (配列数、総塩基数、ポスティング数)
 
 **使用例:**
 
@@ -803,6 +820,24 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
 ikafssnclient -socket /var/run/ikafssn.sock -db refseq_genomic -query query.fasta
 ```
+
+### マルチバックエンド (負荷分散 / マルチサーバ)
+
+1 つの `ikafssnhttpd` で複数の `ikafssnserver` インスタンスに接続できます:
+
+```
+# 負荷分散: 同じ DB を 2 台のサーバで提供、1 つの httpd
+ikafssnserver -ix ./nt_index -db nt -tcp 0.0.0.0:9100   # サーバ A
+ikafssnserver -ix ./nt_index -db nt -tcp 0.0.0.0:9100   # サーバ B
+ikafssnhttpd -server_tcp A:9100 -server_tcp B:9100 -listen :8080
+
+# 異なる DB を別サーバで提供、1 つの httpd で統合
+ikafssnserver -ix ./nt_index -db nt -socket /var/run/nt.sock
+ikafssnserver -ix ./rs_index -db refseq -socket /var/run/rs.sock
+ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
+```
+
+同じデータベース名が複数バックエンドに存在する場合、`ikafssnhttpd` は起動時に k 値セット・合計配列数・合計塩基数の一致を検証します。リクエストは空きスロットのある最高優先度のバックエンドにルーティングされます。容量値 (`max_active_sequences`、`active_sequences`) はサーバ単位で共有されるため、同一サーバ上の複数データベース間で共有される点に注意してください。
 
 代替構成: 別プロセスで HTTP パスベースルーティング:
 

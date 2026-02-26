@@ -204,9 +204,11 @@ target_link_libraries(ikafssninfo PRIVATE
 if(BUILD_HTTPD)
     add_library(ikafssn_httpd_backend STATIC
         ikafssnhttpd/backend_client.cpp
+        ikafssnhttpd/backend_manager.cpp
     )
     target_link_libraries(ikafssn_httpd_backend PUBLIC
         ikafssn_protocol ikafssn_util ikafssn_core
+        Drogon::Drogon
     )
 
     add_library(ikafssn_httpd_controller STATIC

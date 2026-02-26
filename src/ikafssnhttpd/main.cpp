@@ -1,4 +1,5 @@
 #include "ikafssnhttpd/http_controller.hpp"
+#include "ikafssnhttpd/backend_manager.hpp"
 #include "ikafssnhttpd/backend_client.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
@@ -11,6 +12,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
@@ -23,16 +25,18 @@ static void print_usage(const char* prog) {
     std::fprintf(stderr,
         "Usage: %s [options]\n"
         "\n"
-        "Backend connection (one required):\n"
+        "Backend connection (at least one required; order = priority):\n"
         "  -server_socket <path>      UNIX socket path to ikafssnserver\n"
         "  -server_tcp <host>:<port>  TCP address of ikafssnserver\n"
         "\n"
         "Options:\n"
-        "  -listen <host>:<port>  HTTP listen address (default: 0.0.0.0:8080)\n"
-        "  -path_prefix <prefix>  API path prefix (e.g., /nt)\n"
-        "  -threads <int>         Drogon I/O threads (default: all cores)\n"
-        "  -pid <path>            PID file path\n"
-        "  -v, --verbose          Verbose logging\n",
+        "  -listen <host>:<port>       HTTP listen address (default: 0.0.0.0:8080)\n"
+        "  -path_prefix <prefix>       API path prefix (e.g., /nt)\n"
+        "  -threads <int>              Drogon I/O threads (default: all cores)\n"
+        "  -heartbeat_interval <int>   Heartbeat interval in seconds (default: 3600)\n"
+        "  -exclusion_time <int>       Backend exclusion time in seconds (default: 3600)\n"
+        "  -pid <path>                 PID file path\n"
+        "  -v, --verbose               Verbose logging\n",
         prog);
 }
 
@@ -46,43 +50,56 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (!cli.has("-server_socket") && !cli.has("-server_tcp")) {
+    Logger logger = make_logger(cli);
+    bool verbose = logger.verbose();
+
+    // Create BackendManager and add backends in CLI argument order.
+    // We scan argv directly to preserve inter-key ordering
+    // (CliParser::get_strings only returns values per key).
+    auto manager = std::make_shared<BackendManager>();
+    int backend_count = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], "-server_socket") == 0 && i + 1 < argc) {
+            std::string addr = argv[++i];
+            manager->add_backend(BackendMode::kUnix, addr);
+            logger.info("Backend %d: UNIX socket %s", backend_count, addr.c_str());
+            backend_count++;
+        } else if (std::strcmp(argv[i], "-server_tcp") == 0 && i + 1 < argc) {
+            std::string addr = argv[++i];
+            manager->add_backend(BackendMode::kTcp, addr);
+            logger.info("Backend %d: TCP %s", backend_count, addr.c_str());
+            backend_count++;
+        }
+    }
+
+    if (backend_count == 0) {
         std::fprintf(stderr,
-            "Error: one of -server_socket or -server_tcp is required\n");
+            "Error: at least one -server_socket or -server_tcp is required\n");
         print_usage(argv[0]);
         return 1;
     }
 
-    Logger logger = make_logger(cli);
-    bool verbose = logger.verbose();
+    // Parse heartbeat and exclusion time
+    int heartbeat_interval = cli.get_int("-heartbeat_interval", 3600);
+    int exclusion_time = cli.get_int("-exclusion_time", 3600);
+    manager->set_exclusion_time(exclusion_time);
 
-    // Create backend client
-    BackendMode mode;
-    std::string backend_addr;
-    if (cli.has("-server_socket")) {
-        mode = BackendMode::kUnix;
-        backend_addr = cli.get_string("-server_socket");
-        logger.info("Backend: UNIX socket %s", backend_addr.c_str());
-    } else {
-        mode = BackendMode::kTcp;
-        backend_addr = cli.get_string("-server_tcp");
-        logger.info("Backend: TCP %s", backend_addr.c_str());
-    }
-
-    auto backend = std::make_shared<BackendClient>(mode, backend_addr);
-
-    // Create HTTP controller and register routes
-    HttpController controller(backend);
-
-    logger.info("Connecting to backend to fetch server capabilities...");
-    if (!controller.init_cache(30)) {
+    // Initialize backends (connect and validate)
+    logger.info("Connecting to %d backend(s)...", backend_count);
+    if (!manager->init(30, logger)) {
         std::fprintf(stderr,
-            "Error: Failed to connect to backend server at %s "
-            "after 30 seconds. Ensure ikafssnserver is running.\n",
-            backend_addr.c_str());
+            "Error: Failed to initialize backends after 30 seconds. "
+            "Ensure ikafssnserver(s) are running.\n");
         return 1;
     }
-    logger.info("Server capabilities cached successfully.");
+    logger.info("All reachable backends initialized successfully.");
+
+    // Start heartbeat
+    manager->start_heartbeat(heartbeat_interval, logger);
+
+    // Create HTTP controller and register routes
+    HttpController controller(manager);
 
     std::string path_prefix = cli.get_string("-path_prefix");
     controller.register_routes(path_prefix);
@@ -95,6 +112,7 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr,
             "Error: invalid listen address '%s' (expected host:port)\n",
             listen_addr.c_str());
+        manager->stop_heartbeat();
         return 1;
     }
 
@@ -117,14 +135,19 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    logger.info("Starting HTTP server on %s:%u (threads: %d)",
-                host.c_str(), port, threads);
+    logger.info("Starting HTTP server on %s:%u (threads: %d, backends: %d)",
+                host.c_str(), port, threads, backend_count);
     if (!path_prefix.empty()) {
         logger.info("API path prefix: %s", path_prefix.c_str());
     }
+    logger.info("Heartbeat interval: %d seconds, exclusion time: %d seconds",
+                heartbeat_interval, exclusion_time);
 
     // Run Drogon (blocks until shutdown via SIGTERM/SIGINT)
     drogon::app().run();
+
+    // Stop heartbeat
+    manager->stop_heartbeat();
 
     // Cleanup PID file
     if (!pid_file.empty()) {

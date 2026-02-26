@@ -41,7 +41,7 @@ static void test_frame_round_trip() {
     assert(hdr.magic == FRAME_MAGIC);
     assert(hdr.payload_length == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 2);
+    assert(hdr.msg_version == 3);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -83,7 +83,7 @@ static void test_frame_invalid_magic() {
     bad_hdr.magic = 0xDEADBEEF;
     bad_hdr.payload_length = 0;
     bad_hdr.msg_type = 0x01;
-    bad_hdr.msg_version = 2;
+    bad_hdr.msg_version = 3;
     bad_hdr.reserved = 0;
     assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 
@@ -345,12 +345,14 @@ static void test_info_response_serialize() {
     v1.volume_index = 0;
     v1.num_sequences = 1000;
     v1.total_postings = 500000;
+    v1.total_bases = 1500000;
     v1.db_name = "testdb";
     g1.volumes.push_back(v1);
     VolumeInfo v2;
     v2.volume_index = 1;
     v2.num_sequences = 2000;
     v2.total_postings = 900000;
+    v2.total_bases = 3200000;
     v2.db_name = "testdb";
     g1.volumes.push_back(v2);
     db1.groups.push_back(g1);
@@ -362,6 +364,7 @@ static void test_info_response_serialize() {
     v3.volume_index = 0;
     v3.num_sequences = 1000;
     v3.total_postings = 450000;
+    v3.total_bases = 1500000;
     v3.db_name = "testdb";
     g2.volumes.push_back(v3);
     db1.groups.push_back(g2);
@@ -390,15 +393,18 @@ static void test_info_response_serialize() {
     assert(rdb.groups[0].volumes[0].volume_index == 0);
     assert(rdb.groups[0].volumes[0].num_sequences == 1000);
     assert(rdb.groups[0].volumes[0].total_postings == 500000);
+    assert(rdb.groups[0].volumes[0].total_bases == 1500000);
     assert(rdb.groups[0].volumes[0].db_name == "testdb");
     assert(rdb.groups[0].volumes[1].volume_index == 1);
     assert(rdb.groups[0].volumes[1].num_sequences == 2000);
     assert(rdb.groups[0].volumes[1].total_postings == 900000);
+    assert(rdb.groups[0].volumes[1].total_bases == 3200000);
 
     assert(rdb.groups[1].k == 11);
     assert(rdb.groups[1].kmer_type == 1);
     assert(rdb.groups[1].volumes.size() == 1);
     assert(rdb.groups[1].volumes[0].total_postings == 450000);
+    assert(rdb.groups[1].volumes[0].total_bases == 1500000);
 
     std::printf(" OK\n");
 }

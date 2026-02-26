@@ -28,6 +28,7 @@ struct ServerVolumeData {
     KpxReader kpx;
     KsxReader ksx;
     uint16_t volume_index;
+    uint64_t total_bases = 0;
 };
 
 // A group of volumes for a specific k-mer size

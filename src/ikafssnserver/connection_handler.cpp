@@ -95,6 +95,7 @@ void handle_connection(
                     vi.volume_index = vol.volume_index;
                     vi.num_sequences = vol.kix.num_sequences();
                     vi.total_postings = vol.kix.total_postings();
+                    vi.total_bases = vol.total_bases;
                     const auto& kix_hdr = vol.kix.header();
                     vi.db_name = std::string(kix_hdr.db_name,
                         strnlen(kix_hdr.db_name, sizeof(kix_hdr.db_name)));

@@ -94,27 +94,31 @@ std::string format_server_info(const InfoResponse& info, bool verbose) {
 
         for (const auto& g : db.groups) {
             uint64_t group_seqs = 0;
+            uint64_t group_bases = 0;
             uint64_t group_postings = 0;
             for (const auto& v : g.volumes) {
                 group_seqs += v.num_sequences;
+                group_bases += v.total_bases;
                 group_postings += v.total_postings;
             }
 
             const char* type_str = (g.kmer_type == 0) ? "uint16" : "uint32";
-            char line[256];
+            char line[512];
             std::snprintf(line, sizeof(line),
-                "    k=%-3u (%s)  %zu volume(s)   %lu sequences   %lu postings\n",
+                "    k=%-3u (%s)  %zu volume(s)   %lu sequences   %lu bases   %lu postings\n",
                 g.k, type_str, g.volumes.size(),
                 static_cast<unsigned long>(group_seqs),
+                static_cast<unsigned long>(group_bases),
                 static_cast<unsigned long>(group_postings));
             out += line;
 
             if (verbose) {
                 for (const auto& v : g.volumes) {
-                    char vline[256];
+                    char vline[512];
                     std::snprintf(vline, sizeof(vline),
-                        "      Volume %u:  %u sequences  %lu postings  (%s)\n",
+                        "      Volume %u:  %u sequences  %lu bases  %lu postings  (%s)\n",
                         v.volume_index, v.num_sequences,
+                        static_cast<unsigned long>(v.total_bases),
                         static_cast<unsigned long>(v.total_postings),
                         v.db_name.c_str());
                     out += vline;

@@ -13,6 +13,7 @@
 #include "search/volume_searcher.hpp"
 #include "ikafssnserver/server.hpp"
 #include "ikafssnhttpd/backend_client.hpp"
+#include "ikafssnhttpd/backend_manager.hpp"
 #include "ikafssnhttpd/http_controller.hpp"
 #include "ikafssnclient/http_client.hpp"
 #include "protocol/messages.hpp"
@@ -149,9 +150,11 @@ static void test_http_client_search() {
 
     // --- Start ikafssnhttpd (Drogon) ---
     uint16_t http_port = 18923; // use a high port unlikely to conflict
-    auto backend = std::make_shared<BackendClient>(
-        BackendMode::kUnix, sock_path);
-    HttpController controller(backend);
+    auto manager = std::make_shared<BackendManager>();
+    manager->add_backend(BackendMode::kUnix, sock_path);
+    Logger mgr_logger(Logger::kError);
+    CHECK(manager->init(10, mgr_logger));
+    HttpController controller(manager);
     controller.register_routes("");
 
     drogon::app()
