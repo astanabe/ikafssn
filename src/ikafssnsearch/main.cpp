@@ -9,9 +9,12 @@
 #include "search/oid_filter.hpp"
 #include "search/volume_searcher.hpp"
 #include "search/query_preprocessor.hpp"
+#include "search/stage3_alignment.hpp"
 #include "io/fasta_reader.hpp"
+#include "io/blastdb_reader.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
+#include "io/sam_writer.hpp"
 #include "util/cli_parser.hpp"
 #include "util/logger.hpp"
 
@@ -49,25 +52,32 @@ static void print_usage(const char* prog) {
         "  -k <int>                 K-mer size to use (required if multiple k values exist)\n"
         "  -o <path>                Output file (default: stdout)\n"
         "  -threads <int>           Parallel search threads (default: all cores)\n"
-        "  -mode <1|2>              1=Stage1 only, 2=Stage1+Stage2 (default: 2)\n"
+        "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: 2)\n"
+        "  -db <path>               BLAST DB path for mode 3 (default: same as -ix)\n"
         "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: 1)\n"
-        "  -sort_score <1|2>        1=stage1 score, 2=chainscore (default: 2)\n"
-        "  -min_score <int>         Minimum chain score (default: 0 = adaptive)\n"
+        "  -stage2_min_score <int>  Minimum chain score (default: 0 = adaptive)\n"
         "                           0 = use resolved Stage 1 threshold\n"
-        "  -max_gap <int>           Chaining diagonal gap tolerance (default: 100)\n"
-        "  -chain_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
-        "  -max_freq <num>          High-frequency k-mer skip threshold (default: 0.5)\n"
+        "  -stage2_max_gap <int>    Chaining diagonal gap tolerance (default: 100)\n"
+        "  -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
+        "  -stage1_max_freq <num>   High-frequency k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           >= 1: absolute count threshold; 0 = auto\n"
-        "  -min_diag_hits <int>     Diagonal filter min hits (default: 1)\n"
+        "  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: 1)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
-        "  -min_stage1_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
+        "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
         "  -num_results <int>       Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: 2)\n"
         "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
-        "  -outfmt <tab|json>       Output format (default: tab)\n"
+        "  -context <value>         Context extension for mode 3 (int=bases, decimal=query length multiplier, default: 0)\n"
+        "  -stage3_traceback <0|1>  Enable traceback in mode 3 (default: 0)\n"
+        "  -stage3_gapopen <int>    Gap open penalty for mode 3 (default: 10)\n"
+        "  -stage3_gapext <int>     Gap extension penalty for mode 3 (default: 1)\n"
+        "  -stage3_min_pident <num> Min percent identity filter for mode 3 (default: 0)\n"
+        "  -stage3_min_nident <int> Min identical bases filter for mode 3 (default: 0)\n"
+        "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, threads))\n"
+        "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
 }
@@ -175,25 +185,76 @@ int main(int argc, char* argv[]) {
 
     // Search config
     SearchConfig config;
-    double max_freq_raw = cli.get_double("-max_freq", 0.5);
+    double max_freq_raw = cli.get_double("-stage1_max_freq", 0.5);
     config.stage1.stage1_topn = static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
     config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
-    config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-max_gap", 100));
-    config.stage2.chain_max_lookback = static_cast<uint32_t>(cli.get_int("-chain_max_lookback", 64));
-    config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-min_diag_hits", 1));
-    config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-min_score", 0));
+    config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-stage2_max_gap", 100));
+    config.stage2.chain_max_lookback = static_cast<uint32_t>(cli.get_int("-stage2_max_lookback", 64));
+    config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-stage2_min_diag_hits", 1));
+    config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-stage2_min_score", 0));
     config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 0));
     config.mode = static_cast<uint8_t>(cli.get_int("-mode", 2));
-    config.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 2));
     config.strand = static_cast<int8_t>(cli.get_int("-strand", 2));
     if (config.strand != -1 && config.strand != 1 && config.strand != 2) {
         std::fprintf(stderr, "Error: -strand must be -1, 1, or 2\n");
         return 1;
     }
 
-    // Parse -min_stage1_score as double to support fractional values
+    // sort_score is auto-determined by mode (not a CLI option)
+    switch (config.mode) {
+        case 1: config.sort_score = 1; break; // stage1_score
+        case 2: config.sort_score = 2; break; // chainscore
+        case 3: config.sort_score = 3; break; // alnscore
+        default:
+            std::fprintf(stderr, "Error: -mode must be 1, 2, or 3\n");
+            return 1;
+    }
+
+    // BLAST DB path for mode 3 (default: same as index prefix)
+    std::string db_path = cli.get_string("-db", ix_prefix);
+
+    // Stage 3 config
+    Stage3Config stage3_config;
+    stage3_config.gapopen = cli.get_int("-stage3_gapopen", 10);
+    stage3_config.gapext = cli.get_int("-stage3_gapext", 1);
+    stage3_config.traceback = (cli.get_int("-stage3_traceback", 0) != 0);
+    stage3_config.min_pident = cli.get_double("-stage3_min_pident", 0.0);
+    stage3_config.min_nident = static_cast<uint32_t>(cli.get_int("-stage3_min_nident", 0));
+    if (cli.has("-stage3_fetch_threads")) {
+        stage3_config.fetch_threads = cli.get_int("-stage3_fetch_threads", 8);
+        if (stage3_config.fetch_threads > num_threads) {
+            std::fprintf(stderr,
+                "Error: -stage3_fetch_threads (%d) exceeds -threads (%d)\n",
+                stage3_config.fetch_threads, num_threads);
+            return 1;
+        }
+    } else {
+        stage3_config.fetch_threads = std::min(8, num_threads);
+    }
+
+    // Parse -context: integer (bases) or decimal (query length multiplier)
+    std::string context_str = cli.get_string("-context", "0");
+    bool context_is_ratio = (context_str.find('.') != std::string::npos);
+    double context_ratio = 0.0;
+    uint32_t context_abs = 0;
+    if (context_is_ratio) {
+        context_ratio = std::stod(context_str);
+        if (context_ratio < 0) {
+            std::fprintf(stderr, "Error: -context ratio must be >= 0\n");
+            return 1;
+        }
+    } else {
+        int ctx_val = std::stoi(context_str);
+        if (ctx_val < 0) {
+            std::fprintf(stderr, "Error: -context must be >= 0\n");
+            return 1;
+        }
+        context_abs = static_cast<uint32_t>(ctx_val);
+    }
+
+    // Parse -stage1_min_score as double to support fractional values
     {
-        double min_s1 = cli.get_double("-min_stage1_score", 0.5);
+        double min_s1 = cli.get_double("-stage1_min_score", 0.5);
         if (min_s1 > 0 && min_s1 < 1.0) {
             config.min_stage1_score_frac = min_s1;
             // Leave stage1.min_stage1_score at default (will be overridden per-query)
@@ -206,21 +267,21 @@ int main(int argc, char* argv[]) {
     if (config.mode == 1) {
         config.sort_score = 1;
 
-        // Consistency check: fractional + explicit -min_score in mode 1
+        // Consistency check: fractional + explicit -stage2_min_score in mode 1
         // (min_score=0 is allowed since it means adaptive)
-        if (config.min_stage1_score_frac > 0 && cli.has("-min_score") &&
+        if (config.min_stage1_score_frac > 0 && cli.has("-stage2_min_score") &&
             config.stage2.min_score > 0) {
-            std::fprintf(stderr, "Error: -min_score and fractional -min_stage1_score cannot both be specified in -mode 1\n");
+            std::fprintf(stderr, "Error: -stage2_min_score and fractional -stage1_min_score cannot both be specified in -mode 1\n");
             return 1;
         }
 
-        // Consistency check: -min_score and -min_stage1_score in mode 1
-        bool has_min_score = cli.has("-min_score");
-        bool has_min_stage1_score = cli.has("-min_stage1_score");
+        // Consistency check: -stage2_min_score and -stage1_min_score in mode 1
+        bool has_min_score = cli.has("-stage2_min_score");
+        bool has_min_stage1_score = cli.has("-stage1_min_score");
         if (config.min_stage1_score_frac == 0) {
             if (has_min_score && has_min_stage1_score &&
                 config.stage2.min_score != config.stage1.min_stage1_score) {
-                std::fprintf(stderr, "Error: -min_score and -min_stage1_score must be the same in -mode 1\n");
+                std::fprintf(stderr, "Error: -stage2_min_score and -stage1_min_score must be the same in -mode 1\n");
                 return 1;
             }
             if (has_min_score && !has_min_stage1_score) {
@@ -239,9 +300,34 @@ int main(int argc, char* argv[]) {
     std::string outfmt_str = cli.get_string("-outfmt", "tab");
     if (outfmt_str == "json") {
         outfmt = OutputFormat::kJson;
+    } else if (outfmt_str == "sam") {
+        outfmt = OutputFormat::kSam;
+    } else if (outfmt_str == "bam") {
+        outfmt = OutputFormat::kBam;
     } else if (outfmt_str != "tab") {
         std::fprintf(stderr, "Error: unknown output format '%s'\n", outfmt_str.c_str());
         return 1;
+    }
+
+    // SAM/BAM requires mode 3 + traceback
+    if ((outfmt == OutputFormat::kSam || outfmt == OutputFormat::kBam) &&
+        (config.mode != 3 || !stage3_config.traceback)) {
+        std::fprintf(stderr, "Error: SAM/BAM output requires -mode 3 and -stage3_traceback 1\n");
+        return 1;
+    }
+    // BAM requires output file
+    if (outfmt == OutputFormat::kBam && output_path.empty()) {
+        std::fprintf(stderr, "Error: BAM output requires -o <path>\n");
+        return 1;
+    }
+    // mode 3 requires BLAST DB
+    if (config.mode == 3) {
+        auto vol_paths = BlastDbReader::find_volume_paths(db_path);
+        if (vol_paths.empty()) {
+            std::fprintf(stderr, "Error: -mode 3 requires BLAST DB but none found at '%s'\n",
+                         db_path.c_str());
+            return 1;
+        }
     }
 
     // Discover volumes
@@ -360,7 +446,7 @@ int main(int argc, char* argv[]) {
         config.stage1.max_freq = static_cast<uint32_t>(
             std::ceil(max_freq_raw * total_nseq));
         if (config.stage1.max_freq == 0) config.stage1.max_freq = 1;
-        logger.info("-max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
+        logger.info("-stage1_max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
                     max_freq_raw, config.stage1.max_freq,
                     static_cast<unsigned long>(total_nseq));
     } else {
@@ -552,6 +638,15 @@ int main(int argc, char* argv[]) {
             std::make_move_iterator(local.end()));
     });
 
+    // Stage 3 alignment (mode 3 only)
+    if (config.mode == 3) {
+        logger.info("Running Stage 3 alignment on %zu hits...", all_hits.size());
+        all_hits = run_stage3(all_hits, queries, db_path, stage3_config,
+                              context_is_ratio, context_ratio, context_abs,
+                              logger);
+        logger.info("Stage 3 complete: %zu hits after filtering.", all_hits.size());
+    }
+
     // Sort and truncate final results across volumes (per query)
     if (config.num_results > 0) {
         // Sort by (query_id, sort_score desc)
@@ -560,6 +655,12 @@ int main(int argc, char* argv[]) {
                       [](const OutputHit& a, const OutputHit& b) {
                           if (a.query_id != b.query_id) return a.query_id < b.query_id;
                           return a.stage1_score > b.stage1_score;
+                      });
+        } else if (config.sort_score == 3) {
+            std::sort(all_hits.begin(), all_hits.end(),
+                      [](const OutputHit& a, const OutputHit& b) {
+                          if (a.query_id != b.query_id) return a.query_id < b.query_id;
+                          return a.alnscore > b.alnscore;
                       });
         } else {
             std::sort(all_hits.begin(), all_hits.end(),
@@ -588,9 +689,15 @@ int main(int argc, char* argv[]) {
     // num_results == 0: unlimited, skip sort and truncation
 
     // Write output
-    if (output_path.empty()) {
+    if (outfmt == OutputFormat::kSam) {
+        write_results_sam(output_path.empty() ? "-" : output_path,
+                          all_hits, config.stage1.stage1_score_type);
+    } else if (outfmt == OutputFormat::kBam) {
+        write_results_bam(output_path, all_hits, config.stage1.stage1_score_type);
+    } else if (output_path.empty()) {
         write_results(std::cout, all_hits, outfmt,
-                      config.mode, config.stage1.stage1_score_type);
+                      config.mode, config.stage1.stage1_score_type,
+                      stage3_config.traceback);
     } else {
         std::ofstream out(output_path);
         if (!out.is_open()) {
@@ -598,7 +705,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         write_results(out, all_hits, outfmt,
-                      config.mode, config.stage1.stage1_score_type);
+                      config.mode, config.stage1.stage1_score_type,
+                      stage3_config.traceback);
     }
 
     logger.info("Done. %zu hit(s) reported.", all_hits.size());

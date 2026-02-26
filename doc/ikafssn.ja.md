@@ -99,33 +99,40 @@ ikafssnsearch [options]
   -k <int>                使用する k-mer サイズ (複数の k 値が存在する場合は必須)
   -o <path>               出力ファイル (デフォルト: 標準出力)
   -threads <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
-  -min_score <int>        最小チェインスコア (デフォルト: 0 = 適応的)
-                          0 = Stage 1 の解決済み閾値を最小値として使用
-                          1 以上: 絶対的な最小チェインスコア
-  -max_gap <int>          チェイニング対角線ずれ許容幅 (デフォルト: 100)
-  -chain_max_lookback <int>  チェイニング DP 探索窓サイズ (デフォルト: 64、0=無制限)
-  -max_freq <num>         高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
+  -mode <1|2|3>           検索モード (デフォルト: 2)
+                          1=Stage 1 のみ、2=Stage 1+2、3=Stage 1+2+3
+  -db <path>              モード 3 用 BLAST DB パス (デフォルト: -ix と同じ)
+  -stage1_score <1|2>     Stage 1 スコア種別 (デフォルト: 1)
+                          1=coverscore、2=matchscore
+  -stage1_max_freq <num>  高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
                           0〜1 未満: 全ボリューム合計 NSEQ に対する割合
                           1 以上: 絶対カウント閾値; 0 = 自動計算
-  -min_diag_hits <int>    対角線フィルタ最小ヒット数 (デフォルト: 1)
   -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 0)
-  -min_stage1_score <num> Stage 1 最小スコア閾値 (デフォルト: 0.5)
+  -stage1_min_score <num> Stage 1 最小スコア閾値 (デフォルト: 0.5)
                           整数 (>= 1): 絶対閾値
                           小数 (0 < P < 1): クエリ k-mer に対する割合
                             クエリごとに ceil(Nqkmer * P) - Nhighfreq に解決
+  -stage2_min_score <int> 最小チェインスコア (デフォルト: 0 = 適応的)
+                          0 = Stage 1 の解決済み閾値を最小値として使用
+                          1 以上: 絶対的な最小チェインスコア
+  -stage2_max_gap <int>   チェイニング対角線ずれ許容幅 (デフォルト: 100)
+  -stage2_max_lookback <int>  チェイニング DP 探索窓サイズ (デフォルト: 64、0=無制限)
+  -stage2_min_diag_hits <int>  対角線フィルタ最小ヒット数 (デフォルト: 1)
+  -context <value>        モード 3 のコンテクスト拡張 (デフォルト: 0)
+                          整数: 拡張する塩基数; 小数: クエリ長に対する倍率
+  -stage3_traceback <0|1> モード 3 でトレースバックを有効化 (デフォルト: 0)
+  -stage3_gapopen <int>   モード 3 のギャップオープンペナルティ (デフォルト: 10)
+  -stage3_gapext <int>    モード 3 のギャップ伸長ペナルティ (デフォルト: 1)
+  -stage3_min_pident <num>  モード 3 の最小配列一致率フィルタ (デフォルト: 0)
+  -stage3_min_nident <int>  モード 3 の最小一致塩基数フィルタ (デフォルト: 0)
+  -stage3_fetch_threads <int>  モード 3 の BLAST DB 取得スレッド数 (デフォルト: min(8, threads); -threads を超えるとエラー)
   -num_results <int>      最終出力件数、0=無制限 (デフォルト: 0)
-  -mode <1|2>              検索モード (デフォルト: 2)
-                           1=Stage 1 のみ、2=Stage 1 + Stage 2
-  -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: 1)
-                           1=coverscore、2=matchscore
-  -sort_score <1|2>        結果のソート基準 (デフォルト: 2)
-                           1=Stage 1 スコア、2=chainscore
   -seqidlist <path>       検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>       検索する鎖 (デフォルト: 2)
                           1=プラス鎖のみ、-1=マイナス鎖のみ、2=両鎖
   -accept_qdegen <0|1>    縮重塩基を含むクエリを許可 (デフォルト: 1)
-  -outfmt <tab|json>      出力形式 (デフォルト: tab)
+  -outfmt <tab|json|sam|bam>  出力形式 (デフォルト: tab)
   -v, --verbose           詳細ログ出力
 ```
 
@@ -159,7 +166,7 @@ ikafssnsearch -ix ./index/mydb -k 11 -query query.fasta
 
 # 感度を上げた検索
 ikafssnsearch -ix ./index/mydb -query query.fasta \
-    -min_score 2 -stage1_topn 2000 -max_freq 50000
+    -stage2_min_score 2 -stage1_topn 2000 -stage1_max_freq 50000
 
 # seqidlist で検索対象を限定
 ikafssnsearch -ix ./index/mydb -query query.fasta -seqidlist targets.txt
@@ -168,7 +175,22 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -seqidlist targets.txt
 ikafssnsearch -ix ./index/mydb -query query.fasta -negative_seqidlist exclude.txt
 
 # 割合指定の Stage 1 閾値 (クエリ k-mer の 50%)
-ikafssnsearch -ix ./index/mydb -query query.fasta -min_stage1_score 0.5
+ikafssnsearch -ix ./index/mydb -query query.fasta -stage1_min_score 0.5
+
+# モード 3: トレースバック付きペアワイズアライメント
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -num_results 5
+
+# モード 3: SAM 出力
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+
+# モード 3: BAM 出力
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt bam -o result.bam
+
+# モード 3: 配列一致率でフィルタ
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_pident 90
+
+# モード 3: コンテクスト拡張 (前後各50塩基)
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 50 -num_results 5
 
 # パイプラインで ikafssnretrieve に接続
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -442,27 +464,31 @@ ikafssninfo -ix ./index/mydb -v
 
 ## 検索パイプライン
 
-ikafssn は 2 段階の検索パイプラインを使用します。
+ikafssn は 3 段階の検索パイプラインを使用します。
 
-デフォルトパラメータはスループットを優先しています。`stage1_topn=0` と `num_results=0` によりソートを省略し、`min_stage1_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。ランク付けされた出力が必要な場合は `-stage1_topn` や `-num_results` に正の値を設定してください。ソートが有効になりますが、結果件数が多い場合は速度が低下する可能性があります。
+デフォルトパラメータはスループットを優先しています。`stage1_topn=0` と `num_results=0` によりソートを省略し、`stage1_min_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。ランク付けされた出力が必要な場合は `-stage1_topn` や `-num_results` に正の値を設定してください。ソートが有効になりますが、結果件数が多い場合は速度が低下する可能性があります。
 
-1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとにスコアを集計します。スコア種別は 2 種類あります: **coverscore** (配列にマッチしたクエリ k-mer の種類数) と **matchscore** (クエリ k-mer と参照配列位置の総マッチ数)。`min_stage1_score` 以上のスコアを持つ配列を候補として選出します。`stage1_topn > 0` の場合はスコア順にソートして切り詰めます。`stage1_topn = 0` (デフォルト) の場合は全候補をソートせずに返します。
+1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとにスコアを集計します。スコア種別は 2 種類あります: **coverscore** (配列にマッチしたクエリ k-mer の種類数) と **matchscore** (クエリ k-mer と参照配列位置の総マッチ数)。`stage1_min_score` 以上のスコアを持つ配列を候補として選出します。`stage1_topn > 0` の場合はスコア順にソートして切り詰めます。`stage1_topn = 0` (デフォルト) の場合は全候補をソートせずに返します。
 
-2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= min_score` のチェインが結果に含まれます。DP の内側ループは `-chain_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。
+2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。
 
-**適応的 `-min_score` (デフォルト):** `-min_score 0` (デフォルト) の場合、最小チェインスコアはクエリごとに適応的に設定され、解決済みの Stage 1 閾値が使用されます。割合指定の `-min_stage1_score` (例: `0.5`) との組み合わせでは、各クエリの k-mer 構成に基づくクエリごとの適応的閾値が設定されます。絶対値指定の `-min_stage1_score` の場合は、その設定値がそのまま使用されます。固定閾値を使用する場合は `-min_score` に正の整数を指定してください。
+3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context` による拡張オプション付き)、Parasail ライブラリ (nuc44 スコアリングマトリクス) を使って半大域ペアワイズアライメントを実行します。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、配列一致率、一致塩基数、不一致数、ギャップ付きアライメント配列も計算されます。`-stage3_min_pident` と `-stage3_min_nident` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト配列は `-stage3_fetch_threads` で制御されるボリューム並列プリフェッチで取得されます。
 
-**Mode 1 (Stage 1 のみ):** `-mode 1` を指定すると Stage 2 が省略されます。`.kpx` ファイルへのアクセスが不要となり、I/O とメモリを節約できます。結果には Stage 1 スコアのみが含まれ、位置フィールド (q_start, q_end, s_start, s_end) と chainscore は省略されます。Mode 1 では `-min_score` は Stage 1 スコアに適用され、`-sort_score` は 1 (Stage 1 スコア) に強制されます。
+**適応的 `-stage2_min_score` (デフォルト):** `-stage2_min_score 0` (デフォルト) の場合、最小チェインスコアはクエリごとに適応的に設定され、解決済みの Stage 1 閾値が使用されます。割合指定の `-stage1_min_score` (例: `0.5`) との組み合わせでは、各クエリの k-mer 構成に基づくクエリごとの適応的閾値が設定されます。絶対値指定の `-stage1_min_score` の場合は、その設定値がそのまま使用されます。固定閾値を使用する場合は `-stage2_min_score` に正の整数を指定してください。
+
+**Mode 1 (Stage 1 のみ):** `-mode 1` を指定すると Stage 2, 3 が省略されます。`.kpx` ファイルへのアクセスが不要となり、I/O とメモリを節約できます。結果には Stage 1 スコアのみが含まれ、位置フィールド (q_start, q_end, s_start, s_end) と chainscore は省略されます。ソート基準は Stage 1 スコアに強制されます。
+
+**Mode 3 (全パイプライン):** `-mode 3` を指定すると全 3 段階が実行されます。BLAST DB が必要です (`-db` で指定、デフォルトはインデックスプレフィックスと同じ)。ソート基準は alnscore に自動設定されます。SAM/BAM 出力には `-mode 3` と `-stage3_traceback 1` の両方が必要です。
 
 デフォルトではクエリのフォワード鎖とリバースコンプリメント鎖の両方を検索します。`-strand 1` でプラス (フォワード) 鎖のみ、`-strand -1` でマイナス (リバースコンプリメント) 鎖のみの検索に制限できます。
 
 ### 高頻度 k-mer フィルタリング
 
-高頻度 k-mer フィルタリングはボリューム単位のループに入る前に全ボリューム横断でグローバルに行われます。全ボリュームの k-mer カウントを合算し、`max_freq` を超える k-mer はクエリから一度だけ除去されます。これにより、データのボリューム分割方法に関わらず一貫したフィルタリングが保証されます。ビルド時除外情報 (`.khx`) もグローバルにチェックされます。
+高頻度 k-mer フィルタリングはボリューム単位のループに入る前に全ボリューム横断でグローバルに行われます。全ボリュームの k-mer カウントを合算し、`stage1_max_freq` を超える k-mer はクエリから一度だけ除去されます。これにより、データのボリューム分割方法に関わらず一貫したフィルタリングが保証されます。ビルド時除外情報 (`.khx`) もグローバルにチェックされます。
 
-`-max_freq` のデフォルト値は `0.5` で、全ボリューム合計配列数の 50% を超えて出現する k-mer がスキップされます。より一般に、小数値 (0 < x < 1) を指定すると、閾値は `ceil(x * total_NSEQ)` に解決されます (total_NSEQ は全ボリュームの配列数の合計)。整数値 (1 以上) はそのまま絶対カウント閾値として使用されます。
+`-stage1_max_freq` のデフォルト値は `0.5` で、全ボリューム合計配列数の 50% を超えて出現する k-mer がスキップされます。より一般に、小数値 (0 < x < 1) を指定すると、閾値は `ceil(x * total_NSEQ)` に解決されます (total_NSEQ は全ボリュームの配列数の合計)。整数値 (1 以上) はそのまま絶対カウント閾値として使用されます。
 
-`-max_freq 0` を明示的に指定すると、ボリュームごとに以下の式で自動計算されます:
+`-stage1_max_freq 0` を明示的に指定すると、ボリュームごとに以下の式で自動計算されます:
 
 ```
 max_freq = mean_count * 10    ([1000, 100000] に制限)
@@ -471,11 +497,11 @@ max_freq = mean_count * 10    ([1000, 100000] に制限)
 
 この自動計算モードではボリュームごとに `.kix` ヘッダから値が算出されます。
 
-**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。k-mer カウントは全ボリュームで合算された後に閾値と比較されるため、各ボリュームでは閾値未満だが合計では閾値を超える k-mer も正しく除外されます。除外された k-mer は共有 `.khx` ファイル (k 値ごとに 1 つ、ボリュームごとではない) に記録されます。小数値 (0 < x < 1) を指定した場合、閾値は全ボリューム合計 NSEQ に基づいて解決されます (`-max_freq` と同じ方式)。検索時に割合指定の `-min_stage1_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算から差し引かれます。
+**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。k-mer カウントは全ボリュームで合算された後に閾値と比較されるため、各ボリュームでは閾値未満だが合計では閾値を超える k-mer も正しく除外されます。除外された k-mer は共有 `.khx` ファイル (k 値ごとに 1 つ、ボリュームごとではない) に記録されます。小数値 (0 < x < 1) を指定した場合、閾値は全ボリューム合計 NSEQ に基づいて解決されます (`-max_freq` と同じ方式)。検索時に割合指定の `-stage1_min_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算から差し引かれます。
 
 ### 割合指定の Stage 1 閾値
 
-`-min_stage1_score` を小数 (0 < P < 1) で指定すると、閾値はクエリごとに以下の式で解決されます:
+`-stage1_min_score` を小数 (0 < P < 1) で指定すると、閾値はクエリごとに以下の式で解決されます:
 
 ```
 threshold = ceil(Nqkmer * P) - Nhighfreq
@@ -498,10 +524,11 @@ ikafssn は 3 種類のスコアを計算します。
 | **coverscore** | 参照配列にマッチしたクエリ k-mer の種類数。各クエリ k-mer は参照配列あたり最大 1 回カウントされます (複数位置にマッチしても重複計上されません)。 | Stage 1 |
 | **matchscore** | (クエリ k-mer, 参照配列位置) の総マッチ数。1 つのクエリ k-mer が参照配列の複数位置にマッチした場合、その分だけ加算されます。 | Stage 1 |
 | **chainscore** | チェイニング DP が求めた最良コリニアチェインの長さ (k-mer ヒット数)。`.kpx` の位置データを使用します。 | Stage 2 |
+| **alnscore** | Parasail による半大域ペアワイズアライメントスコア (nuc44 マトリクス)。BLAST DB からのサブジェクト配列取得が必要です。 | Stage 3 |
 
 - `-stage1_score` で Stage 1 が使用するスコア種別を選択します (1=coverscore, 2=matchscore)。候補のランキングと出力される Stage 1 スコアに影響します。
-- `-sort_score` で最終結果のソートに使用するスコアを選択します (1=Stage 1 スコア, 2=chainscore)。
-- `-mode 1` では Stage 1 スコアのみが利用可能で、chainscore は計算されません。
+- ソート基準はモードにより自動決定: mode 1 は Stage 1 スコア、mode 2 は chainscore、mode 3 は alnscore。
+- `-mode 1` では Stage 1 スコアのみが利用可能で、chainscore と alnscore は計算されません。
 
 ## 出力形式
 
@@ -519,6 +546,18 @@ ikafssn は 3 種類のスコアを計算します。
 
 ```
 # query_id  accession  strand  coverscore  volume
+```
+
+**Mode 3, traceback=0** (`-mode 3`):
+
+```
+# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  alnscore  volume
+```
+
+**Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
+
+```
+# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  alnscore  pident  nident  nmismatch  cigar  q_seq  s_seq  volume
 ```
 
 ### JSON 形式
@@ -567,6 +606,21 @@ ikafssn は 3 種類のスコアを計算します。
   ]
 }
 ```
+
+### SAM/BAM 形式
+
+SAM/BAM 出力には `-mode 3 -stage3_traceback 1` が必要です。`-outfmt sam` で SAM、`-outfmt bam` で BAM を出力します (BAM は `-o <path>` が必須)。
+
+SAM レコードの構成:
+- **QNAME**: query_id
+- **FLAG**: 0 (フォワード) / 16 (リバース)
+- **RNAME**: accession
+- **POS**: s_start + 1 (1-based)
+- **MAPQ**: 255
+- **CIGAR**: 拡張 CIGAR (=/X/I/D 演算子)
+- **SEQ**: ギャップなしクエリ配列
+- **QUAL**: * (利用不可)
+- **タグ**: `AS:i` (alnscore), `NM:i` (nmismatch), `cs:i` (chainscore), `s1:i` (stage1_score)
 
 ## デプロイ構成
 

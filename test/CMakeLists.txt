@@ -246,6 +246,37 @@ if(ENABLE_REMOTE_RETRIEVE)
 endif()
 add_test(NAME test_retrieve_ssu COMMAND test_retrieve_ssu)
 
+# --- Stage 3 tests ---
+
+# Stage 3 alignment unit test (Parasail only, no BLAST DB)
+add_executable(test_stage3_alignment test_stage3_alignment.cpp)
+target_link_libraries(test_stage3_alignment PRIVATE
+    ikafssn_stage3 ikafssn_search ikafssn_index ikafssn_blastdb
+    ikafssn_io ikafssn_util ikafssn_core parasail TBB::tbb)
+target_include_directories(test_stage3_alignment PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${NCBI_TOOLKIT_INCLUDE}" "${CMAKE_SOURCE_DIR}/src")
+add_test(NAME test_stage3_alignment COMMAND test_stage3_alignment)
+
+# SAM/BAM writer test (htslib)
+add_executable(test_sam_writer test_sam_writer.cpp)
+target_link_libraries(test_sam_writer PRIVATE
+    ikafssn_sam_writer ikafssn_io ikafssn_core hts)
+target_include_directories(test_sam_writer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+add_test(NAME test_sam_writer COMMAND test_sam_writer)
+
+# Stage 3 integration test (requires NCBI Toolkit + Parasail + BLAST DB)
+add_executable(test_stage3_integration test_stage3_integration.cpp)
+target_link_libraries(test_stage3_integration PRIVATE
+    ikafssn_stage3 ikafssn_sam_writer ikafssn_search ikafssn_builder
+    ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    parasail hts TBB::tbb)
+target_include_directories(test_stage3_integration PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${NCBI_TOOLKIT_INCLUDE}" "${CMAKE_SOURCE_DIR}/src")
+target_compile_definitions(test_stage3_integration PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME test_stage3_integration COMMAND test_stage3_integration)
+
 # --- Phase 7 tests ---
 
 # ikafssninfo integration test (requires NCBI Toolkit for index building)

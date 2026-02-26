@@ -99,33 +99,40 @@ Options:
   -k <int>                K-mer size to use (required if multiple k values exist)
   -o <path>               Output file (default: stdout)
   -threads <int>          Parallel search threads (default: all cores)
-  -min_score <int>        Minimum chain score (default: 0 = adaptive)
-                          0 = use resolved Stage 1 threshold as minimum
-                          >= 1: absolute minimum chain score
-  -max_gap <int>          Chaining diagonal gap tolerance (default: 100)
-  -chain_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)
-  -max_freq <num>         High-frequency k-mer skip threshold (default: 0.5)
+  -mode <1|2|3>           Search mode (default: 2)
+                          1=Stage 1 only, 2=Stage 1+2, 3=Stage 1+2+3
+  -db <path>              BLAST DB path for mode 3 (default: same as -ix)
+  -stage1_score <1|2>     Stage 1 score type (default: 1)
+                          1=coverscore, 2=matchscore
+  -stage1_max_freq <num>  High-frequency k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
                           >= 1: absolute count threshold; 0 = auto
-  -min_diag_hits <int>    Diagonal filter min hits (default: 1)
   -stage1_topn <int>      Stage 1 candidate limit, 0=unlimited (default: 0)
-  -min_stage1_score <num> Stage 1 minimum score (default: 0.5)
+  -stage1_min_score <num> Stage 1 minimum score (default: 0.5)
                           Integer (>= 1): absolute threshold
                           Fraction (0 < P < 1): proportion of query k-mers,
                             resolved per query as ceil(Nqkmer * P) - Nhighfreq
+  -stage2_min_score <int> Minimum chain score (default: 0 = adaptive)
+                          0 = use resolved Stage 1 threshold as minimum
+                          >= 1: absolute minimum chain score
+  -stage2_max_gap <int>   Chaining diagonal gap tolerance (default: 100)
+  -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)
+  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: 1)
+  -context <value>        Context extension for mode 3 (default: 0)
+                          Integer: bases to extend; Decimal: query length multiplier
+  -stage3_traceback <0|1> Enable traceback in mode 3 (default: 0)
+  -stage3_gapopen <int>   Gap open penalty for mode 3 (default: 10)
+  -stage3_gapext <int>    Gap extension penalty for mode 3 (default: 1)
+  -stage3_min_pident <num>  Min percent identity filter for mode 3 (default: 0)
+  -stage3_min_nident <int>  Min identical bases filter for mode 3 (default: 0)
+  -stage3_fetch_threads <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, threads); error if exceeds -threads)
   -num_results <int>      Max results per query, 0=unlimited (default: 0)
-  -mode <1|2>             Search mode (default: 2)
-                          1=Stage 1 only, 2=Stage 1 + Stage 2
-  -stage1_score <1|2>     Stage 1 score type (default: 1)
-                          1=coverscore, 2=matchscore
-  -sort_score <1|2>       Sort key for results (default: 2)
-                          1=stage1 score, 2=chainscore
   -seqidlist <path>       Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
   -strand <-1|1|2>       Strand to search (default: 2)
                           1=plus only, -1=minus only, 2=both
   -accept_qdegen <0|1>    Accept queries with degenerate bases (default: 1)
-  -outfmt <tab|json>      Output format (default: tab)
+  -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose           Verbose logging
 ```
 
@@ -159,7 +166,7 @@ ikafssnsearch -ix ./index/mydb -k 11 -query query.fasta
 
 # Increase sensitivity
 ikafssnsearch -ix ./index/mydb -query query.fasta \
-    -min_score 2 -stage1_topn 2000 -max_freq 50000
+    -stage2_min_score 2 -stage1_topn 2000 -stage1_max_freq 50000
 
 # Restrict to specific accessions
 ikafssnsearch -ix ./index/mydb -query query.fasta -seqidlist targets.txt
@@ -168,7 +175,25 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -seqidlist targets.txt
 ikafssnsearch -ix ./index/mydb -query query.fasta -negative_seqidlist exclude.txt
 
 # Fractional Stage 1 threshold (50% of query k-mers)
-ikafssnsearch -ix ./index/mydb -query query.fasta -min_stage1_score 0.5
+ikafssnsearch -ix ./index/mydb -query query.fasta -stage1_min_score 0.5
+
+# Mode 3: pairwise alignment with traceback
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -num_results 5
+
+# Mode 3: SAM output
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+
+# Mode 3: BAM output
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt bam -o result.bam
+
+# Mode 3: filter by percent identity
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_pident 90
+
+# Mode 3: with context extension (50 bases each side)
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 50 -num_results 5
+
+# Mode 3: with context extension (0.1x query length each side)
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 0.1 -num_results 5
 
 # Pipe to ikafssnretrieve
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -442,17 +467,21 @@ ikafssninfo -ix ./index/mydb -v
 
 ## Search Pipeline
 
-ikafssn uses a two-stage search pipeline:
+ikafssn uses a three-stage search pipeline:
 
-The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0` disable sorting, and `min_stage1_score=0.5` (fractional) filters candidates by requiring at least 50% of query k-mers to match. To get ranked output, set positive values for `-stage1_topn` and/or `-num_results`, which triggers sorting but may reduce speed for large result sets.
+The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0` disable sorting, and `stage1_min_score=0.5` (fractional) filters candidates by requiring at least 50% of query k-mers to match. To get ranked output, set positive values for `-stage1_topn` and/or `-num_results`, which triggers sorting but may reduce speed for large result sets.
 
-1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `min_stage1_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0` (default), all qualifying candidates are returned without sorting.
+1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `stage1_min_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0` (default), all qualifying candidates are returned without sorting.
 
-2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= min_score` are reported. The DP inner loop is limited by `-chain_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior).
+2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= stage2_min_score` are reported. The DP inner loop is limited by `-stage2_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior).
 
-**Adaptive `-min_score` (default):** When `-min_score 0` (the default), the minimum chain score is set adaptively per query to the resolved Stage 1 threshold. With fractional `-min_stage1_score` (e.g. `0.5`), this means each query gets a per-query adaptive threshold based on its k-mer composition. With absolute `-min_stage1_score`, the configured value is used. Set `-min_score` to a positive integer to override this behavior with a fixed threshold.
+3. **Stage 3 (Pairwise Alignment):** For each Stage 2 hit, retrieves the subject subsequence from the BLAST DB (with optional context extension via `-context`), and performs semi-global pairwise alignment using the Parasail library (nuc44 scoring matrix). The alignment score (**alnscore**) is computed for all hits. When `-stage3_traceback 1` is enabled, CIGAR strings, percent identity, identical base count, mismatch count, and aligned sequences (with gaps) are also computed. Hits can be filtered by `-stage3_min_pident` and `-stage3_min_nident` (traceback mode only). Subject sequences are pre-fetched in parallel across BLAST DB volumes controlled by `-stage3_fetch_threads`.
 
-**Mode 1 (Stage 1 only):** When `-mode 1` is specified, Stage 2 is skipped entirely. The `.kpx` file is not accessed, saving I/O and memory. Results contain only Stage 1 scores; position fields (q_start, q_end, s_start, s_end) and chainscore are omitted. In mode 1, `-min_score` applies to the Stage 1 score, and `-sort_score` is forced to 1 (stage1 score).
+**Adaptive `-stage2_min_score` (default):** When `-stage2_min_score 0` (the default), the minimum chain score is set adaptively per query to the resolved Stage 1 threshold. With fractional `-stage1_min_score` (e.g. `0.5`), this means each query gets a per-query adaptive threshold based on its k-mer composition. With absolute `-stage1_min_score`, the configured value is used. Set `-stage2_min_score` to a positive integer to override this behavior with a fixed threshold.
+
+**Mode 1 (Stage 1 only):** When `-mode 1` is specified, Stages 2 and 3 are skipped entirely. The `.kpx` file is not accessed, saving I/O and memory. Results contain only Stage 1 scores; position fields (q_start, q_end, s_start, s_end) and chainscore are omitted. The sort key is forced to stage1 score.
+
+**Mode 3 (Full pipeline):** When `-mode 3` is specified, all three stages are executed. A BLAST DB is required (specified via `-db`, defaulting to the index prefix). The sort key is automatically set to alnscore. SAM/BAM output requires `-mode 3` with `-stage3_traceback 1`.
 
 By default, both forward and reverse complement strands of the query are searched. Use `-strand 1` to search only the plus (forward) strand, or `-strand -1` to search only the minus (reverse complement) strand.
 
@@ -498,10 +527,11 @@ ikafssn computes three types of scores:
 | **coverscore** | Number of distinct query k-mers that match the subject sequence. Each query k-mer is counted at most once per subject, regardless of how many positions it matches. | Stage 1 |
 | **matchscore** | Total number of (query k-mer, subject position) matches. A single query k-mer matching multiple positions in the subject counts multiple times. | Stage 1 |
 | **chainscore** | Length (number of k-mer hits) of the best collinear chain found by the chaining DP. Requires position data from `.kpx`. | Stage 2 |
+| **alnscore** | Semi-global pairwise alignment score computed by Parasail (nuc44 matrix). Requires BLAST DB for subject sequence retrieval. | Stage 3 |
 
 - `-stage1_score` selects which score type Stage 1 uses (1=coverscore, 2=matchscore). This affects candidate ranking and the stage1 score reported in output.
-- `-sort_score` selects which score is used for final result sorting (1=stage1 score, 2=chainscore).
-- In `-mode 1`, only Stage 1 scores are available; chainscore is not computed.
+- The sort key is auto-determined by mode: mode 1 sorts by stage1 score, mode 2 by chainscore, mode 3 by alnscore.
+- In `-mode 1`, only Stage 1 scores are available; chainscore and alnscore are not computed.
 
 ## Output Format
 
@@ -519,6 +549,18 @@ Tab-separated columns, where `coverscore` is replaced by `matchscore` when `-sta
 
 ```
 # query_id  accession  strand  coverscore  volume
+```
+
+**Mode 3, traceback=0** (`-mode 3`):
+
+```
+# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  alnscore  volume
+```
+
+**Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
+
+```
+# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  alnscore  pident  nident  nmismatch  cigar  q_seq  s_seq  volume
 ```
 
 ### JSON Format
@@ -567,6 +609,53 @@ Tab-separated columns, where `coverscore` is replaced by `matchscore` when `-sta
   ]
 }
 ```
+
+**Mode 3** (`-mode 3 -stage3_traceback 1`):
+
+```json
+{
+  "results": [
+    {
+      "query_id": "query1",
+      "hits": [
+        {
+          "accession": "NC_001234.5",
+          "strand": "+",
+          "q_start": 0,
+          "q_end": 150,
+          "s_start": 1000,
+          "s_end": 1150,
+          "coverscore": 8,
+          "chainscore": 12,
+          "alnscore": 240,
+          "pident": 95.3,
+          "nident": 143,
+          "nmismatch": 7,
+          "cigar": "50=2X48=1I50=",
+          "q_seq": "ACGT...",
+          "s_seq": "ACGT...",
+          "volume": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+### SAM/BAM Format
+
+SAM/BAM output requires `-mode 3 -stage3_traceback 1`. Use `-outfmt sam` for SAM or `-outfmt bam` for BAM (BAM requires `-o <path>`).
+
+SAM records contain:
+- **QNAME**: query_id
+- **FLAG**: 0 (forward) or 16 (reverse)
+- **RNAME**: accession
+- **POS**: s_start + 1 (1-based)
+- **MAPQ**: 255
+- **CIGAR**: extended CIGAR with =/X/I/D operators
+- **SEQ**: ungapped query sequence
+- **QUAL**: * (not available)
+- **Tags**: `AS:i` (alnscore), `NM:i` (nmismatch), `cs:i` (chainscore), `s1:i` (stage1_score)
 
 ## Deployment Architecture
 
@@ -634,6 +723,8 @@ ID and position postings are stored in separate files so that Stage 1 filtering 
 - CMake >= 3.16
 - NCBI C++ Toolkit (for BLAST DB access)
 - Intel TBB (for parallelization)
+- Parasail >= 2.6 (for Stage 3 pairwise alignment)
+- htslib >= 1.17 (for SAM/BAM output)
 - Drogon (for ikafssnhttpd, optional)
 - libcurl (for HTTP client mode and remote retrieval, optional)
 

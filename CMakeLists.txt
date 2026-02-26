@@ -57,6 +57,25 @@ endif()
 
 include("${NCBI_TOOLKIT_CMAKE}")
 
+# --- Parasail (for Stage 3 alignment) ---
+set(PARASAIL_DIR "${CMAKE_SOURCE_DIR}/parasail" CACHE PATH
+    "Path to Parasail install root")
+add_library(parasail STATIC IMPORTED)
+set_target_properties(parasail PROPERTIES
+    IMPORTED_LOCATION "${PARASAIL_DIR}/lib/libparasail.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${PARASAIL_DIR}/include"
+)
+
+# --- htslib (for SAM/BAM output) ---
+set(HTSLIB_DIR "${CMAKE_SOURCE_DIR}/htslib" CACHE PATH
+    "Path to htslib install root")
+add_library(hts STATIC IMPORTED)
+set_target_properties(hts PROPERTIES
+    IMPORTED_LOCATION "${HTSLIB_DIR}/lib/libhts.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${HTSLIB_DIR}/include"
+    INTERFACE_LINK_LIBRARIES "z;bz2;lzma;deflate;pthread;m"
+)
+
 # --- Intel TBB ---
 find_package(TBB REQUIRED)
 

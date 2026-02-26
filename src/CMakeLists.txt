@@ -63,6 +63,25 @@ add_library(ikafssn_search STATIC
 )
 target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_io)
 
+# Stage 3 alignment library (requires Parasail + BLAST DB)
+add_library(ikafssn_stage3 STATIC
+    search/stage3_alignment.cpp
+)
+target_include_directories(ikafssn_stage3 PRIVATE
+    "${NCBI_TOOLKIT_INCLUDE}"
+)
+target_link_libraries(ikafssn_stage3 PUBLIC
+    ikafssn_core ikafssn_io ikafssn_blastdb parasail
+)
+
+# SAM/BAM output library (requires htslib)
+add_library(ikafssn_sam_writer STATIC
+    io/sam_writer.cpp
+)
+target_link_libraries(ikafssn_sam_writer PUBLIC
+    ikafssn_core ikafssn_io hts
+)
+
 # Utility library
 add_library(ikafssn_util STATIC
     util/cli_parser.cpp
@@ -96,8 +115,12 @@ target_link_libraries(ikafssnindex PRIVATE
 add_executable(ikafssnsearch
     ikafssnsearch/main.cpp
 )
+target_include_directories(ikafssnsearch PRIVATE
+    "${NCBI_TOOLKIT_INCLUDE}"
+)
 target_link_libraries(ikafssnsearch PRIVATE
-    ikafssn_search ikafssn_index ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_search ikafssn_stage3 ikafssn_sam_writer
+    ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
     TBB::tbb
 )
 

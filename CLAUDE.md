@@ -38,6 +38,8 @@ This project's external dependencies and their status on this dev machine (Ubunt
 | Intel TBB (oneTBB) | 2021.11.0 | system | `sudo apt install libtbb-dev` |
 | Drogon | 1.8.7 | system | `sudo apt install libdrogon-dev` |
 | libcurl | 8.5.0 | system | apt (pre-installed) |
+| Parasail | 2.6.2 | `./parasail/` | source build |
+| htslib | 1.23 | `./htslib/` | source build |
 | BLAST+ | 2.12.0 | system | apt (pre-installed, for test data generation) |
 
 ### NCBI C++ Toolkit
@@ -57,7 +59,7 @@ Each command links only its required dependencies to allow lightweight deploymen
 | Command | Purpose | Key Dependencies |
 |---|---|---|
 | `ikafssnindex` | Build k-mer inverted index from BLAST DB | NCBI C++ Toolkit, TBB |
-| `ikafssnsearch` | Local direct search (mmap index) | NCBI C++ Toolkit, TBB |
+| `ikafssnsearch` | Local direct search (mmap index) | NCBI C++ Toolkit, TBB, Parasail (mode 3), htslib (SAM/BAM) |
 | `ikafssnretrieve` | Extract matched subsequences | NCBI C++ Toolkit, libcurl (remote) |
 | `ikafssnserver` | Search daemon (UNIX/TCP socket) | NCBI C++ Toolkit, TBB |
 | `ikafssnhttpd` | HTTP REST proxy to ikafssnserver | Drogon |
@@ -68,7 +70,7 @@ Each command links only its required dependencies to allow lightweight deploymen
 
 - **`core/`** — Fundamental types (`Hit`, `ChainResult`), constants, k-mer 2-bit encoding/revcomp (templates parameterized on `KmerInt` = `uint16_t` for k<=8, `uint32_t` for k=9-13), LEB128 varint
 - **`index/`** — Reader/writer for four index file formats (`.kix` main index, `.kpx` position data, `.ksx` sequence metadata, `.khx` build-time exclusion bitset), index builder with partition+buffer strategy
-- **`search/`** — Two-stage search pipeline: Stage 1 (ID posting scan with OID filter, coverscore or matchscore) -> Stage 2 (position-aware chaining DP with diagonal filter, chainscore). Mode 1 skips Stage 2 entirely. Configurable sort_score (stage1 score or chainscore). Defaults: stage1_topn=0 (unlimited, no sort), num_results=0 (unlimited, no sort), min_stage1_score=0.5 (fractional), min_score=1 — speed-first defaults that skip sorting. Set positive stage1_topn/num_results to enable sorting. Fractional min_stage1_score (0 < P < 1) resolves per-query threshold as `ceil(Nqkmer * P) - Nhighfreq`, using `.khx` for build-time exclusion awareness. Query k-mers with exactly one IUPAC degenerate base are expanded to all variants (matching index-time subject handling); Stage 1 uses per-position dedup (`last_scored_pos`) to avoid inflating scores from expanded k-mers; Stage 2 deduplicates `(q_pos, s_pos)` hits before diagonal filter
+- **`search/`** — Three-stage search pipeline: Stage 1 (ID posting scan with OID filter, coverscore or matchscore) -> Stage 2 (position-aware chaining DP with diagonal filter, chainscore) -> Stage 3 (Parasail pairwise alignment with BLAST DB subject retrieval, alnscore/pident/CIGAR). Mode 1 skips Stage 2+3, mode 2 skips Stage 3. sort_score is auto-determined by mode (1=stage1, 2=chainscore, 3=alnscore). Defaults: stage1_topn=0 (unlimited, no sort), num_results=0 (unlimited, no sort), stage1_min_score=0.5 (fractional), stage2_min_score=1 — speed-first defaults that skip sorting. Set positive stage1_topn/num_results to enable sorting. Fractional stage1_min_score (0 < P < 1) resolves per-query threshold as `ceil(Nqkmer * P) - Nhighfreq`, using `.khx` for build-time exclusion awareness. Query k-mers with exactly one IUPAC degenerate base are expanded to all variants (matching index-time subject handling); Stage 1 uses per-position dedup (`last_scored_pos`) to avoid inflating scores from expanded k-mers; Stage 2 deduplicates `(q_pos, s_pos)` hits before diagonal filter; Stage 3 uses parasail_sg semi-global alignment with nuc44 matrix, optional traceback for CIGAR/pident/q_seq/s_seq, context extension for subject subsequence retrieval, and volume-parallel BLAST DB prefetch
 - **`protocol/`** — Length-prefixed binary protocol for client-server communication (frame header + typed messages)
 - **`io/`** — BLAST DB reader (CSeqDB wrapper), FASTA reader, mmap RAII wrapper, seqidlist reader (text/binary auto-detect), result writer/reader
 - **`util/`** — CLI parser, size string parser ("8G"), socket utilities, progress display, logger

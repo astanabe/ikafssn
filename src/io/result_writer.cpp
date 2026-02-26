@@ -11,7 +11,8 @@ static const char* stage1_score_name(uint8_t stage1_score_type) {
 void write_results_tab(std::ostream& out,
                        const std::vector<OutputHit>& hits,
                        uint8_t mode,
-                       uint8_t stage1_score_type) {
+                       uint8_t stage1_score_type,
+                       bool stage3_traceback) {
     const char* s1name = stage1_score_name(stage1_score_type);
 
     if (mode == 1) {
@@ -21,6 +22,44 @@ void write_results_tab(std::ostream& out,
                 << h.accession << '\t'
                 << h.strand << '\t'
                 << h.stage1_score << '\t'
+                << h.volume << '\n';
+        }
+    } else if (mode == 3 && stage3_traceback) {
+        out << "# query_id\taccession\tstrand\tq_start\tq_end\ts_start\ts_end\t"
+            << s1name << "\tchainscore\talnscore\tpident\tnident\tnmismatch\tcigar\tq_seq\ts_seq\tvolume\n";
+        for (const auto& h : hits) {
+            out << h.query_id << '\t'
+                << h.accession << '\t'
+                << h.strand << '\t'
+                << h.q_start << '\t'
+                << h.q_end << '\t'
+                << h.s_start << '\t'
+                << h.s_end << '\t'
+                << h.stage1_score << '\t'
+                << h.score << '\t'
+                << h.alnscore << '\t'
+                << h.pident << '\t'
+                << h.nident << '\t'
+                << h.nmismatch << '\t'
+                << h.cigar << '\t'
+                << h.q_seq << '\t'
+                << h.s_seq << '\t'
+                << h.volume << '\n';
+        }
+    } else if (mode == 3) {
+        out << "# query_id\taccession\tstrand\tq_start\tq_end\ts_start\ts_end\t"
+            << s1name << "\tchainscore\talnscore\tvolume\n";
+        for (const auto& h : hits) {
+            out << h.query_id << '\t'
+                << h.accession << '\t'
+                << h.strand << '\t'
+                << h.q_start << '\t'
+                << h.q_end << '\t'
+                << h.s_start << '\t'
+                << h.s_end << '\t'
+                << h.stage1_score << '\t'
+                << h.score << '\t'
+                << h.alnscore << '\t'
                 << h.volume << '\n';
         }
     } else {
@@ -59,7 +98,8 @@ static void json_escape(std::ostream& out, const std::string& s) {
 void write_results_json(std::ostream& out,
                         const std::vector<OutputHit>& hits,
                         uint8_t mode,
-                        uint8_t stage1_score_type) {
+                        uint8_t stage1_score_type,
+                        bool stage3_traceback) {
     const char* s1name = stage1_score_name(stage1_score_type);
 
     // Group hits by query_id (preserve order of first appearance)
@@ -94,6 +134,17 @@ void write_results_json(std::ostream& out,
             if (mode != 1) {
                 out << "          \"chainscore\": " << h->score << ",\n";
             }
+            if (mode == 3) {
+                out << "          \"alnscore\": " << h->alnscore << ",\n";
+                if (stage3_traceback) {
+                    out << "          \"pident\": " << h->pident << ",\n";
+                    out << "          \"nident\": " << h->nident << ",\n";
+                    out << "          \"nmismatch\": " << h->nmismatch << ",\n";
+                    out << "          \"cigar\": "; json_escape(out, h->cigar); out << ",\n";
+                    out << "          \"q_seq\": "; json_escape(out, h->q_seq); out << ",\n";
+                    out << "          \"s_seq\": "; json_escape(out, h->s_seq); out << ",\n";
+                }
+            }
             out << "          \"volume\": " << h->volume << "\n";
             out << "        }";
             if (hi + 1 < qhits.size()) out << ',';
@@ -110,13 +161,18 @@ void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,
                    OutputFormat fmt,
                    uint8_t mode,
-                   uint8_t stage1_score_type) {
+                   uint8_t stage1_score_type,
+                   bool stage3_traceback) {
     switch (fmt) {
         case OutputFormat::kTab:
-            write_results_tab(out, hits, mode, stage1_score_type);
+            write_results_tab(out, hits, mode, stage1_score_type, stage3_traceback);
             break;
         case OutputFormat::kJson:
-            write_results_json(out, hits, mode, stage1_score_type);
+            write_results_json(out, hits, mode, stage1_score_type, stage3_traceback);
+            break;
+        case OutputFormat::kSam:
+        case OutputFormat::kBam:
+            // SAM/BAM handled separately via sam_writer
             break;
     }
 }
