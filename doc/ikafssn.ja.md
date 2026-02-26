@@ -978,7 +978,7 @@ Parasail のダウンロード・ビルド・インストールは、ikafssn ソ
 
 ```bash
 curl -L -o parasail-2.6.2.tar.gz \
-    https://github.com/jeffdaily/parasail/releases/download/v2.6.2/parasail-2.6.2.tar.gz
+    https://github.com/jeffdaily/parasail/archive/refs/tags/v2.6.2.tar.gz
 tar xf parasail-2.6.2.tar.gz
 cd parasail-2.6.2
 mkdir build && cd build
