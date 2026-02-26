@@ -31,6 +31,7 @@ struct OutputHit {
     double pident = 0.0;
     std::string q_seq;        // aligned query (with gaps, traceback only)
     std::string s_seq;        // aligned subject (with gaps, traceback only)
+    uint32_t q_length = 0;    // query full sequence length
     uint32_t s_length = 0;    // subject full sequence length (for SAM @SQ)
 };
 

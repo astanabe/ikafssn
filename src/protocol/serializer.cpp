@@ -10,9 +10,17 @@ static void put_u8(std::vector<uint8_t>& buf, uint8_t v) {
     buf.push_back(v);
 }
 
+static void put_i8(std::vector<uint8_t>& buf, int8_t v) {
+    buf.push_back(static_cast<uint8_t>(v));
+}
+
 static void put_u16(std::vector<uint8_t>& buf, uint16_t v) {
     buf.push_back(static_cast<uint8_t>(v));
     buf.push_back(static_cast<uint8_t>(v >> 8));
+}
+
+static void put_i16(std::vector<uint8_t>& buf, int16_t v) {
+    put_u16(buf, static_cast<uint16_t>(v));
 }
 
 static void put_u32(std::vector<uint8_t>& buf, uint32_t v) {
@@ -20,6 +28,10 @@ static void put_u32(std::vector<uint8_t>& buf, uint32_t v) {
     buf.push_back(static_cast<uint8_t>(v >> 8));
     buf.push_back(static_cast<uint8_t>(v >> 16));
     buf.push_back(static_cast<uint8_t>(v >> 24));
+}
+
+static void put_i32(std::vector<uint8_t>& buf, int32_t v) {
+    put_u32(buf, static_cast<uint32_t>(v));
 }
 
 static void put_u64(std::vector<uint8_t>& buf, uint64_t v) {
@@ -47,11 +59,25 @@ public:
         return true;
     }
 
+    bool get_i8(int8_t& v) {
+        uint8_t raw;
+        if (!get_u8(raw)) return false;
+        v = static_cast<int8_t>(raw);
+        return true;
+    }
+
     bool get_u16(uint16_t& v) {
         if (!has(2)) return false;
         v = static_cast<uint16_t>(data_[pos_]) |
             (static_cast<uint16_t>(data_[pos_ + 1]) << 8);
         pos_ += 2;
+        return true;
+    }
+
+    bool get_i16(int16_t& v) {
+        uint16_t raw;
+        if (!get_u16(raw)) return false;
+        v = static_cast<int16_t>(raw);
         return true;
     }
 
@@ -62,6 +88,13 @@ public:
             (static_cast<uint32_t>(data_[pos_ + 2]) << 16) |
             (static_cast<uint32_t>(data_[pos_ + 3]) << 24);
         pos_ += 4;
+        return true;
+    }
+
+    bool get_i32(int32_t& v) {
+        uint32_t raw;
+        if (!get_u32(raw)) return false;
+        v = static_cast<int32_t>(raw);
         return true;
     }
 
@@ -97,22 +130,64 @@ private:
 };
 
 // --- SearchRequest ---
+// Wire format (all fields in natural order, no backward-compat trailer):
+//   u8   k
+//   u16  stage2_min_score
+//   u16  stage2_max_gap
+//   u32  stage1_max_freq
+//   u8   stage2_min_diag_hits
+//   u16  stage1_topn
+//   u16  stage1_min_score
+//   u16  num_results
+//   u16  stage1_min_score_frac_x10000
+//   u16  stage1_max_freq_frac_x10000
+//   u8   seqidlist_mode
+//   u8   mode
+//   u8   stage1_score
+//   u8   accept_qdegen
+//   i8   strand
+//   u8   has_stage2_min_score
+//   u16  stage2_max_lookback
+//   u8   stage3_traceback
+//   i16  stage3_gapopen
+//   i16  stage3_gapext
+//   u16  stage3_min_pident_x100
+//   u32  stage3_min_nident
+//   u32  context_abs
+//   u16  context_frac_x10000
+//   u32  num_seqids
+//     [str16 seqid] × num_seqids
+//   u16  num_queries
+//     [str16 query_id, u32 seq_len, bytes seq] × num_queries
 
 std::vector<uint8_t> serialize(const SearchRequest& req) {
     std::vector<uint8_t> buf;
     buf.reserve(256);
 
     put_u8(buf, req.k);
-    put_u16(buf, req.min_score);
-    put_u16(buf, req.max_gap);
-    put_u32(buf, req.max_freq);
-    put_u8(buf, req.min_diag_hits);
+    put_u16(buf, req.stage2_min_score);
+    put_u16(buf, req.stage2_max_gap);
+    put_u32(buf, req.stage1_max_freq);
+    put_u8(buf, req.stage2_min_diag_hits);
     put_u16(buf, req.stage1_topn);
-    put_u16(buf, req.min_stage1_score);
+    put_u16(buf, req.stage1_min_score);
     put_u16(buf, req.num_results);
+    put_u16(buf, req.stage1_min_score_frac_x10000);
+    put_u16(buf, req.stage1_max_freq_frac_x10000);
     put_u8(buf, static_cast<uint8_t>(req.seqidlist_mode));
     put_u8(buf, req.mode);
-    put_u8(buf, static_cast<uint8_t>(req.stage1_score_type | (req.sort_score << 4)));
+    put_u8(buf, req.stage1_score);
+    put_u8(buf, req.accept_qdegen);
+    put_i8(buf, req.strand);
+    put_u8(buf, req.has_stage2_min_score);
+    put_u16(buf, req.stage2_max_lookback);
+    put_u8(buf, req.stage3_traceback);
+    put_i16(buf, req.stage3_gapopen);
+    put_i16(buf, req.stage3_gapext);
+    put_u16(buf, req.stage3_min_pident_x100);
+    put_u32(buf, req.stage3_min_nident);
+    put_u32(buf, req.context_abs);
+    put_u16(buf, req.context_frac_x10000);
 
     put_u32(buf, static_cast<uint32_t>(req.seqids.size()));
     for (const auto& acc : req.seqids) {
@@ -126,24 +201,6 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
         buf.insert(buf.end(), q.sequence.begin(), q.sequence.end());
     }
 
-    // Backward-compatible trailer: fractional min_stage1_score
-    put_u16(buf, req.min_stage1_score_frac_x10000);
-
-    // Backward-compatible trailer: accept_qdegen
-    put_u8(buf, req.accept_qdegen);
-
-    // Backward-compatible trailer: strand
-    put_u8(buf, static_cast<uint8_t>(req.strand));
-
-    // Backward-compatible trailer: max_freq fraction
-    put_u16(buf, req.max_freq_frac_x10000);
-
-    // Backward-compatible trailer: has_min_score
-    put_u8(buf, req.has_min_score);
-
-    // Backward-compatible trailer: chain_max_lookback
-    put_u16(buf, req.chain_max_lookback);
-
     return buf;
 }
 
@@ -151,13 +208,15 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     Reader r(data.data(), data.size());
 
     if (!r.get_u8(req.k)) return false;
-    if (!r.get_u16(req.min_score)) return false;
-    if (!r.get_u16(req.max_gap)) return false;
-    if (!r.get_u32(req.max_freq)) return false;
-    if (!r.get_u8(req.min_diag_hits)) return false;
+    if (!r.get_u16(req.stage2_min_score)) return false;
+    if (!r.get_u16(req.stage2_max_gap)) return false;
+    if (!r.get_u32(req.stage1_max_freq)) return false;
+    if (!r.get_u8(req.stage2_min_diag_hits)) return false;
     if (!r.get_u16(req.stage1_topn)) return false;
-    if (!r.get_u16(req.min_stage1_score)) return false;
+    if (!r.get_u16(req.stage1_min_score)) return false;
     if (!r.get_u16(req.num_results)) return false;
+    if (!r.get_u16(req.stage1_min_score_frac_x10000)) return false;
+    if (!r.get_u16(req.stage1_max_freq_frac_x10000)) return false;
 
     uint8_t seqidlist_mode;
     if (!r.get_u8(seqidlist_mode)) return false;
@@ -165,10 +224,18 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     req.seqidlist_mode = static_cast<SeqidlistMode>(seqidlist_mode);
 
     if (!r.get_u8(req.mode)) return false;
-    uint8_t packed;
-    if (!r.get_u8(packed)) return false;
-    req.stage1_score_type = packed & 0x0F;
-    req.sort_score = (packed >> 4) & 0x0F;
+    if (!r.get_u8(req.stage1_score)) return false;
+    if (!r.get_u8(req.accept_qdegen)) return false;
+    if (!r.get_i8(req.strand)) return false;
+    if (!r.get_u8(req.has_stage2_min_score)) return false;
+    if (!r.get_u16(req.stage2_max_lookback)) return false;
+    if (!r.get_u8(req.stage3_traceback)) return false;
+    if (!r.get_i16(req.stage3_gapopen)) return false;
+    if (!r.get_i16(req.stage3_gapext)) return false;
+    if (!r.get_u16(req.stage3_min_pident_x100)) return false;
+    if (!r.get_u32(req.stage3_min_nident)) return false;
+    if (!r.get_u32(req.context_abs)) return false;
+    if (!r.get_u16(req.context_frac_x10000)) return false;
 
     uint32_t num_seqids;
     if (!r.get_u32(num_seqids)) return false;
@@ -191,42 +258,43 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
         if (!r.skip(seq_len)) return false;
     }
 
-    // Backward-compatible trailer: fractional min_stage1_score
-    if (r.remaining() >= 2) {
-        r.get_u16(req.min_stage1_score_frac_x10000);
-    }
-
-    // Backward-compatible trailer: accept_qdegen
-    if (r.remaining() >= 1) {
-        r.get_u8(req.accept_qdegen);
-    }
-
-    // Backward-compatible trailer: strand
-    if (r.remaining() >= 1) {
-        uint8_t strand_raw;
-        r.get_u8(strand_raw);
-        req.strand = static_cast<int8_t>(strand_raw);
-    }
-
-    // Backward-compatible trailer: max_freq fraction
-    if (r.remaining() >= 2) {
-        r.get_u16(req.max_freq_frac_x10000);
-    }
-
-    // Backward-compatible trailer: has_min_score
-    if (r.remaining() >= 1) {
-        r.get_u8(req.has_min_score);
-    }
-
-    // Backward-compatible trailer: chain_max_lookback
-    if (r.remaining() >= 2) {
-        r.get_u16(req.chain_max_lookback);
-    }
-
     return true;
 }
 
 // --- SearchResponse ---
+// Wire format:
+//   u8   status
+//   u8   k
+//   u8   mode
+//   u8   stage1_score
+//   u8   stage3_traceback
+//   u16  num_queries
+//   for each query:
+//     str16 query_id
+//     u8    skipped
+//     u8    warnings
+//     u16   num_hits
+//     for each hit:
+//       str16  accession
+//       u8     strand
+//       u32    q_start
+//       u32    q_end
+//       u32    q_length
+//       u32    s_start
+//       u32    s_end
+//       u32    s_length
+//       u16    score        (chainscore)
+//       u16    stage1_score
+//       u16    volume
+//       i32    alnscore
+//       u32    nident
+//       u32    nmismatch
+//       u16    pident_x100
+//       str16  cigar
+//       str16  q_seq
+//       str16  s_seq
+//   u16  num_rejected
+//     [str16 query_id] × num_rejected
 
 std::vector<uint8_t> serialize(const SearchResponse& resp) {
     std::vector<uint8_t> buf;
@@ -235,36 +303,38 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
     put_u8(buf, resp.status);
     put_u8(buf, resp.k);
     put_u8(buf, resp.mode);
-    put_u8(buf, resp.stage1_score_type);
+    put_u8(buf, resp.stage1_score);
+    put_u8(buf, resp.stage3_traceback);
     put_u16(buf, static_cast<uint16_t>(resp.results.size()));
 
     for (const auto& qr : resp.results) {
         put_str16(buf, qr.query_id);
+        put_u8(buf, qr.skipped);
+        put_u8(buf, qr.warnings);
         put_u16(buf, static_cast<uint16_t>(qr.hits.size()));
         for (const auto& hit : qr.hits) {
             put_str16(buf, hit.accession);
             put_u8(buf, hit.strand);
             put_u32(buf, hit.q_start);
             put_u32(buf, hit.q_end);
+            put_u32(buf, hit.q_length);
             put_u32(buf, hit.s_start);
             put_u32(buf, hit.s_end);
+            put_u32(buf, hit.s_length);
             put_u16(buf, hit.score);
             put_u16(buf, hit.stage1_score);
             put_u16(buf, hit.volume);
+            put_i32(buf, hit.alnscore);
+            put_u32(buf, hit.nident);
+            put_u32(buf, hit.nmismatch);
+            put_u16(buf, hit.pident_x100);
+            put_str16(buf, hit.cigar);
+            put_str16(buf, hit.q_seq);
+            put_str16(buf, hit.s_seq);
         }
     }
 
-    // Backward-compatible trailer: per-query skipped flags
-    for (const auto& qr : resp.results) {
-        put_u8(buf, qr.skipped);
-    }
-
-    // Backward-compatible trailer: per-query warning flags
-    for (const auto& qr : resp.results) {
-        put_u8(buf, qr.warnings);
-    }
-
-    // Backward-compatible trailer: rejected query IDs
+    // Rejected query IDs
     put_u16(buf, static_cast<uint16_t>(resp.rejected_query_ids.size()));
     for (const auto& qid : resp.rejected_query_ids) {
         put_str16(buf, qid);
@@ -279,7 +349,8 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
     if (!r.get_u8(resp.status)) return false;
     if (!r.get_u8(resp.k)) return false;
     if (!r.get_u8(resp.mode)) return false;
-    if (!r.get_u8(resp.stage1_score_type)) return false;
+    if (!r.get_u8(resp.stage1_score)) return false;
+    if (!r.get_u8(resp.stage3_traceback)) return false;
 
     uint16_t num_queries;
     if (!r.get_u16(num_queries)) return false;
@@ -288,6 +359,8 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
     for (uint16_t qi = 0; qi < num_queries; qi++) {
         auto& qr = resp.results[qi];
         if (!r.get_str16(qr.query_id)) return false;
+        if (!r.get_u8(qr.skipped)) return false;
+        if (!r.get_u8(qr.warnings)) return false;
 
         uint16_t num_hits;
         if (!r.get_u16(num_hits)) return false;
@@ -299,37 +372,29 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
             if (!r.get_u8(hit.strand)) return false;
             if (!r.get_u32(hit.q_start)) return false;
             if (!r.get_u32(hit.q_end)) return false;
+            if (!r.get_u32(hit.q_length)) return false;
             if (!r.get_u32(hit.s_start)) return false;
             if (!r.get_u32(hit.s_end)) return false;
+            if (!r.get_u32(hit.s_length)) return false;
             if (!r.get_u16(hit.score)) return false;
             if (!r.get_u16(hit.stage1_score)) return false;
             if (!r.get_u16(hit.volume)) return false;
+            if (!r.get_i32(hit.alnscore)) return false;
+            if (!r.get_u32(hit.nident)) return false;
+            if (!r.get_u32(hit.nmismatch)) return false;
+            if (!r.get_u16(hit.pident_x100)) return false;
+            if (!r.get_str16(hit.cigar)) return false;
+            if (!r.get_str16(hit.q_seq)) return false;
+            if (!r.get_str16(hit.s_seq)) return false;
         }
     }
 
-    // Backward-compatible trailer: per-query skipped flags
-    if (r.remaining() >= num_queries) {
-        for (uint16_t qi = 0; qi < num_queries; qi++) {
-            r.get_u8(resp.results[qi].skipped);
-        }
-    }
-
-    // Backward-compatible trailer: per-query warning flags
-    if (r.remaining() >= num_queries) {
-        for (uint16_t qi = 0; qi < num_queries; qi++) {
-            r.get_u8(resp.results[qi].warnings);
-        }
-    }
-
-    // Backward-compatible trailer: rejected query IDs
-    if (r.remaining() >= 2) {
-        uint16_t num_rejected;
-        if (r.get_u16(num_rejected)) {
-            resp.rejected_query_ids.resize(num_rejected);
-            for (uint16_t i = 0; i < num_rejected; i++) {
-                if (!r.get_str16(resp.rejected_query_ids[i])) break;
-            }
-        }
+    // Rejected query IDs
+    uint16_t num_rejected;
+    if (!r.get_u16(num_rejected)) return false;
+    resp.rejected_query_ids.resize(num_rejected);
+    for (uint16_t i = 0; i < num_rejected; i++) {
+        if (!r.get_str16(resp.rejected_query_ids[i])) return false;
     }
 
     return true;

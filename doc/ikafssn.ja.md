@@ -213,7 +213,9 @@ ikafssnretrieve [options]
 
 共通オプション:
   -o <path>               出力 FASTA ファイル (デフォルト: 標準出力)
-  -context <int>          マッチ領域の前後に付加する塩基数 (デフォルト: 0)
+  -context <value>        コンテクスト拡張 (デフォルト: 0)
+                          整数: マッチ領域の前後に付加する塩基数
+                          小数: クエリ長 (q_len) に対する倍率
   -v, --verbose           詳細ログ出力
 
 リモート取得オプション (-remote 時):
@@ -246,6 +248,9 @@ ikafssnclient -http http://search.example.com:8080 -query query.fasta \
 
 # マッチ領域の前後 50bp を含めて抽出
 ikafssnretrieve -db nt -results results.tsv -context 50
+
+# コンテクストをクエリ長の倍率で指定 (前後各 0.1 倍)
+ikafssnretrieve -db nt -results results.tsv -context 0.1
 ```
 
 ### ikafssnserver
@@ -267,16 +272,25 @@ ikafssnserver [options]
   -max_query <int>        同時処理クエリ配列数のグローバル上限 (デフォルト: 1024)
   -max_seqs_per_req <int> 1 リクエストあたりの受理配列数上限 (デフォルト: スレッド数)
   -pid <path>             PID ファイルパス
-  -min_score <int>        デフォルト最小チェインスコア (デフォルト: 0 = 適応的)
-  -max_gap <int>          デフォルトチェイニング対角線ずれ許容幅 (デフォルト: 100)
-  -chain_max_lookback <int>  デフォルトチェイニング DP 探索窓サイズ (デフォルト: 64、0=無制限)
-  -max_freq <num>         デフォルト高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
+  -db <path>              モード 3 用 BLAST DB パス (デフォルト: -ix と同じ)
+  -stage1_max_freq <num>  デフォルト高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
                           0〜1 未満: 全ボリューム合計 NSEQ に対する割合
                           1 以上: 絶対カウント閾値; 0 = 自動計算
-  -min_diag_hits <int>    デフォルト対角線フィルタ最小ヒット数 (デフォルト: 1)
   -stage1_topn <int>      デフォルト Stage 1 候補数上限 (デフォルト: 0)
-  -min_stage1_score <num> デフォルト Stage 1 最小スコア閾値 (デフォルト: 0.5)
+  -stage1_min_score <num> デフォルト Stage 1 最小スコア閾値 (デフォルト: 0.5)
                           整数 (>= 1) または小数 (0 < P < 1)
+  -stage2_min_score <int> デフォルト最小チェインスコア (デフォルト: 0 = 適応的)
+  -stage2_max_gap <int>   デフォルトチェイニング対角線ずれ許容幅 (デフォルト: 100)
+  -stage2_max_lookback <int>  デフォルトチェイニング DP 探索窓サイズ (デフォルト: 64、0=無制限)
+  -stage2_min_diag_hits <int> デフォルト対角線フィルタ最小ヒット数 (デフォルト: 1)
+  -context <value>        デフォルトコンテクスト拡張 (デフォルト: 0)
+                          整数: 拡張する塩基数; 小数: クエリ長に対する倍率
+  -stage3_traceback <0|1> デフォルトトレースバックモード (デフォルト: 0)
+  -stage3_gapopen <int>   デフォルトギャップオープンペナルティ (デフォルト: 10)
+  -stage3_gapext <int>    デフォルトギャップ伸長ペナルティ (デフォルト: 1)
+  -stage3_min_pident <num>  デフォルト最小配列一致率 (デフォルト: 0)
+  -stage3_min_nident <int>  デフォルト最小一致塩基数 (デフォルト: 0)
+  -stage3_fetch_threads <int>  BLAST DB 取得スレッド数 (デフォルト: min(8, threads))
   -num_results <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
   -shutdown_timeout <int> グレースフルシャットダウンのタイムアウト秒数 (デフォルト: 30)
@@ -297,6 +311,10 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -tcp 0.0.0.0:9100
 
 # デーモン運用 (systemd 等から起動)
 ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn.pid
+
+# モード 3 対応: BLAST DB と Stage 3 デフォルトを指定
+ikafssnserver -ix ./nt_index -db nt -socket /var/run/ikafssn.sock \
+    -stage3_traceback 1 -context 50
 ```
 
 **運用上の特性:**
@@ -365,26 +383,32 @@ ikafssnclient [options]
 オプション:
   -o <path>                出力ファイル (デフォルト: 標準出力)
   -k <int>                 使用する k-mer サイズ (デフォルト: サーバ側デフォルト)
-  -min_score <int>         最小スコア (デフォルト: サーバ側デフォルト)
-                           0 = 適応的モードを明示的にリクエスト
-  -max_gap <int>           チェイニング対角線ずれ許容幅 (デフォルト: サーバ側デフォルト)
-  -chain_max_lookback <int>  チェイニング DP 探索窓サイズ (デフォルト: サーバ側デフォルト)
-  -max_freq <num>          高頻度 k-mer スキップ閾値 (デフォルト: サーバ側デフォルト)
+  -mode <1|2|3>            検索モード (デフォルト: サーバ側デフォルト)
+  -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: サーバ側デフォルト)
+  -stage1_max_freq <num>   高頻度 k-mer スキップ閾値 (デフォルト: サーバ側デフォルト)
                            0〜1 未満: 全ボリューム合計 NSEQ に対する割合
                            1 以上: 絶対カウント閾値
-  -min_diag_hits <int>     対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
   -stage1_topn <int>       Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
-  -min_stage1_score <num>  Stage 1 最小スコア閾値 (デフォルト: サーバ側デフォルト)
+  -stage1_min_score <num>  Stage 1 最小スコア閾値 (デフォルト: サーバ側デフォルト)
                            整数 (>= 1) または小数 (0 < P < 1)
+  -stage2_min_score <int>  最小チェインスコア (デフォルト: サーバ側デフォルト)
+                           0 = 適応的モードを明示的にリクエスト
+  -stage2_max_gap <int>    チェイニング対角線ずれ許容幅 (デフォルト: サーバ側デフォルト)
+  -stage2_max_lookback <int>  チェイニング DP 探索窓サイズ (デフォルト: サーバ側デフォルト)
+  -stage2_min_diag_hits <int> 対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
+  -context <value>         コンテクスト拡張 (デフォルト: サーバ側デフォルト)
+                           整数: 拡張する塩基数; 小数: クエリ長に対する倍率
+  -stage3_traceback <0|1>  トレースバック有効化 (デフォルト: サーバ側デフォルト)
+  -stage3_gapopen <int>    ギャップオープンペナルティ (デフォルト: サーバ側デフォルト)
+  -stage3_gapext <int>     ギャップ伸長ペナルティ (デフォルト: サーバ側デフォルト)
+  -stage3_min_pident <num> 最小配列一致率フィルタ (デフォルト: サーバ側デフォルト)
+  -stage3_min_nident <int> 最小一致塩基数フィルタ (デフォルト: サーバ側デフォルト)
   -num_results <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
-  -mode <1|2>              検索モード (デフォルト: サーバ側デフォルト)
-  -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: サーバ側デフォルト)
-  -sort_score <1|2>        結果のソート基準 (デフォルト: サーバ側デフォルト)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
-  -accept_qdegen <0|1>     縮重塩基を含むクエリを許可 (デフォルト: 0)
-  -outfmt <tab|json>       出力形式 (デフォルト: tab)
+  -accept_qdegen <0|1>     縮重塩基を含むクエリを許可 (デフォルト: 1)
+  -outfmt <tab|json|sam|bam>  出力形式 (デフォルト: tab)
   -v, --verbose            詳細ログ出力
 
 HTTP 認証 (HTTP モード専用):
@@ -423,6 +447,12 @@ ikafssnclient -http http://search.example.com:8080 -query query.fasta --http-use
 
 # .netrc ファイルによる認証
 ikafssnclient -http http://search.example.com:8080 -query query.fasta --netrc-file ~/.netrc
+
+# モード 3: トレースバック付きペアワイズアライメント
+ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -mode 3 -stage3_traceback 1
+
+# モード 3: SAM 出力
+ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
 ```
 
 ### ikafssninfo
@@ -436,9 +466,11 @@ ikafssninfo [options]
   -ix <prefix>            インデックスプレフィックス (blastn -db と同様)
 
 オプション:
-  -db <path>              BLAST DB プレフィックス (指定時は DB 情報も表示)
+  -db <path>              BLAST DB プレフィックス (デフォルト: -ix から自動検出)
   -v, --verbose           詳細ログ出力 (k-mer 頻度分布の詳細等)
 ```
+
+`-db` 未指定の場合、インデックスプレフィックスパスが有効な BLAST DB に対応するかを確認し、自動検出を試みます。
 
 **出力情報:**
 
@@ -447,7 +479,7 @@ ikafssninfo [options]
 - 各ボリュームの配列数、総ポスティング数、ファイルサイズ、除外 k-mer 数 (`.khx` 存在時)
 - 全体統計: 総配列数、総ポスティング数、総インデックスサイズ、圧縮率
 - `-v` 指定時: k-mer 出現頻度分布 (min, max, mean, パーセンタイル)
-- `-db` 指定時: BLAST DB のタイトル、配列数、総塩基数、ボリューム構成
+- `-db` 指定時 (または自動検出時): BLAST DB のタイトル、配列数、総塩基数、ボリューム構成
 
 **使用例:**
 
@@ -497,7 +529,7 @@ max_freq = mean_count * 10    ([1000, 100000] に制限)
 
 この自動計算モードではボリュームごとに `.kix` ヘッダから値が算出されます。
 
-**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。k-mer カウントは全ボリュームで合算された後に閾値と比較されるため、各ボリュームでは閾値未満だが合計では閾値を超える k-mer も正しく除外されます。除外された k-mer は共有 `.khx` ファイル (k 値ごとに 1 つ、ボリュームごとではない) に記録されます。小数値 (0 < x < 1) を指定した場合、閾値は全ボリューム合計 NSEQ に基づいて解決されます (`-max_freq` と同じ方式)。検索時に割合指定の `-stage1_min_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算から差し引かれます。
+**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。k-mer カウントは全ボリュームで合算された後に閾値と比較されるため、各ボリュームでは閾値未満だが合計では閾値を超える k-mer も正しく除外されます。除外された k-mer は共有 `.khx` ファイル (k 値ごとに 1 つ、ボリュームごとではない) に記録されます。小数値 (0 < x < 1) を指定した場合、閾値は全ボリューム合計 NSEQ に基づいて解決されます (`-stage1_max_freq` と同じ方式)。検索時に割合指定の `-stage1_min_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算から差し引かれます。
 
 ### 割合指定の Stage 1 閾値
 
@@ -539,25 +571,25 @@ ikafssn は 3 種類のスコアを計算します。
 タブ区切りのカラムです。`-stage1_score 2` のとき `coverscore` が `matchscore` に置き換わります。
 
 ```
-# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  volume
+# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  volume
 ```
 
 **Mode 1** (`-mode 1`):
 
 ```
-# query_id  accession  strand  coverscore  volume
+# query_id  accession  strand  q_len  s_len  coverscore  volume
 ```
 
 **Mode 3, traceback=0** (`-mode 3`):
 
 ```
-# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  alnscore  volume
+# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  alnscore  volume
 ```
 
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
 ```
-# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  alnscore  pident  nident  nmismatch  cigar  q_seq  s_seq  volume
+# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  alnscore  pident  nident  nmismatch  cigar  q_seq  s_seq  volume
 ```
 
 ### JSON 形式
@@ -575,8 +607,10 @@ ikafssn は 3 種類のスコアを計算します。
           "strand": "+",
           "q_start": 0,
           "q_end": 150,
+          "q_len": 200,
           "s_start": 1000,
           "s_end": 1150,
+          "s_len": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "volume": 0
@@ -598,6 +632,8 @@ ikafssn は 3 種類のスコアを計算します。
         {
           "accession": "NC_001234.5",
           "strand": "+",
+          "q_len": 200,
+          "s_len": 5000,
           "coverscore": 8,
           "volume": 0
         }

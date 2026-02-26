@@ -1,5 +1,6 @@
 #include "ikafssnclient/http_client.hpp"
 
+#include <climits>
 #include <curl/curl.h>
 #include <json/json.h>
 
@@ -21,25 +22,39 @@ static std::string build_request_json(const SearchRequest& req) {
     Json::Value root;
 
     root["k"] = req.k;
-    root["min_score"] = req.min_score;
-    if (req.has_min_score) {
-        root["has_min_score"] = true;
+    root["stage2_min_score"] = req.stage2_min_score;
+    if (req.has_stage2_min_score) {
+        root["has_stage2_min_score"] = true;
     }
-    root["max_gap"] = req.max_gap;
-    if (req.max_freq_frac_x10000 != 0) {
-        root["max_freq_frac"] = static_cast<double>(req.max_freq_frac_x10000) / 10000.0;
+    root["stage2_max_gap"] = req.stage2_max_gap;
+    root["stage2_max_lookback"] = req.stage2_max_lookback;
+    if (req.stage1_max_freq_frac_x10000 != 0) {
+        root["stage1_max_freq_frac"] = static_cast<double>(req.stage1_max_freq_frac_x10000) / 10000.0;
     } else {
-        root["max_freq"] = req.max_freq;
+        root["stage1_max_freq"] = req.stage1_max_freq;
     }
-    root["min_diag_hits"] = req.min_diag_hits;
+    if (req.stage1_min_score_frac_x10000 != 0) {
+        root["stage1_min_score_frac"] = static_cast<double>(req.stage1_min_score_frac_x10000) / 10000.0;
+    }
+    root["stage2_min_diag_hits"] = req.stage2_min_diag_hits;
     root["stage1_topn"] = req.stage1_topn;
-    root["min_stage1_score"] = req.min_stage1_score;
+    root["stage1_min_score"] = req.stage1_min_score;
     root["num_results"] = req.num_results;
     root["mode"] = req.mode;
-    root["stage1_score"] = req.stage1_score_type;
-    root["sort_score"] = req.sort_score;
+    root["stage1_score"] = req.stage1_score;
     root["accept_qdegen"] = req.accept_qdegen;
     root["strand"] = req.strand;
+
+    // Stage 3 parameters
+    root["stage3_traceback"] = req.stage3_traceback;
+    if (req.stage3_gapopen != INT16_MIN)
+        root["stage3_gapopen"] = req.stage3_gapopen;
+    if (req.stage3_gapext != INT16_MIN)
+        root["stage3_gapext"] = req.stage3_gapext;
+    root["stage3_min_pident_x100"] = req.stage3_min_pident_x100;
+    root["stage3_min_nident"] = req.stage3_min_nident;
+    root["context_abs"] = req.context_abs;
+    root["context_frac_x10000"] = req.context_frac_x10000;
 
     switch (req.seqidlist_mode) {
     case SeqidlistMode::kInclude:
@@ -98,10 +113,11 @@ static bool parse_response_json(const std::string& body,
     resp.status = (status == "success") ? 0 : 1;
     resp.k = static_cast<uint8_t>(root.get("k", 0).asUInt());
     resp.mode = static_cast<uint8_t>(root.get("mode", 2).asUInt());
-    resp.stage1_score_type = static_cast<uint8_t>(root.get("stage1_score_type", 1).asUInt());
+    resp.stage1_score = static_cast<uint8_t>(root.get("stage1_score", 1).asUInt());
+    resp.stage3_traceback = static_cast<uint8_t>(root.get("stage3_traceback", 0).asUInt());
 
     // Determine stage1 score field name
-    const char* s1name = (resp.stage1_score_type == 2) ? "matchscore" : "coverscore";
+    const char* s1name = (resp.stage1_score == 2) ? "matchscore" : "coverscore";
 
     const auto& results = root["results"];
     if (!results.isArray()) {
@@ -137,8 +153,21 @@ static bool parse_response_json(const std::string& body,
                     hit.s_end = h.get("s_end", 0).asUInt();
                     hit.score = static_cast<uint16_t>(h.get("chainscore", 0).asUInt());
                 }
+                hit.q_length = h.get("q_len", 0).asUInt();
+                hit.s_length = h.get("s_len", 0).asUInt();
                 hit.stage1_score = static_cast<uint16_t>(h.get(s1name, 0).asUInt());
                 hit.volume = static_cast<uint16_t>(h.get("volume", 0).asUInt());
+                if (resp.mode == 3) {
+                    hit.alnscore = h.get("alnscore", 0).asInt();
+                    if (resp.stage3_traceback) {
+                        hit.pident_x100 = static_cast<uint16_t>(h.get("pident", 0.0).asDouble() * 100.0);
+                        hit.nident = h.get("nident", 0).asUInt();
+                        hit.nmismatch = h.get("nmismatch", 0).asUInt();
+                        hit.cigar = h.get("cigar", "").asString();
+                        hit.q_seq = h.get("q_seq", "").asString();
+                        hit.s_seq = h.get("s_seq", "").asString();
+                    }
+                }
                 query_result.hits.push_back(std::move(hit));
             }
         }

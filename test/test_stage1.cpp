@@ -298,9 +298,11 @@ static void test_stage1_fractional_threshold() {
     config.min_stage1_score_frac = 0.5; // 50% of query k-mers
 
     // Search with fractional threshold (should produce results)
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "test_query", g_query_seq, 7,
-        kix, kpx, ksx, filter, config, nullptr);
+        "test_query", qdata, 7,
+        kix, kpx, ksx, filter, config);
 
     // The fractional threshold resolves to ceil(Nqkmer * 0.5)
     // With a 100bp query, k=7: 94 k-mer positions, many distinct values
@@ -316,9 +318,10 @@ static void test_stage1_fractional_threshold() {
     config_low.stage1.min_stage1_score = 1;
     config_low.min_stage1_score_frac = 0.05; // 5% of query k-mers
 
+    auto qdata_low = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config_low);
     auto result_low = search_volume<uint16_t>(
-        "test_query", g_query_seq, 7,
-        kix, kpx, ksx, filter, config_low, nullptr);
+        "test_query", qdata_low, 7,
+        kix, kpx, ksx, filter, config_low);
 
     // Lower fraction should produce at least as many results as higher fraction
     CHECK(result_low.hits.size() >= result.hits.size());
@@ -362,13 +365,16 @@ static void test_stage1_fractional_with_highfreq() {
     config.stage1.min_stage1_score = 1;
     config.min_stage1_score_frac = 0.3; // 30% of query k-mers
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata_with = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, &khx, config);
     auto result_with_khx = search_volume<uint16_t>(
-        "test_query", g_query_seq, 7,
-        kix, kpx, ksx, filter, config, &khx);
+        "test_query", qdata_with, 7,
+        kix, kpx, ksx, filter, config);
 
+    auto qdata_without = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result_without_khx = search_volume<uint16_t>(
-        "test_query", g_query_seq, 7,
-        kix, kpx, ksx, filter, config, nullptr);
+        "test_query", qdata_without, 7,
+        kix, kpx, ksx, filter, config);
 
     // With khx, the Nhighfreq subtraction makes the effective threshold lower
     // (because more k-mers are recognized as excluded), so we should get

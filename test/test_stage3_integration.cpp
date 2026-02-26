@@ -74,8 +74,10 @@ static void test_stage3_pipeline() {
     config.num_results = 10;
     config.mode = 2;
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", g_query_seq, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config);
 
     CHECK(!result.hits.empty());
 
@@ -180,8 +182,10 @@ static void test_stage3_score_only() {
     config.stage2.min_score = 2;
     config.num_results = 5;
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(query, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", query, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config);
     CHECK(!result.hits.empty());
 
     std::vector<OutputHit> all_hits;
@@ -259,8 +263,10 @@ static void test_stage3_context() {
     config.stage2.min_score = 2;
     config.num_results = 5;
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(query, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", query, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config);
 
     if (result.hits.empty()) {
         std::fprintf(stderr, "  (no hits, skipping context test)\n");

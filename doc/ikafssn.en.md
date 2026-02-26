@@ -216,7 +216,9 @@ Input:
 
 Common options:
   -o <path>               Output FASTA file (default: stdout)
-  -context <int>          Bases to add before/after match region (default: 0)
+  -context <value>        Context extension (default: 0)
+                          Integer: bases to add before/after match region
+                          Decimal: multiplier of query length (q_len)
   -v, --verbose           Verbose logging
 
 Remote options (-remote):
@@ -249,6 +251,9 @@ ikafssnclient -http http://search.example.com:8080 -query query.fasta \
 
 # Include 50bp of context around match region
 ikafssnretrieve -db nt -results results.tsv -context 50
+
+# Context as fraction of query length (0.1x each side)
+ikafssnretrieve -db nt -results results.tsv -context 0.1
 ```
 
 ### ikafssnserver
@@ -270,16 +275,25 @@ Options:
   -max_query <int>        Max concurrent query sequences globally (default: 1024)
   -max_seqs_per_req <int> Max sequences accepted per request (default: thread count)
   -pid <path>             PID file path
-  -min_score <int>        Default minimum chain score (default: 0 = adaptive)
-  -max_gap <int>          Default chaining gap tolerance (default: 100)
-  -chain_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)
-  -max_freq <num>         Default high-freq k-mer skip threshold (default: 0.5)
+  -db <path>              BLAST DB path for mode 3 (default: same as -ix)
+  -stage1_max_freq <num>  Default high-freq k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
                           >= 1: absolute count threshold; 0 = auto
-  -min_diag_hits <int>    Default diagonal filter min hits (default: 1)
   -stage1_topn <int>      Default Stage 1 candidate limit (default: 0)
-  -min_stage1_score <num> Default Stage 1 minimum score (default: 0.5)
+  -stage1_min_score <num> Default Stage 1 minimum score (default: 0.5)
                           Integer (>= 1) or fraction (0 < P < 1)
+  -stage2_min_score <int> Default minimum chain score (default: 0 = adaptive)
+  -stage2_max_gap <int>   Default chaining gap tolerance (default: 100)
+  -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)
+  -stage2_min_diag_hits <int> Default diagonal filter min hits (default: 1)
+  -context <value>        Default context extension (default: 0)
+                          Integer: bases to extend; Decimal: query length multiplier
+  -stage3_traceback <0|1> Default traceback mode (default: 0)
+  -stage3_gapopen <int>   Default gap open penalty (default: 10)
+  -stage3_gapext <int>    Default gap extension penalty (default: 1)
+  -stage3_min_pident <num>  Default min percent identity (default: 0)
+  -stage3_min_nident <int>  Default min identical bases (default: 0)
+  -stage3_fetch_threads <int>  Threads for BLAST DB fetch (default: min(8, threads))
   -num_results <int>      Default max results per query (default: 0)
   -accept_qdegen <0|1>    Default accept queries with degenerate bases (default: 1)
   -shutdown_timeout <int> Graceful shutdown timeout in seconds (default: 30)
@@ -300,6 +314,10 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -tcp 0.0.0.0:9100
 
 # Daemon operation (started from systemd)
 ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn.pid
+
+# Mode 3 support: specify BLAST DB and Stage 3 defaults
+ikafssnserver -ix ./nt_index -db nt -socket /var/run/ikafssn.sock \
+    -stage3_traceback 1 -context 50
 ```
 
 **Operational characteristics:**
@@ -368,26 +386,32 @@ Required:
 Options:
   -o <path>                Output file (default: stdout)
   -k <int>                 K-mer size (default: server default)
-  -min_score <int>         Minimum score (default: server default)
-                           0 = explicitly request adaptive mode
-  -max_gap <int>           Chaining gap tolerance (default: server default)
-  -chain_max_lookback <int>  Chaining DP lookback window (default: server default)
-  -max_freq <num>          High-freq k-mer skip threshold (default: server default)
+  -mode <1|2|3>            Search mode (default: server default)
+  -stage1_score <1|2>      Stage 1 score type (default: server default)
+  -stage1_max_freq <num>   High-freq k-mer skip threshold (default: server default)
                            0 < x < 1: fraction of total NSEQ across all volumes
                            >= 1: absolute count threshold
-  -min_diag_hits <int>     Diagonal filter min hits (default: server default)
   -stage1_topn <int>       Stage 1 candidate limit (default: server default)
-  -min_stage1_score <num>  Stage 1 minimum score (default: server default)
+  -stage1_min_score <num>  Stage 1 minimum score (default: server default)
                            Integer (>= 1) or fraction (0 < P < 1)
+  -stage2_min_score <int>  Minimum chain score (default: server default)
+                           0 = explicitly request adaptive mode
+  -stage2_max_gap <int>    Chaining gap tolerance (default: server default)
+  -stage2_max_lookback <int>  Chaining DP lookback window (default: server default)
+  -stage2_min_diag_hits <int> Diagonal filter min hits (default: server default)
+  -context <value>         Context extension (default: server default)
+                           Integer: bases to extend; Decimal: query length multiplier
+  -stage3_traceback <0|1>  Enable traceback (default: server default)
+  -stage3_gapopen <int>    Gap open penalty (default: server default)
+  -stage3_gapext <int>     Gap extension penalty (default: server default)
+  -stage3_min_pident <num> Min percent identity filter (default: server default)
+  -stage3_min_nident <int> Min identical bases filter (default: server default)
   -num_results <int>       Max results per query (default: server default)
-  -mode <1|2>              Search mode (default: server default)
-  -stage1_score <1|2>      Stage 1 score type (default: server default)
-  -sort_score <1|2>        Sort key for results (default: server default)
   -seqidlist <path>        Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
   -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
-  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)
-  -outfmt <tab|json>       Output format (default: tab)
+  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)
+  -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose            Verbose logging
 
 HTTP Authentication (HTTP mode only):
@@ -426,6 +450,12 @@ ikafssnclient -http http://search.example.com:8080 -query query.fasta --http-use
 
 # HTTP with .netrc credentials
 ikafssnclient -http http://search.example.com:8080 -query query.fasta --netrc-file ~/.netrc
+
+# Mode 3: pairwise alignment with traceback
+ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -mode 3 -stage3_traceback 1
+
+# Mode 3: SAM output
+ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
 ```
 
 ### ikafssninfo
@@ -439,9 +469,11 @@ Required:
   -ix <prefix>            Index prefix (like blastn -db)
 
 Options:
-  -db <path>              BLAST DB prefix (also show DB info)
+  -db <path>              BLAST DB prefix (default: auto-detect from -ix)
   -v, --verbose           Verbose output (k-mer frequency distribution, etc.)
 ```
+
+When `-db` is not specified, `ikafssninfo` attempts to auto-detect the BLAST DB by checking whether the index prefix path corresponds to a valid BLAST DB.
 
 **Output includes:**
 
@@ -450,7 +482,7 @@ Options:
 - Per-volume statistics: sequence count, total postings, file sizes, excluded k-mer count (if `.khx` present)
 - Overall statistics: total sequences, total postings, total index size, compression ratio
 - With `-v`: k-mer frequency distribution (min, max, mean, percentiles)
-- With `-db`: BLAST DB title, sequence count, total bases, volume paths
+- With `-db` (or auto-detected): BLAST DB title, sequence count, total bases, volume paths
 
 **Examples:**
 
@@ -487,11 +519,11 @@ By default, both forward and reverse complement strands of the query are searche
 
 ### High-Frequency K-mer Filtering
 
-High-frequency k-mer filtering is performed globally across all volumes before the per-volume search loop. K-mer counts are aggregated across all volumes, and k-mers exceeding `max_freq` are removed from the query once. This ensures consistent filtering regardless of how data is partitioned across volumes. Build-time exclusions (`.khx`) are also checked globally.
+High-frequency k-mer filtering is performed globally across all volumes before the per-volume search loop. K-mer counts are aggregated across all volumes, and k-mers exceeding `stage1_max_freq` are removed from the query once. This ensures consistent filtering regardless of how data is partitioned across volumes. Build-time exclusions (`.khx`) are also checked globally.
 
-The default value of `-max_freq` is `0.5`, meaning k-mers occurring in more than 50% of the total sequences across all volumes are skipped. More generally, when a fractional value (0 < x < 1) is specified, the threshold is resolved as `ceil(x * total_NSEQ)` where `total_NSEQ` is the sum of sequence counts across all volumes. An integer value (>= 1) is used as an absolute count threshold directly.
+The default value of `-stage1_max_freq` is `0.5`, meaning k-mers occurring in more than 50% of the total sequences across all volumes are skipped. More generally, when a fractional value (0 < x < 1) is specified, the threshold is resolved as `ceil(x * total_NSEQ)` where `total_NSEQ` is the sum of sequence counts across all volumes. An integer value (>= 1) is used as an absolute count threshold directly.
 
-When `-max_freq 0` is specified explicitly, the threshold is auto-calculated per volume as:
+When `-stage1_max_freq 0` is specified explicitly, the threshold is auto-calculated per volume as:
 
 ```
 max_freq = mean_count * 10    (clamped to [1000, 100000])
@@ -500,7 +532,7 @@ where mean_count = total_postings / 4^k
 
 This auto mode is computed per volume from the `.kix` header.
 
-**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. K-mer counts are aggregated across all volumes before applying the threshold, so a k-mer that is locally below the threshold in each volume but exceeds it globally will be correctly excluded. A single shared `.khx` file (per k value, not per volume) records which k-mers were excluded. When a fractional value (0 < x < 1) is specified, the threshold is resolved using the total NSEQ across all volumes (same as `-max_freq`). At search time, when fractional `-min_stage1_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation.
+**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. K-mer counts are aggregated across all volumes before applying the threshold, so a k-mer that is locally below the threshold in each volume but exceeds it globally will be correctly excluded. A single shared `.khx` file (per k value, not per volume) records which k-mers were excluded. When a fractional value (0 < x < 1) is specified, the threshold is resolved using the total NSEQ across all volumes (same as `-stage1_max_freq`). At search time, when fractional `-stage1_min_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation.
 
 ### Fractional Stage 1 Threshold
 
@@ -542,25 +574,25 @@ ikafssn computes three types of scores:
 Tab-separated columns, where `coverscore` is replaced by `matchscore` when `-stage1_score 2`:
 
 ```
-# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  volume
+# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  volume
 ```
 
 **Mode 1** (`-mode 1`):
 
 ```
-# query_id  accession  strand  coverscore  volume
+# query_id  accession  strand  q_len  s_len  coverscore  volume
 ```
 
 **Mode 3, traceback=0** (`-mode 3`):
 
 ```
-# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  alnscore  volume
+# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  alnscore  volume
 ```
 
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
 ```
-# query_id  accession  strand  q_start  q_end  s_start  s_end  coverscore  chainscore  alnscore  pident  nident  nmismatch  cigar  q_seq  s_seq  volume
+# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  alnscore  pident  nident  nmismatch  cigar  q_seq  s_seq  volume
 ```
 
 ### JSON Format
@@ -578,8 +610,10 @@ Tab-separated columns, where `coverscore` is replaced by `matchscore` when `-sta
           "strand": "+",
           "q_start": 0,
           "q_end": 150,
+          "q_len": 200,
           "s_start": 1000,
           "s_end": 1150,
+          "s_len": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "volume": 0
@@ -601,6 +635,8 @@ Tab-separated columns, where `coverscore` is replaced by `matchscore` when `-sta
         {
           "accession": "NC_001234.5",
           "strand": "+",
+          "q_len": 200,
+          "s_len": 5000,
           "coverscore": 8,
           "volume": 0
         }
@@ -623,8 +659,10 @@ Tab-separated columns, where `coverscore` is replaced by `matchscore` when `-sta
           "strand": "+",
           "q_start": 0,
           "q_end": 150,
+          "q_len": 200,
           "s_start": 1000,
           "s_end": 1150,
+          "s_len": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "alnscore": 240,

@@ -8,6 +8,7 @@
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
 #include "search/oid_filter.hpp"
+#include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
 #include "ikafssnserver/server.hpp"
 #include "ikafssnhttpd/backend_client.hpp"
@@ -111,9 +112,11 @@ static void test_http_client_search() {
     }
     OidFilter no_filter;
 
+    std::vector<const KixReader*> all_kix = {&kix};
     std::vector<SearchResult> local_results;
     for (const auto& q : queries) {
-        auto sr = search_volume<uint16_t>(q.id, q.sequence, k,
+        auto qdata = preprocess_query<uint16_t>(q.sequence, k, all_kix, nullptr, config);
+        auto sr = search_volume<uint16_t>(q.id, qdata, k,
                                           kix, kpx, ksx, no_filter, config);
         local_results.push_back(sr);
     }

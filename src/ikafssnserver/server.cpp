@@ -179,7 +179,11 @@ void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger
         arena.execute([&, client_fd] {
             tg.run([&, client_fd] {
                 handle_connection(client_fd, kmer_groups_, default_k_,
-                                  config.search_config, *this, arena, logger);
+                                  config.search_config,
+                                  config.stage3_config, config.db_path,
+                                  config.context_is_ratio, config.context_ratio,
+                                  config.context_abs,
+                                  *this, arena, logger);
             });
         });
     }
@@ -209,7 +213,7 @@ int Server::run(const ServerConfig& config_in) {
                 std::ceil(config.max_freq_raw * total_nseq));
             if (resolved == 0) resolved = 1;
             config.search_config.stage1.max_freq = resolved;
-            logger.info("-max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
+            logger.info("-stage1_max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
                         config.max_freq_raw, resolved,
                         static_cast<unsigned long>(total_nseq));
         }

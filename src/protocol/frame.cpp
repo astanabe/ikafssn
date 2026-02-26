@@ -57,6 +57,7 @@ bool read_frame(int fd, FrameHeader& header, std::vector<uint8_t>& payload) {
     if (!read_all(fd, &header, sizeof(header))) return false;
 
     if (header.magic != FRAME_MAGIC) return false;
+    if (header.msg_version != 1) return false;
     if (header.payload_length > MAX_PAYLOAD_SIZE) return false;
 
     payload.resize(header.payload_length);

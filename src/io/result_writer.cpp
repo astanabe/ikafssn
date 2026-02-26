@@ -16,16 +16,18 @@ void write_results_tab(std::ostream& out,
     const char* s1name = stage1_score_name(stage1_score_type);
 
     if (mode == 1) {
-        out << "# query_id\taccession\tstrand\t" << s1name << "\tvolume\n";
+        out << "# query_id\taccession\tstrand\tq_len\ts_len\t" << s1name << "\tvolume\n";
         for (const auto& h : hits) {
             out << h.query_id << '\t'
                 << h.accession << '\t'
                 << h.strand << '\t'
+                << h.q_length << '\t'
+                << h.s_length << '\t'
                 << h.stage1_score << '\t'
                 << h.volume << '\n';
         }
     } else if (mode == 3 && stage3_traceback) {
-        out << "# query_id\taccession\tstrand\tq_start\tq_end\ts_start\ts_end\t"
+        out << "# query_id\taccession\tstrand\tq_start\tq_end\tq_len\ts_start\ts_end\ts_len\t"
             << s1name << "\tchainscore\talnscore\tpident\tnident\tnmismatch\tcigar\tq_seq\ts_seq\tvolume\n";
         for (const auto& h : hits) {
             out << h.query_id << '\t'
@@ -33,8 +35,10 @@ void write_results_tab(std::ostream& out,
                 << h.strand << '\t'
                 << h.q_start << '\t'
                 << h.q_end << '\t'
+                << h.q_length << '\t'
                 << h.s_start << '\t'
                 << h.s_end << '\t'
+                << h.s_length << '\t'
                 << h.stage1_score << '\t'
                 << h.score << '\t'
                 << h.alnscore << '\t'
@@ -47,7 +51,7 @@ void write_results_tab(std::ostream& out,
                 << h.volume << '\n';
         }
     } else if (mode == 3) {
-        out << "# query_id\taccession\tstrand\tq_start\tq_end\ts_start\ts_end\t"
+        out << "# query_id\taccession\tstrand\tq_start\tq_end\tq_len\ts_start\ts_end\ts_len\t"
             << s1name << "\tchainscore\talnscore\tvolume\n";
         for (const auto& h : hits) {
             out << h.query_id << '\t'
@@ -55,15 +59,17 @@ void write_results_tab(std::ostream& out,
                 << h.strand << '\t'
                 << h.q_start << '\t'
                 << h.q_end << '\t'
+                << h.q_length << '\t'
                 << h.s_start << '\t'
                 << h.s_end << '\t'
+                << h.s_length << '\t'
                 << h.stage1_score << '\t'
                 << h.score << '\t'
                 << h.alnscore << '\t'
                 << h.volume << '\n';
         }
     } else {
-        out << "# query_id\taccession\tstrand\tq_start\tq_end\ts_start\ts_end\t"
+        out << "# query_id\taccession\tstrand\tq_start\tq_end\tq_len\ts_start\ts_end\ts_len\t"
             << s1name << "\tchainscore\tvolume\n";
         for (const auto& h : hits) {
             out << h.query_id << '\t'
@@ -71,8 +77,10 @@ void write_results_tab(std::ostream& out,
                 << h.strand << '\t'
                 << h.q_start << '\t'
                 << h.q_end << '\t'
+                << h.q_length << '\t'
                 << h.s_start << '\t'
                 << h.s_end << '\t'
+                << h.s_length << '\t'
                 << h.stage1_score << '\t'
                 << h.score << '\t'
                 << h.volume << '\n';
@@ -127,9 +135,13 @@ void write_results_json(std::ostream& out,
             if (mode != 1) {
                 out << "          \"q_start\": " << h->q_start << ",\n";
                 out << "          \"q_end\": " << h->q_end << ",\n";
+            }
+            out << "          \"q_len\": " << h->q_length << ",\n";
+            if (mode != 1) {
                 out << "          \"s_start\": " << h->s_start << ",\n";
                 out << "          \"s_end\": " << h->s_end << ",\n";
             }
+            out << "          \"s_len\": " << h->s_length << ",\n";
             out << "          \"" << s1name << "\": " << h->stage1_score << ",\n";
             if (mode != 1) {
                 out << "          \"chainscore\": " << h->score << ",\n";

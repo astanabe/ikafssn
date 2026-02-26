@@ -8,6 +8,7 @@
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
 #include "search/oid_filter.hpp"
+#include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
@@ -106,14 +107,17 @@ static std::vector<OutputHit> search_sequential(
 
         OidFilter filter;
 
+        std::vector<const KixReader*> vol_kix = {&kix};
         for (const auto& query : queries) {
             SearchResult sr;
             if (k < K_TYPE_THRESHOLD) {
+                auto qdata = preprocess_query<uint16_t>(query.sequence, k, vol_kix, nullptr, config);
                 sr = search_volume<uint16_t>(
-                    query.id, query.sequence, k, kix, kpx, ksx, filter, config);
+                    query.id, qdata, k, kix, kpx, ksx, filter, config);
             } else {
+                auto qdata = preprocess_query<uint32_t>(query.sequence, k, vol_kix, nullptr, config);
                 sr = search_volume<uint32_t>(
-                    query.id, query.sequence, k, kix, kpx, ksx, filter, config);
+                    query.id, qdata, k, kix, kpx, ksx, filter, config);
             }
 
             for (const auto& cr : sr.hits) {
@@ -197,15 +201,18 @@ static std::vector<OutputHit> search_parallel(
                 const auto& query = queries[job.query_idx];
                 const auto& vd = vols[job.volume_idx];
                 OidFilter filter;
+                std::vector<const KixReader*> job_kix = {&vd.kix};
 
                 SearchResult sr;
                 if (k < K_TYPE_THRESHOLD) {
+                    auto qdata = preprocess_query<uint16_t>(query.sequence, k, job_kix, nullptr, config);
                     sr = search_volume<uint16_t>(
-                        query.id, query.sequence, k,
+                        query.id, qdata, k,
                         vd.kix, vd.kpx, vd.ksx, filter, config);
                 } else {
+                    auto qdata = preprocess_query<uint32_t>(query.sequence, k, job_kix, nullptr, config);
                     sr = search_volume<uint32_t>(
-                        query.id, query.sequence, k,
+                        query.id, qdata, k,
                         vd.kix, vd.kpx, vd.ksx, filter, config);
                 }
 
@@ -422,10 +429,14 @@ static void test_parallel_counting_pass() {
     sconfig.stage2.min_score = 2;
     sconfig.num_results = 50;
 
+    std::vector<const KixReader*> kix_st_vec = {&kix_st};
+    auto qdata_st = preprocess_query<uint16_t>(g_query_fj, 7, kix_st_vec, nullptr, sconfig);
     auto sr_st = search_volume<uint16_t>(
-        "q", g_query_fj, 7, kix_st, kpx_st, ksx_st, filter, sconfig);
+        "q", qdata_st, 7, kix_st, kpx_st, ksx_st, filter, sconfig);
+    std::vector<const KixReader*> kix_mt_vec = {&kix_mt};
+    auto qdata_mt = preprocess_query<uint16_t>(g_query_fj, 7, kix_mt_vec, nullptr, sconfig);
     auto sr_mt = search_volume<uint16_t>(
-        "q", g_query_fj, 7, kix_mt, kpx_mt, ksx_mt, filter, sconfig);
+        "q", qdata_mt, 7, kix_mt, kpx_mt, ksx_mt, filter, sconfig);
 
     CHECK_EQ(sr_st.hits.size(), sr_mt.hits.size());
     for (size_t i = 0; i < sr_st.hits.size() && i < sr_mt.hits.size(); i++) {

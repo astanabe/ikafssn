@@ -19,6 +19,11 @@ void handle_connection(
     const std::map<int, KmerGroup>& kmer_groups,
     int default_k,
     const SearchConfig& default_config,
+    const Stage3Config& default_stage3_config,
+    const std::string& db_path,
+    bool default_context_is_ratio,
+    double default_context_ratio,
+    uint32_t default_context_abs,
     Server& server,
     tbb::task_arena& arena,
     const Logger& logger) {
@@ -42,11 +47,14 @@ void handle_connection(
             break;
         }
 
-        logger.debug("Search request: k=%d, %zu queries, %zu seqids",
-                      req.k, req.queries.size(), req.seqids.size());
+        logger.debug("Search request: k=%d, %zu queries, %zu seqids, mode=%d",
+                      req.k, req.queries.size(), req.seqids.size(), req.mode);
 
         SearchResponse resp = process_search_request(
-            req, kmer_groups, default_k, default_config, server, arena);
+            req, kmer_groups, default_k, default_config,
+            default_stage3_config, db_path,
+            default_context_is_ratio, default_context_ratio, default_context_abs,
+            server, arena);
 
         auto resp_payload = serialize(resp);
         if (!write_frame(client_fd, MsgType::kSearchResponse, resp_payload)) {

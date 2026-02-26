@@ -1,5 +1,6 @@
 #include "ikafssnhttpd/http_controller.hpp"
 
+#include <climits>
 #include <thread>
 
 #include <drogon/HttpAppFramework.h>
@@ -60,29 +61,47 @@ void HttpController::search(
     const auto& j = *json;
 
     sreq.k = static_cast<uint8_t>(j.get("k", 0).asUInt());
-    sreq.min_score = static_cast<uint16_t>(j.get("min_score", 0).asUInt());
-    if (j.isMember("has_min_score") && j["has_min_score"].asBool()) {
-        sreq.has_min_score = 1;
+    sreq.stage2_min_score = static_cast<uint16_t>(j.get("stage2_min_score", 0).asUInt());
+    if (j.isMember("has_stage2_min_score") && j["has_stage2_min_score"].asBool()) {
+        sreq.has_stage2_min_score = 1;
     }
-    sreq.max_gap = static_cast<uint16_t>(j.get("max_gap", 0).asUInt());
-    sreq.chain_max_lookback = static_cast<uint16_t>(j.get("chain_max_lookback", 0).asUInt());
-    if (j.isMember("max_freq_frac") && j["max_freq_frac"].isDouble()) {
-        double frac = j["max_freq_frac"].asDouble();
+    sreq.stage2_max_gap = static_cast<uint16_t>(j.get("stage2_max_gap", 0).asUInt());
+    sreq.stage2_max_lookback = static_cast<uint16_t>(j.get("stage2_max_lookback", 0).asUInt());
+    if (j.isMember("stage1_max_freq_frac") && j["stage1_max_freq_frac"].isDouble()) {
+        double frac = j["stage1_max_freq_frac"].asDouble();
         if (frac > 0 && frac < 1.0) {
-            sreq.max_freq_frac_x10000 = static_cast<uint16_t>(frac * 10000.0);
+            sreq.stage1_max_freq_frac_x10000 = static_cast<uint16_t>(frac * 10000.0);
         }
     } else {
-        sreq.max_freq = j.get("max_freq", 0).asUInt();
+        sreq.stage1_max_freq = j.get("stage1_max_freq", 0).asUInt();
     }
-    sreq.min_diag_hits = static_cast<uint8_t>(j.get("min_diag_hits", 0).asUInt());
+    if (j.isMember("stage1_min_score_frac") && j["stage1_min_score_frac"].isDouble()) {
+        double frac = j["stage1_min_score_frac"].asDouble();
+        if (frac > 0 && frac < 1.0) {
+            sreq.stage1_min_score_frac_x10000 = static_cast<uint16_t>(frac * 10000.0);
+        }
+    }
+    sreq.stage2_min_diag_hits = static_cast<uint8_t>(j.get("stage2_min_diag_hits", 0).asUInt());
     sreq.stage1_topn = static_cast<uint16_t>(j.get("stage1_topn", 0).asUInt());
-    sreq.min_stage1_score = static_cast<uint16_t>(j.get("min_stage1_score", 0).asUInt());
+    sreq.stage1_min_score = static_cast<uint16_t>(j.get("stage1_min_score", 0).asUInt());
     sreq.num_results = static_cast<uint16_t>(j.get("num_results", 0).asUInt());
     sreq.mode = static_cast<uint8_t>(j.get("mode", 0).asUInt());
-    sreq.stage1_score_type = static_cast<uint8_t>(j.get("stage1_score", 0).asUInt());
-    sreq.sort_score = static_cast<uint8_t>(j.get("sort_score", 0).asUInt());
-    sreq.accept_qdegen = static_cast<uint8_t>(j.get("accept_qdegen", 0).asUInt());
+    sreq.stage1_score = static_cast<uint8_t>(j.get("stage1_score", 0).asUInt());
+    sreq.accept_qdegen = static_cast<uint8_t>(j.get("accept_qdegen", 1).asUInt());
     sreq.strand = static_cast<int8_t>(j.get("strand", 0).asInt());
+
+    // Stage 3 parameters
+    sreq.stage3_traceback = static_cast<uint8_t>(j.get("stage3_traceback", 0).asUInt());
+    sreq.stage3_gapopen = j.isMember("stage3_gapopen")
+        ? static_cast<int16_t>(j["stage3_gapopen"].asInt())
+        : INT16_MIN;
+    sreq.stage3_gapext = j.isMember("stage3_gapext")
+        ? static_cast<int16_t>(j["stage3_gapext"].asInt())
+        : INT16_MIN;
+    sreq.stage3_min_pident_x100 = static_cast<uint16_t>(j.get("stage3_min_pident_x100", 0).asUInt());
+    sreq.stage3_min_nident = j.get("stage3_min_nident", 0).asUInt();
+    sreq.context_abs = j.get("context_abs", 0).asUInt();
+    sreq.context_frac_x10000 = static_cast<uint16_t>(j.get("context_frac_x10000", 0).asUInt());
 
     // Seqidlist mode
     std::string mode_str = j.get("seqidlist_mode", "none").asString();
@@ -146,8 +165,10 @@ void HttpController::search(
         result["status"] = (sresp.status == 0) ? "success" : "error";
         result["k"] = sresp.k;
         result["mode"] = sresp.mode;
-        result["stage1_score_type"] = sresp.stage1_score_type;
-        const char* s1name = (sresp.stage1_score_type == 2) ? "matchscore" : "coverscore";
+        result["stage1_score"] = sresp.stage1_score;
+        if (sresp.stage3_traceback)
+            result["stage3_traceback"] = sresp.stage3_traceback;
+        const char* s1name = (sresp.stage1_score == 2) ? "matchscore" : "coverscore";
 
         Json::Value results_arr(Json::arrayValue);
         for (const auto& qr : sresp.results) {
@@ -162,12 +183,27 @@ void HttpController::search(
                 if (sresp.mode != 1) {
                     hobj["q_start"] = hit.q_start;
                     hobj["q_end"] = hit.q_end;
+                }
+                hobj["q_len"] = hit.q_length;
+                if (sresp.mode != 1) {
                     hobj["s_start"] = hit.s_start;
                     hobj["s_end"] = hit.s_end;
                 }
+                hobj["s_len"] = hit.s_length;
                 hobj[s1name] = hit.stage1_score;
                 if (sresp.mode != 1) {
                     hobj["chainscore"] = hit.score;
+                }
+                if (sresp.mode == 3) {
+                    hobj["alnscore"] = hit.alnscore;
+                    if (sresp.stage3_traceback) {
+                        hobj["pident"] = static_cast<double>(hit.pident_x100) / 100.0;
+                        hobj["nident"] = hit.nident;
+                        hobj["nmismatch"] = hit.nmismatch;
+                        hobj["cigar"] = hit.cigar;
+                        hobj["q_seq"] = hit.q_seq;
+                        hobj["s_seq"] = hit.s_seq;
+                    }
                 }
                 hobj["volume"] = hit.volume;
                 hits_arr.append(std::move(hobj));

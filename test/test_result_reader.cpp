@@ -21,9 +21,9 @@ static void test_basic_parse() {
 
     std::string path = g_test_dir + "/basic.tsv";
     write_file(path,
-        "# query_id\taccession\tstrand\tq_start\tq_end\ts_start\ts_end\tcoverscore\tchainscore\tvolume\n"
-        "query1\tACC001\t+\t0\t49\t100\t149\t5\t15\t0\n"
-        "query1\tACC002\t-\t10\t39\t200\t229\t3\t10\t1\n"
+        "# query_id\taccession\tstrand\tq_start\tq_end\tq_len\ts_start\ts_end\ts_len\tcoverscore\tchainscore\tvolume\n"
+        "query1\tACC001\t+\t0\t49\t500\t100\t149\t2000\t5\t15\t0\n"
+        "query1\tACC002\t-\t10\t39\t500\t200\t229\t3000\t3\t10\t1\n"
     );
 
     auto results = read_results_tab(path);
@@ -34,8 +34,10 @@ static void test_basic_parse() {
     CHECK_EQ(results[0].strand, '+');
     CHECK_EQ(results[0].q_start, 0u);
     CHECK_EQ(results[0].q_end, 49u);
+    CHECK_EQ(results[0].q_length, 500u);
     CHECK_EQ(results[0].s_start, 100u);
     CHECK_EQ(results[0].s_end, 149u);
+    CHECK_EQ(results[0].s_length, 2000u);
     CHECK_EQ(results[0].stage1_score, 5u);
     CHECK_EQ(results[0].score, 15u);
     CHECK_EQ(results[0].volume, 0u);
@@ -45,8 +47,10 @@ static void test_basic_parse() {
     CHECK_EQ(results[1].strand, '-');
     CHECK_EQ(results[1].q_start, 10u);
     CHECK_EQ(results[1].q_end, 39u);
+    CHECK_EQ(results[1].q_length, 500u);
     CHECK_EQ(results[1].s_start, 200u);
     CHECK_EQ(results[1].s_end, 229u);
+    CHECK_EQ(results[1].s_length, 3000u);
     CHECK_EQ(results[1].stage1_score, 3u);
     CHECK_EQ(results[1].score, 10u);
     CHECK_EQ(results[1].volume, 1u);
@@ -60,7 +64,7 @@ static void test_skip_header_and_blank() {
         "# comment line\n"
         "# another comment\n"
         "\n"
-        "query1\tACC001\t+\t0\t49\t100\t149\t5\t15\t0\n"
+        "query1\tACC001\t+\t0\t49\t500\t100\t149\t2000\t5\t15\t0\n"
         "\n"
     );
 
@@ -75,11 +79,11 @@ static void test_invalid_lines() {
     std::string path = g_test_dir + "/invalid.tsv";
     write_file(path,
         "# header\n"
-        "query1\tACC001\t+\t0\t49\t100\t149\t5\t15\t0\n"
+        "query1\tACC001\t+\t0\t49\t500\t100\t149\t2000\t5\t15\t0\n"
         "too_few_fields\tACC002\n"
-        "query2\tACC003\tX\t0\t49\t100\t149\t5\t15\t0\n"   // bad strand
-        "query3\tACC004\t+\tabc\t49\t100\t149\t5\t15\t0\n"  // bad number
-        "query4\tACC005\t-\t5\t55\t300\t350\t8\t20\t2\n"
+        "query2\tACC003\tX\t0\t49\t500\t100\t149\t2000\t5\t15\t0\n"   // bad strand
+        "query3\tACC004\t+\tabc\t49\t500\t100\t149\t2000\t5\t15\t0\n"  // bad number
+        "query4\tACC005\t-\t5\t55\t500\t300\t350\t2000\t8\t20\t2\n"
     );
 
     auto results = read_results_tab(path);
@@ -115,8 +119,8 @@ static void test_stream_interface() {
 
     std::istringstream iss(
         "# header\n"
-        "q1\tA1\t+\t0\t10\t20\t30\t3\t5\t0\n"
-        "q2\tA2\t-\t5\t15\t25\t35\t4\t8\t1\n"
+        "q1\tA1\t+\t0\t10\t100\t20\t30\t200\t3\t5\t0\n"
+        "q2\tA2\t-\t5\t15\t100\t25\t35\t200\t4\t8\t1\n"
     );
 
     auto results = read_results_tab(iss);
@@ -161,7 +165,7 @@ static void test_windows_line_endings() {
     std::string path = g_test_dir + "/crlf.tsv";
     write_file(path,
         "# header\r\n"
-        "q1\tA1\t+\t0\t10\t20\t30\t3\t5\t0\r\n"
+        "q1\tA1\t+\t0\t10\t100\t20\t30\t200\t3\t5\t0\r\n"
     );
 
     auto results = read_results_tab(path);

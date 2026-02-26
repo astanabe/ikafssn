@@ -9,6 +9,7 @@
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
 #include "search/oid_filter.hpp"
+#include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
 #include "ikafssnserver/server.hpp"
 #include "ikafssnserver/connection_handler.hpp"
@@ -101,9 +102,11 @@ static void test_server_client_search() {
     config.stage2.min_score = 1;
     OidFilter no_filter;
 
+    std::vector<const KixReader*> all_kix = {&kix};
     std::vector<SearchResult> local_results;
     for (const auto& q : queries) {
-        auto sr = search_volume<uint16_t>(q.id, q.sequence, k,
+        auto qdata = preprocess_query<uint16_t>(q.sequence, k, all_kix, nullptr, config);
+        auto sr = search_volume<uint16_t>(q.id, qdata, k,
                                           kix, kpx, ksx, no_filter, config);
         local_results.push_back(sr);
     }
@@ -128,8 +131,11 @@ static void test_server_client_search() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
+            Stage3Config stage3_config;
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, server, arena, logger);
+                              server.default_k(), config,
+                              stage3_config, std::string(), false, 0.0, 0,
+                              server, arena, logger);
         }
     });
 
@@ -225,8 +231,11 @@ static void test_health_check() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
+            Stage3Config stage3_config;
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, server, arena, logger);
+                              server.default_k(), config,
+                              stage3_config, std::string(), false, 0.0, 0,
+                              server, arena, logger);
         }
     });
 
@@ -283,8 +292,11 @@ static void test_seqidlist_filter_via_server() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
+            Stage3Config stage3_config;
             handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config, server, arena, logger);
+                              server.default_k(), config,
+                              stage3_config, std::string(), false, 0.0, 0,
+                              server, arena, logger);
         }
     });
 

@@ -12,6 +12,7 @@
 #include "index/khx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/volume_searcher.hpp"
+#include "search/stage3_alignment.hpp"
 #include "protocol/messages.hpp"
 
 #include <tbb/task_arena.h>
@@ -44,6 +45,11 @@ SearchResponse process_search_request(
     const std::map<int, KmerGroup>& kmer_groups,
     int default_k,
     const SearchConfig& default_config,
+    const Stage3Config& default_stage3_config,
+    const std::string& db_path,
+    bool default_context_is_ratio,
+    double default_context_ratio,
+    uint32_t default_context_abs,
     Server& server,
     tbb::task_arena& arena);
 

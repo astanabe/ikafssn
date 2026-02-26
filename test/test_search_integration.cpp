@@ -9,6 +9,7 @@
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
 #include "search/oid_filter.hpp"
+#include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
@@ -64,8 +65,10 @@ static void test_build_and_search() {
     config.num_results = 50;
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", g_query_seq, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config);
 
     CHECK(!result.hits.empty());
     CHECK(result.query_id == "query1");
@@ -120,8 +123,10 @@ static void test_revcomp_search() {
         }
     }
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(rc_query, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "rc_query", rc_query, 7, kix, kpx, ksx, filter, config);
+        "rc_query", qdata, 7, kix, kpx, ksx, filter, config);
 
     // Verify the search completes without error
     CHECK(result.query_id == "rc_query");
@@ -165,8 +170,10 @@ static void test_seqidlist_filter() {
     config.stage2.min_score = 1;
     config.num_results = 50;
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "filtered_query", g_query_seq, 7, kix, kpx, ksx, filter, config);
+        "filtered_query", qdata, 7, kix, kpx, ksx, filter, config);
 
     // Results should only contain the included OIDs, not FJ876973.1
     for (const auto& cr : result.hits) {
@@ -204,8 +211,10 @@ static void test_negative_seqidlist() {
     config.stage2.min_score = 1;
     config.num_results = 50;
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "neg_query", g_query_seq, 7, kix, kpx, ksx, filter, config);
+        "neg_query", qdata, 7, kix, kpx, ksx, filter, config);
 
     // FJ876973.1 OID should be excluded from results
     for (const auto& cr : result.hits) {
@@ -326,8 +335,10 @@ static void test_search_k9() {
     config.stage2.min_score = 2;
     config.num_results = 50;
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint32_t>(g_query_seq, 9, all_kix, nullptr, config);
     auto result = search_volume<uint32_t>(
-        "query_k9", g_query_seq, 9, kix, kpx, ksx, filter, config);
+        "query_k9", qdata, 9, kix, kpx, ksx, filter, config);
 
     // Should find hits (seq1 has this pattern)
     CHECK(result.query_id == "query_k9");
@@ -368,8 +379,10 @@ static void test_search_mode1() {
     config.mode = 1;         // stage1 only
     config.sort_score = 1;   // sort by stage1 score
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "mode1_query", g_query_seq, 7, kix, kpx, ksx, filter, config);
+        "mode1_query", qdata, 7, kix, kpx, ksx, filter, config);
 
     CHECK(result.query_id == "mode1_query");
     CHECK(!result.hits.empty());
@@ -417,8 +430,10 @@ static void test_search_num_results_zero() {
     config_limited.stage2.min_score = 1;
     config_limited.num_results = 2;
 
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata_lim = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config_limited);
     auto result_limited = search_volume<uint16_t>(
-        "q_lim", g_query_seq, 7, kix, kpx, ksx, filter, config_limited);
+        "q_lim", qdata_lim, 7, kix, kpx, ksx, filter, config_limited);
 
     // num_results=0 (unlimited)
     SearchConfig config_unlimited;
@@ -430,8 +445,9 @@ static void test_search_num_results_zero() {
     config_unlimited.stage2.min_score = 1;
     config_unlimited.num_results = 0;
 
+    auto qdata_unlim = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config_unlimited);
     auto result_unlimited = search_volume<uint16_t>(
-        "q_unlim", g_query_seq, 7, kix, kpx, ksx, filter, config_unlimited);
+        "q_unlim", qdata_unlim, 7, kix, kpx, ksx, filter, config_unlimited);
 
     // Limited should have at most 2
     CHECK(result_limited.hits.size() <= 2);

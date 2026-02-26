@@ -96,17 +96,41 @@ static void test_frame_invalid_magic() {
     std::printf(" OK\n");
 }
 
+static void test_frame_invalid_msg_version() {
+    std::printf("  test_frame_invalid_msg_version...");
+
+    int rfd, wfd;
+    assert(make_pipe(rfd, wfd));
+
+    // Write a frame with bad msg_version
+    FrameHeader bad_hdr;
+    bad_hdr.magic = FRAME_MAGIC;
+    bad_hdr.payload_length = 0;
+    bad_hdr.msg_type = 0x01;
+    bad_hdr.msg_version = 99;
+    bad_hdr.reserved = 0;
+    assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
+
+    FrameHeader hdr;
+    std::vector<uint8_t> payload;
+    assert(!read_frame(rfd, hdr, payload));
+
+    ::close(rfd);
+    ::close(wfd);
+    std::printf(" OK\n");
+}
+
 static void test_search_request_serialize() {
     std::printf("  test_search_request_serialize...");
 
     SearchRequest req;
     req.k = 9;
-    req.min_score = 5;
-    req.max_gap = 100;
-    req.max_freq = 50000;
-    req.min_diag_hits = 3;
+    req.stage2_min_score = 5;
+    req.stage2_max_gap = 100;
+    req.stage1_max_freq = 50000;
+    req.stage2_min_diag_hits = 3;
     req.stage1_topn = 500;
-    req.min_stage1_score = 2;
+    req.stage1_min_score = 2;
     req.num_results = 50;
     req.seqidlist_mode = SeqidlistMode::kInclude;
     req.seqids = {"NM_001234", "XM_005678"};
@@ -119,12 +143,12 @@ static void test_search_request_serialize() {
     assert(deserialize(data, req2));
 
     assert(req2.k == 9);
-    assert(req2.min_score == 5);
-    assert(req2.max_gap == 100);
-    assert(req2.max_freq == 50000);
-    assert(req2.min_diag_hits == 3);
+    assert(req2.stage2_min_score == 5);
+    assert(req2.stage2_max_gap == 100);
+    assert(req2.stage1_max_freq == 50000);
+    assert(req2.stage2_min_diag_hits == 3);
     assert(req2.stage1_topn == 500);
-    assert(req2.min_stage1_score == 2);
+    assert(req2.stage1_min_score == 2);
     assert(req2.num_results == 50);
     assert(req2.seqidlist_mode == SeqidlistMode::kInclude);
     assert(req2.seqids.size() == 2);
@@ -151,9 +175,9 @@ static void test_search_request_defaults() {
     assert(deserialize(data, req2));
 
     assert(req2.k == 0);
-    assert(req2.min_score == 0);
-    assert(req2.max_gap == 0);
-    assert(req2.max_freq == 0);
+    assert(req2.stage2_min_score == 0);
+    assert(req2.stage2_max_gap == 0);
+    assert(req2.stage1_max_freq == 0);
     assert(req2.seqidlist_mode == SeqidlistMode::kNone);
     assert(req2.seqids.empty());
     assert(req2.queries.size() == 1);
@@ -474,49 +498,87 @@ static void test_search_response_skipped() {
     std::printf(" OK\n");
 }
 
-static void test_search_request_backward_compat_no_accept_qdegen() {
-    std::printf("  test_search_request_backward_compat_no_accept_qdegen...");
+static void test_search_request_stage3_fields() {
+    std::printf("  test_search_request_stage3_fields...");
 
-    // Simulate old format: serialize without the accept_qdegen trailer
-    // by serializing and then trimming the last byte
     SearchRequest req;
     req.k = 9;
-    req.accept_qdegen = 0;
-    req.queries.push_back({"q1", "ACGT"});
+    req.stage3_traceback = 1;
+    req.stage3_gapopen = -10;
+    req.stage3_gapext = -1;
+    req.stage3_min_pident_x100 = 9500;  // 95.00%
+    req.stage3_min_nident = 200;
+    req.context_abs = 500;
+    req.context_frac_x10000 = 1500;  // 0.15
+    req.queries.push_back({"q1", "ACGTACGT"});
 
     auto data = serialize(req);
-    // Remove the last byte (accept_qdegen trailer)
-    data.pop_back();
-
     SearchRequest req2;
     assert(deserialize(data, req2));
-    // Should default to 0
-    assert(req2.accept_qdegen == 0);
+
+    assert(req2.stage3_traceback == 1);
+    assert(req2.stage3_gapopen == -10);
+    assert(req2.stage3_gapext == -1);
+    assert(req2.stage3_min_pident_x100 == 9500);
+    assert(req2.stage3_min_nident == 200);
+    assert(req2.context_abs == 500);
+    assert(req2.context_frac_x10000 == 1500);
 
     std::printf(" OK\n");
 }
 
-static void test_search_response_backward_compat_no_skipped() {
-    std::printf("  test_search_response_backward_compat_no_skipped...");
+static void test_search_response_stage3_fields() {
+    std::printf("  test_search_response_stage3_fields...");
 
-    // Simulate old format: serialize a response, remove the skipped trailer
     SearchResponse resp;
     resp.status = 0;
     resp.k = 9;
+    resp.mode = 3;
+    resp.stage3_traceback = 1;
 
     QueryResult qr;
     qr.query_id = "q1";
-    qr.skipped = 1; // Will be serialized
+
+    ResponseHit hit;
+    hit.accession = "ACC001";
+    hit.strand = 0;
+    hit.q_start = 10;
+    hit.q_end = 200;
+    hit.q_length = 500;
+    hit.s_start = 1000;
+    hit.s_end = 1190;
+    hit.s_length = 5000;
+    hit.score = 42;
+    hit.stage1_score = 20;
+    hit.volume = 0;
+    hit.alnscore = 380;
+    hit.nident = 175;
+    hit.nmismatch = 15;
+    hit.pident_x100 = 9211;  // 92.11%
+    hit.cigar = "100M5I85M";
+    hit.q_seq = "ACGTACGTACGT";
+    hit.s_seq = "ACGTACGTTCGT";
+    qr.hits.push_back(hit);
     resp.results.push_back(qr);
 
     auto data = serialize(resp);
-    // Remove the last byte (skipped trailer for 1 query)
-    data.pop_back();
-
     SearchResponse resp2;
     assert(deserialize(data, resp2));
-    // Should default to 0
-    assert(resp2.results[0].skipped == 0);
+
+    assert(resp2.stage3_traceback == 1);
+    assert(resp2.mode == 3);
+    assert(resp2.results.size() == 1);
+
+    const auto& h = resp2.results[0].hits[0];
+    assert(h.q_length == 500);
+    assert(h.s_length == 5000);
+    assert(h.alnscore == 380);
+    assert(h.nident == 175);
+    assert(h.nmismatch == 15);
+    assert(h.pident_x100 == 9211);
+    assert(h.cigar == "100M5I85M");
+    assert(h.q_seq == "ACGTACGTACGT");
+    assert(h.s_seq == "ACGTACGTTCGT");
 
     std::printf(" OK\n");
 }
@@ -567,53 +629,57 @@ static void test_search_request_chain_max_lookback() {
 
     SearchRequest req;
     req.k = 9;
-    req.chain_max_lookback = 128;
+    req.stage2_max_lookback = 128;
     req.queries.push_back({"q1", "ACGTACGT"});
 
     auto data = serialize(req);
     SearchRequest req2;
     assert(deserialize(data, req2));
 
-    assert(req2.chain_max_lookback == 128);
+    assert(req2.stage2_max_lookback == 128);
 
     // Also test with 0 (server default)
-    req.chain_max_lookback = 0;
+    req.stage2_max_lookback = 0;
     data = serialize(req);
     SearchRequest req3;
     assert(deserialize(data, req3));
-    assert(req3.chain_max_lookback == 0);
+    assert(req3.stage2_max_lookback == 0);
 
     std::printf(" OK\n");
 }
 
-static void test_search_response_backward_compat_no_rejected() {
-    std::printf("  test_search_response_backward_compat_no_rejected...");
+static void test_search_response_q_s_length() {
+    std::printf("  test_search_response_q_s_length...");
 
-    // Simulate old format: serialize a response with rejected_query_ids,
-    // then truncate the rejected trailer to simulate an old server
     SearchResponse resp;
     resp.status = 0;
-    resp.k = 9;
+    resp.k = 7;
+    resp.mode = 2;
 
     QueryResult qr;
     qr.query_id = "q1";
-    qr.skipped = 0;
+
+    ResponseHit hit;
+    hit.accession = "ACC001";
+    hit.strand = 0;
+    hit.q_start = 0;
+    hit.q_end = 100;
+    hit.q_length = 1500;
+    hit.s_start = 200;
+    hit.s_end = 300;
+    hit.s_length = 8000;
+    hit.score = 25;
+    hit.stage1_score = 10;
+    hit.volume = 1;
+    qr.hits.push_back(hit);
     resp.results.push_back(qr);
-    resp.rejected_query_ids = {"q2"};
 
     auto data = serialize(resp);
-
-    // Calculate how many bytes to remove:
-    // rejected trailer = u16(1) + str16("q2") = 2 + 2 + 2 = 6 bytes
-    // Remove last 6 bytes to simulate old server without rejected trailer
-    for (int i = 0; i < 6; i++) data.pop_back();
-
     SearchResponse resp2;
     assert(deserialize(data, resp2));
-    assert(resp2.results.size() == 1);
-    assert(resp2.results[0].query_id == "q1");
-    // Should default to empty
-    assert(resp2.rejected_query_ids.empty());
+
+    assert(resp2.results[0].hits[0].q_length == 1500);
+    assert(resp2.results[0].hits[0].s_length == 8000);
 
     std::printf(" OK\n");
 }
@@ -625,6 +691,7 @@ int main() {
     test_frame_round_trip();
     test_frame_empty_payload();
     test_frame_invalid_magic();
+    test_frame_invalid_msg_version();
     test_search_request_serialize();
     test_search_request_defaults();
     test_search_response_serialize();
@@ -637,10 +704,10 @@ int main() {
     test_frame_full_round_trip();
     test_search_request_accept_qdegen();
     test_search_response_skipped();
-    test_search_request_backward_compat_no_accept_qdegen();
-    test_search_response_backward_compat_no_skipped();
+    test_search_request_stage3_fields();
+    test_search_response_stage3_fields();
     test_search_response_rejected_query_ids();
-    test_search_response_backward_compat_no_rejected();
+    test_search_response_q_s_length();
     test_search_request_chain_max_lookback();
 
     std::printf("All protocol tests passed.\n");

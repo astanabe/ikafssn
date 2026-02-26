@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "ikafssnserver/request_processor.hpp"
+#include "search/stage3_alignment.hpp"
 #include "search/volume_searcher.hpp"
 #include "util/logger.hpp"
 
@@ -24,6 +25,12 @@ struct ServerConfig {
     SearchConfig search_config;
     double max_freq_raw = 0.5;          // raw -max_freq value (fraction or absolute)
     Logger::Level log_level = Logger::kInfo;
+    // Stage 3 / BLAST DB config
+    std::string db_path;            // BLAST DB path for mode 3
+    Stage3Config stage3_config;     // default stage3 config
+    bool context_is_ratio = false;
+    double context_ratio = 0.0;
+    uint32_t context_abs = 0;
 };
 
 class Server {

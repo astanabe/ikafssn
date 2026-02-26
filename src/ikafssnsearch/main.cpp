@@ -569,6 +569,8 @@ int main(int argc, char* argv[]) {
                                     oh.score = cr.score;
                                     oh.stage1_score = cr.stage1_score;
                                     oh.volume = vd.volume_index;
+                                    oh.q_length = static_cast<uint32_t>(query.sequence.size());
+                                    oh.s_length = vd.ksx.seq_length(cr.seq_id);
                                     local_hits.push_back(oh);
                                 }
                             }
@@ -623,6 +625,8 @@ int main(int argc, char* argv[]) {
                             oh.score = cr.score;
                             oh.stage1_score = cr.stage1_score;
                             oh.volume = vd.volume_index;
+                            oh.q_length = static_cast<uint32_t>(query.sequence.size());
+                            oh.s_length = vd.ksx.seq_length(cr.seq_id);
                             local_hits.push_back(oh);
                         }
                     }

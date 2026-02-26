@@ -9,6 +9,7 @@
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
 #include "search/oid_filter.hpp"
+#include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
 #include "core/config.hpp"
 #include "util/logger.hpp"
@@ -63,8 +64,10 @@ static void test_full_pipeline() {
     config.num_results = 50;
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
+    std::vector<const KixReader*> all_kix = {&kix};
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", g_query_seq, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config);
     CHECK(!result.hits.empty());
 
     // Convert to OutputHit

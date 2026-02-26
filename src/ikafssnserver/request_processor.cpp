@@ -3,12 +3,15 @@
 
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
+#include <climits>
 #include <cmath>
+#include "io/fasta_reader.hpp"
 #include "io/result_writer.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 
 #include <tbb/blocked_range.h>
 #include <tbb/combinable.h>
@@ -27,6 +30,11 @@ SearchResponse process_search_request(
     const std::map<int, KmerGroup>& kmer_groups,
     int default_k,
     const SearchConfig& default_config,
+    const Stage3Config& default_stage3_config,
+    const std::string& db_path,
+    bool default_context_is_ratio,
+    double default_context_ratio,
+    uint32_t default_context_abs,
     Server& server,
     tbb::task_arena& arena) {
 
@@ -46,49 +54,52 @@ SearchResponse process_search_request(
 
     // Build search config, using request values if non-zero, else server defaults
     SearchConfig config = default_config;
-    if (req.has_min_score)
-        config.stage2.min_score = req.min_score;
-    if (req.max_gap != 0)
-        config.stage2.max_gap = req.max_gap;
-    if (req.chain_max_lookback != 0)
-        config.stage2.chain_max_lookback = req.chain_max_lookback;
-    if (req.max_freq_frac_x10000 != 0) {
-        double frac = static_cast<double>(req.max_freq_frac_x10000) / 10000.0;
+    if (req.has_stage2_min_score)
+        config.stage2.min_score = req.stage2_min_score;
+    if (req.stage2_max_gap != 0)
+        config.stage2.max_gap = req.stage2_max_gap;
+    if (req.stage2_max_lookback != 0)
+        config.stage2.chain_max_lookback = req.stage2_max_lookback;
+    if (req.stage1_max_freq_frac_x10000 != 0) {
+        double frac = static_cast<double>(req.stage1_max_freq_frac_x10000) / 10000.0;
         uint64_t total_nseq = 0;
         for (const auto& vol : group.volumes) total_nseq += vol.ksx.num_sequences();
         config.stage1.max_freq = static_cast<uint32_t>(std::ceil(frac * total_nseq));
         if (config.stage1.max_freq == 0) config.stage1.max_freq = 1;
-    } else if (req.max_freq != 0) {
-        config.stage1.max_freq = req.max_freq;
+    } else if (req.stage1_max_freq != 0) {
+        config.stage1.max_freq = req.stage1_max_freq;
     }
-    if (req.min_diag_hits != 0)
-        config.stage2.min_diag_hits = req.min_diag_hits;
+    if (req.stage2_min_diag_hits != 0)
+        config.stage2.min_diag_hits = req.stage2_min_diag_hits;
     if (req.stage1_topn != 0)
         config.stage1.stage1_topn = req.stage1_topn;
-    if (req.min_stage1_score_frac_x10000 != 0) {
+    if (req.stage1_min_score_frac_x10000 != 0) {
         config.min_stage1_score_frac =
-            static_cast<double>(req.min_stage1_score_frac_x10000) / 10000.0;
-    } else if (req.min_stage1_score != 0) {
-        config.stage1.min_stage1_score = req.min_stage1_score;
+            static_cast<double>(req.stage1_min_score_frac_x10000) / 10000.0;
+    } else if (req.stage1_min_score != 0) {
+        config.stage1.min_stage1_score = req.stage1_min_score;
     }
     if (req.num_results != 0)
         config.num_results = req.num_results;
     if (req.mode != 0)
         config.mode = req.mode;
-    if (req.stage1_score_type != 0)
-        config.stage1.stage1_score_type = req.stage1_score_type;
-    if (req.sort_score != 0)
-        config.sort_score = req.sort_score;
+    if (req.stage1_score != 0)
+        config.stage1.stage1_score_type = req.stage1_score;
     if (req.strand != 0)
         config.strand = req.strand;
 
-    // Mode 1: force sort_score=1
-    if (config.mode == 1) {
-        config.sort_score = 1;
+    // sort_score is auto-determined by mode (sort_score field in request is ignored)
+    switch (config.mode) {
+        case 1: config.sort_score = 1; break;
+        case 2: config.sort_score = 2; break;
+        case 3: config.sort_score = 3; break;
+        default: config.sort_score = 2; break;
+    }
 
-        // Consistency check: min_score and min_stage1_score
-        bool has_min_score = req.has_min_score;
-        bool has_min_stage1_score = (req.min_stage1_score != 0);
+    // Mode 1: consistency checks
+    if (config.mode == 1) {
+        bool has_min_score = req.has_stage2_min_score;
+        bool has_min_stage1_score = (req.stage1_min_score != 0);
         if (has_min_score && has_min_stage1_score &&
             config.stage2.min_score != config.stage1.min_stage1_score) {
             resp.status = 2; // parameter conflict
@@ -102,10 +113,35 @@ SearchResponse process_search_request(
         }
     }
 
+    // Resolve Stage 3 parameters from request (INT16_MIN = use server default)
+    Stage3Config stage3_config = default_stage3_config;
+    if (req.stage3_traceback != 0)
+        stage3_config.traceback = true;
+    if (req.stage3_gapopen != INT16_MIN)
+        stage3_config.gapopen = req.stage3_gapopen;
+    if (req.stage3_gapext != INT16_MIN)
+        stage3_config.gapext = req.stage3_gapext;
+    if (req.stage3_min_pident_x100 != 0)
+        stage3_config.min_pident = static_cast<double>(req.stage3_min_pident_x100) / 100.0;
+    if (req.stage3_min_nident != 0)
+        stage3_config.min_nident = req.stage3_min_nident;
+
+    // Resolve context
+    bool ctx_is_ratio = default_context_is_ratio;
+    double ctx_ratio = default_context_ratio;
+    uint32_t ctx_abs = default_context_abs;
+    if (req.context_frac_x10000 != 0) {
+        ctx_is_ratio = true;
+        ctx_ratio = static_cast<double>(req.context_frac_x10000) / 10000.0;
+    } else if (req.context_abs != 0) {
+        ctx_is_ratio = false;
+        ctx_abs = req.context_abs;
+    }
+
     // Set response metadata
     resp.status = 0;
     resp.mode = config.mode;
-    resp.stage1_score_type = config.stage1.stage1_score_type;
+    resp.stage1_score = config.stage1.stage1_score_type;
 
     // Build seqidlist filter mode
     OidFilterMode filter_mode = OidFilterMode::kNone;
@@ -114,9 +150,7 @@ SearchResponse process_search_request(
     else if (req.seqidlist_mode == SeqidlistMode::kExclude)
         filter_mode = OidFilterMode::kExclude;
 
-    // Resolve effective accept_qdegen: client non-zero overrides server default
-    uint8_t accept_qdegen = (req.accept_qdegen != 0)
-        ? req.accept_qdegen : config.accept_qdegen;
+    uint8_t accept_qdegen = req.accept_qdegen;
 
     // Classify queries: skipped (degenerate) vs valid
     std::vector<size_t> valid_indices;  // original indices of non-skipped queries
@@ -266,6 +300,8 @@ SearchResponse process_search_request(
                                 rh.score = static_cast<uint16_t>(cr.score);
                                 rh.stage1_score = static_cast<uint16_t>(cr.stage1_score);
                                 rh.volume = vol.volume_index;
+                                rh.q_length = static_cast<uint32_t>(query.sequence.size());
+                                rh.s_length = vol.ksx.seq_length(cr.seq_id);
                                 local_hits.emplace_back(aq.result_idx, rh);
                             }
                         }
@@ -281,6 +317,83 @@ SearchResponse process_search_request(
         }
     });
 
+    // Stage 3 alignment (mode 3 only)
+    if (config.mode == 3) {
+        if (db_path.empty()) {
+            resp.status = 3; // mode 3 requires BLAST DB
+            server.release_sequences(acquired);
+            return resp;
+        }
+
+        // Build FastaRecord vector from accepted queries
+        std::vector<FastaRecord> fasta_queries;
+        for (const auto& aq : accepted_queries) {
+            fasta_queries.push_back({
+                req.queries[aq.query_idx].query_id,
+                req.queries[aq.query_idx].sequence
+            });
+        }
+
+        // Flatten all hits into OutputHit vector for run_stage3
+        std::vector<OutputHit> output_hits;
+        for (auto& qr : resp.results) {
+            for (auto& hit : qr.hits) {
+                OutputHit oh;
+                oh.query_id = qr.query_id;
+                oh.accession = hit.accession;
+                oh.strand = (hit.strand == 0) ? '+' : '-';
+                oh.q_start = hit.q_start;
+                oh.q_end = hit.q_end;
+                oh.s_start = hit.s_start;
+                oh.s_end = hit.s_end;
+                oh.score = hit.score;
+                oh.stage1_score = hit.stage1_score;
+                oh.volume = hit.volume;
+                oh.q_length = hit.q_length;
+                oh.s_length = hit.s_length;
+                output_hits.push_back(std::move(oh));
+            }
+        }
+
+        Logger logger(Logger::kInfo);
+        output_hits = run_stage3(output_hits, fasta_queries, db_path,
+                                 stage3_config, ctx_is_ratio, ctx_ratio, ctx_abs, logger);
+
+        // Write back to ResponseHit
+        // Clear existing hits and rebuild from filtered output_hits
+        for (auto& qr : resp.results) qr.hits.clear();
+        // Group output_hits by query_id -> resp.results index map
+        std::unordered_map<std::string, size_t> qid_to_ridx;
+        for (size_t i = 0; i < resp.results.size(); i++)
+            qid_to_ridx[resp.results[i].query_id] = i;
+        for (const auto& oh : output_hits) {
+            auto qit = qid_to_ridx.find(oh.query_id);
+            if (qit == qid_to_ridx.end()) continue;
+            ResponseHit rh;
+            rh.accession = oh.accession;
+            rh.strand = (oh.strand == '+') ? 0 : 1;
+            rh.q_start = oh.q_start;
+            rh.q_end = oh.q_end;
+            rh.s_start = oh.s_start;
+            rh.s_end = oh.s_end;
+            rh.score = static_cast<uint16_t>(oh.score);
+            rh.stage1_score = static_cast<uint16_t>(oh.stage1_score);
+            rh.volume = oh.volume;
+            rh.q_length = oh.q_length;
+            rh.s_length = oh.s_length;
+            rh.alnscore = oh.alnscore;
+            rh.nident = oh.nident;
+            rh.nmismatch = oh.nmismatch;
+            rh.pident_x100 = static_cast<uint16_t>(oh.pident * 100.0);
+            rh.cigar = oh.cigar;
+            rh.q_seq = oh.q_seq;
+            rh.s_seq = oh.s_seq;
+            resp.results[qit->second].hits.push_back(std::move(rh));
+        }
+
+        resp.stage3_traceback = stage3_config.traceback ? 1 : 0;
+    }
+
     // Release permits
     server.release_sequences(acquired);
 
@@ -293,6 +406,11 @@ SearchResponse process_search_request(
                 std::sort(qr.hits.begin(), qr.hits.end(),
                           [](const ResponseHit& a, const ResponseHit& b) {
                               return a.stage1_score > b.stage1_score;
+                          });
+            } else if (config.sort_score == 3) {
+                std::sort(qr.hits.begin(), qr.hits.end(),
+                          [](const ResponseHit& a, const ResponseHit& b) {
+                              return a.alnscore > b.alnscore;
                           });
             } else {
                 std::sort(qr.hits.begin(), qr.hits.end(),

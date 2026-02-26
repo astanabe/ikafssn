@@ -130,9 +130,13 @@ add_library(ikafssn_server_lib STATIC
     ikafssnserver/connection_handler.cpp
     ikafssnserver/request_processor.cpp
 )
+target_include_directories(ikafssn_server_lib PRIVATE
+    "${NCBI_TOOLKIT_INCLUDE}"
+)
 target_link_libraries(ikafssn_server_lib PUBLIC
-    ikafssn_search ikafssn_protocol ikafssn_index ikafssn_io ikafssn_util ikafssn_core
-    TBB::tbb
+    ikafssn_search ikafssn_stage3
+    ikafssn_protocol ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    parasail TBB::tbb
 )
 
 add_executable(ikafssnserver
@@ -161,6 +165,7 @@ add_executable(ikafssnclient
 )
 target_link_libraries(ikafssnclient PRIVATE
     ikafssn_client_lib ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_sam_writer hts
 )
 
 # ikafssnretrieve

@@ -6,12 +6,14 @@
 #include "io/fasta_reader.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
+#include "io/sam_writer.hpp"
 #include "protocol/messages.hpp"
 #include "util/cli_parser.hpp"
 #include "util/socket_utils.hpp"
 #include "util/logger.hpp"
 
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -39,24 +41,29 @@ static void print_usage(const char* prog) {
         "Options:\n"
         "  -o <path>                Output file (default: stdout)\n"
         "  -k <int>                 K-mer size (default: server default)\n"
-        "  -mode <1|2>              1=Stage1 only, 2=Stage1+Stage2 (default: server default)\n"
+        "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: server default)\n"
         "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: server default)\n"
-        "  -sort_score <1|2>        1=stage1 score, 2=chainscore (default: server default)\n"
-        "  -min_score <int>         Minimum score (default: server default)\n"
-        "  -max_gap <int>           Chaining gap tolerance (default: server default)\n"
-        "  -chain_max_lookback <int>  Chaining DP lookback window (default: server default)\n"
-        "  -max_freq <num>          High-freq k-mer skip threshold (default: server default)\n"
+        "  -stage2_min_score <int>  Minimum chain score (default: server default)\n"
+        "  -stage2_max_gap <int>    Chaining gap tolerance (default: server default)\n"
+        "  -stage2_max_lookback <int>  Chaining DP lookback window (default: server default)\n"
+        "  -stage1_max_freq <num>   High-freq k-mer skip threshold (default: server default)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           >= 1: absolute count threshold\n"
-        "  -min_diag_hits <int>     Diagonal filter min hits (default: server default)\n"
+        "  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: server default)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit (default: server default)\n"
-        "  -min_stage1_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: server default)\n"
+        "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: server default)\n"
         "  -num_results <int>       Max results per query (default: server default)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)\n"
-        "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 0)\n"
-        "  -outfmt <tab|json>       Output format (default: tab)\n"
+        "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
+        "  -context <value>         Context extension (int=bases, decimal=ratio, default: 0)\n"
+        "  -stage3_traceback <0|1>  Enable traceback in mode 3 (default: 0)\n"
+        "  -stage3_gapopen <int>    Gap open penalty (default: server default)\n"
+        "  -stage3_gapext <int>     Gap extension penalty (default: server default)\n"
+        "  -stage3_min_pident <num> Min percent identity filter (default: server default)\n"
+        "  -stage3_min_nident <int> Min identical bases filter (default: server default)\n"
+        "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n"
 #ifdef IKAFSSN_ENABLE_HTTP
         "\n"
@@ -197,6 +204,10 @@ int main(int argc, char* argv[]) {
     std::string outfmt_str = cli.get_string("-outfmt", "tab");
     if (outfmt_str == "json") {
         outfmt = OutputFormat::kJson;
+    } else if (outfmt_str == "sam") {
+        outfmt = OutputFormat::kSam;
+    } else if (outfmt_str == "bam") {
+        outfmt = OutputFormat::kBam;
     } else if (outfmt_str != "tab") {
         std::fprintf(stderr, "Error: unknown output format '%s'\n", outfmt_str.c_str());
         return 1;
@@ -213,38 +224,74 @@ int main(int argc, char* argv[]) {
     // Build base search request parameters (shared across retries)
     SearchRequest base_req;
     base_req.k = static_cast<uint8_t>(cli.get_int("-k", 0));
-    if (cli.has("-min_score")) {
-        base_req.min_score = static_cast<uint16_t>(cli.get_int("-min_score", 0));
-        base_req.has_min_score = 1;
+    if (cli.has("-stage2_min_score")) {
+        base_req.stage2_min_score = static_cast<uint16_t>(cli.get_int("-stage2_min_score", 0));
+        base_req.has_stage2_min_score = 1;
     }
-    base_req.max_gap = static_cast<uint16_t>(cli.get_int("-max_gap", 0));
-    base_req.chain_max_lookback = static_cast<uint16_t>(cli.get_int("-chain_max_lookback", 0));
+    base_req.stage2_max_gap = static_cast<uint16_t>(cli.get_int("-stage2_max_gap", 0));
+    base_req.stage2_max_lookback = static_cast<uint16_t>(cli.get_int("-stage2_max_lookback", 0));
     {
-        double max_freq_val = cli.get_double("-max_freq", 0.0);
+        double max_freq_val = cli.get_double("-stage1_max_freq", 0.0);
         if (max_freq_val > 0 && max_freq_val < 1.0) {
-            base_req.max_freq_frac_x10000 =
+            base_req.stage1_max_freq_frac_x10000 =
                 static_cast<uint16_t>(max_freq_val * 10000.0);
         } else {
-            base_req.max_freq = static_cast<uint32_t>(max_freq_val);
+            base_req.stage1_max_freq = static_cast<uint32_t>(max_freq_val);
         }
     }
-    base_req.min_diag_hits = static_cast<uint8_t>(cli.get_int("-min_diag_hits", 0));
+    base_req.stage2_min_diag_hits = static_cast<uint8_t>(cli.get_int("-stage2_min_diag_hits", 0));
     base_req.stage1_topn = static_cast<uint16_t>(cli.get_int("-stage1_topn", 0));
     {
-        double min_s1 = cli.get_double("-min_stage1_score", 0.0);
+        double min_s1 = cli.get_double("-stage1_min_score", 0.0);
         if (min_s1 > 0 && min_s1 < 1.0) {
-            base_req.min_stage1_score_frac_x10000 =
+            base_req.stage1_min_score_frac_x10000 =
                 static_cast<uint16_t>(min_s1 * 10000.0);
         } else {
-            base_req.min_stage1_score = static_cast<uint16_t>(min_s1);
+            base_req.stage1_min_score = static_cast<uint16_t>(min_s1);
         }
     }
     base_req.num_results = static_cast<uint16_t>(cli.get_int("-num_results", 0));
     base_req.mode = static_cast<uint8_t>(cli.get_int("-mode", 0));
-    base_req.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
-    base_req.sort_score = static_cast<uint8_t>(cli.get_int("-sort_score", 0));
-    base_req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 0));
+    base_req.stage1_score = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
+    base_req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
     base_req.strand = static_cast<int8_t>(cli.get_int("-strand", 0));
+
+    // Stage 3 parameters
+    base_req.stage3_traceback = static_cast<uint8_t>(cli.get_int("-stage3_traceback", 0));
+    base_req.stage3_gapopen = cli.has("-stage3_gapopen")
+        ? static_cast<int16_t>(cli.get_int("-stage3_gapopen", 0))
+        : INT16_MIN;
+    base_req.stage3_gapext = cli.has("-stage3_gapext")
+        ? static_cast<int16_t>(cli.get_int("-stage3_gapext", 0))
+        : INT16_MIN;
+    {
+        double min_pident = cli.get_double("-stage3_min_pident", 0.0);
+        base_req.stage3_min_pident_x100 = static_cast<uint16_t>(min_pident * 100.0);
+    }
+    base_req.stage3_min_nident = static_cast<uint32_t>(cli.get_int("-stage3_min_nident", 0));
+
+    // Context
+    {
+        std::string context_str = cli.get_string("-context", "0");
+        if (context_str.find('.') != std::string::npos) {
+            double ratio = std::stod(context_str);
+            base_req.context_frac_x10000 = static_cast<uint16_t>(ratio * 10000.0);
+        } else {
+            base_req.context_abs = static_cast<uint32_t>(std::stoi(context_str));
+        }
+    }
+
+    // SAM/BAM requires mode 3 + traceback
+    if ((outfmt == OutputFormat::kSam || outfmt == OutputFormat::kBam) &&
+        (base_req.mode != 3 || base_req.stage3_traceback == 0)) {
+        std::fprintf(stderr, "Error: SAM/BAM output requires -mode 3 and -stage3_traceback 1\n");
+        return 1;
+    }
+    // BAM requires -o
+    if (outfmt == OutputFormat::kBam && output_path.empty()) {
+        std::fprintf(stderr, "Error: BAM output requires -o <path>\n");
+        return 1;
+    }
 
     // Seqidlist
     if (cli.has("-seqidlist")) {
@@ -273,7 +320,8 @@ int main(int argc, char* argv[]) {
     std::vector<OutputHit> all_hits;
     bool has_skipped = false;
     uint8_t resp_mode = 0;
-    uint8_t resp_stage1_score_type = 0;
+    uint8_t resp_stage1_score = 0;
+    bool resp_stage3_traceback = false;
 
     // Retry schedule: 30s, 60s, 120s, 120s, ...
     static constexpr int retry_delays[] = {30, 60, 120};
@@ -301,7 +349,8 @@ int main(int argc, char* argv[]) {
         // Save mode/score_type from first successful response
         if (attempt == 0) {
             resp_mode = resp.mode;
-            resp_stage1_score_type = resp.stage1_score_type;
+            resp_stage1_score = resp.stage1_score;
+            resp_stage3_traceback = (resp.stage3_traceback != 0);
         }
 
         // Collect results from accepted queries
@@ -330,7 +379,16 @@ int main(int argc, char* argv[]) {
                 oh.score = hit.score;
                 oh.stage1_score = hit.stage1_score;
                 oh.volume = hit.volume;
-                all_hits.push_back(oh);
+                oh.q_length = hit.q_length;
+                oh.s_length = hit.s_length;
+                oh.alnscore = hit.alnscore;
+                oh.nident = hit.nident;
+                oh.nmismatch = hit.nmismatch;
+                oh.pident = static_cast<double>(hit.pident_x100) / 100.0;
+                oh.cigar = hit.cigar;
+                oh.q_seq = hit.q_seq;
+                oh.s_seq = hit.s_seq;
+                all_hits.push_back(std::move(oh));
             }
         }
 
@@ -356,10 +414,16 @@ int main(int argc, char* argv[]) {
         if (req.queries.empty()) break; // all resolved
     }
 
-    // Write output using mode/stage1_score_type from response
-    if (output_path.empty()) {
+    // Write output using mode/stage1_score from response
+    if (outfmt == OutputFormat::kSam) {
+        write_results_sam(output_path.empty() ? "-" : output_path,
+                          all_hits, resp_stage1_score);
+    } else if (outfmt == OutputFormat::kBam) {
+        write_results_bam(output_path, all_hits, resp_stage1_score);
+    } else if (output_path.empty()) {
         write_results(std::cout, all_hits, outfmt,
-                      resp_mode, resp_stage1_score_type);
+                      resp_mode, resp_stage1_score,
+                      resp_stage3_traceback);
     } else {
         std::ofstream out(output_path);
         if (!out.is_open()) {
@@ -367,7 +431,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         write_results(out, all_hits, outfmt,
-                      resp_mode, resp_stage1_score_type);
+                      resp_mode, resp_stage1_score,
+                      resp_stage3_traceback);
     }
 
     logger.info("Done. %zu hit(s) reported.", all_hits.size());

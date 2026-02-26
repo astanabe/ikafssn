@@ -28,7 +28,7 @@ static void print_usage(const char* prog) {
         "  -ix <prefix>            Index prefix (like blastn -db)\n"
         "\n"
         "Options:\n"
-        "  -db <path>              BLAST DB prefix (show DB info as well)\n"
+        "  -db <path>              BLAST DB prefix (default: auto-detect from -ix)\n"
         "  -v, --verbose           Verbose output (k-mer frequency distribution details)\n"
         "  -h, --help              Show this help\n",
         prog);
@@ -390,17 +390,25 @@ int main(int argc, char* argv[]) {
         print_frequency_stats(fs);
     }
 
-    // BLAST DB information (if -db specified)
-    if (!db_path.empty()) {
-        std::printf("\n--- BLAST DB Information ---\n\n");
-        std::printf("DB prefix:         %s\n", db_path.c_str());
+    // BLAST DB information: use -db if specified, otherwise try -ix path
+    std::string effective_db = db_path;
+    if (effective_db.empty()) {
+        auto vol_paths = BlastDbReader::find_volume_paths(ix_prefix);
+        if (!vol_paths.empty()) {
+            effective_db = ix_prefix;
+        }
+    }
 
-        auto vol_paths = BlastDbReader::find_volume_paths(db_path);
+    if (!effective_db.empty()) {
+        std::printf("\n--- BLAST DB Information ---\n\n");
+        std::printf("DB prefix:         %s\n", effective_db.c_str());
+
+        auto vol_paths = BlastDbReader::find_volume_paths(effective_db);
         std::printf("DB volumes:        %zu\n", vol_paths.size());
 
         // Open the DB to get title and aggregate stats
         BlastDbReader db;
-        if (db.open(db_path)) {
+        if (db.open(effective_db)) {
             std::string title = db.get_title();
             uint32_t db_nseqs = db.num_sequences();
             std::printf("DB title:          %s\n", title.c_str());
@@ -423,7 +431,7 @@ int main(int argc, char* argv[]) {
             db.close();
         } else {
             std::fprintf(stderr, "Warning: could not open BLAST DB '%s'\n",
-                         db_path.c_str());
+                         effective_db.c_str());
         }
     }
 

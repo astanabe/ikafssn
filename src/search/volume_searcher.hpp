@@ -33,35 +33,6 @@ struct SearchResult {
     std::vector<ChainResult> hits;
 };
 
-// Search a single volume for a single query.
-// Template parameter KmerInt: uint16_t or uint32_t.
-// When mode=1, kpx is not accessed (may be unopened).
-// khx: nullable pointer to KhxReader for build-time exclusion info.
-// buf: optional thread-local Stage1Buffer to avoid per-call allocation.
-template <typename KmerInt>
-SearchResult search_volume(
-    const std::string& query_id,
-    const std::string& query_seq,
-    int k,
-    const KixReader& kix,
-    const KpxReader& kpx,
-    const KsxReader& ksx,
-    const OidFilter& filter,
-    const SearchConfig& config,
-    const KhxReader* khx = nullptr,
-    Stage1Buffer* buf = nullptr);
-
-extern template SearchResult search_volume<uint16_t>(
-    const std::string&, const std::string&, int,
-    const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&, const KhxReader*,
-    Stage1Buffer*);
-extern template SearchResult search_volume<uint32_t>(
-    const std::string&, const std::string&, int,
-    const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&, const KhxReader*,
-    Stage1Buffer*);
-
 // Search a single volume using pre-processed query k-mer data.
 // High-freq k-mers have already been removed and thresholds resolved globally.
 // buf: optional thread-local Stage1Buffer to avoid per-call allocation.
