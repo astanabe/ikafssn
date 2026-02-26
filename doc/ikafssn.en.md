@@ -136,7 +136,7 @@ Options:
   -v, --verbose           Verbose logging
 ```
 
-The `-ix` option specifies the index prefix path (without extension), similar to `blastn -db`. For example, if `ikafssnindex -db nt -k 11 -o /data/index` generated the following files:
+The `-ix` option specifies the index prefix path (without extension), similar to `blastn -db`. For example, if `ikafssnindex -db nt -k 11 -o /data/index` generated the following files for a multi-volume BLAST DB (`nt` with volumes `nt.00`, `nt.01`):
 
 ```
 /data/index/nt.00.11mer.kix
@@ -145,11 +145,12 @@ The `-ix` option specifies the index prefix path (without extension), similar to
 /data/index/nt.01.11mer.kix
 /data/index/nt.01.11mer.kpx
 /data/index/nt.01.11mer.ksx
+/data/index/nt.11mer.kvx
 ```
 
-then specify `-ix /data/index/nt`. The prefix `/data/index/nt` is split into the directory `/data/index/` and the base name `nt`, and all files matching `nt.<vol>.<k>mer.k?x` in that directory are discovered automatically.
+then specify `-ix /data/index/nt`. The prefix `/data/index/nt` is split into the directory `/data/index/` and the base name `nt`. Volumes are discovered via the `.kvx` manifest file (`nt.11mer.kvx`), which lists the volume basenames. For aggregated databases (e.g. `combined` aggregating `foo` and `bar`), the index files would be `foo.11mer.kix`, `bar.11mer.kix`, with `combined.11mer.kvx` as the manifest.
 
-If the index directory contains indexes for multiple k-mer sizes (e.g. both `nt.00.09mer.kix` and `nt.00.11mer.kix`), you must specify `-k` to select which one to use. If only a single k-mer size exists, `-k` can be omitted.
+If the index directory contains indexes for multiple k-mer sizes (e.g. both `nt.09mer.kvx` and `nt.11mer.kvx`), you must specify `-k` to select which one to use. If only a single k-mer size exists, `-k` can be omitted.
 
 When `-accept_qdegen` is 0, queries containing IUPAC degenerate bases (R, Y, S, W, K, M, B, D, H, V, N) are skipped with a warning, and the exit code is 2. Set `-accept_qdegen 1` to allow such queries. K-mers containing exactly one degenerate base are expanded to all possible variants (e.g., R→A,G produces 2 k-mers; N→A,C,G,T produces 4) and used for search. K-mers with two or more degenerate bases are skipped; when this occurs, a warning is emitted to stderr once per query indicating the query name and that such k-mers are ignored. In server mode (`ikafssnserver`), this warning is propagated through the protocol to `ikafssnclient`, which displays the same message. This matches the indexer's handling of subject-side degenerate bases.
 
@@ -761,21 +762,29 @@ Sample systemd unit files are provided in `doc/systemd/`. See the files for conf
 
 ## Index File Formats
 
-Per BLAST DB volume, three files are generated:
+Per BLAST DB volume, three files are generated using the BLAST DB volume's own basename:
 
 ```
-<db_prefix>.<volume_index>.<kk>mer.kix   — ID postings (direct-address table + delta-compressed)
-<db_prefix>.<volume_index>.<kk>mer.kpx   — Position postings (delta-compressed)
-<db_prefix>.<volume_index>.<kk>mer.ksx   — Sequence metadata (lengths + accessions)
+<vol_basename>.<kk>mer.kix   — ID postings (direct-address table + delta-compressed)
+<vol_basename>.<kk>mer.kpx   — Position postings (delta-compressed)
+<vol_basename>.<kk>mer.ksx   — Sequence metadata (lengths + accessions)
+```
+
+A `.kvx` manifest file is always generated for volume discovery:
+
+```
+<db_base>.<kk>mer.kvx        — Volume manifest (text, lists volume basenames)
 ```
 
 When `-max_freq_build` is used, a shared exclusion bitset file is also generated (one per k value, shared across all volumes):
 
 ```
-<db_prefix>.<kk>mer.khx                  — Build-time exclusion bitset (shared across volumes)
+<db_base>.<kk>mer.khx        — Build-time exclusion bitset (shared across volumes)
 ```
 
-Example: `nt.00.11mer.kix`, `nt.01.11mer.kpx`, `nt.11mer.khx`
+Examples:
+- Standard multi-volume (`nt` with volumes `nt.00`, `nt.01`): `nt.00.11mer.kix`, `nt.01.11mer.kpx`, `nt.11mer.kvx`, `nt.11mer.khx`
+- Aggregated (`combined` with volumes `foo`, `bar`): `foo.11mer.kix`, `bar.11mer.kix`, `combined.11mer.kvx`
 
 The `.khx` file contains a 32-byte header (magic "KMHX", format version, k) followed by a bitset of `ceil(4^k / 8)` bytes. Bit *i* = 1 indicates that k-mer *i* was excluded during index build based on cross-volume aggregated counts.
 

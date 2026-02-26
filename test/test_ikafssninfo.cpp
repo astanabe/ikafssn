@@ -46,13 +46,26 @@ static void setup() {
     IndexBuilderConfig config;
     config.k = 7;
 
-    std::string prefix = g_index_dir + "/testdb.00.07mer";
-    bool ok = build_index<uint16_t>(db, config, prefix, 0, 1, "testdb", logger);
+    std::string db_base = "testdb";
+    std::string vol_basename = std::filesystem::path(g_testdb_path).filename().string();
+    std::string prefix = g_index_dir + "/" + vol_basename + ".07mer";
+    bool ok = build_index<uint16_t>(db, config, prefix, 0, 1, db_base, logger);
     if (!ok) {
         std::fprintf(stderr, "FAIL: index build failed\n");
         std::exit(1);
     }
     db.close();
+
+    // Write .kvx manifest so ikafssninfo can discover the volume
+    {
+        std::string kvx_path = g_index_dir + "/" + db_base + ".07mer.kvx";
+        FILE* fp = std::fopen(kvx_path.c_str(), "w");
+        if (!fp) { std::fprintf(stderr, "FAIL: cannot write kvx\n"); std::exit(1); }
+        std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
+        std::fprintf(fp, "TITLE %s\n", db_base.c_str());
+        std::fprintf(fp, "DBLIST \"%s\"\n", vol_basename.c_str());
+        std::fclose(fp);
+    }
 }
 
 static void cleanup() {
@@ -138,7 +151,7 @@ static void test_consistency_with_reader() {
 
     // Verify that the info displayed by ikafssninfo matches
     // what we read directly from the index files.
-    std::regex kix_pattern(R"((.+)\.(\d+)\.(\d+)mer\.kix)");
+    std::regex kix_pattern(R"((.+)\.(\d+)mer\.kix)");
 
     uint32_t found_seqs = 0;
     uint64_t found_postings = 0;

@@ -1,6 +1,7 @@
 #include "ikafssnserver/server.hpp"
 #include "ikafssnserver/connection_handler.hpp"
 #include "core/config.hpp"
+#include "io/kvx_reader.hpp"
 #include "util/socket_utils.hpp"
 
 #include <algorithm>
@@ -33,8 +34,6 @@ bool Server::load_indexes(const std::string& ix_prefix, const Logger& logger) {
     std::string db_name = prefix_path.filename().string();
     if (parent_dir.empty()) parent_dir = ".";
 
-    std::regex suffix_pattern(R"((\d+)\.(\d+)mer\.kix)");
-
     struct VolumeFile {
         std::string base_path;
         uint16_t volume_index;
@@ -42,20 +41,35 @@ bool Server::load_indexes(const std::string& ix_prefix, const Logger& logger) {
     };
     std::vector<VolumeFile> vf_list;
 
-    std::string prefix_dot = db_name + ".";
-    for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
-        if (!entry.is_regular_file()) continue;
-        std::string fname = entry.path().filename().string();
-        if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
-            continue;
-        std::string suffix = fname.substr(prefix_dot.size());
-        std::smatch m;
-        if (std::regex_match(suffix, m, suffix_pattern)) {
-            VolumeFile vf;
-            vf.volume_index = static_cast<uint16_t>(std::stoi(m[1].str()));
-            vf.k = std::stoi(m[2].str());
-            vf.base_path = parent_dir + "/" + db_name + "." + m[1].str() + "." + m[2].str() + "mer";
-            vf_list.push_back(vf);
+    // Discover volumes from .kvx manifests
+    {
+        std::regex kvx_pattern("(\\d+)mer\\.kvx");
+        std::string prefix_dot = db_name + ".";
+        for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
+            if (!entry.is_regular_file()) continue;
+            std::string fname = entry.path().filename().string();
+            if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
+                continue;
+            std::string suffix = fname.substr(prefix_dot.size());
+            std::smatch m;
+            if (std::regex_match(suffix, m, kvx_pattern)) {
+                int k = std::stoi(m[1].str());
+                char kk_str[8];
+                std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+                std::string kvx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.kvx";
+                auto kvx = read_kvx(kvx_path);
+                if (kvx) {
+                    for (uint16_t vi = 0; vi < kvx->volume_basenames.size(); vi++) {
+                        std::string base = parent_dir + "/" + kvx->volume_basenames[vi] + "." + kk_str + "mer";
+                        if (!std::filesystem::exists(base + ".kix")) continue;
+                        VolumeFile vf;
+                        vf.volume_index = vi;
+                        vf.k = k;
+                        vf.base_path = base;
+                        vf_list.push_back(vf);
+                    }
+                }
+            }
         }
     }
 

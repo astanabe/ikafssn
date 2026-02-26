@@ -136,7 +136,7 @@ ikafssnsearch [options]
   -v, --verbose           詳細ログ出力
 ```
 
-`-ix` オプションには `blastn -db` と同様にインデックスのプレフィックスパス (拡張子なし) を指定します。例えば、`ikafssnindex -db nt -k 11 -o /data/index` が以下のファイルを生成した場合:
+`-ix` オプションには `blastn -db` と同様にインデックスのプレフィックスパス (拡張子なし) を指定します。例えば、マルチボリューム BLAST DB (`nt`、ボリューム `nt.00`、`nt.01`) に対して `ikafssnindex -db nt -k 11 -o /data/index` が以下のファイルを生成した場合:
 
 ```
 /data/index/nt.00.11mer.kix
@@ -145,11 +145,12 @@ ikafssnsearch [options]
 /data/index/nt.01.11mer.kix
 /data/index/nt.01.11mer.kpx
 /data/index/nt.01.11mer.ksx
+/data/index/nt.11mer.kvx
 ```
 
-`-ix /data/index/nt` と指定します。プレフィックス `/data/index/nt` はディレクトリ `/data/index/` とベース名 `nt` に分割され、そのディレクトリ内の `nt.<vol>.<k>mer.k?x` に一致する全ファイルが自動的に検出されます。
+`-ix /data/index/nt` と指定します。プレフィックス `/data/index/nt` はディレクトリ `/data/index/` とベース名 `nt` に分割され、`.kvx` マニフェストファイル (`nt.11mer.kvx`) からボリュームベースネームの一覧を読み取ってボリュームを検出します。集約データベース (例: `combined` が `foo` と `bar` を束ねたもの) の場合、インデックスファイルは `foo.11mer.kix`、`bar.11mer.kix`、マニフェストは `combined.11mer.kvx` となります。
 
-インデックスディレクトリに複数の k-mer サイズのインデックスが含まれる場合 (例: `nt.00.09mer.kix` と `nt.00.11mer.kix` の両方が存在する場合)、`-k` で使用するサイズを指定する必要があります。k-mer サイズが 1 種類のみの場合は `-k` を省略できます。
+インデックスディレクトリに複数の k-mer サイズのインデックスが含まれる場合 (例: `nt.09mer.kvx` と `nt.11mer.kvx` の両方が存在する場合)、`-k` で使用するサイズを指定する必要があります。k-mer サイズが 1 種類のみの場合は `-k` を省略できます。
 
 `-accept_qdegen` が 0 の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは警告付きでスキップされ、終了コードは 2 になります。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます。1 文字の縮重塩基を含む k-mer は全可能バリアントに展開して検索に使用されます (例: R→A,G で 2 k-mer、N→A,C,G,T で 4 k-mer)。2 文字以上の縮重塩基を含む k-mer はスキップされます。この場合、クエリごとに 1 回、当該クエリ名とスキップされた旨の警告が標準エラーに出力されます。サーバモード (`ikafssnserver`) ではこの警告がプロトコル経由で `ikafssnclient` に伝播され、クライアント側でも同じメッセージが表示されます。この処理はインデックス構築時のサブジェクト配列に対する処理と同等です。
 
@@ -758,21 +759,29 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 
 ## インデックスファイル形式
 
-BLAST DB ボリュームごとに 3 つのファイルが生成されます:
+BLAST DB ボリュームごとに、ボリューム自身のベースネームを使って 3 つのファイルが生成されます:
 
 ```
-<db_prefix>.<volume_index>.<kk>mer.kix   — ID ポスティング (直接アドレステーブル + デルタ圧縮)
-<db_prefix>.<volume_index>.<kk>mer.kpx   — 位置ポスティング (デルタ圧縮)
-<db_prefix>.<volume_index>.<kk>mer.ksx   — 配列メタデータ (配列長 + アクセッション)
+<vol_basename>.<kk>mer.kix   — ID ポスティング (直接アドレステーブル + デルタ圧縮)
+<vol_basename>.<kk>mer.kpx   — 位置ポスティング (デルタ圧縮)
+<vol_basename>.<kk>mer.ksx   — 配列メタデータ (配列長 + アクセッション)
+```
+
+ボリューム検出用の `.kvx` マニフェストファイルが常に生成されます:
+
+```
+<db_base>.<kk>mer.kvx        — ボリュームマニフェスト (テキスト形式、ボリュームベースネーム一覧)
 ```
 
 `-max_freq_build` 使用時は全ボリューム共有の除外ビットセットファイルも生成されます (k 値ごとに 1 つ):
 
 ```
-<db_prefix>.<kk>mer.khx                  — 構築時除外ビットセット (全ボリューム共有)
+<db_base>.<kk>mer.khx        — 構築時除外ビットセット (全ボリューム共有)
 ```
 
-例: `nt.00.11mer.kix`, `nt.01.11mer.kpx`, `nt.11mer.khx`
+例:
+- 標準マルチボリューム (`nt`、ボリューム `nt.00`、`nt.01`): `nt.00.11mer.kix`、`nt.01.11mer.kpx`、`nt.11mer.kvx`、`nt.11mer.khx`
+- 集約 DB (`combined`、ボリューム `foo`、`bar`): `foo.11mer.kix`、`bar.11mer.kix`、`combined.11mer.kvx`
 
 `.khx` ファイルは 32 バイトヘッダ (マジック "KMHX"、フォーマットバージョン、k) に続き、`ceil(4^k / 8)` バイトのビットセットで構成されます。ビット *i* = 1 は k-mer *i* がボリューム横断の合算カウントに基づきインデックス構築時に除外されたことを示します。
 

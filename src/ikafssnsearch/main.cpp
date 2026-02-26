@@ -12,6 +12,7 @@
 #include "search/stage3_alignment.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/blastdb_reader.hpp"
+#include "io/kvx_reader.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
 #include "io/sam_writer.hpp"
@@ -90,6 +91,35 @@ struct VolumeFiles {
     int k;
 };
 
+// Discover volumes for a specific k value from a .kvx manifest.
+static bool discover_from_kvx(const std::string& parent_dir,
+                               const std::string& db_name,
+                               int k,
+                               std::vector<VolumeFiles>& volumes) {
+    char kk_str[8];
+    std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+    std::string kvx_path = parent_dir + "/" + db_name + "." + kk_str + "mer.kvx";
+
+    auto kvx = read_kvx(kvx_path);
+    if (!kvx) return false;
+
+    for (uint16_t vi = 0; vi < kvx->volume_basenames.size(); vi++) {
+        const auto& bn = kvx->volume_basenames[vi];
+        std::string base = parent_dir + "/" + bn + "." + kk_str + "mer";
+
+        if (!std::filesystem::exists(base + ".kix")) continue;
+
+        VolumeFiles vf;
+        vf.volume_index = vi;
+        vf.k = k;
+        vf.kix_path = base + ".kix";
+        vf.kpx_path = base + ".kpx";
+        vf.ksx_path = base + ".ksx";
+        volumes.push_back(vf);
+    }
+    return !volumes.empty();
+}
+
 static std::vector<VolumeFiles> discover_volumes(const std::string& ix_prefix, int filter_k = 0) {
     std::vector<VolumeFiles> volumes;
 
@@ -98,33 +128,29 @@ static std::vector<VolumeFiles> discover_volumes(const std::string& ix_prefix, i
     std::string db_name = prefix_path.filename().string();
     if (parent_dir.empty()) parent_dir = ".";
 
-    // Match files: <db_name>.<vol_idx>.<k>mer.kix
-    std::regex suffix_pattern(R"((\d+)\.(\d+)mer\.kix)");
-
-    std::string prefix_dot = db_name + ".";
-    for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
-        if (!entry.is_regular_file()) continue;
-        std::string fname = entry.path().filename().string();
-        if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
-            continue;
-        std::string suffix = fname.substr(prefix_dot.size());
-        std::smatch m;
-        if (std::regex_match(suffix, m, suffix_pattern)) {
-            int k = std::stoi(m[2].str());
-            if (filter_k > 0 && k != filter_k) continue;
-            VolumeFiles vf;
-            vf.volume_index = static_cast<uint16_t>(std::stoi(m[1].str()));
-            vf.k = k;
-            std::string base = parent_dir + "/" + db_name + "." + m[1].str() + "." + m[2].str() + "mer";
-            vf.kix_path = base + ".kix";
-            vf.kpx_path = base + ".kpx";
-            vf.ksx_path = base + ".ksx";
-            volumes.push_back(vf);
+    if (filter_k > 0) {
+        discover_from_kvx(parent_dir, db_name, filter_k, volumes);
+    } else {
+        // Scan directory for <db_name>.XXmer.kvx files to discover available k values
+        std::regex kvx_pattern("(\\d+)mer\\.kvx");
+        std::string prefix_dot = db_name + ".";
+        for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
+            if (!entry.is_regular_file()) continue;
+            std::string fname = entry.path().filename().string();
+            if (fname.size() <= prefix_dot.size() || fname.compare(0, prefix_dot.size(), prefix_dot) != 0)
+                continue;
+            std::string suffix = fname.substr(prefix_dot.size());
+            std::smatch m;
+            if (std::regex_match(suffix, m, kvx_pattern)) {
+                int k = std::stoi(m[1].str());
+                discover_from_kvx(parent_dir, db_name, k, volumes);
+            }
         }
     }
 
     std::sort(volumes.begin(), volumes.end(),
               [](const VolumeFiles& a, const VolumeFiles& b) {
+                  if (a.k != b.k) return a.k < b.k;
                   return a.volume_index < b.volume_index;
               });
     return volumes;

@@ -35,6 +35,7 @@ target_link_libraries(ikafssn_builder PUBLIC
 add_library(ikafssn_io STATIC
     io/mmap_file.cpp
     io/fasta_reader.cpp
+    io/kvx_reader.cpp
     io/seqidlist_reader.cpp
     io/result_writer.cpp
     io/result_reader.cpp

@@ -35,12 +35,20 @@ static std::string g_test_dir;
 static std::string g_query_fj;  // 100bp from FJ876973.1 (in multivol_a)
 static std::string g_query_gq;  // 100bp from GQ912721.1 (in multivol_b)
 
+// Volume basenames for the two test BLAST DBs
+static const char* VOL_BASENAME_A = "ssu_multivol_a";
+static const char* VOL_BASENAME_B = "ssu_multivol_b";
+
 // Build indexes for two separate BLAST DBs as volume 0 and volume 1
-// in the same output directory. This simulates a multi-volume DB.
+// in the same output directory, using volume basenames (new naming convention).
+// Also writes a .kvx manifest.
 static void build_multivolume_index(int k, const std::string& db_base) {
     Logger logger(Logger::kError);
 
-    // Volume 0: multivol_a
+    char kk_str[8];
+    std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+
+    // Volume 0: multivol_a (using volume basename)
     {
         BlastDbReader db;
         CHECK(db.open(g_multivol_a_path));
@@ -48,9 +56,7 @@ static void build_multivolume_index(int k, const std::string& db_base) {
         IndexBuilderConfig config;
         config.k = k;
 
-        char kk_str[8];
-        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-        std::string prefix = g_test_dir + "/" + db_base + ".00." +
+        std::string prefix = g_test_dir + "/" + VOL_BASENAME_A + "." +
                              std::string(kk_str) + "mer";
 
         if (k < K_TYPE_THRESHOLD) {
@@ -60,7 +66,7 @@ static void build_multivolume_index(int k, const std::string& db_base) {
         }
     }
 
-    // Volume 1: multivol_b
+    // Volume 1: multivol_b (using volume basename)
     {
         BlastDbReader db;
         CHECK(db.open(g_multivol_b_path));
@@ -68,9 +74,7 @@ static void build_multivolume_index(int k, const std::string& db_base) {
         IndexBuilderConfig config;
         config.k = k;
 
-        char kk_str[8];
-        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-        std::string prefix = g_test_dir + "/" + db_base + ".01." +
+        std::string prefix = g_test_dir + "/" + VOL_BASENAME_B + "." +
                              std::string(kk_str) + "mer";
 
         if (k < K_TYPE_THRESHOLD) {
@@ -78,6 +82,17 @@ static void build_multivolume_index(int k, const std::string& db_base) {
         } else {
             CHECK(build_index<uint32_t>(db, config, prefix, 1, 2, db_base, logger));
         }
+    }
+
+    // Write .kvx manifest
+    {
+        std::string kvx_path = g_test_dir + "/" + db_base + "." + kk_str + "mer.kvx";
+        FILE* fp = std::fopen(kvx_path.c_str(), "w");
+        CHECK(fp != nullptr);
+        std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
+        std::fprintf(fp, "TITLE %s\n", db_base.c_str());
+        std::fprintf(fp, "DBLIST \"%s\" \"%s\"\n", VOL_BASENAME_A, VOL_BASENAME_B);
+        std::fclose(fp);
     }
 }
 
@@ -89,13 +104,11 @@ static std::vector<OutputHit> search_sequential(
     char kk_str[8];
     std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
 
+    const char* vol_basenames[2] = { VOL_BASENAME_A, VOL_BASENAME_B };
     std::vector<OutputHit> all_hits;
 
     for (int vi = 0; vi < 2; vi++) {
-        char vol_str[8];
-        std::snprintf(vol_str, sizeof(vol_str), "%02d", vi);
-        std::string prefix = g_test_dir + "/" + db_base + "." +
-                             std::string(vol_str) + "." +
+        std::string prefix = g_test_dir + "/" + vol_basenames[vi] + "." +
                              std::string(kk_str) + "mer";
 
         KixReader kix;
@@ -169,12 +182,10 @@ static std::vector<OutputHit> search_parallel(
         uint16_t volume_index;
     };
 
+    const char* vol_basenames[2] = { VOL_BASENAME_A, VOL_BASENAME_B };
     std::vector<VolumeData> vols(2);
     for (int vi = 0; vi < 2; vi++) {
-        char vol_str[8];
-        std::snprintf(vol_str, sizeof(vol_str), "%02d", vi);
-        std::string prefix = g_test_dir + "/" + db_base + "." +
-                             std::string(vol_str) + "." +
+        std::string prefix = g_test_dir + "/" + vol_basenames[vi] + "." +
                              std::string(kk_str) + "mer";
         CHECK(vols[vi].kix.open(prefix + ".kix"));
         CHECK(vols[vi].kpx.open(prefix + ".kpx"));

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -207,16 +208,30 @@ int main(int argc, char* argv[]) {
 
     uint16_t total_volumes = static_cast<uint16_t>(vol_paths.size());
 
+    // Extract per-volume basenames from BLAST DB volume paths
+    std::vector<std::string> vol_basenames(total_volumes);
+    for (uint16_t vi = 0; vi < total_volumes; vi++) {
+        vol_basenames[vi] = std::filesystem::path(vol_paths[vi]).filename().string();
+    }
+
+    // Check for duplicate basenames
+    {
+        std::set<std::string> seen;
+        for (const auto& bn : vol_basenames) {
+            if (!seen.insert(bn).second) {
+                std::fprintf(stderr, "Error: duplicate volume basename '%s'\n", bn.c_str());
+                return 1;
+            }
+        }
+    }
+
     // Pre-compute per-volume output prefixes
     std::vector<std::string> vol_prefixes(total_volumes);
     {
         char kk_str[8];
         std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
         for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            char vol_str[8];
-            std::snprintf(vol_str, sizeof(vol_str), "%02d", vi);
-            vol_prefixes[vi] = out_dir + "/" + db_base + "." +
-                               vol_str + "." + kk_str + "mer";
+            vol_prefixes[vi] = out_dir + "/" + vol_basenames[vi] + "." + kk_str + "mer";
         }
     }
 
@@ -300,6 +315,27 @@ int main(int argc, char* argv[]) {
             }
         }
         return 1;
+    }
+
+    // Write .kvx manifest
+    {
+        char kk_str[8];
+        std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+        std::string kvx_path = out_dir + "/" + db_base + "." + kk_str + "mer.kvx";
+        FILE* fp = std::fopen(kvx_path.c_str(), "w");
+        if (!fp) {
+            std::fprintf(stderr, "Error: cannot write %s\n", kvx_path.c_str());
+            return 1;
+        }
+        std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
+        std::fprintf(fp, "TITLE %s\n", db_base.c_str());
+        std::fprintf(fp, "DBLIST");
+        for (const auto& bn : vol_basenames) {
+            std::fprintf(fp, " \"%s\"", bn.c_str());
+        }
+        std::fprintf(fp, "\n");
+        std::fclose(fp);
+        logger.info("Wrote volume manifest: %s", kvx_path.c_str());
     }
 
     // Post-build cross-volume frequency filtering
