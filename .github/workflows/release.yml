@@ -125,6 +125,10 @@ jobs:
             https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
           tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
           cd ncbi-cxx-toolkit-public-release-30.0.0
+          if [ "$(uname)" = "Darwin" ]; then
+            export CFLAGS="-I${HOMEBREW_PREFIX}/include"
+            export CXXFLAGS="-I${HOMEBREW_PREFIX}/include"
+          fi
           ./cmake-configure \
             --without-debug \
             --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
