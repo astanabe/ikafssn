@@ -42,7 +42,7 @@ jobs:
             libtbb-dev liblmdb-dev libsqlite3-dev \
             libcurl4-openssl-dev libjsoncpp-dev \
             zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
-            libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev
+            libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev libpq-dev
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
