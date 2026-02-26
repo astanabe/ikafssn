@@ -917,7 +917,7 @@ Install the required packages (excluding NCBI C++ Toolkit) with the following co
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
     libcurl4-openssl-dev libjsoncpp-dev
 sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
-sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev
+sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev libpq-dev
 ```
 
 The second line installs dependencies required for building Parasail and htslib from source. The third line installs Drogon and its additional dependencies that are not automatically pulled in by `libdrogon-dev` on Ubuntu. If ikafssnhttpd is not needed, omit the third line and build with `-DBUILD_HTTPD=OFF`.
