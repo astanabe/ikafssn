@@ -41,7 +41,7 @@ static void test_frame_round_trip() {
     assert(hdr.magic == FRAME_MAGIC);
     assert(hdr.payload_length == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 1);
+    assert(hdr.msg_version == 2);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -83,7 +83,7 @@ static void test_frame_invalid_magic() {
     bad_hdr.magic = 0xDEADBEEF;
     bad_hdr.payload_length = 0;
     bad_hdr.msg_type = 0x01;
-    bad_hdr.msg_version = 1;
+    bad_hdr.msg_version = 2;
     bad_hdr.reserved = 0;
     assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 
@@ -133,6 +133,7 @@ static void test_search_request_serialize() {
     req.stage1_min_score = 2;
     req.num_results = 50;
     req.seqidlist_mode = SeqidlistMode::kInclude;
+    req.db_name = "testdb";
     req.seqids = {"NM_001234", "XM_005678"};
     req.queries.push_back({"query1", "ACGTACGTACGT"});
     req.queries.push_back({"query2", "TTTTAAAACCCC"});
@@ -150,6 +151,7 @@ static void test_search_request_serialize() {
     assert(req2.stage1_topn == 500);
     assert(req2.stage1_min_score == 2);
     assert(req2.num_results == 50);
+    assert(req2.db_name == "testdb");
     assert(req2.seqidlist_mode == SeqidlistMode::kInclude);
     assert(req2.seqids.size() == 2);
     assert(req2.seqids[0] == "NM_001234");
@@ -178,6 +180,7 @@ static void test_search_request_defaults() {
     assert(req2.stage2_min_score == 0);
     assert(req2.stage2_max_gap == 0);
     assert(req2.stage1_max_freq == 0);
+    assert(req2.db_name.empty());
     assert(req2.seqidlist_mode == SeqidlistMode::kNone);
     assert(req2.seqids.empty());
     assert(req2.queries.size() == 1);
@@ -191,6 +194,7 @@ static void test_search_response_serialize() {
     SearchResponse resp;
     resp.status = 0;
     resp.k = 11;
+    resp.db_name = "testdb";
 
     QueryResult qr;
     qr.query_id = "query1";
@@ -224,6 +228,7 @@ static void test_search_response_serialize() {
 
     assert(resp2.status == 0);
     assert(resp2.k == 11);
+    assert(resp2.db_name == "testdb");
     assert(resp2.results.size() == 1);
     assert(resp2.results[0].query_id == "query1");
     assert(resp2.results[0].hits.size() == 2);
@@ -325,6 +330,13 @@ static void test_info_response_serialize() {
     InfoResponse resp;
     resp.status = 0;
     resp.default_k = 11;
+    resp.max_active_sequences = 1024;
+    resp.active_sequences = 42;
+
+    DatabaseInfo db1;
+    db1.name = "testdb";
+    db1.default_k = 11;
+    db1.max_mode = 3;
 
     KmerGroupInfo g1;
     g1.k = 7;
@@ -341,7 +353,7 @@ static void test_info_response_serialize() {
     v2.total_postings = 900000;
     v2.db_name = "testdb";
     g1.volumes.push_back(v2);
-    resp.groups.push_back(g1);
+    db1.groups.push_back(g1);
 
     KmerGroupInfo g2;
     g2.k = 11;
@@ -352,7 +364,9 @@ static void test_info_response_serialize() {
     v3.total_postings = 450000;
     v3.db_name = "testdb";
     g2.volumes.push_back(v3);
-    resp.groups.push_back(g2);
+    db1.groups.push_back(g2);
+
+    resp.databases.push_back(db1);
 
     auto data = serialize(resp);
     InfoResponse resp2;
@@ -360,23 +374,31 @@ static void test_info_response_serialize() {
 
     assert(resp2.status == 0);
     assert(resp2.default_k == 11);
-    assert(resp2.groups.size() == 2);
+    assert(resp2.max_active_sequences == 1024);
+    assert(resp2.active_sequences == 42);
+    assert(resp2.databases.size() == 1);
 
-    assert(resp2.groups[0].k == 7);
-    assert(resp2.groups[0].kmer_type == 0);
-    assert(resp2.groups[0].volumes.size() == 2);
-    assert(resp2.groups[0].volumes[0].volume_index == 0);
-    assert(resp2.groups[0].volumes[0].num_sequences == 1000);
-    assert(resp2.groups[0].volumes[0].total_postings == 500000);
-    assert(resp2.groups[0].volumes[0].db_name == "testdb");
-    assert(resp2.groups[0].volumes[1].volume_index == 1);
-    assert(resp2.groups[0].volumes[1].num_sequences == 2000);
-    assert(resp2.groups[0].volumes[1].total_postings == 900000);
+    const auto& rdb = resp2.databases[0];
+    assert(rdb.name == "testdb");
+    assert(rdb.default_k == 11);
+    assert(rdb.max_mode == 3);
+    assert(rdb.groups.size() == 2);
 
-    assert(resp2.groups[1].k == 11);
-    assert(resp2.groups[1].kmer_type == 1);
-    assert(resp2.groups[1].volumes.size() == 1);
-    assert(resp2.groups[1].volumes[0].total_postings == 450000);
+    assert(rdb.groups[0].k == 7);
+    assert(rdb.groups[0].kmer_type == 0);
+    assert(rdb.groups[0].volumes.size() == 2);
+    assert(rdb.groups[0].volumes[0].volume_index == 0);
+    assert(rdb.groups[0].volumes[0].num_sequences == 1000);
+    assert(rdb.groups[0].volumes[0].total_postings == 500000);
+    assert(rdb.groups[0].volumes[0].db_name == "testdb");
+    assert(rdb.groups[0].volumes[1].volume_index == 1);
+    assert(rdb.groups[0].volumes[1].num_sequences == 2000);
+    assert(rdb.groups[0].volumes[1].total_postings == 900000);
+
+    assert(rdb.groups[1].k == 11);
+    assert(rdb.groups[1].kmer_type == 1);
+    assert(rdb.groups[1].volumes.size() == 1);
+    assert(rdb.groups[1].volumes[0].total_postings == 450000);
 
     std::printf(" OK\n");
 }
@@ -387,7 +409,9 @@ static void test_info_response_empty() {
     InfoResponse resp;
     resp.status = 0;
     resp.default_k = 9;
-    // No groups
+    resp.max_active_sequences = 512;
+    resp.active_sequences = 0;
+    // No databases
 
     auto data = serialize(resp);
     InfoResponse resp2;
@@ -395,7 +419,9 @@ static void test_info_response_empty() {
 
     assert(resp2.status == 0);
     assert(resp2.default_k == 9);
-    assert(resp2.groups.empty());
+    assert(resp2.max_active_sequences == 512);
+    assert(resp2.active_sequences == 0);
+    assert(resp2.databases.empty());
 
     std::printf(" OK\n");
 }

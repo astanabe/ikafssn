@@ -241,13 +241,13 @@ ikafssnretrieve -db nt -results results.tsv -o matches.fasta
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # Server search results also work
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # Remote retrieval via NCBI efetch
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -remote > matches.fasta
 
 # Remote retrieval with API key (higher throughput)
-ikafssnclient -http http://search.example.com:8080 -query query.fasta \
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta \
     | ikafssnretrieve -remote -api_key XXXXXXXX > matches.fasta
 
 # Include 50bp of context around match region
@@ -265,7 +265,7 @@ Search daemon. Keeps index files memory-mapped and accepts search requests via U
 ikafssnserver [options]
 
 Required:
-  -ix <prefix>            Index prefix (like blastn -db)
+  -ix <prefix>            Index prefix (repeatable for multi-DB)
 
 Listener (at least one required):
   -socket <path>          UNIX domain socket path
@@ -276,7 +276,8 @@ Options:
   -max_query <int>        Max concurrent query sequences globally (default: 1024)
   -max_seqs_per_req <int> Max sequences accepted per request (default: thread count)
   -pid <path>             PID file path
-  -db <path>              BLAST DB path for mode 3 (default: same as -ix)
+  -db <path>              BLAST DB path for mode 3 (repeatable, paired with -ix;
+                          default: same as corresponding -ix prefix)
   -stage1_max_freq <num>  Default high-freq k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
                           >= 1: absolute count threshold; 0 = auto
@@ -319,11 +320,16 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn
 # Mode 3 support: specify BLAST DB and Stage 3 defaults
 ikafssnserver -ix ./nt_index -db nt -socket /var/run/ikafssn.sock \
     -stage3_traceback 1 -context 50
+
+# Multi-DB: serve two databases in one process
+ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
+    -socket /var/run/ikafssn.sock -threads 32
 ```
 
 **Operational characteristics:**
 
-- One process serves one BLAST DB index. To serve multiple DBs, start separate processes.
+- One process can serve multiple BLAST DB indexes simultaneously. Specify `-ix` (and optionally `-db`) multiple times to load several databases. Each database is identified by its basename (the last path component of the `-ix` prefix) and clients must specify `-db <name>` when the server hosts more than one database.
+- If `-db` is specified, the count must match the number of `-ix` flags (paired in order). Databases without a `-db` override default to the `-ix` prefix as the BLAST DB path. A database with no `-db` path supports modes 1-2 only (max_mode=2); providing `-db` enables mode 3 (max_mode=3).
 - If the index prefix matches indexes for multiple k-mer sizes, all are loaded and clients can specify k per request.
 - On SIGTERM/SIGINT, performs graceful shutdown: stops accepting new connections, waits for in-flight requests to complete (up to `-shutdown_timeout` seconds), then exits.
 - **Per-sequence concurrency control:** The server limits concurrency at the per-sequence level, not per-connection. When a request arrives, the server attempts to acquire permits for each valid query sequence. If the global limit (`-max_query`) is reached, excess sequences are returned to the client as "rejected" for retry. The `-max_seqs_per_req` option caps how many permits a single request can acquire, preventing one large request from monopolizing all slots.
@@ -364,7 +370,10 @@ ikafssnhttpd -server_socket /var/run/ikafssn.sock -listen 0.0.0.0:8080
 # Connect to remote ikafssnserver via TCP
 ikafssnhttpd -server_tcp 10.0.1.5:9100 -listen 0.0.0.0:8080
 
-# Multiple DBs with path prefix (pair with nginx routing)
+# Multiple DBs: single ikafssnserver with multi-DB, one ikafssnhttpd
+ikafssnhttpd -server_socket /var/run/ikafssn.sock -listen 0.0.0.0:8080
+
+# Alternative: separate servers with path prefix (pair with nginx routing)
 ikafssnhttpd -server_socket /var/run/ikafssn_nt.sock -listen :8080 -path_prefix /nt
 ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix /rs
 ```
@@ -408,6 +417,7 @@ Options:
   -stage3_min_pident <num> Min percent identity filter (default: server default)
   -stage3_min_nident <int> Min identical bases filter (default: server default)
   -num_results <int>       Max results per query (default: server default)
+  -db <name>               Target database name on server (required for multi-DB servers)
   -seqidlist <path>        Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
   -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
@@ -425,38 +435,38 @@ HTTP Authentication (HTTP mode only):
 **Examples:**
 
 ```bash
-# UNIX socket (local)
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta
+# UNIX socket (local, single-DB server)
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
 
 # TCP (local or remote)
-ikafssnclient -tcp 10.0.1.5:9100 -query query.fasta
+ikafssnclient -tcp 10.0.1.5:9100 -db nt -query query.fasta
 
 # HTTP
-ikafssnclient -http http://search.example.com:8080 -query query.fasta
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta
 
 # Restrict search scope
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -seqidlist targets.txt
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -seqidlist targets.txt
 
 # Pipe to ikafssnretrieve
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # Specify k-mer size
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -k 9
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -k 9
 
 # HTTP with Basic Auth (curl-style)
-ikafssnclient -http http://search.example.com:8080 -query query.fasta --user admin:secret
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --user admin:secret
 
 # HTTP with Basic Auth (wget-style)
-ikafssnclient -http http://search.example.com:8080 -query query.fasta --http-user=admin --http-password=secret
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --http-user=admin --http-password=secret
 
 # HTTP with .netrc credentials
-ikafssnclient -http http://search.example.com:8080 -query query.fasta --netrc-file ~/.netrc
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --netrc-file ~/.netrc
 
 # Mode 3: pairwise alignment with traceback
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -mode 3 -stage3_traceback 1
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -stage3_traceback 1
 
 # Mode 3: SAM output
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
 ```
 
 ### ikafssninfo
@@ -746,6 +756,19 @@ Machine B (HTTP frontend):
 ```
 
 ### Multiple Databases
+
+A single `ikafssnserver` process can serve multiple databases simultaneously:
+
+```
+# Single process, multiple DBs (recommended)
+ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
+    -socket /var/run/ikafssn.sock
+
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -db refseq_genomic -query query.fasta
+```
+
+Alternatively, separate processes with path-based HTTP routing:
 
 ```
 ikafssnserver -ix ./nt_index  -socket /var/run/ikafssn_nt.sock

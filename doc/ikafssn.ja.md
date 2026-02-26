@@ -241,13 +241,13 @@ ikafssnretrieve -db nt -results results.tsv -o matches.fasta
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # サーバ経由の検索結果からも同様に利用可能
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # NCBI efetch からリモート取得
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -remote > matches.fasta
 
 # NCBI efetch + API key (高スループット)
-ikafssnclient -http http://search.example.com:8080 -query query.fasta \
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta \
     | ikafssnretrieve -remote -api_key XXXXXXXX > matches.fasta
 
 # マッチ領域の前後 50bp を含めて抽出
@@ -265,7 +265,7 @@ ikafssnretrieve -db nt -results results.tsv -context 0.1
 ikafssnserver [options]
 
 必須:
-  -ix <prefix>            インデックスプレフィックス (blastn -db と同様)
+  -ix <prefix>            インデックスプレフィックス (繰り返し指定でマルチ DB 対応)
 
 リスニング (いずれかまたは両方):
   -socket <path>          UNIX ドメインソケットパス
@@ -276,7 +276,8 @@ ikafssnserver [options]
   -max_query <int>        同時処理クエリ配列数のグローバル上限 (デフォルト: 1024)
   -max_seqs_per_req <int> 1 リクエストあたりの受理配列数上限 (デフォルト: スレッド数)
   -pid <path>             PID ファイルパス
-  -db <path>              モード 3 用 BLAST DB パス (デフォルト: -ix と同じ)
+  -db <path>              モード 3 用 BLAST DB パス (繰り返し指定、-ix と対応;
+                          デフォルト: 対応する -ix プレフィックスと同じ)
   -stage1_max_freq <num>  デフォルト高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
                           0〜1 未満: 全ボリューム合計 NSEQ に対する割合
                           1 以上: 絶対カウント閾値; 0 = 自動計算
@@ -319,11 +320,16 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn
 # モード 3 対応: BLAST DB と Stage 3 デフォルトを指定
 ikafssnserver -ix ./nt_index -db nt -socket /var/run/ikafssn.sock \
     -stage3_traceback 1 -context 50
+
+# マルチ DB: 1 プロセスで 2 つのデータベースを同時サーブ
+ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
+    -socket /var/run/ikafssn.sock -threads 32
 ```
 
 **運用上の特性:**
 
-- 1 プロセスにつき 1 つの BLAST DB のインデックスのみをサーブします。複数 DB を同時にサーブする場合は DB ごとに別プロセスを起動してください。
+- 1 プロセスで複数の BLAST DB インデックスを同時にサーブできます。`-ix` (および必要に応じて `-db`) を複数回指定して複数データベースをロードします。各データベースは `-ix` プレフィックスのベースネーム (パスの最終コンポーネント) で識別され、サーバが複数 DB をホストする場合、クライアントは `-db <name>` でターゲット DB を指定する必要があります。
+- `-db` を指定する場合、その数は `-ix` の数と一致する必要があります (順番に対応)。`-db` を省略した DB は `-ix` プレフィックスを BLAST DB パスとして使用します。`-db` パスが未指定の DB はモード 1-2 のみ対応 (max_mode=2)、`-db` を指定するとモード 3 も利用可能 (max_mode=3) になります。
 - `-ix` プレフィックスに対応する異なる k-mer サイズのインデックスが存在する場合、全て読み込み、クライアントのリクエストで k を指定できます。
 - SIGTERM/SIGINT 受信時はグレースフルシャットダウンを行います。新規接続の受付を停止し、実行中のリクエストの完了を最大 `-shutdown_timeout` 秒待ちます。
 - **配列単位の同時実行制御:** サーバは接続単位ではなく、配列単位で同時実行数を制御します。リクエストが到着すると、有効なクエリ配列ごとにパーミットの取得を試みます。グローバル上限 (`-max_query`) に達した場合、超過分の配列はリトライ用に「拒否」としてクライアントに返されます。`-max_seqs_per_req` は 1 リクエストが取得できるパーミット数の上限を設定し、大量配列を含む単一リクエストによるスロットの独占を防ぎます。
@@ -364,7 +370,10 @@ ikafssnhttpd -server_socket /var/run/ikafssn.sock -listen 0.0.0.0:8080
 # リモートの ikafssnserver に TCP で接続
 ikafssnhttpd -server_tcp 10.0.1.5:9100 -listen 0.0.0.0:8080
 
-# 複数 DB のパスベースルーティング (nginx と組み合わせて使用)
+# 複数 DB: マルチ DB の ikafssnserver に接続する場合は 1 つの ikafssnhttpd で十分
+ikafssnhttpd -server_socket /var/run/ikafssn.sock -listen 0.0.0.0:8080
+
+# 代替構成: 別プロセスのサーバにパスプレフィックスでルーティング (nginx と組み合わせ)
 ikafssnhttpd -server_socket /var/run/ikafssn_nt.sock -listen :8080 -path_prefix /nt
 ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix /rs
 ```
@@ -408,6 +417,7 @@ ikafssnclient [options]
   -stage3_min_pident <num> 最小配列一致率フィルタ (デフォルト: サーバ側デフォルト)
   -stage3_min_nident <int> 最小一致塩基数フィルタ (デフォルト: サーバ側デフォルト)
   -num_results <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
+  -db <name>               サーバ上のターゲットデータベース名 (マルチ DB サーバでは必須)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
@@ -426,37 +436,37 @@ HTTP 認証 (HTTP モード専用):
 
 ```bash
 # UNIX ソケット経由 (ローカル)
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
 
 # TCP 直接接続
-ikafssnclient -tcp 10.0.1.5:9100 -query query.fasta
+ikafssnclient -tcp 10.0.1.5:9100 -db nt -query query.fasta
 
 # HTTP 経由
-ikafssnclient -http http://search.example.com:8080 -query query.fasta
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta
 
 # seqidlist で検索対象を限定
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -seqidlist targets.txt
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -seqidlist targets.txt
 
 # パイプラインで ikafssnretrieve に接続
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # 特定の k-mer サイズを指定
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -k 9
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -k 9
 
 # HTTP Basic 認証 (curl 形式)
-ikafssnclient -http http://search.example.com:8080 -query query.fasta --user admin:secret
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --user admin:secret
 
 # HTTP Basic 認証 (wget 形式)
-ikafssnclient -http http://search.example.com:8080 -query query.fasta --http-user=admin --http-password=secret
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --http-user=admin --http-password=secret
 
 # .netrc ファイルによる認証
-ikafssnclient -http http://search.example.com:8080 -query query.fasta --netrc-file ~/.netrc
+ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --netrc-file ~/.netrc
 
 # モード 3: トレースバック付きペアワイズアライメント
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -mode 3 -stage3_traceback 1
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -stage3_traceback 1
 
 # モード 3: SAM 出力
-ikafssnclient -socket /var/run/ikafssn.sock -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
 ```
 
 ### ikafssninfo
@@ -746,6 +756,19 @@ ikafssnserver → ikafssnclient (UNIX ソケット経由)
 ```
 
 ### 複数データベース
+
+1 つの `ikafssnserver` プロセスで複数のデータベースを同時にサーブできます:
+
+```
+# 1 プロセスでマルチ DB (推奨)
+ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
+    -socket /var/run/ikafssn.sock
+
+ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -db refseq_genomic -query query.fasta
+```
+
+代替構成: 別プロセスで HTTP パスベースルーティング:
 
 ```
 ikafssnserver -ix ./nt_index  -socket /var/run/ikafssn_nt.sock

@@ -20,6 +20,7 @@
 namespace ikafssn {
 
 class Server;  // forward declaration
+struct DatabaseEntry;  // forward declaration
 
 // Pre-opened volume data (shared read-only across threads)
 struct ServerVolumeData {
@@ -37,19 +38,12 @@ struct KmerGroup {
     KhxReader khx;  // shared .khx for this k-mer size
 };
 
-// Process a search request using loaded index data.
+// Process a search request using loaded index data from a specific database.
 // Acquires per-sequence permits via server semaphore; rejected queries
 // are returned in resp.rejected_query_ids for client retry.
 SearchResponse process_search_request(
     const SearchRequest& req,
-    const std::map<int, KmerGroup>& kmer_groups,
-    int default_k,
-    const SearchConfig& default_config,
-    const Stage3Config& default_stage3_config,
-    const std::string& db_path,
-    bool default_context_is_ratio,
-    double default_context_ratio,
-    uint32_t default_context_abs,
+    const DatabaseEntry& db,
     Server& server,
     tbb::task_arena& arena);
 

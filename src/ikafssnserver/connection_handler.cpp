@@ -16,15 +16,8 @@ static void send_error(int fd, uint32_t code, const std::string& msg) {
 
 void handle_connection(
     int client_fd,
-    const std::map<int, KmerGroup>& kmer_groups,
-    int default_k,
-    const SearchConfig& default_config,
-    const Stage3Config& default_stage3_config,
-    const std::string& db_path,
-    bool default_context_is_ratio,
-    double default_context_ratio,
-    uint32_t default_context_abs,
     Server& server,
+    const ServerConfig& config,
     tbb::task_arena& arena,
     const Logger& logger) {
 
@@ -47,14 +40,22 @@ void handle_connection(
             break;
         }
 
-        logger.debug("Search request: k=%d, %zu queries, %zu seqids, mode=%d",
-                      req.k, req.queries.size(), req.seqids.size(), req.mode);
+        // Validate db_name
+        if (req.db_name.empty()) {
+            send_error(client_fd, 400, "db_name is required");
+            break;
+        }
 
-        SearchResponse resp = process_search_request(
-            req, kmer_groups, default_k, default_config,
-            default_stage3_config, db_path,
-            default_context_is_ratio, default_context_ratio, default_context_abs,
-            server, arena);
+        const DatabaseEntry* db = server.find_database(req.db_name);
+        if (!db) {
+            send_error(client_fd, 404, "Database not found: " + req.db_name);
+            break;
+        }
+
+        logger.debug("Search request: db=%s, k=%d, %zu queries, %zu seqids, mode=%d",
+                      req.db_name.c_str(), req.k, req.queries.size(), req.seqids.size(), req.mode);
+
+        SearchResponse resp = process_search_request(req, *db, server, arena);
 
         auto resp_payload = serialize(resp);
         if (!write_frame(client_fd, MsgType::kSearchResponse, resp_payload)) {
@@ -74,26 +75,36 @@ void handle_connection(
     case MsgType::kInfoRequest: {
         InfoResponse iresp;
         iresp.status = 0;
-        iresp.default_k = static_cast<uint8_t>(default_k);
+        iresp.default_k = static_cast<uint8_t>(server.default_k());
+        iresp.max_active_sequences = server.max_active_sequences();
+        iresp.active_sequences = server.active_sequences();
 
-        for (const auto& [k, group] : kmer_groups) {
-            KmerGroupInfo gi;
-            gi.k = static_cast<uint8_t>(k);
-            gi.kmer_type = group.kmer_type;
+        for (const auto& db : server.databases()) {
+            DatabaseInfo dbi;
+            dbi.name = db.name;
+            dbi.default_k = static_cast<uint8_t>(db.default_k);
+            dbi.max_mode = db.max_mode;
 
-            for (const auto& vol : group.volumes) {
-                VolumeInfo vi;
-                vi.volume_index = vol.volume_index;
-                vi.num_sequences = vol.kix.num_sequences();
-                vi.total_postings = vol.kix.total_postings();
-                // Extract db_name from kix header
-                const auto& hdr = vol.kix.header();
-                vi.db_name = std::string(hdr.db_name,
-                    strnlen(hdr.db_name, sizeof(hdr.db_name)));
-                gi.volumes.push_back(std::move(vi));
+            for (const auto& [k, group] : db.kmer_groups) {
+                KmerGroupInfo gi;
+                gi.k = static_cast<uint8_t>(k);
+                gi.kmer_type = group.kmer_type;
+
+                for (const auto& vol : group.volumes) {
+                    VolumeInfo vi;
+                    vi.volume_index = vol.volume_index;
+                    vi.num_sequences = vol.kix.num_sequences();
+                    vi.total_postings = vol.kix.total_postings();
+                    const auto& kix_hdr = vol.kix.header();
+                    vi.db_name = std::string(kix_hdr.db_name,
+                        strnlen(kix_hdr.db_name, sizeof(kix_hdr.db_name)));
+                    gi.volumes.push_back(std::move(vi));
+                }
+
+                dbi.groups.push_back(std::move(gi));
             }
 
-            iresp.groups.push_back(std::move(gi));
+            iresp.databases.push_back(std::move(dbi));
         }
 
         auto resp_payload = serialize(iresp);

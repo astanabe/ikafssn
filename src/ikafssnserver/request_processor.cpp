@@ -27,33 +27,27 @@ struct AcceptedQuery {
 
 SearchResponse process_search_request(
     const SearchRequest& req,
-    const std::map<int, KmerGroup>& kmer_groups,
-    int default_k,
-    const SearchConfig& default_config,
-    const Stage3Config& default_stage3_config,
-    const std::string& db_path,
-    bool default_context_is_ratio,
-    double default_context_ratio,
-    uint32_t default_context_abs,
+    const DatabaseEntry& db,
     Server& server,
     tbb::task_arena& arena) {
 
     SearchResponse resp;
+    resp.db_name = db.name;
 
     // Determine k
-    int k = (req.k != 0) ? req.k : default_k;
+    int k = (req.k != 0) ? req.k : db.default_k;
     resp.k = static_cast<uint8_t>(k);
 
-    auto it = kmer_groups.find(k);
-    if (it == kmer_groups.end()) {
+    auto it = db.kmer_groups.find(k);
+    if (it == db.kmer_groups.end()) {
         resp.status = 1;
         return resp;
     }
 
     const KmerGroup& group = it->second;
 
-    // Build search config, using request values if non-zero, else server defaults
-    SearchConfig config = default_config;
+    // Build search config, using request values if non-zero, else DB defaults
+    SearchConfig config = db.resolved_search_config;
     if (req.has_stage2_min_score)
         config.stage2.min_score = req.stage2_min_score;
     if (req.stage2_max_gap != 0)
@@ -88,7 +82,13 @@ SearchResponse process_search_request(
     if (req.strand != 0)
         config.strand = req.strand;
 
-    // sort_score is auto-determined by mode (sort_score field in request is ignored)
+    // Validate mode against max_mode
+    if (config.mode > db.max_mode) {
+        resp.status = 4; // mode exceeds max_mode for this DB
+        return resp;
+    }
+
+    // sort_score is auto-determined by mode
     switch (config.mode) {
         case 1: config.sort_score = 1; break;
         case 2: config.sort_score = 2; break;
@@ -114,7 +114,7 @@ SearchResponse process_search_request(
     }
 
     // Resolve Stage 3 parameters from request (INT16_MIN = use server default)
-    Stage3Config stage3_config = default_stage3_config;
+    Stage3Config stage3_config = db.stage3_config;
     if (req.stage3_traceback != 0)
         stage3_config.traceback = true;
     if (req.stage3_gapopen != INT16_MIN)
@@ -127,9 +127,9 @@ SearchResponse process_search_request(
         stage3_config.min_nident = req.stage3_min_nident;
 
     // Resolve context
-    bool ctx_is_ratio = default_context_is_ratio;
-    double ctx_ratio = default_context_ratio;
-    uint32_t ctx_abs = default_context_abs;
+    bool ctx_is_ratio = db.context_is_ratio;
+    double ctx_ratio = db.context_ratio;
+    uint32_t ctx_abs = db.context_abs;
     if (req.context_frac_x10000 != 0) {
         ctx_is_ratio = true;
         ctx_ratio = static_cast<double>(req.context_frac_x10000) / 10000.0;
@@ -175,8 +175,6 @@ SearchResponse process_search_request(
     }
 
     // Build resp.results for skipped + accepted queries only
-    // (rejected queries are NOT included in results)
-    // Mark accepted queries for O(1) lookup
     std::vector<bool> is_accepted(req.queries.size(), false);
     for (int i = 0; i < acquired; i++) {
         is_accepted[valid_indices[i]] = true;
@@ -195,7 +193,6 @@ SearchResponse process_search_request(
     struct PreprocessedQuery32 { QueryKmerData<uint32_t> qdata; };
     std::vector<PreprocessedQuery16> pp16;
     std::vector<PreprocessedQuery32> pp32;
-    // Map from original query index to preprocessed index
     std::vector<size_t> query_pp_idx(req.queries.size(), SIZE_MAX);
 
     std::vector<AcceptedQuery> accepted_queries;
@@ -319,7 +316,7 @@ SearchResponse process_search_request(
 
     // Stage 3 alignment (mode 3 only)
     if (config.mode == 3) {
-        if (db_path.empty()) {
+        if (db.db_path.empty()) {
             resp.status = 3; // mode 3 requires BLAST DB
             server.release_sequences(acquired);
             return resp;
@@ -356,13 +353,11 @@ SearchResponse process_search_request(
         }
 
         Logger logger(Logger::kInfo);
-        output_hits = run_stage3(output_hits, fasta_queries, db_path,
+        output_hits = run_stage3(output_hits, fasta_queries, db.db_path,
                                  stage3_config, ctx_is_ratio, ctx_ratio, ctx_abs, logger);
 
         // Write back to ResponseHit
-        // Clear existing hits and rebuild from filtered output_hits
         for (auto& qr : resp.results) qr.hits.clear();
-        // Group output_hits by query_id -> resp.results index map
         std::unordered_map<std::string, size_t> qid_to_ridx;
         for (size_t i = 0; i < resp.results.size(); i++)
             qid_to_ridx[resp.results[i].query_id] = i;

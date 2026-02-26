@@ -102,6 +102,7 @@ void HttpController::search(
     sreq.stage3_min_nident = j.get("stage3_min_nident", 0).asUInt();
     sreq.context_abs = j.get("context_abs", 0).asUInt();
     sreq.context_frac_x10000 = static_cast<uint16_t>(j.get("context_frac_x10000", 0).asUInt());
+    sreq.db_name = j.get("db_name", "").asString();
 
     // Seqidlist mode
     std::string mode_str = j.get("seqidlist_mode", "none").asString();
@@ -278,35 +279,47 @@ void HttpController::info(
         Json::Value result;
         result["status"] = (iresp.status == 0) ? "success" : "error";
         result["default_k"] = iresp.default_k;
+        result["max_active_sequences"] = iresp.max_active_sequences;
+        result["active_sequences"] = iresp.active_sequences;
 
-        Json::Value groups_arr(Json::arrayValue);
-        for (const auto& g : iresp.groups) {
-            Json::Value gobj;
-            gobj["k"] = g.k;
-            gobj["kmer_type"] = (g.kmer_type == 0) ? "uint16" : "uint32";
+        Json::Value databases_arr(Json::arrayValue);
+        for (const auto& db : iresp.databases) {
+            Json::Value dbobj;
+            dbobj["name"] = db.name;
+            dbobj["default_k"] = db.default_k;
+            dbobj["max_mode"] = db.max_mode;
 
-            uint64_t group_total_sequences = 0;
-            uint64_t group_total_postings = 0;
+            Json::Value groups_arr(Json::arrayValue);
+            for (const auto& g : db.groups) {
+                Json::Value gobj;
+                gobj["k"] = g.k;
+                gobj["kmer_type"] = (g.kmer_type == 0) ? "uint16" : "uint32";
 
-            Json::Value vols_arr(Json::arrayValue);
-            for (const auto& v : g.volumes) {
-                Json::Value vobj;
-                vobj["volume_index"] = v.volume_index;
-                vobj["num_sequences"] = v.num_sequences;
-                vobj["total_postings"] = static_cast<Json::UInt64>(v.total_postings);
-                vobj["db_name"] = v.db_name;
-                vols_arr.append(std::move(vobj));
+                uint64_t group_total_sequences = 0;
+                uint64_t group_total_postings = 0;
 
-                group_total_sequences += v.num_sequences;
-                group_total_postings += v.total_postings;
+                Json::Value vols_arr(Json::arrayValue);
+                for (const auto& v : g.volumes) {
+                    Json::Value vobj;
+                    vobj["volume_index"] = v.volume_index;
+                    vobj["num_sequences"] = v.num_sequences;
+                    vobj["total_postings"] = static_cast<Json::UInt64>(v.total_postings);
+                    vobj["db_name"] = v.db_name;
+                    vols_arr.append(std::move(vobj));
+
+                    group_total_sequences += v.num_sequences;
+                    group_total_postings += v.total_postings;
+                }
+                gobj["volumes"] = std::move(vols_arr);
+                gobj["num_volumes"] = static_cast<Json::UInt>(g.volumes.size());
+                gobj["total_sequences"] = static_cast<Json::UInt64>(group_total_sequences);
+                gobj["total_postings"] = static_cast<Json::UInt64>(group_total_postings);
+                groups_arr.append(std::move(gobj));
             }
-            gobj["volumes"] = std::move(vols_arr);
-            gobj["num_volumes"] = static_cast<Json::UInt>(g.volumes.size());
-            gobj["total_sequences"] = static_cast<Json::UInt64>(group_total_sequences);
-            gobj["total_postings"] = static_cast<Json::UInt64>(group_total_postings);
-            groups_arr.append(std::move(gobj));
+            dbobj["kmer_groups"] = std::move(groups_arr);
+            databases_arr.append(std::move(dbobj));
         }
-        result["kmer_groups"] = std::move(groups_arr);
+        result["databases"] = std::move(databases_arr);
 
         auto resp = drogon::HttpResponse::newHttpJsonResponse(std::move(result));
         (*cb)(resp);

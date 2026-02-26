@@ -14,9 +14,13 @@ public:
     // Check if a flag/option is present.
     bool has(const std::string& key) const;
 
-    // Get string value for a key. Returns default_val if not found.
+    // Get string value for a key (last value wins). Returns default_val if not found.
     std::string get_string(const std::string& key,
                            const std::string& default_val = {}) const;
+
+    // Get all string values for a key (for multi-value options like -ix).
+    // Returns empty vector if key is absent.
+    std::vector<std::string> get_strings(const std::string& key) const;
 
     // Get integer value for a key. Returns default_val if not found or invalid.
     int get_int(const std::string& key, int default_val = 0) const;
@@ -32,7 +36,7 @@ public:
 
 private:
     std::string program_;
-    std::unordered_map<std::string, std::string> opts_;
+    std::unordered_map<std::string, std::vector<std::string>> opts_;
     std::vector<std::string> positional_;
 };
 

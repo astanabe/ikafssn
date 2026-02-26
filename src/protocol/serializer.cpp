@@ -155,6 +155,7 @@ private:
 //   u32  stage3_min_nident
 //   u32  context_abs
 //   u16  context_frac_x10000
+//   str16 db_name
 //   u32  num_seqids
 //     [str16 seqid] × num_seqids
 //   u16  num_queries
@@ -188,6 +189,7 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     put_u32(buf, req.stage3_min_nident);
     put_u32(buf, req.context_abs);
     put_u16(buf, req.context_frac_x10000);
+    put_str16(buf, req.db_name);
 
     put_u32(buf, static_cast<uint32_t>(req.seqids.size()));
     for (const auto& acc : req.seqids) {
@@ -236,6 +238,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u32(req.stage3_min_nident)) return false;
     if (!r.get_u32(req.context_abs)) return false;
     if (!r.get_u16(req.context_frac_x10000)) return false;
+    if (!r.get_str16(req.db_name)) return false;
 
     uint32_t num_seqids;
     if (!r.get_u32(num_seqids)) return false;
@@ -268,6 +271,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //   u8   mode
 //   u8   stage1_score
 //   u8   stage3_traceback
+//   str16 db_name
 //   u16  num_queries
 //   for each query:
 //     str16 query_id
@@ -305,6 +309,7 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
     put_u8(buf, resp.mode);
     put_u8(buf, resp.stage1_score);
     put_u8(buf, resp.stage3_traceback);
+    put_str16(buf, resp.db_name);
     put_u16(buf, static_cast<uint16_t>(resp.results.size()));
 
     for (const auto& qr : resp.results) {
@@ -351,6 +356,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
     if (!r.get_u8(resp.mode)) return false;
     if (!r.get_u8(resp.stage1_score)) return false;
     if (!r.get_u8(resp.stage3_traceback)) return false;
+    if (!r.get_str16(resp.db_name)) return false;
 
     uint16_t num_queries;
     if (!r.get_u16(num_queries)) return false;
@@ -451,19 +457,26 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format:
-//   u8  status
-//   u8  default_k
-//   u16 num_groups
-//   for each group:
-//     u8  k
-//     u8  kmer_type
-//     u16 num_volumes
-//     for each volume:
-//       u16 volume_index
-//       u32 num_sequences
-//       u64 total_postings
-//       str16 db_name
+// Wire format (v2):
+//   u8   status
+//   u8   default_k
+//   i32  max_active_sequences
+//   i32  active_sequences
+//   u16  num_databases
+//   for each database:
+//     str16 name
+//     u8    default_k
+//     u8    max_mode
+//     u16   num_groups
+//     for each group:
+//       u8  k
+//       u8  kmer_type
+//       u16 num_volumes
+//       for each volume:
+//         u16 volume_index
+//         u32 num_sequences
+//         u64 total_postings
+//         str16 db_name
 
 std::vector<uint8_t> serialize(const InfoResponse& resp) {
     std::vector<uint8_t> buf;
@@ -471,18 +484,27 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
 
     put_u8(buf, resp.status);
     put_u8(buf, resp.default_k);
-    put_u16(buf, static_cast<uint16_t>(resp.groups.size()));
+    put_i32(buf, resp.max_active_sequences);
+    put_i32(buf, resp.active_sequences);
+    put_u16(buf, static_cast<uint16_t>(resp.databases.size()));
 
-    for (const auto& g : resp.groups) {
-        put_u8(buf, g.k);
-        put_u8(buf, g.kmer_type);
-        put_u16(buf, static_cast<uint16_t>(g.volumes.size()));
+    for (const auto& db : resp.databases) {
+        put_str16(buf, db.name);
+        put_u8(buf, db.default_k);
+        put_u8(buf, db.max_mode);
+        put_u16(buf, static_cast<uint16_t>(db.groups.size()));
 
-        for (const auto& v : g.volumes) {
-            put_u16(buf, v.volume_index);
-            put_u32(buf, v.num_sequences);
-            put_u64(buf, v.total_postings);
-            put_str16(buf, v.db_name);
+        for (const auto& g : db.groups) {
+            put_u8(buf, g.k);
+            put_u8(buf, g.kmer_type);
+            put_u16(buf, static_cast<uint16_t>(g.volumes.size()));
+
+            for (const auto& v : g.volumes) {
+                put_u16(buf, v.volume_index);
+                put_u32(buf, v.num_sequences);
+                put_u64(buf, v.total_postings);
+                put_str16(buf, v.db_name);
+            }
         }
     }
 
@@ -494,26 +516,39 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
 
     if (!r.get_u8(resp.status)) return false;
     if (!r.get_u8(resp.default_k)) return false;
+    if (!r.get_i32(resp.max_active_sequences)) return false;
+    if (!r.get_i32(resp.active_sequences)) return false;
 
-    uint16_t num_groups;
-    if (!r.get_u16(num_groups)) return false;
-    resp.groups.resize(num_groups);
+    uint16_t num_databases;
+    if (!r.get_u16(num_databases)) return false;
+    resp.databases.resize(num_databases);
 
-    for (uint16_t gi = 0; gi < num_groups; gi++) {
-        auto& g = resp.groups[gi];
-        if (!r.get_u8(g.k)) return false;
-        if (!r.get_u8(g.kmer_type)) return false;
+    for (uint16_t di = 0; di < num_databases; di++) {
+        auto& db = resp.databases[di];
+        if (!r.get_str16(db.name)) return false;
+        if (!r.get_u8(db.default_k)) return false;
+        if (!r.get_u8(db.max_mode)) return false;
 
-        uint16_t num_vols;
-        if (!r.get_u16(num_vols)) return false;
-        g.volumes.resize(num_vols);
+        uint16_t num_groups;
+        if (!r.get_u16(num_groups)) return false;
+        db.groups.resize(num_groups);
 
-        for (uint16_t vi = 0; vi < num_vols; vi++) {
-            auto& v = g.volumes[vi];
-            if (!r.get_u16(v.volume_index)) return false;
-            if (!r.get_u32(v.num_sequences)) return false;
-            if (!r.get_u64(v.total_postings)) return false;
-            if (!r.get_str16(v.db_name)) return false;
+        for (uint16_t gi = 0; gi < num_groups; gi++) {
+            auto& g = db.groups[gi];
+            if (!r.get_u8(g.k)) return false;
+            if (!r.get_u8(g.kmer_type)) return false;
+
+            uint16_t num_vols;
+            if (!r.get_u16(num_vols)) return false;
+            g.volumes.resize(num_vols);
+
+            for (uint16_t vi = 0; vi < num_vols; vi++) {
+                auto& v = g.volumes[vi];
+                if (!r.get_u16(v.volume_index)) return false;
+                if (!r.get_u32(v.num_sequences)) return false;
+                if (!r.get_u64(v.total_postings)) return false;
+                if (!r.get_str16(v.db_name)) return false;
+            }
         }
     }
 

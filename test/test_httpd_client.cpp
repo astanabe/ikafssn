@@ -3,6 +3,7 @@
 
 #include "io/blastdb_reader.hpp"
 #include "io/fasta_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "index/index_builder.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
@@ -125,8 +126,10 @@ static void test_http_client_search() {
     std::string sock_path = g_test_dir + "/test_hc_server.sock";
     ::unlink(sock_path.c_str());
 
+    std::string db_name = parse_index_prefix(ix_prefix).db_name;
+
     ServerConfig sconfig;
-    sconfig.ix_prefix = ix_prefix;
+    sconfig.db_entries.push_back({ix_prefix, ix_prefix});
     sconfig.unix_socket_path = sock_path;
     sconfig.num_threads = 2;
     sconfig.log_level = Logger::kError;
@@ -169,6 +172,7 @@ static void test_http_client_search() {
 
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
+    req.db_name = db_name;
     for (const auto& q : queries) {
         req.queries.push_back({q.id, q.sequence});
     }
@@ -239,6 +243,7 @@ static void test_http_client_search() {
     if (!target_acc.empty()) {
         SearchRequest freq;
         freq.k = static_cast<uint8_t>(k);
+        freq.db_name = db_name;
         freq.seqidlist_mode = SeqidlistMode::kInclude;
         freq.seqids = {target_acc};
         for (const auto& q : queries) {

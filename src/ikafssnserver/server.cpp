@@ -26,18 +26,32 @@ Server::~Server() {
     }
 }
 
-bool Server::load_indexes(const std::string& ix_prefix, const Logger& logger) {
+bool Server::load_database(const std::string& ix_prefix, const std::string& db_path,
+                           const ServerConfig& config, const Logger& logger) {
+    auto prefix_parts = parse_index_prefix(ix_prefix);
+    const std::string& db_name = prefix_parts.db_name;
+
+    // Check for duplicate DB name
+    if (db_name_index_.count(db_name)) {
+        logger.error("Duplicate database name '%s' (from %s)", db_name.c_str(), ix_prefix.c_str());
+        return false;
+    }
+
     auto discovered = discover_volumes(ix_prefix);
     if (discovered.empty()) {
         logger.error("No index files found for prefix %s", ix_prefix.c_str());
         return false;
     }
 
-    auto prefix_parts = parse_index_prefix(ix_prefix);
+    DatabaseEntry entry;
+    entry.name = db_name;
+    entry.ix_prefix = ix_prefix;
+    entry.db_path = db_path;
+    entry.max_mode = db_path.empty() ? 2 : 3;
 
     // Group by k and open index files
     for (const auto& dv : discovered) {
-        auto& group = kmer_groups_[dv.k];
+        auto& group = entry.kmer_groups[dv.k];
         group.k = dv.k;
         group.kmer_type = kmer_type_for_k(dv.k);
 
@@ -61,25 +75,68 @@ bool Server::load_indexes(const std::string& ix_prefix, const Logger& logger) {
     }
 
     // Sort volumes within each group, then open shared .khx per group
-    for (auto& [k, group] : kmer_groups_) {
+    for (auto& [k, group] : entry.kmer_groups) {
         std::sort(group.volumes.begin(), group.volumes.end(),
                   [](const ServerVolumeData& a, const ServerVolumeData& b) {
                       return a.volume_index < b.volume_index;
                   });
 
         // Open shared .khx for this k-mer group (non-fatal if missing)
-        group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db_name, k)); // non-fatal
+        group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db_name, k));
     }
 
     // Default k = largest available
-    default_k_ = kmer_groups_.rbegin()->first;
+    entry.default_k = entry.kmer_groups.rbegin()->first;
 
-    logger.info("Loaded %zu k-mer group(s):", kmer_groups_.size());
-    for (const auto& [k, group] : kmer_groups_) {
+    // Resolve search config from server config template
+    entry.resolved_search_config = config.search_config;
+
+    // Resolve -max_freq fraction per-DB
+    if (config.max_freq_raw > 0 && config.max_freq_raw < 1.0) {
+        if (!entry.kmer_groups.empty()) {
+            uint64_t total_nseq = 0;
+            for (const auto& vol : entry.kmer_groups.begin()->second.volumes)
+                total_nseq += vol.ksx.num_sequences();
+            auto resolved = static_cast<uint32_t>(
+                std::ceil(config.max_freq_raw * total_nseq));
+            if (resolved == 0) resolved = 1;
+            entry.resolved_search_config.stage1.max_freq = resolved;
+            logger.info("DB '%s': -stage1_max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
+                        db_name.c_str(), config.max_freq_raw, resolved,
+                        static_cast<unsigned long>(total_nseq));
+        }
+    } else {
+        entry.resolved_search_config.stage1.max_freq =
+            static_cast<uint32_t>(config.max_freq_raw);
+    }
+
+    // Copy stage3/context params from ServerConfig
+    entry.stage3_config = config.stage3_config;
+    entry.context_is_ratio = config.context_is_ratio;
+    entry.context_ratio = config.context_ratio;
+    entry.context_abs = config.context_abs;
+
+    logger.info("Loaded DB '%s' (%zu k-mer group(s)):", db_name.c_str(), entry.kmer_groups.size());
+    for (const auto& [k, group] : entry.kmer_groups) {
         logger.info("  k=%d: %zu volume(s)", k, group.volumes.size());
     }
 
+    size_t idx = databases_.size();
+    databases_.push_back(std::move(entry));
+    db_name_index_[db_name] = idx;
+
     return true;
+}
+
+const DatabaseEntry* Server::find_database(const std::string& name) const {
+    auto it = db_name_index_.find(name);
+    if (it == db_name_index_.end()) return nullptr;
+    return &databases_[it->second];
+}
+
+int Server::default_k() const {
+    if (databases_.empty()) return 0;
+    return databases_[0].default_k;
 }
 
 void Server::request_shutdown() {
@@ -142,16 +199,10 @@ void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger
 
         logger.debug("Accepted connection (fd=%d)", client_fd);
 
-        // Dispatch to worker thread unconditionally (no connection-level gating).
-        // Per-sequence gating happens inside process_search_request().
+        // Dispatch to worker thread
         arena.execute([&, client_fd] {
             tg.run([&, client_fd] {
-                handle_connection(client_fd, kmer_groups_, default_k_,
-                                  config.search_config,
-                                  config.stage3_config, config.db_path,
-                                  config.context_is_ratio, config.context_ratio,
-                                  config.context_abs,
-                                  *this, arena, logger);
+                handle_connection(client_fd, *this, config, arena, logger);
             });
         });
     }
@@ -162,32 +213,19 @@ void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger
 }
 
 int Server::run(const ServerConfig& config_in) {
-    // Mutable copy so we can resolve -max_freq fraction
     ServerConfig config = config_in;
     Logger logger(config.log_level);
 
-    // Load indexes
-    if (!load_indexes(config.ix_prefix, logger)) {
-        return 1;
+    // Load all databases
+    for (const auto& db_entry : config.db_entries) {
+        if (!load_database(db_entry.ix_prefix, db_entry.db_path, config, logger)) {
+            return 1;
+        }
     }
 
-    // Resolve -max_freq fraction using total NSEQ from loaded indexes
-    if (config.max_freq_raw > 0 && config.max_freq_raw < 1.0) {
-        if (!kmer_groups_.empty()) {
-            uint64_t total_nseq = 0;
-            for (const auto& vol : kmer_groups_.begin()->second.volumes)
-                total_nseq += vol.ksx.num_sequences();
-            auto resolved = static_cast<uint32_t>(
-                std::ceil(config.max_freq_raw * total_nseq));
-            if (resolved == 0) resolved = 1;
-            config.search_config.stage1.max_freq = resolved;
-            logger.info("-stage1_max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
-                        config.max_freq_raw, resolved,
-                        static_cast<unsigned long>(total_nseq));
-        }
-    } else {
-        config.search_config.stage1.max_freq =
-            static_cast<uint32_t>(config.max_freq_raw);
+    if (databases_.empty()) {
+        logger.error("No databases loaded");
+        return 1;
     }
 
     // Write PID file if requested
@@ -207,6 +245,16 @@ int Server::run(const ServerConfig& config_in) {
         logger.info("Max concurrent sequences: %d, max per request: %d",
                      max_active_sequences_, max_seqs_per_req_);
     }
+
+    // Log total mmap count
+    size_t total_mmaps = 0;
+    for (const auto& db : databases_) {
+        for (const auto& [k, group] : db.kmer_groups) {
+            total_mmaps += group.volumes.size() * 3; // kix + kpx + ksx
+            if (group.khx.is_open()) total_mmaps++;
+        }
+    }
+    logger.info("Total mmap'd files across %zu DB(s): %zu", databases_.size(), total_mmaps);
 
     // Set up listening sockets
     if (config.unix_socket_path.empty() && config.tcp_addr.empty()) {
@@ -236,15 +284,11 @@ int Server::run(const ServerConfig& config_in) {
         logger.info("Listening on TCP: %s", config.tcp_addr.c_str());
 
         // If both UNIX and TCP, use TCP as primary accept loop.
-        // For simplicity in this initial implementation, we start accept loops
-        // for each socket in separate threads.
         if (listen_fd >= 0) {
-            // Start UNIX socket accept loop in background thread
             std::thread unix_thread([this, listen_fd, &config, &logger] {
                 accept_loop(listen_fd, config, logger);
             });
 
-            // Run TCP accept loop in main thread
             accept_loop(tcp_fd, config, logger);
 
             unix_thread.join();
@@ -254,7 +298,7 @@ int Server::run(const ServerConfig& config_in) {
         listen_fd = tcp_fd;
     }
 
-    logger.info("Server ready, default k=%d", default_k_);
+    logger.info("Server ready, %zu database(s), default k=%d", databases_.size(), default_k());
 
     // Run accept loop (blocks until shutdown)
     accept_loop(listen_fd, config, logger);

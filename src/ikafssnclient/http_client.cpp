@@ -55,6 +55,8 @@ static std::string build_request_json(const SearchRequest& req) {
     root["stage3_min_nident"] = req.stage3_min_nident;
     root["context_abs"] = req.context_abs;
     root["context_frac_x10000"] = req.context_frac_x10000;
+    if (!req.db_name.empty())
+        root["db_name"] = req.db_name;
 
     switch (req.seqidlist_mode) {
     case SeqidlistMode::kInclude:

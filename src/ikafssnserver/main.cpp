@@ -3,9 +3,11 @@
 #include "util/cli_parser.hpp"
 #include "util/common_init.hpp"
 #include "util/context_parser.hpp"
+#include "io/volume_discovery.hpp"
 
 #include <csignal>
 #include <cstdio>
+#include <set>
 
 using namespace ikafssn;
 
@@ -22,7 +24,7 @@ static void print_usage(const char* prog) {
         "Usage: %s [options]\n"
         "\n"
         "Required:\n"
-        "  -ix <prefix>             Index prefix (like blastn -db)\n"
+        "  -ix <prefix>             Index prefix (repeatable for multi-DB)\n"
         "\n"
         "Listener (at least one required):\n"
         "  -socket <path>           UNIX domain socket path\n"
@@ -33,7 +35,8 @@ static void print_usage(const char* prog) {
         "  -max_query <int>         Max concurrent query sequences globally (default: 1024)\n"
         "  -max_seqs_per_req <int>  Max sequences accepted per request (default: thread count)\n"
         "  -pid <path>              PID file path\n"
-        "  -db <path>               BLAST DB path for mode 3 (default: same as -ix)\n"
+        "  -db <path>               BLAST DB path for mode 3 (repeatable, paired with -ix;\n"
+        "                           default: same as corresponding -ix prefix)\n"
         "  -stage2_min_score <int>  Default minimum chain score (default: 0 = adaptive)\n"
         "  -stage2_max_gap <int>    Default chaining gap tolerance (default: 100)\n"
         "  -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)\n"
@@ -79,8 +82,39 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Build db_entries from -ix and -db lists
+    auto ix_list = cli.get_strings("-ix");
+    auto db_list = cli.get_strings("-db");
+
+    if (!db_list.empty() && db_list.size() != ix_list.size()) {
+        std::fprintf(stderr,
+            "Error: -db count (%zu) must be 0 or equal to -ix count (%zu)\n",
+            db_list.size(), ix_list.size());
+        return 1;
+    }
+
+    // Check for duplicate DB names
+    {
+        std::set<std::string> seen_names;
+        for (const auto& ix : ix_list) {
+            auto parts = parse_index_prefix(ix);
+            if (!seen_names.insert(parts.db_name).second) {
+                std::fprintf(stderr,
+                    "Error: duplicate database name '%s' (from -ix %s)\n",
+                    parts.db_name.c_str(), ix.c_str());
+                return 1;
+            }
+        }
+    }
+
     ServerConfig config;
-    config.ix_prefix = cli.get_string("-ix");
+    for (size_t i = 0; i < ix_list.size(); i++) {
+        ServerConfig::DbEntry entry;
+        entry.ix_prefix = ix_list[i];
+        entry.db_path = (i < db_list.size()) ? db_list[i] : ix_list[i];
+        config.db_entries.push_back(std::move(entry));
+    }
+
     config.unix_socket_path = cli.get_string("-socket");
     config.tcp_addr = cli.get_string("-tcp");
     config.pid_file = cli.get_string("-pid");
@@ -123,9 +157,6 @@ int main(int argc, char* argv[]) {
         static_cast<uint32_t>(cli.get_int("-num_results", 0));
     config.search_config.accept_qdegen =
         static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
-
-    // BLAST DB path for mode 3 (default: same as index prefix)
-    config.db_path = cli.get_string("-db", config.ix_prefix);
 
     // Stage 3 config
     config.stage3_config.gapopen = cli.get_int("-stage3_gapopen", 10);

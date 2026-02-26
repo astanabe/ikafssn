@@ -47,6 +47,7 @@ struct SearchRequest {
     uint32_t stage3_min_nident = 0;               // 0 = no filter
     uint32_t context_abs = 0;                     // absolute context bases (when frac=0)
     uint16_t context_frac_x10000 = 0;             // ratio * 10000 (when > 0, ratio mode)
+    std::string db_name;                           // target database name (empty = error)
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
 };
@@ -94,6 +95,7 @@ struct SearchResponse {
     uint8_t  mode = 2;              // 1 = stage1 only, 2 = stage1+stage2, 3 = stage1+stage2+stage3
     uint8_t  stage1_score = 1;      // 1 = coverscore, 2 = matchscore
     uint8_t  stage3_traceback = 0;  // echo back: 1 = traceback fields populated
+    std::string db_name;            // echo back database name
     std::vector<QueryResult> results;
     std::vector<std::string> rejected_query_ids;  // queries rejected due to concurrency limit
 };
@@ -130,11 +132,21 @@ struct KmerGroupInfo {
     std::vector<VolumeInfo> volumes;
 };
 
+// Per-database info in the info response
+struct DatabaseInfo {
+    std::string name;
+    uint8_t default_k = 0;
+    uint8_t max_mode = 2;   // 1=stage1 only, 2=stage1+2, 3=stage1+2+3
+    std::vector<KmerGroupInfo> groups;
+};
+
 // Info response message (server -> client)
 struct InfoResponse {
-    uint8_t  status = 0;  // 0 = success
-    uint8_t  default_k = 0;
-    std::vector<KmerGroupInfo> groups;
+    uint8_t  status = 0;           // 0 = success
+    uint8_t  default_k = 0;       // global default (first DB's)
+    int32_t  max_active_sequences = 0;
+    int32_t  active_sequences = 0; // current in-use
+    std::vector<DatabaseInfo> databases;
 };
 
 } // namespace ikafssn

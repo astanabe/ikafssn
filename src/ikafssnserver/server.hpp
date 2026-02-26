@@ -4,6 +4,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ikafssnserver/request_processor.hpp"
@@ -13,8 +14,27 @@
 
 namespace ikafssn {
 
+// Per-database entry holding loaded indexes and resolved config
+struct DatabaseEntry {
+    std::string name;                       // DB name (basename of ix_prefix)
+    std::string ix_prefix;                  // original (for logging)
+    std::string db_path;                    // BLAST DB path (empty = max_mode 2)
+    std::map<int, KmerGroup> kmer_groups;
+    int default_k = 0;                      // largest k for this DB
+    uint8_t max_mode = 2;                   // 2 or 3
+    SearchConfig resolved_search_config;    // max_freq resolved per-DB
+    Stage3Config stage3_config;
+    bool context_is_ratio = false;
+    double context_ratio = 0.0;
+    uint32_t context_abs = 0;
+};
+
 struct ServerConfig {
-    std::string ix_prefix;
+    struct DbEntry {
+        std::string ix_prefix;
+        std::string db_path;  // empty = defaults to ix_prefix
+    };
+    std::vector<DbEntry> db_entries;
     std::string unix_socket_path;
     std::string tcp_addr;           // "host:port"
     std::string pid_file;
@@ -26,7 +46,6 @@ struct ServerConfig {
     double max_freq_raw = 0.5;          // raw -max_freq value (fraction or absolute)
     Logger::Level log_level = Logger::kInfo;
     // Stage 3 / BLAST DB config
-    std::string db_path;            // BLAST DB path for mode 3
     Stage3Config stage3_config;     // default stage3 config
     bool context_is_ratio = false;
     double context_ratio = 0.0;
@@ -38,8 +57,15 @@ public:
     Server() = default;
     ~Server();
 
-    // Load indexes matching the given prefix.
-    bool load_indexes(const std::string& ix_prefix, const Logger& logger);
+    // Load a single database's indexes.
+    bool load_database(const std::string& ix_prefix, const std::string& db_path,
+                       const ServerConfig& config, const Logger& logger);
+
+    // Find a database by name. Returns nullptr if not found.
+    const DatabaseEntry* find_database(const std::string& name) const;
+
+    // Get all loaded databases.
+    const std::vector<DatabaseEntry>& databases() const { return databases_; }
 
     // Run the server (blocking). Returns exit code.
     int run(const ServerConfig& config);
@@ -47,11 +73,14 @@ public:
     // Request graceful shutdown (called from signal handler).
     void request_shutdown();
 
-    // Get the default k value.
-    int default_k() const { return default_k_; }
+    // Get the default k value (first DB's default_k).
+    int default_k() const;
 
-    // Get the kmer groups (for testing).
-    const std::map<int, KmerGroup>& kmer_groups() const { return kmer_groups_; }
+    // Get max active sequences limit.
+    int max_active_sequences() const { return max_active_sequences_; }
+
+    // Get current active sequences count.
+    int active_sequences() const { return active_sequences_; }
 
     // Non-blocking: try to acquire up to n permits (capped by max_seqs_per_req_).
     // Returns count actually acquired.
@@ -61,8 +90,8 @@ public:
     void release_sequences(int n);
 
 private:
-    std::map<int, KmerGroup> kmer_groups_;
-    int default_k_ = 0;
+    std::vector<DatabaseEntry> databases_;
+    std::unordered_map<std::string, size_t> db_name_index_;
     std::atomic<bool> shutdown_requested_{false};
     std::vector<int> listen_fds_;
 

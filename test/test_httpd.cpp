@@ -3,6 +3,7 @@
 
 #include "io/blastdb_reader.hpp"
 #include "io/fasta_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "index/index_builder.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
@@ -71,6 +72,10 @@ static std::string build_test_index(int k) {
     return ix_dir + "/test";
 }
 
+static std::string db_name_from_prefix(const std::string& ix_prefix) {
+    return parse_index_prefix(ix_prefix).db_name;
+}
+
 // Test: BackendClient search matches direct local search
 static void test_backend_search() {
     std::fprintf(stderr, "-- test_backend_search\n");
@@ -78,6 +83,8 @@ static void test_backend_search() {
     int k = 7;
     std::string ix_prefix = build_test_index(k);
     CHECK(!ix_prefix.empty());
+
+    std::string db_name = db_name_from_prefix(ix_prefix);
 
     // Read query FASTA
     auto queries = read_fasta(queries_path());
@@ -113,7 +120,9 @@ static void test_backend_search() {
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_prefix, logger));
+    ServerConfig server_config;
+    server_config.search_config = config;
+    CHECK(server.load_database(ix_prefix, ix_prefix, server_config, logger));
 
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
@@ -123,11 +132,7 @@ static void test_backend_search() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            Stage3Config stage3_config;
-            handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config,
-                              stage3_config, std::string(), false, 0.0, 0,
-                              server, arena, logger);
+            handle_connection(client_fd, server, server_config, arena, logger);
         }
     });
 
@@ -138,6 +143,7 @@ static void test_backend_search() {
 
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
+    req.db_name = db_name;
     for (const auto& q : queries) {
         req.queries.push_back({q.id, q.sequence});
     }
@@ -212,9 +218,9 @@ static void test_backend_health() {
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_prefix, logger));
+    ServerConfig server_config;
+    CHECK(server.load_database(ix_prefix, ix_prefix, server_config, logger));
 
-    SearchConfig config;
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
 
@@ -222,11 +228,7 @@ static void test_backend_health() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            Stage3Config stage3_config;
-            handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config,
-                              stage3_config, std::string(), false, 0.0, 0,
-                              server, arena, logger);
+            handle_connection(client_fd, server, server_config, arena, logger);
         }
     });
 
@@ -255,9 +257,9 @@ static void test_backend_info() {
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_prefix, logger));
+    ServerConfig server_config;
+    CHECK(server.load_database(ix_prefix, ix_prefix, server_config, logger));
 
-    SearchConfig config;
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
 
@@ -265,11 +267,7 @@ static void test_backend_info() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            Stage3Config stage3_config;
-            handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config,
-                              stage3_config, std::string(), false, 0.0, 0,
-                              server, arena, logger);
+            handle_connection(client_fd, server, server_config, arena, logger);
         }
     });
 
@@ -283,18 +281,20 @@ static void test_backend_info() {
     CHECK_EQ(iresp.status, 0);
     CHECK_EQ(iresp.default_k, static_cast<uint8_t>(server.default_k()));
 
-    // Should have at least one kmer group
-    CHECK(!iresp.groups.empty());
+    // Should have at least one database
+    CHECK(!iresp.databases.empty());
 
+    const auto& db = iresp.databases[0];
     // First group should have k=7 (we built with k=7)
-    CHECK_EQ(iresp.groups[0].k, 7);
-    CHECK_EQ(iresp.groups[0].kmer_type, 0); // uint16 for k<9
-    CHECK(!iresp.groups[0].volumes.empty());
+    CHECK(!db.groups.empty());
+    CHECK_EQ(db.groups[0].k, 7);
+    CHECK_EQ(db.groups[0].kmer_type, 0); // uint16 for k<9
+    CHECK(!db.groups[0].volumes.empty());
 
-    // Volume 0 should have 5 sequences (our test db)
-    CHECK_EQ(iresp.groups[0].volumes[0].volume_index, 0);
-    CHECK(iresp.groups[0].volumes[0].num_sequences > 0);
-    CHECK(iresp.groups[0].volumes[0].total_postings > 0);
+    // Volume 0 should have sequences
+    CHECK_EQ(db.groups[0].volumes[0].volume_index, 0);
+    CHECK(db.groups[0].volumes[0].num_sequences > 0);
+    CHECK(db.groups[0].volumes[0].total_postings > 0);
 
     server_thread.join();
     close_fd(listen_fd);
@@ -329,6 +329,7 @@ static void test_backend_seqidlist_filter() {
 
     int k = 7;
     std::string ix_prefix = g_test_dir + "/httpd_index/test";
+    std::string db_name = db_name_from_prefix(ix_prefix);
     std::string sock_path = g_test_dir + "/test_httpd_seqidlist.sock";
     ::unlink(sock_path.c_str());
 
@@ -351,9 +352,9 @@ static void test_backend_seqidlist_filter() {
 
     Server server;
     Logger logger(Logger::kError);
-    CHECK(server.load_indexes(ix_prefix, logger));
+    ServerConfig server_config;
+    CHECK(server.load_database(ix_prefix, ix_prefix, server_config, logger));
 
-    SearchConfig config;
     int listen_fd = unix_listen(sock_path);
     CHECK(listen_fd >= 0);
 
@@ -361,11 +362,7 @@ static void test_backend_seqidlist_filter() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            Stage3Config stage3_config;
-            handle_connection(client_fd, server.kmer_groups(),
-                              server.default_k(), config,
-                              stage3_config, std::string(), false, 0.0, 0,
-                              server, arena, logger);
+            handle_connection(client_fd, server, server_config, arena, logger);
         }
     });
 
@@ -375,6 +372,7 @@ static void test_backend_seqidlist_filter() {
 
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
+    req.db_name = db_name;
     req.seqidlist_mode = SeqidlistMode::kInclude;
     req.seqids = {target_acc};
     for (const auto& q : queries) {
