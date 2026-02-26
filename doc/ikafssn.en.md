@@ -970,6 +970,16 @@ sudo dnf install -y libuuid-devel openssl-devel
 
 On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. The second-to-last line of each block installs dependencies required for building Parasail and htslib from source. The last line installs dependencies needed to build Drogon from source. If ikafssnhttpd is not needed, omit the last line and build with `-DBUILD_HTTPD=OFF`.
 
+**macOS (Homebrew):**
+
+```bash
+brew install cmake tbb lmdb sqlite3 curl jsoncpp \
+    xz libdeflate autoconf automake libtool openssl@3
+brew install drogon
+```
+
+The second line installs Drogon for building ikafssnhttpd. If ikafssnhttpd is not needed, omit the second line and build with `-DBUILD_HTTPD=OFF`. On macOS, use `make -j$(sysctl -n hw.ncpu)` instead of `make -j$(nproc)` in the build steps below.
+
 ### Parasail
 
 ikafssn uses the Parasail library for Stage 3 pairwise alignment. By default, CMake looks for Parasail at `./parasail` relative to the source root. If Parasail is installed elsewhere, specify the path with `-DPARASAIL_DIR`.
@@ -989,6 +999,8 @@ make install
 cd ../..
 ```
 
+On macOS with CMake >= 4.0, add `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` to the `cmake` command above.
+
 ### htslib
 
 ikafssn uses htslib for SAM/BAM output. By default, CMake looks for htslib at `./htslib` relative to the source root. If htslib is installed elsewhere, specify the path with `-DHTSLIB_DIR`.
@@ -1005,6 +1017,13 @@ autoreconf -i
 make -j$(nproc)
 make install
 cd ..
+```
+
+On macOS, add Homebrew paths so that configure can find xz (lzma) and libdeflate:
+
+```bash
+./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3 \
+    CPPFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib"
 ```
 
 ### NCBI C++ Toolkit
@@ -1031,6 +1050,21 @@ cd ../../..
 ```
 
 Only the libraries required by ikafssn (`seqdb`, `blastdb_format`, and their dependencies) are built. The full toolkit build is not necessary.
+
+On macOS, the Homebrew include path must be visible to the compiler (for `lmdb.h`), and the build directory glob pattern differs:
+
+```bash
+export CFLAGS="-I$(brew --prefix)/include"
+export CXXFLAGS="-I$(brew --prefix)/include"
+./cmake-configure \
+    --without-debug \
+    --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
+    --with-install="$(realpath ..)/ncbi-cxx-toolkit"
+cd CMake-Clang*/build
+make -j$(sysctl -n hw.ncpu)
+make install
+cd ../../..
+```
 
 ### Build
 

@@ -970,6 +970,16 @@ sudo dnf install -y libuuid-devel openssl-devel
 
 EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。各ブロックの最後から 2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。最終行は Drogon のソースビルドに必要な依存パッケージです。ikafssnhttpd が不要な場合は最終行を省略し、`-DBUILD_HTTPD=OFF` でビルドしてください。
 
+**macOS (Homebrew):**
+
+```bash
+brew install cmake tbb lmdb sqlite3 curl jsoncpp \
+    xz libdeflate autoconf automake libtool openssl@3
+brew install drogon
+```
+
+2 行目は ikafssnhttpd のビルドに必要な Drogon です。ikafssnhttpd が不要な場合は 2 行目を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。macOS では以下のビルド手順中の `make -j$(nproc)` を `make -j$(sysctl -n hw.ncpu)` に読み替えてください。
+
 ### Parasail
 
 ikafssn は Stage 3 ペアワイズアライメントに Parasail ライブラリを使用します。デフォルトではソースルート直下の `./parasail` を参照します。別の場所にインストール済みの場合は `-DPARASAIL_DIR` で指定してください。
@@ -989,6 +999,8 @@ make install
 cd ../..
 ```
 
+macOS で CMake >= 4.0 を使用する場合、上記の `cmake` コマンドに `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` を追加してください。
+
 ### htslib
 
 ikafssn は SAM/BAM 出力に htslib を使用します。デフォルトではソースルート直下の `./htslib` を参照します。別の場所にインストール済みの場合は `-DHTSLIB_DIR` で指定してください。
@@ -1005,6 +1017,13 @@ autoreconf -i
 make -j$(nproc)
 make install
 cd ..
+```
+
+macOS では、configure が xz (lzma) や libdeflate を認識できるよう Homebrew のパスを指定してください:
+
+```bash
+./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3 \
+    CPPFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib"
 ```
 
 ### NCBI C++ Toolkit
@@ -1031,6 +1050,21 @@ cd ../../..
 ```
 
 ikafssn が必要とするライブラリ (`seqdb`、`blastdb_format` およびその依存) のみをビルドします。Toolkit 全体のビルドは不要です。
+
+macOS では、Homebrew の include パスをコンパイラに認識させる必要があります (`lmdb.h` 用)。また、ビルドディレクトリの glob パターンが異なります:
+
+```bash
+export CFLAGS="-I$(brew --prefix)/include"
+export CXXFLAGS="-I$(brew --prefix)/include"
+./cmake-configure \
+    --without-debug \
+    --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
+    --with-install="$(realpath ..)/ncbi-cxx-toolkit"
+cd CMake-Clang*/build
+make -j$(sysctl -n hw.ncpu)
+make install
+cd ../../..
+```
 
 ### ビルド
 
