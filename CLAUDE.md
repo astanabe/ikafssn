@@ -120,6 +120,11 @@ Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eu
   3. この明示的な指示を受けて初めて計画立案を開始する。
 - 計画を提示する際は、プランファイル（`.md`）の**絶対パス**を表示すること。
 
+## Version Management
+
+- バージョン番号は `CMakeLists.txt` の `IKAFSSN_VERSION` で管理される。形式は `"0.1.YYYY.MM.DD"`（本日の日付）。
+- **コミット前に必ず確認**: `IKAFSSN_VERSION` の日付部分が本日の日付と一致しているか確認し、古い場合は本日の日付に更新してからコミットすること。ユーザーからの指示がなくても自主的に行う。
+
 ## Development Environment Rules
 
 - `sudo` が必要なコマンドは Claude Code から直接実行しない。ユーザーに提示して手動実行を求めること。
