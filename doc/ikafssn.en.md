@@ -537,7 +537,7 @@ This auto mode is computed per volume from the `.kix` header.
 
 ### Fractional Stage 1 Threshold
 
-When `-min_stage1_score` is specified as a fraction (0 < P < 1), the threshold is resolved per query as:
+When `-stage1_min_score` is specified as a fraction (0 < P < 1), the threshold is resolved per query as:
 
 ```
 threshold = ceil(Nqkmer * P) - Nhighfreq
@@ -912,9 +912,9 @@ The build subdirectory name within the toolkit (e.g. `CMake-GCC1330-Release`) is
 To download, build, and install the toolkit into `./ncbi-cxx-toolkit`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-30.0.0.tar.gz \
+curl -L -o ncbi-cxx-toolkit-public-release-30.0.0.tar.gz \
     https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
-tar xf ncbi-cxx-toolkit-30.0.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
 cd ncbi-cxx-toolkit-public-release-30.0.0
 ./cmake-configure \
     --without-debug \
@@ -923,7 +923,7 @@ cd ncbi-cxx-toolkit-public-release-30.0.0
 cd CMake-GCC*/build
 make -j$(nproc)
 make install
-cd ../..
+cd ../../..
 ```
 
 Only the libraries required by ikafssn (`seqdb`, `blastdb_format`, and their dependencies) are built. The full toolkit build is not necessary.

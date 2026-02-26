@@ -193,6 +193,9 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -s
 # モード 3: コンテクスト拡張 (前後各50塩基)
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 50 -num_results 5
 
+# モード 3: コンテクスト拡張 (前後各クエリ長の0.1倍)
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 0.1 -num_results 5
+
 # パイプラインで ikafssnretrieve に接続
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 ```
@@ -909,9 +912,9 @@ Toolkit 内のビルドサブディレクトリ名 (例: `CMake-GCC1330-Release`
 Toolkit のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-30.0.0.tar.gz \
+curl -L -o ncbi-cxx-toolkit-public-release-30.0.0.tar.gz \
     https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
-tar xf ncbi-cxx-toolkit-30.0.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
 cd ncbi-cxx-toolkit-public-release-30.0.0
 ./cmake-configure \
     --without-debug \
@@ -920,7 +923,7 @@ cd ncbi-cxx-toolkit-public-release-30.0.0
 cd CMake-GCC*/build
 make -j$(nproc)
 make install
-cd ../..
+cd ../../..
 ```
 
 ikafssn が必要とするライブラリ (`seqdb`、`blastdb_format` およびその依存) のみをビルドします。Toolkit 全体のビルドは不要です。

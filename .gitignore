@@ -1,6 +1,19 @@
 # Build output
 build/
+CMakeFiles/
 
-# NCBI C++ Toolkit (source and install)
-ncbi-cxx-toolkit-public-release-*/
+# NCBI C++ Toolkit (source, tarball, and install)
+ncbi-cxx-toolkit/
+ncbi-cxx-toolkit-public-release-*
 ncbi-toolkit/
+
+# Parasail (source, tarball, and install)
+parasail-*
+parasail/
+
+# htslib (source, tarball, and install)
+htslib-*
+htslib/
+
+# Claude Code conversation logs
+claude*.txt
