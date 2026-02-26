@@ -583,8 +583,10 @@ ikafssn は 3 種類のスコアを計算します。
 **Mode 3, traceback=0** (`-mode 3`):
 
 ```
-# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  alnscore  volume
+# query_id  accession  strand  q_end  q_len  s_end  s_len  coverscore  chainscore  alnscore  volume
 ```
+
+注: トレースバックなしでは正確なアライメント開始位置が得られないため、`q_start` と `s_start` は省略されます。
 
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
@@ -635,6 +637,66 @@ ikafssn は 3 種類のスコアを計算します。
           "q_len": 200,
           "s_len": 5000,
           "coverscore": 8,
+          "volume": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Mode 3, traceback=0** (`-mode 3`):
+
+```json
+{
+  "results": [
+    {
+      "query_id": "query1",
+      "hits": [
+        {
+          "accession": "NC_001234.5",
+          "strand": "+",
+          "q_end": 150,
+          "q_len": 200,
+          "s_end": 1150,
+          "s_len": 5000,
+          "coverscore": 8,
+          "chainscore": 12,
+          "alnscore": 240,
+          "volume": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
+
+```json
+{
+  "results": [
+    {
+      "query_id": "query1",
+      "hits": [
+        {
+          "accession": "NC_001234.5",
+          "strand": "+",
+          "q_start": 0,
+          "q_end": 150,
+          "q_len": 200,
+          "s_start": 1000,
+          "s_end": 1150,
+          "s_len": 5000,
+          "coverscore": 8,
+          "chainscore": 12,
+          "alnscore": 240,
+          "pident": 95.3,
+          "nident": 143,
+          "nmismatch": 7,
+          "cigar": "50=2X48=1I50=",
+          "q_seq": "ACGT...",
+          "s_seq": "ACGT...",
           "volume": 0
         }
       ]
