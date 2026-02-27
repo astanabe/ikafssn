@@ -41,7 +41,7 @@ struct KmerGroup {
 
 // Process a search request using loaded index data from a specific database.
 // Acquires per-sequence permits via server semaphore; rejected queries
-// are returned in resp.rejected_query_ids for client retry.
+// are returned in resp.rejected_qseqids for client retry.
 SearchResponse process_search_request(
     const SearchRequest& req,
     const DatabaseEntry& db,

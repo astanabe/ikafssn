@@ -95,13 +95,13 @@ static std::vector<OutputHit> make_hits() {
     for (int i = 0; i < NUM_TARGETS; i++) {
         if (!g_acc_info[i].found) continue;
         OutputHit h;
-        h.query_id = "ssu_test";
-        h.accession = TARGET_ACC[i];
-        h.strand = '+';
-        h.q_start = 0;
-        h.q_end = g_acc_info[i].seq_length - 1;
-        h.s_start = 0;
-        h.s_end = g_acc_info[i].seq_length - 1;
+        h.qseqid = "ssu_test";
+        h.sseqid = TARGET_ACC[i];
+        h.sstrand = '+';
+        h.qstart = 0;
+        h.qend = g_acc_info[i].seq_length - 1;
+        h.sstart = 0;
+        h.send = g_acc_info[i].seq_length - 1;
         h.chainscore = 100;
         h.volume = 0;
         hits.push_back(h);

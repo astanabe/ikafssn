@@ -229,7 +229,7 @@ Common options:
   -o <path>               Output FASTA file (default: stdout)
   -context <value>        Context extension (default: 0)
                           Integer: bases to add before/after match region
-                          Decimal: multiplier of query length (q_len)
+                          Decimal: multiplier of query length (qlen)
   -v, --verbose           Verbose logging
 
 Remote options (-remote):
@@ -585,7 +585,7 @@ The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0
 
 **Adaptive `-stage2_min_score` (default):** When `-stage2_min_score 0` (the default), the minimum chain score is set adaptively per query to the resolved Stage 1 threshold. With fractional `-stage1_min_score` (e.g. `0.5`), this means each query gets a per-query adaptive threshold based on its k-mer composition. With absolute `-stage1_min_score`, the configured value is used. Set `-stage2_min_score` to a positive integer to override this behavior with a fixed threshold.
 
-**Mode 1 (Stage 1 only):** When `-mode 1` is specified, Stages 2 and 3 are skipped entirely. The `.kpx` file is not accessed, saving I/O and memory. Results contain only Stage 1 scores; position fields (q_start, q_end, s_start, s_end) and chainscore are omitted. The sort key is forced to stage1 score.
+**Mode 1 (Stage 1 only):** When `-mode 1` is specified, Stages 2 and 3 are skipped entirely. The `.kpx` file is not accessed, saving I/O and memory. Results contain only Stage 1 scores; position fields (qstart, qend, sstart, send) and chainscore are omitted. The sort key is forced to stage1 score.
 
 **Mode 3 (Full pipeline):** When `-mode 3` is specified, all three stages are executed. A BLAST DB is required (specified via `-db`, defaulting to the index prefix). The sort key is automatically set to alnscore. SAM/BAM output requires `-mode 3` with `-stage3_traceback 1`.
 
@@ -648,27 +648,27 @@ ikafssn computes three types of scores:
 Tab-separated columns, where `coverscore` is replaced by `matchscore` when `-stage1_score 2`:
 
 ```
-# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  volume
+# qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  volume
 ```
 
 **Mode 1** (`-mode 1`):
 
 ```
-# query_id  accession  strand  q_len  s_len  coverscore  volume
+# qseqid  sseqid  sstrand  qlen  slen  coverscore  volume
 ```
 
 **Mode 3, traceback=0** (`-mode 3`):
 
 ```
-# query_id  accession  strand  q_end  q_len  s_end  s_len  coverscore  chainscore  alnscore  volume
+# qseqid  sseqid  sstrand  qend  qlen  send  slen  coverscore  chainscore  alnscore  volume
 ```
 
-Note: `q_start` and `s_start` are omitted because accurate alignment start positions are unavailable without traceback.
+Note: `qstart` and `sstart` are omitted because accurate alignment start positions are unavailable without traceback.
 
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
 ```
-# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  alnscore  pident  nident  nmismatch  cigar  q_seq  s_seq  volume
+# qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  alnscore  pident  nident  mismatch  cigar  qseq  sseq  volume
 ```
 
 ### JSON Format
@@ -679,17 +679,17 @@ Note: `q_start` and `s_start` are omitted because accurate alignment start posit
 {
   "results": [
     {
-      "query_id": "query1",
+      "qseqid": "query1",
       "hits": [
         {
-          "accession": "NC_001234.5",
-          "strand": "+",
-          "q_start": 0,
-          "q_end": 150,
-          "q_len": 200,
-          "s_start": 1000,
-          "s_end": 1150,
-          "s_len": 5000,
+          "sseqid": "NC_001234.5",
+          "sstrand": "+",
+          "qstart": 0,
+          "qend": 150,
+          "qlen": 200,
+          "sstart": 1000,
+          "send": 1150,
+          "slen": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "volume": 0
@@ -706,13 +706,13 @@ Note: `q_start` and `s_start` are omitted because accurate alignment start posit
 {
   "results": [
     {
-      "query_id": "query1",
+      "qseqid": "query1",
       "hits": [
         {
-          "accession": "NC_001234.5",
-          "strand": "+",
-          "q_len": 200,
-          "s_len": 5000,
+          "sseqid": "NC_001234.5",
+          "sstrand": "+",
+          "qlen": 200,
+          "slen": 5000,
           "coverscore": 8,
           "volume": 0
         }
@@ -728,15 +728,15 @@ Note: `q_start` and `s_start` are omitted because accurate alignment start posit
 {
   "results": [
     {
-      "query_id": "query1",
+      "qseqid": "query1",
       "hits": [
         {
-          "accession": "NC_001234.5",
-          "strand": "+",
-          "q_end": 150,
-          "q_len": 200,
-          "s_end": 1150,
-          "s_len": 5000,
+          "sseqid": "NC_001234.5",
+          "sstrand": "+",
+          "qend": 150,
+          "qlen": 200,
+          "send": 1150,
+          "slen": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "alnscore": 240,
@@ -754,26 +754,26 @@ Note: `q_start` and `s_start` are omitted because accurate alignment start posit
 {
   "results": [
     {
-      "query_id": "query1",
+      "qseqid": "query1",
       "hits": [
         {
-          "accession": "NC_001234.5",
-          "strand": "+",
-          "q_start": 0,
-          "q_end": 150,
-          "q_len": 200,
-          "s_start": 1000,
-          "s_end": 1150,
-          "s_len": 5000,
+          "sseqid": "NC_001234.5",
+          "sstrand": "+",
+          "qstart": 0,
+          "qend": 150,
+          "qlen": 200,
+          "sstart": 1000,
+          "send": 1150,
+          "slen": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "alnscore": 240,
           "pident": 95.3,
           "nident": 143,
-          "nmismatch": 7,
+          "mismatch": 7,
           "cigar": "50=2X48=1I50=",
-          "q_seq": "ACGT...",
-          "s_seq": "ACGT...",
+          "qseq": "ACGT...",
+          "sseq": "ACGT...",
           "volume": 0
         }
       ]
@@ -787,15 +787,15 @@ Note: `q_start` and `s_start` are omitted because accurate alignment start posit
 SAM/BAM output requires `-mode 3 -stage3_traceback 1`. Use `-outfmt sam` for SAM or `-outfmt bam` for BAM (BAM requires `-o <path>`).
 
 SAM records contain:
-- **QNAME**: query_id
+- **QNAME**: qseqid
 - **FLAG**: 0 (forward) or 16 (reverse)
-- **RNAME**: accession
-- **POS**: s_start + 1 (1-based)
+- **RNAME**: sseqid
+- **POS**: sstart + 1 (1-based)
 - **MAPQ**: 255
 - **CIGAR**: extended CIGAR with =/X/I/D operators
 - **SEQ**: ungapped query sequence
 - **QUAL**: * (not available)
-- **Tags**: `AS:i` (alnscore), `NM:i` (nmismatch), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
+- **Tags**: `AS:i` (alnscore), `NM:i` (mismatch), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
 
 ## Deployment Architecture
 

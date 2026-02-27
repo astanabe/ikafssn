@@ -412,37 +412,37 @@ int main(int argc, char* argv[]) {
             if (qr.skipped != 0) {
                 has_skipped = true;
                 std::fprintf(stderr, "Warning: query '%s' was skipped (degenerate bases)\n",
-                             qr.query_id.c_str());
+                             qr.qseqid.c_str());
                 continue;
             }
             if (qr.warnings & kWarnMultiDegen) {
                 std::fprintf(stderr,
                     "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
                     "those k-mers are ignored and not used in the search\n",
-                    qr.query_id.c_str());
+                    qr.qseqid.c_str());
             }
             for (const auto& hit : qr.hits) {
                 OutputHit oh;
-                oh.query_id = qr.query_id;
-                oh.accession = hit.accession;
-                oh.strand = (hit.strand == 0) ? '+' : '-';
-                oh.q_start = hit.q_start;
-                oh.q_end = hit.q_end;
-                oh.s_start = hit.s_start;
-                oh.s_end = hit.s_end;
+                oh.qseqid = qr.qseqid;
+                oh.sseqid = hit.sseqid;
+                oh.sstrand = (hit.sstrand == 0) ? '+' : '-';
+                oh.qstart = hit.qstart;
+                oh.qend = hit.qend;
+                oh.sstart = hit.sstart;
+                oh.send = hit.send;
                 oh.chainscore = hit.chainscore;
                 oh.coverscore = hit.coverscore;
                 oh.matchscore = hit.matchscore;
                 oh.volume = hit.volume;
-                oh.q_length = hit.q_length;
-                oh.s_length = hit.s_length;
+                oh.qlen = hit.qlen;
+                oh.slen = hit.slen;
                 oh.alnscore = hit.alnscore;
                 oh.nident = hit.nident;
-                oh.nmismatch = hit.nmismatch;
+                oh.mismatch = hit.mismatch;
                 oh.pident = static_cast<double>(hit.pident_x100) / 100.0;
                 oh.cigar = hit.cigar;
-                oh.q_seq = hit.q_seq;
-                oh.s_seq = hit.s_seq;
+                oh.qseq = hit.qseq;
+                oh.sseq = hit.sseq;
                 all_hits.push_back(std::move(oh));
             }
         }
@@ -480,7 +480,7 @@ int main(int argc, char* argv[]) {
             }
 
             logger.info("Received response: k=%d, %zu query result(s), %zu rejected",
-                         resp.k, resp.results.size(), resp.rejected_query_ids.size());
+                         resp.k, resp.results.size(), resp.rejected_qseqids.size());
 
             // Save mode/score_type from first successful response
             if (first_response) {
@@ -493,18 +493,18 @@ int main(int argc, char* argv[]) {
             collect_results(resp);
 
             // If no rejected queries, this batch is done
-            if (resp.rejected_query_ids.empty()) break;
+            if (resp.rejected_qseqids.empty()) break;
 
             // Sleep before retry
             int delay_idx = std::min(attempt, num_retry_delays - 1);
             int delay = retry_delays[delay_idx];
             logger.info("%zu queries rejected, retrying in %d seconds...",
-                        resp.rejected_query_ids.size(), delay);
+                        resp.rejected_qseqids.size(), delay);
             std::this_thread::sleep_for(std::chrono::seconds(delay));
 
             // Rebuild request with only rejected query IDs
             req = base_req;
-            for (const auto& qid : resp.rejected_query_ids) {
+            for (const auto& qid : resp.rejected_qseqids) {
                 auto it = query_map.find(qid);
                 if (it != query_map.end()) {
                     req.queries.push_back({qid, it->second});

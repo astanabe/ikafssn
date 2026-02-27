@@ -74,13 +74,13 @@ static void test_full_pipeline() {
     std::vector<OutputHit> hits;
     for (const auto& cr : result.hits) {
         OutputHit oh;
-        oh.query_id = result.query_id;
-        oh.accession = std::string(ksx.accession(cr.seq_id));
-        oh.strand = cr.is_reverse ? '-' : '+';
-        oh.q_start = cr.q_start;
-        oh.q_end = cr.q_end;
-        oh.s_start = cr.s_start;
-        oh.s_end = cr.s_end;
+        oh.qseqid = result.query_id;
+        oh.sseqid = std::string(ksx.accession(cr.seq_id));
+        oh.sstrand = cr.is_reverse ? '-' : '+';
+        oh.qstart = cr.q_start;
+        oh.qend = cr.q_end;
+        oh.sstart = cr.s_start;
+        oh.send = cr.s_end;
         oh.chainscore = cr.chainscore;
         oh.volume = 0;
         hits.push_back(oh);
@@ -145,7 +145,7 @@ static void test_context_extension() {
         while (std::getline(iss, sline)) {
             if (!sline.empty() && sline[0] != '>') seq += sline;
         }
-        CHECK_EQ(seq.size(), 101u); // s_end - s_start + 1 = 200 - 100 + 1 = 101
+        CHECK_EQ(seq.size(), 101u); // send - sstart + 1 = 200 - 100 + 1 = 101
     }
 
     // Retrieve with context=10

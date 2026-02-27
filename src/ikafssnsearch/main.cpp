@@ -485,21 +485,21 @@ int main(int argc, char* argv[]) {
                             if (!sr.hits.empty()) {
                                 for (const auto& cr : sr.hits) {
                                     OutputHit oh;
-                                    oh.query_id = sr.query_id;
-                                    oh.accession = std::string(vd.ksx.accession(cr.seq_id));
-                                    oh.strand = cr.is_reverse ? '-' : '+';
-                                    oh.q_start = cr.q_start;
-                                    oh.q_end = cr.q_end;
-                                    oh.s_start = cr.s_start;
-                                    oh.s_end = cr.s_end;
+                                    oh.qseqid = sr.query_id;
+                                    oh.sseqid = std::string(vd.ksx.accession(cr.seq_id));
+                                    oh.sstrand = cr.is_reverse ? '-' : '+';
+                                    oh.qstart = cr.q_start;
+                                    oh.qend = cr.q_end;
+                                    oh.sstart = cr.s_start;
+                                    oh.send = cr.s_end;
                                     oh.chainscore = cr.chainscore;
                                     if (config.stage1.stage1_score_type == 2)
                                         oh.matchscore = cr.stage1_score;
                                     else
                                         oh.coverscore = cr.stage1_score;
                                     oh.volume = vd.volume_index;
-                                    oh.q_length = static_cast<uint32_t>(query.sequence.size());
-                                    oh.s_length = vd.ksx.seq_length(cr.seq_id);
+                                    oh.qlen = static_cast<uint32_t>(query.sequence.size());
+                                    oh.slen = vd.ksx.seq_length(cr.seq_id);
                                     local_hits.push_back(oh);
                                 }
                             }
@@ -544,21 +544,21 @@ int main(int argc, char* argv[]) {
                         auto& local_hits = tls_hits.local();
                         for (const auto& cr : sr.hits) {
                             OutputHit oh;
-                            oh.query_id = sr.query_id;
-                            oh.accession = std::string(vd.ksx.accession(cr.seq_id));
-                            oh.strand = cr.is_reverse ? '-' : '+';
-                            oh.q_start = cr.q_start;
-                            oh.q_end = cr.q_end;
-                            oh.s_start = cr.s_start;
-                            oh.s_end = cr.s_end;
+                            oh.qseqid = sr.query_id;
+                            oh.sseqid = std::string(vd.ksx.accession(cr.seq_id));
+                            oh.sstrand = cr.is_reverse ? '-' : '+';
+                            oh.qstart = cr.q_start;
+                            oh.qend = cr.q_end;
+                            oh.sstart = cr.s_start;
+                            oh.send = cr.s_end;
                             oh.chainscore = cr.chainscore;
                             if (config.stage1.stage1_score_type == 2)
                                 oh.matchscore = cr.stage1_score;
                             else
                                 oh.coverscore = cr.stage1_score;
                             oh.volume = vd.volume_index;
-                            oh.q_length = static_cast<uint32_t>(query.sequence.size());
-                            oh.s_length = vd.ksx.seq_length(cr.seq_id);
+                            oh.qlen = static_cast<uint32_t>(query.sequence.size());
+                            oh.slen = vd.ksx.seq_length(cr.seq_id);
                             local_hits.push_back(oh);
                         }
                     }
@@ -589,19 +589,19 @@ int main(int argc, char* argv[]) {
         if (config.sort_score == 1) {
             std::sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
-                          if (a.query_id != b.query_id) return a.query_id < b.query_id;
+                          if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
                           return (a.coverscore + a.matchscore) > (b.coverscore + b.matchscore);
                       });
         } else if (config.sort_score == 3) {
             std::sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
-                          if (a.query_id != b.query_id) return a.query_id < b.query_id;
+                          if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
                           return a.alnscore > b.alnscore;
                       });
         } else {
             std::sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
-                          if (a.query_id != b.query_id) return a.query_id < b.query_id;
+                          if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
                           return a.chainscore > b.chainscore;
                       });
         }
@@ -611,8 +611,8 @@ int main(int argc, char* argv[]) {
         std::string cur_qid;
         uint32_t cur_count = 0;
         for (const auto& h : all_hits) {
-            if (h.query_id != cur_qid) {
-                cur_qid = h.query_id;
+            if (h.qseqid != cur_qid) {
+                cur_qid = h.qseqid;
                 cur_count = 0;
             }
             if (cur_count < config.num_results) {

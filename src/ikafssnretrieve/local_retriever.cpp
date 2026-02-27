@@ -55,10 +55,10 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
 
     uint32_t retrieved = 0;
     for (const auto& hit : hits) {
-        auto it = acc_map.find(hit.accession);
+        auto it = acc_map.find(hit.sseqid);
         if (it == acc_map.end()) {
             std::fprintf(stderr, "retrieve_local: accession '%s' not found in DB\n",
-                         hit.accession.c_str());
+                         hit.sseqid.c_str());
             continue;
         }
 
@@ -67,8 +67,8 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
         uint32_t seq_len = readers[reader_idx].seq_length(oid);
 
         // Compute extraction range with context
-        uint32_t ext_start = hit.s_start;
-        uint32_t ext_end = hit.s_end;
+        uint32_t ext_start = hit.sstart;
+        uint32_t ext_end = hit.send;
         if (opts.context > 0) {
             ext_start = (ext_start >= opts.context) ? ext_start - opts.context : 0;
             ext_end = std::min(ext_end + opts.context, seq_len - 1);
@@ -87,22 +87,22 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
         }
         if (ext_start > ext_end) {
             std::fprintf(stderr, "retrieve_local: invalid range [%u, %u] for '%s'\n",
-                         ext_start, ext_end, hit.accession.c_str());
+                         ext_start, ext_end, hit.sseqid.c_str());
             continue;
         }
 
         std::string subseq = full_seq.substr(ext_start, ext_end - ext_start + 1);
 
         // Apply reverse complement for minus strand
-        if (hit.strand == '-') {
+        if (hit.sstrand == '-') {
             reverse_complement(subseq);
         }
 
         // Write FASTA record
-        // >accession query=query_id strand=+/- range=start-end
-        out << '>' << hit.accession
-            << " query=" << hit.query_id
-            << " strand=" << hit.strand
+        // >sseqid query=qseqid strand=+/- range=start-end
+        out << '>' << hit.sseqid
+            << " query=" << hit.qseqid
+            << " strand=" << hit.sstrand
             << " range=" << ext_start << '-' << ext_end
             << " score=" << hit.chainscore
             << '\n';

@@ -25,7 +25,7 @@ struct FetchTarget {
     uint32_t s_end;
     uint32_t seq_length_estimate;  // estimated from s_end
     // Original hit info for FASTA header
-    std::string query_id;
+    std::string qseqid;
     char strand;
     uint32_t score;
 };

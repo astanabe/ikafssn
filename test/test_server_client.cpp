@@ -175,26 +175,26 @@ static void test_server_client_search() {
     for (size_t qi = 0; qi < resp.results.size() && qi < local_results.size(); qi++) {
         const auto& server_qr = resp.results[qi];
         const auto& local_sr = local_results[qi];
-        CHECK(server_qr.query_id == local_sr.query_id);
+        CHECK(server_qr.qseqid == local_sr.query_id);
         CHECK_EQ(server_qr.hits.size(), local_sr.hits.size());
 
-        // Build comparable lists sorted by (accession, s_start, q_start) to avoid ordering issues
+        // Build comparable lists sorted by (sseqid, sstart, qstart) to avoid ordering issues
         struct HitKey {
-            std::string accession;
-            uint32_t q_start, q_end, s_start, s_end;
+            std::string sseqid;
+            uint32_t qstart, qend, sstart, send;
             uint16_t chainscore;
             bool is_reverse;
             bool operator<(const HitKey& o) const {
-                if (accession != o.accession) return accession < o.accession;
-                if (s_start != o.s_start) return s_start < o.s_start;
-                return q_start < o.q_start;
+                if (sseqid != o.sseqid) return sseqid < o.sseqid;
+                if (sstart != o.sstart) return sstart < o.sstart;
+                return qstart < o.qstart;
             }
         };
 
         std::vector<HitKey> server_sorted, local_sorted;
         for (const auto& sh : server_qr.hits) {
-            server_sorted.push_back({sh.accession, sh.q_start, sh.q_end,
-                                     sh.s_start, sh.s_end, sh.chainscore, sh.strand == 1});
+            server_sorted.push_back({sh.sseqid, sh.qstart, sh.qend,
+                                     sh.sstart, sh.send, sh.chainscore, sh.sstrand == 1});
         }
         for (const auto& lh : local_sr.hits) {
             local_sorted.push_back({std::string(ksx.accession(lh.seq_id)),
@@ -205,11 +205,11 @@ static void test_server_client_search() {
         std::sort(local_sorted.begin(), local_sorted.end());
 
         for (size_t hi = 0; hi < server_sorted.size() && hi < local_sorted.size(); hi++) {
-            CHECK(server_sorted[hi].accession == local_sorted[hi].accession);
-            CHECK_EQ(server_sorted[hi].q_start, local_sorted[hi].q_start);
-            CHECK_EQ(server_sorted[hi].q_end, local_sorted[hi].q_end);
-            CHECK_EQ(server_sorted[hi].s_start, local_sorted[hi].s_start);
-            CHECK_EQ(server_sorted[hi].s_end, local_sorted[hi].s_end);
+            CHECK(server_sorted[hi].sseqid == local_sorted[hi].sseqid);
+            CHECK_EQ(server_sorted[hi].qstart, local_sorted[hi].qstart);
+            CHECK_EQ(server_sorted[hi].qend, local_sorted[hi].qend);
+            CHECK_EQ(server_sorted[hi].sstart, local_sorted[hi].sstart);
+            CHECK_EQ(server_sorted[hi].send, local_sorted[hi].send);
             CHECK_EQ(server_sorted[hi].chainscore, local_sorted[hi].chainscore);
             CHECK(server_sorted[hi].is_reverse == local_sorted[hi].is_reverse);
         }
@@ -328,7 +328,7 @@ static void test_seqidlist_filter_via_server() {
     // All hits should have the target accession
     for (const auto& qr : resp.results) {
         for (const auto& hit : qr.hits) {
-            CHECK(hit.accession == target_acc);
+            CHECK(hit.sseqid == target_acc);
         }
     }
 }

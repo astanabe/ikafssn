@@ -85,13 +85,13 @@ static void test_stage3_pipeline() {
     std::vector<OutputHit> all_hits;
     for (const auto& cr : result.hits) {
         OutputHit oh;
-        oh.query_id = result.query_id;
-        oh.accession = std::string(ksx.accession(cr.seq_id));
-        oh.strand = cr.is_reverse ? '-' : '+';
-        oh.q_start = cr.q_start;
-        oh.q_end = cr.q_end;
-        oh.s_start = cr.s_start;
-        oh.s_end = cr.s_end;
+        oh.qseqid = result.query_id;
+        oh.sseqid = std::string(ksx.accession(cr.seq_id));
+        oh.sstrand = cr.is_reverse ? '-' : '+';
+        oh.qstart = cr.q_start;
+        oh.qend = cr.q_end;
+        oh.sstart = cr.s_start;
+        oh.send = cr.s_end;
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = 0;
@@ -127,15 +127,15 @@ static void test_stage3_pipeline() {
         // nident should be positive
         CHECK(h.nident > 0);
         // Coordinates should be within sequence bounds
-        CHECK(h.s_length > 0);
-        CHECK(h.s_start < h.s_length);
-        CHECK(h.s_end < h.s_length);
+        CHECK(h.slen > 0);
+        CHECK(h.sstart < h.slen);
+        CHECK(h.send < h.slen);
     }
 
     // The exact match hit (FJ876973.1) should have high pident
     bool found_high_pident = false;
     for (const auto& h : filtered) {
-        if (h.accession == ACC_FJ && h.strand == '+') {
+        if (h.sseqid == ACC_FJ && h.sstrand == '+') {
             CHECK(h.pident > 90.0);
             found_high_pident = true;
         }
@@ -191,13 +191,13 @@ static void test_stage3_score_only() {
     std::vector<OutputHit> all_hits;
     for (const auto& cr : result.hits) {
         OutputHit oh;
-        oh.query_id = result.query_id;
-        oh.accession = std::string(ksx.accession(cr.seq_id));
-        oh.strand = cr.is_reverse ? '-' : '+';
-        oh.q_start = cr.q_start;
-        oh.q_end = cr.q_end;
-        oh.s_start = cr.s_start;
-        oh.s_end = cr.s_end;
+        oh.qseqid = result.query_id;
+        oh.sseqid = std::string(ksx.accession(cr.seq_id));
+        oh.sstrand = cr.is_reverse ? '-' : '+';
+        oh.qstart = cr.q_start;
+        oh.qend = cr.q_end;
+        oh.sstart = cr.s_start;
+        oh.send = cr.s_end;
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = 0;
@@ -276,13 +276,13 @@ static void test_stage3_context() {
     std::vector<OutputHit> all_hits;
     for (const auto& cr : result.hits) {
         OutputHit oh;
-        oh.query_id = result.query_id;
-        oh.accession = std::string(ksx.accession(cr.seq_id));
-        oh.strand = cr.is_reverse ? '-' : '+';
-        oh.q_start = cr.q_start;
-        oh.q_end = cr.q_end;
-        oh.s_start = cr.s_start;
-        oh.s_end = cr.s_end;
+        oh.qseqid = result.query_id;
+        oh.sseqid = std::string(ksx.accession(cr.seq_id));
+        oh.sstrand = cr.is_reverse ? '-' : '+';
+        oh.qstart = cr.q_start;
+        oh.qend = cr.q_end;
+        oh.sstart = cr.s_start;
+        oh.send = cr.s_end;
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = 0;

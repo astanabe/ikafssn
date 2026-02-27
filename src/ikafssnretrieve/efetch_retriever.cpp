@@ -265,16 +265,16 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
     };
     std::unordered_map<std::string, AccessionInfo> acc_info;
     for (size_t i = 0; i < hits.size(); i++) {
-        auto& info = acc_info[hits[i].accession];
-        uint32_t ext_start = hits[i].s_start;
-        uint32_t ext_end = hits[i].s_end;
+        auto& info = acc_info[hits[i].sseqid];
+        uint32_t ext_start = hits[i].sstart;
+        uint32_t ext_end = hits[i].send;
         if (opts.context > 0) {
             ext_start = (ext_start >= opts.context) ? ext_start - opts.context : 0;
             ext_end += opts.context;  // may exceed actual seq length; efetch handles this
         }
         info.hit_refs.push_back({i, ext_start, ext_end});
-        if (hits[i].s_end > info.max_s_end)
-            info.max_s_end = hits[i].s_end;
+        if (hits[i].send > info.max_s_end)
+            info.max_s_end = hits[i].send;
     }
 
     // Separate into batch and individual lists
@@ -337,14 +337,14 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                 if (ext_start > ext_end) continue;
 
                 std::string subseq = full_seq.substr(ext_start, ext_end - ext_start + 1);
-                if (hit.strand == '-') {
+                if (hit.sstrand == '-') {
                     reverse_complement(subseq);
                 }
 
                 std::ostringstream header;
-                header << hit.accession
-                       << " query=" << hit.query_id
-                       << " strand=" << hit.strand
+                header << hit.sseqid
+                       << " query=" << hit.qseqid
+                       << " strand=" << hit.sstrand
                        << " range=" << ext_start << '-' << ext_end
                        << " score=" << hit.chainscore;
                 write_fasta_record(out, header.str(), subseq);
@@ -390,14 +390,14 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
             }
 
             std::string subseq = std::move(records[0].sequence);
-            if (hit.strand == '-') {
+            if (hit.sstrand == '-') {
                 reverse_complement(subseq);
             }
 
             std::ostringstream header;
-            header << hit.accession
-                   << " query=" << hit.query_id
-                   << " strand=" << hit.strand
+            header << hit.sseqid
+                   << " query=" << hit.qseqid
+                   << " strand=" << hit.sstrand
                    << " range=" << hr.ext_start << '-' << hr.ext_end
                    << " score=" << hit.chainscore;
             write_fasta_record(out, header.str(), subseq);

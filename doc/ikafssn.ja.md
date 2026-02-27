@@ -229,7 +229,7 @@ ikafssnretrieve [options]
   -o <path>               出力 FASTA ファイル (デフォルト: 標準出力)
   -context <value>        コンテクスト拡張 (デフォルト: 0)
                           整数: マッチ領域の前後に付加する塩基数
-                          小数: クエリ長 (q_len) に対する倍率
+                          小数: クエリ長 (qlen) に対する倍率
   -v, --verbose           詳細ログ出力
 
 リモート取得オプション (-remote 時):
@@ -585,7 +585,7 @@ ikafssn は 3 段階の検索パイプラインを使用します。
 
 **適応的 `-stage2_min_score` (デフォルト):** `-stage2_min_score 0` (デフォルト) の場合、最小チェインスコアはクエリごとに適応的に設定され、解決済みの Stage 1 閾値が使用されます。割合指定の `-stage1_min_score` (例: `0.5`) との組み合わせでは、各クエリの k-mer 構成に基づくクエリごとの適応的閾値が設定されます。絶対値指定の `-stage1_min_score` の場合は、その設定値がそのまま使用されます。固定閾値を使用する場合は `-stage2_min_score` に正の整数を指定してください。
 
-**Mode 1 (Stage 1 のみ):** `-mode 1` を指定すると Stage 2, 3 が省略されます。`.kpx` ファイルへのアクセスが不要となり、I/O とメモリを節約できます。結果には Stage 1 スコアのみが含まれ、位置フィールド (q_start, q_end, s_start, s_end) と chainscore は省略されます。ソート基準は Stage 1 スコアに強制されます。
+**Mode 1 (Stage 1 のみ):** `-mode 1` を指定すると Stage 2, 3 が省略されます。`.kpx` ファイルへのアクセスが不要となり、I/O とメモリを節約できます。結果には Stage 1 スコアのみが含まれ、位置フィールド (qstart, qend, sstart, send) と chainscore は省略されます。ソート基準は Stage 1 スコアに強制されます。
 
 **Mode 3 (全パイプライン):** `-mode 3` を指定すると全 3 段階が実行されます。BLAST DB が必要です (`-db` で指定、デフォルトはインデックスプレフィックスと同じ)。ソート基準は alnscore に自動設定されます。SAM/BAM 出力には `-mode 3` と `-stage3_traceback 1` の両方が必要です。
 
@@ -648,27 +648,27 @@ ikafssn は 3 種類のスコアを計算します。
 タブ区切りのカラムです。`-stage1_score 2` のとき `coverscore` が `matchscore` に置き換わります。
 
 ```
-# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  volume
+# qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  volume
 ```
 
 **Mode 1** (`-mode 1`):
 
 ```
-# query_id  accession  strand  q_len  s_len  coverscore  volume
+# qseqid  sseqid  sstrand  qlen  slen  coverscore  volume
 ```
 
 **Mode 3, traceback=0** (`-mode 3`):
 
 ```
-# query_id  accession  strand  q_end  q_len  s_end  s_len  coverscore  chainscore  alnscore  volume
+# qseqid  sseqid  sstrand  qend  qlen  send  slen  coverscore  chainscore  alnscore  volume
 ```
 
-注: トレースバックなしでは正確なアライメント開始位置が得られないため、`q_start` と `s_start` は省略されます。
+注: トレースバックなしでは正確なアライメント開始位置が得られないため、`qstart` と `sstart` は省略されます。
 
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
 ```
-# query_id  accession  strand  q_start  q_end  q_len  s_start  s_end  s_len  coverscore  chainscore  alnscore  pident  nident  nmismatch  cigar  q_seq  s_seq  volume
+# qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  alnscore  pident  nident  mismatch  cigar  qseq  sseq  volume
 ```
 
 ### JSON 形式
@@ -679,17 +679,17 @@ ikafssn は 3 種類のスコアを計算します。
 {
   "results": [
     {
-      "query_id": "query1",
+      "qseqid": "query1",
       "hits": [
         {
-          "accession": "NC_001234.5",
-          "strand": "+",
-          "q_start": 0,
-          "q_end": 150,
-          "q_len": 200,
-          "s_start": 1000,
-          "s_end": 1150,
-          "s_len": 5000,
+          "sseqid": "NC_001234.5",
+          "sstrand": "+",
+          "qstart": 0,
+          "qend": 150,
+          "qlen": 200,
+          "sstart": 1000,
+          "send": 1150,
+          "slen": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "volume": 0
@@ -706,13 +706,13 @@ ikafssn は 3 種類のスコアを計算します。
 {
   "results": [
     {
-      "query_id": "query1",
+      "qseqid": "query1",
       "hits": [
         {
-          "accession": "NC_001234.5",
-          "strand": "+",
-          "q_len": 200,
-          "s_len": 5000,
+          "sseqid": "NC_001234.5",
+          "sstrand": "+",
+          "qlen": 200,
+          "slen": 5000,
           "coverscore": 8,
           "volume": 0
         }
@@ -728,15 +728,15 @@ ikafssn は 3 種類のスコアを計算します。
 {
   "results": [
     {
-      "query_id": "query1",
+      "qseqid": "query1",
       "hits": [
         {
-          "accession": "NC_001234.5",
-          "strand": "+",
-          "q_end": 150,
-          "q_len": 200,
-          "s_end": 1150,
-          "s_len": 5000,
+          "sseqid": "NC_001234.5",
+          "sstrand": "+",
+          "qend": 150,
+          "qlen": 200,
+          "send": 1150,
+          "slen": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "alnscore": 240,
@@ -754,26 +754,26 @@ ikafssn は 3 種類のスコアを計算します。
 {
   "results": [
     {
-      "query_id": "query1",
+      "qseqid": "query1",
       "hits": [
         {
-          "accession": "NC_001234.5",
-          "strand": "+",
-          "q_start": 0,
-          "q_end": 150,
-          "q_len": 200,
-          "s_start": 1000,
-          "s_end": 1150,
-          "s_len": 5000,
+          "sseqid": "NC_001234.5",
+          "sstrand": "+",
+          "qstart": 0,
+          "qend": 150,
+          "qlen": 200,
+          "sstart": 1000,
+          "send": 1150,
+          "slen": 5000,
           "coverscore": 8,
           "chainscore": 12,
           "alnscore": 240,
           "pident": 95.3,
           "nident": 143,
-          "nmismatch": 7,
+          "mismatch": 7,
           "cigar": "50=2X48=1I50=",
-          "q_seq": "ACGT...",
-          "s_seq": "ACGT...",
+          "qseq": "ACGT...",
+          "sseq": "ACGT...",
           "volume": 0
         }
       ]
@@ -787,15 +787,15 @@ ikafssn は 3 種類のスコアを計算します。
 SAM/BAM 出力には `-mode 3 -stage3_traceback 1` が必要です。`-outfmt sam` で SAM、`-outfmt bam` で BAM を出力します (BAM は `-o <path>` が必須)。
 
 SAM レコードの構成:
-- **QNAME**: query_id
+- **QNAME**: qseqid
 - **FLAG**: 0 (フォワード) / 16 (リバース)
-- **RNAME**: accession
-- **POS**: s_start + 1 (1-based)
+- **RNAME**: sseqid
+- **POS**: sstart + 1 (1-based)
 - **MAPQ**: 255
 - **CIGAR**: 拡張 CIGAR (=/X/I/D 演算子)
 - **SEQ**: ギャップなしクエリ配列
 - **QUAL**: * (利用不可)
-- **タグ**: `AS:i` (alnscore), `NM:i` (nmismatch), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
+- **タグ**: `AS:i` (alnscore), `NM:i` (mismatch), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
 
 ## デプロイ構成
 

@@ -159,7 +159,7 @@ private:
 //   u32  num_seqids
 //     [str16 seqid] × num_seqids
 //   u16  num_queries
-//     [str16 query_id, u32 seq_len, bytes seq] × num_queries
+//     [str16 qseqid, u32 seq_len, bytes seq] × num_queries
 
 std::vector<uint8_t> serialize(const SearchRequest& req) {
     std::vector<uint8_t> buf;
@@ -198,7 +198,7 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
 
     put_u16(buf, static_cast<uint16_t>(req.queries.size()));
     for (const auto& q : req.queries) {
-        put_str16(buf, q.query_id);
+        put_str16(buf, q.qseqid);
         put_u32(buf, static_cast<uint32_t>(q.sequence.size()));
         buf.insert(buf.end(), q.sequence.begin(), q.sequence.end());
     }
@@ -251,7 +251,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u16(num_queries)) return false;
     req.queries.resize(num_queries);
     for (uint16_t i = 0; i < num_queries; i++) {
-        if (!r.get_str16(req.queries[i].query_id)) return false;
+        if (!r.get_str16(req.queries[i].qseqid)) return false;
         uint32_t seq_len;
         if (!r.get_u32(seq_len)) return false;
         if (!r.has(seq_len)) return false;
@@ -274,32 +274,32 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //   str16 db
 //   u16  num_queries
 //   for each query:
-//     str16 query_id
+//     str16 qseqid
 //     u8    skipped
 //     u8    warnings
 //     u16   num_hits
 //     for each hit:
-//       str16  accession
-//       u8     strand
-//       u32    q_start
-//       u32    q_end
-//       u32    q_length
-//       u32    s_start
-//       u32    s_end
-//       u32    s_length
+//       str16  sseqid
+//       u8     sstrand
+//       u32    qstart
+//       u32    qend
+//       u32    qlen
+//       u32    sstart
+//       u32    send
+//       u32    slen
 //       u16    coverscore
 //       u16    matchscore
 //       u16    chainscore
 //       u16    volume
 //       i32    alnscore
 //       u32    nident
-//       u32    nmismatch
+//       u32    mismatch
 //       u16    pident_x100
 //       str16  cigar
-//       str16  q_seq
-//       str16  s_seq
+//       str16  qseq
+//       str16  sseq
 //   u16  num_rejected
-//     [str16 query_id] × num_rejected
+//     [str16 qseqid] × num_rejected
 
 std::vector<uint8_t> serialize(const SearchResponse& resp) {
     std::vector<uint8_t> buf;
@@ -314,36 +314,36 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
     put_u16(buf, static_cast<uint16_t>(resp.results.size()));
 
     for (const auto& qr : resp.results) {
-        put_str16(buf, qr.query_id);
+        put_str16(buf, qr.qseqid);
         put_u8(buf, qr.skipped);
         put_u8(buf, qr.warnings);
         put_u16(buf, static_cast<uint16_t>(qr.hits.size()));
         for (const auto& hit : qr.hits) {
-            put_str16(buf, hit.accession);
-            put_u8(buf, hit.strand);
-            put_u32(buf, hit.q_start);
-            put_u32(buf, hit.q_end);
-            put_u32(buf, hit.q_length);
-            put_u32(buf, hit.s_start);
-            put_u32(buf, hit.s_end);
-            put_u32(buf, hit.s_length);
+            put_str16(buf, hit.sseqid);
+            put_u8(buf, hit.sstrand);
+            put_u32(buf, hit.qstart);
+            put_u32(buf, hit.qend);
+            put_u32(buf, hit.qlen);
+            put_u32(buf, hit.sstart);
+            put_u32(buf, hit.send);
+            put_u32(buf, hit.slen);
             put_u16(buf, hit.coverscore);
             put_u16(buf, hit.matchscore);
             put_u16(buf, hit.chainscore);
             put_u16(buf, hit.volume);
             put_i32(buf, hit.alnscore);
             put_u32(buf, hit.nident);
-            put_u32(buf, hit.nmismatch);
+            put_u32(buf, hit.mismatch);
             put_u16(buf, hit.pident_x100);
             put_str16(buf, hit.cigar);
-            put_str16(buf, hit.q_seq);
-            put_str16(buf, hit.s_seq);
+            put_str16(buf, hit.qseq);
+            put_str16(buf, hit.sseq);
         }
     }
 
     // Rejected query IDs
-    put_u16(buf, static_cast<uint16_t>(resp.rejected_query_ids.size()));
-    for (const auto& qid : resp.rejected_query_ids) {
+    put_u16(buf, static_cast<uint16_t>(resp.rejected_qseqids.size()));
+    for (const auto& qid : resp.rejected_qseqids) {
         put_str16(buf, qid);
     }
 
@@ -366,7 +366,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
 
     for (uint16_t qi = 0; qi < num_queries; qi++) {
         auto& qr = resp.results[qi];
-        if (!r.get_str16(qr.query_id)) return false;
+        if (!r.get_str16(qr.qseqid)) return false;
         if (!r.get_u8(qr.skipped)) return false;
         if (!r.get_u8(qr.warnings)) return false;
 
@@ -376,34 +376,34 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
 
         for (uint16_t hi = 0; hi < num_hits; hi++) {
             auto& hit = qr.hits[hi];
-            if (!r.get_str16(hit.accession)) return false;
-            if (!r.get_u8(hit.strand)) return false;
-            if (!r.get_u32(hit.q_start)) return false;
-            if (!r.get_u32(hit.q_end)) return false;
-            if (!r.get_u32(hit.q_length)) return false;
-            if (!r.get_u32(hit.s_start)) return false;
-            if (!r.get_u32(hit.s_end)) return false;
-            if (!r.get_u32(hit.s_length)) return false;
+            if (!r.get_str16(hit.sseqid)) return false;
+            if (!r.get_u8(hit.sstrand)) return false;
+            if (!r.get_u32(hit.qstart)) return false;
+            if (!r.get_u32(hit.qend)) return false;
+            if (!r.get_u32(hit.qlen)) return false;
+            if (!r.get_u32(hit.sstart)) return false;
+            if (!r.get_u32(hit.send)) return false;
+            if (!r.get_u32(hit.slen)) return false;
             if (!r.get_u16(hit.coverscore)) return false;
             if (!r.get_u16(hit.matchscore)) return false;
             if (!r.get_u16(hit.chainscore)) return false;
             if (!r.get_u16(hit.volume)) return false;
             if (!r.get_i32(hit.alnscore)) return false;
             if (!r.get_u32(hit.nident)) return false;
-            if (!r.get_u32(hit.nmismatch)) return false;
+            if (!r.get_u32(hit.mismatch)) return false;
             if (!r.get_u16(hit.pident_x100)) return false;
             if (!r.get_str16(hit.cigar)) return false;
-            if (!r.get_str16(hit.q_seq)) return false;
-            if (!r.get_str16(hit.s_seq)) return false;
+            if (!r.get_str16(hit.qseq)) return false;
+            if (!r.get_str16(hit.sseq)) return false;
         }
     }
 
     // Rejected query IDs
     uint16_t num_rejected;
     if (!r.get_u16(num_rejected)) return false;
-    resp.rejected_query_ids.resize(num_rejected);
+    resp.rejected_qseqids.resize(num_rejected);
     for (uint16_t i = 0; i < num_rejected; i++) {
-        if (!r.get_str16(resp.rejected_query_ids[i])) return false;
+        if (!r.get_str16(resp.rejected_qseqids[i])) return false;
     }
 
     return true;

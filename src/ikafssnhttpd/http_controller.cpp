@@ -133,14 +133,14 @@ void HttpController::search(
     }
 
     for (const auto& q : j["queries"]) {
-        if (!q.isMember("query_id") || !q.isMember("sequence")) {
+        if (!q.isMember("qseqid") || !q.isMember("sequence")) {
             callback(make_error_response(
                 drogon::k400BadRequest,
-                "Each query must have 'query_id' and 'sequence' fields"));
+                "Each query must have 'qseqid' and 'sequence' fields"));
             return;
         }
         QueryEntry entry;
-        entry.query_id = q["query_id"].asString();
+        entry.qseqid = q["qseqid"].asString();
         entry.sequence = q["sequence"].asString();
         if (entry.sequence.empty()) {
             callback(make_error_response(drogon::k400BadRequest,
@@ -188,23 +188,23 @@ void HttpController::search(
         Json::Value results_arr(Json::arrayValue);
         for (const auto& qr : sresp.results) {
             Json::Value qobj;
-            qobj["query_id"] = qr.query_id;
+            qobj["qseqid"] = qr.qseqid;
 
             Json::Value hits_arr(Json::arrayValue);
             for (const auto& hit : qr.hits) {
                 Json::Value hobj;
-                hobj["accession"] = hit.accession;
-                hobj["strand"] = (hit.strand == 0) ? "+" : "-";
+                hobj["sseqid"] = hit.sseqid;
+                hobj["sstrand"] = (hit.sstrand == 0) ? "+" : "-";
                 if (sresp.mode != 1) {
-                    hobj["q_start"] = hit.q_start;
-                    hobj["q_end"] = hit.q_end;
+                    hobj["qstart"] = hit.qstart;
+                    hobj["qend"] = hit.qend;
                 }
-                hobj["q_len"] = hit.q_length;
+                hobj["qlen"] = hit.qlen;
                 if (sresp.mode != 1) {
-                    hobj["s_start"] = hit.s_start;
-                    hobj["s_end"] = hit.s_end;
+                    hobj["sstart"] = hit.sstart;
+                    hobj["send"] = hit.send;
                 }
-                hobj["s_len"] = hit.s_length;
+                hobj["slen"] = hit.slen;
                 hobj["coverscore"] = hit.coverscore;
                 hobj["matchscore"] = hit.matchscore;
                 if (sresp.mode != 1) {
@@ -215,10 +215,10 @@ void HttpController::search(
                     if (sresp.stage3_traceback) {
                         hobj["pident"] = static_cast<double>(hit.pident_x100) / 100.0;
                         hobj["nident"] = hit.nident;
-                        hobj["nmismatch"] = hit.nmismatch;
+                        hobj["mismatch"] = hit.mismatch;
                         hobj["cigar"] = hit.cigar;
-                        hobj["q_seq"] = hit.q_seq;
-                        hobj["s_seq"] = hit.s_seq;
+                        hobj["qseq"] = hit.qseq;
+                        hobj["sseq"] = hit.sseq;
                     }
                 }
                 hobj["volume"] = hit.volume;
@@ -239,11 +239,11 @@ void HttpController::search(
         }
         result["results"] = std::move(results_arr);
 
-        if (!sresp.rejected_query_ids.empty()) {
+        if (!sresp.rejected_qseqids.empty()) {
             Json::Value rejected_arr(Json::arrayValue);
-            for (const auto& qid : sresp.rejected_query_ids)
+            for (const auto& qid : sresp.rejected_qseqids)
                 rejected_arr.append(qid);
-            result["rejected_query_ids"] = std::move(rejected_arr);
+            result["rejected_qseqids"] = std::move(rejected_arr);
         }
 
         auto resp = drogon::HttpResponse::newHttpJsonResponse(std::move(result));

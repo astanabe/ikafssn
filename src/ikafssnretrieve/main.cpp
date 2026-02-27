@@ -131,7 +131,7 @@ int main(int argc, char* argv[]) {
             logger.info("Retrieving from local BLAST DB: %s (context ratio=%.4f)",
                         db_path.c_str(), ctx_param.ratio);
             for (auto& hit : hits) {
-                uint32_t ctx = static_cast<uint32_t>(hit.q_length * ctx_param.ratio);
+                uint32_t ctx = static_cast<uint32_t>(hit.qlen * ctx_param.ratio);
                 // Temporarily store per-hit context using a single-hit retrieval approach
                 RetrieveOptions opts;
                 opts.context = ctx;
@@ -155,7 +155,7 @@ int main(int argc, char* argv[]) {
             // For simplicity, compute per-hit max context
             uint32_t max_ctx = 0;
             for (const auto& hit : hits) {
-                uint32_t ctx = static_cast<uint32_t>(hit.q_length * ctx_param.ratio);
+                uint32_t ctx = static_cast<uint32_t>(hit.qlen * ctx_param.ratio);
                 if (ctx > max_ctx) max_ctx = ctx;
             }
             opts.context = max_ctx;

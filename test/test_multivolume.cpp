@@ -135,13 +135,13 @@ static std::vector<OutputHit> search_sequential(
 
             for (const auto& cr : sr.hits) {
                 OutputHit oh;
-                oh.query_id = sr.query_id;
-                oh.accession = std::string(ksx.accession(cr.seq_id));
-                oh.strand = cr.is_reverse ? '-' : '+';
-                oh.q_start = cr.q_start;
-                oh.q_end = cr.q_end;
-                oh.s_start = cr.s_start;
-                oh.s_end = cr.s_end;
+                oh.qseqid = sr.query_id;
+                oh.sseqid = std::string(ksx.accession(cr.seq_id));
+                oh.sstrand = cr.is_reverse ? '-' : '+';
+                oh.qstart = cr.q_start;
+                oh.qend = cr.q_end;
+                oh.sstart = cr.s_start;
+                oh.send = cr.s_end;
                 oh.chainscore = cr.chainscore;
                 oh.volume = static_cast<uint16_t>(vi);
                 all_hits.push_back(oh);
@@ -153,12 +153,12 @@ static std::vector<OutputHit> search_sequential(
         ksx.close();
     }
 
-    // Sort by (query_id, chainscore desc, accession, volume)
+    // Sort by (qseqid, chainscore desc, sseqid, volume)
     std::sort(all_hits.begin(), all_hits.end(),
               [](const OutputHit& a, const OutputHit& b) {
-                  if (a.query_id != b.query_id) return a.query_id < b.query_id;
+                  if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
                   if (a.chainscore != b.chainscore) return a.chainscore > b.chainscore;
-                  if (a.accession != b.accession) return a.accession < b.accession;
+                  if (a.sseqid != b.sseqid) return a.sseqid < b.sseqid;
                   return a.volume < b.volume;
               });
 
@@ -231,13 +231,13 @@ static std::vector<OutputHit> search_parallel(
                     std::vector<OutputHit> local;
                     for (const auto& cr : sr.hits) {
                         OutputHit oh;
-                        oh.query_id = sr.query_id;
-                        oh.accession = std::string(vd.ksx.accession(cr.seq_id));
-                        oh.strand = cr.is_reverse ? '-' : '+';
-                        oh.q_start = cr.q_start;
-                        oh.q_end = cr.q_end;
-                        oh.s_start = cr.s_start;
-                        oh.s_end = cr.s_end;
+                        oh.qseqid = sr.query_id;
+                        oh.sseqid = std::string(vd.ksx.accession(cr.seq_id));
+                        oh.sstrand = cr.is_reverse ? '-' : '+';
+                        oh.qstart = cr.q_start;
+                        oh.qend = cr.q_end;
+                        oh.sstart = cr.s_start;
+                        oh.send = cr.s_end;
                         oh.chainscore = cr.chainscore;
                         oh.volume = vd.volume_index;
                         local.push_back(oh);
@@ -248,12 +248,12 @@ static std::vector<OutputHit> search_parallel(
             });
     });
 
-    // Sort by (query_id, chainscore desc, accession, volume)
+    // Sort by (qseqid, chainscore desc, sseqid, volume)
     std::sort(all_hits.begin(), all_hits.end(),
               [](const OutputHit& a, const OutputHit& b) {
-                  if (a.query_id != b.query_id) return a.query_id < b.query_id;
+                  if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
                   if (a.chainscore != b.chainscore) return a.chainscore > b.chainscore;
-                  if (a.accession != b.accession) return a.accession < b.accession;
+                  if (a.sseqid != b.sseqid) return a.sseqid < b.sseqid;
                   return a.volume < b.volume;
               });
 
@@ -334,9 +334,9 @@ static void test_parallel_equals_sequential() {
 
     // Verify each result matches
     for (size_t i = 0; i < seq_results.size() && i < par_results.size(); i++) {
-        CHECK(seq_results[i].query_id == par_results[i].query_id);
-        CHECK(seq_results[i].accession == par_results[i].accession);
-        CHECK(seq_results[i].strand == par_results[i].strand);
+        CHECK(seq_results[i].qseqid == par_results[i].qseqid);
+        CHECK(seq_results[i].sseqid == par_results[i].sseqid);
+        CHECK(seq_results[i].sstrand == par_results[i].sstrand);
         CHECK_EQ(seq_results[i].chainscore, par_results[i].chainscore);
         CHECK_EQ(seq_results[i].volume, par_results[i].volume);
     }
@@ -365,7 +365,7 @@ static void test_result_merge_ordering() {
 
     // Verify results are sorted by score descending within each query
     for (size_t i = 1; i < results.size(); i++) {
-        if (results[i].query_id == results[i - 1].query_id) {
+        if (results[i].qseqid == results[i - 1].qseqid) {
             CHECK(results[i].chainscore <= results[i - 1].chainscore);
         }
     }
@@ -487,7 +487,7 @@ static void test_multivolume_k9() {
     CHECK_EQ(seq_results.size(), par_results.size());
 
     for (size_t i = 0; i < seq_results.size() && i < par_results.size(); i++) {
-        CHECK(seq_results[i].query_id == par_results[i].query_id);
+        CHECK(seq_results[i].qseqid == par_results[i].qseqid);
         CHECK_EQ(seq_results[i].chainscore, par_results[i].chainscore);
     }
 }

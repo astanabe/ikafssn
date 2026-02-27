@@ -171,7 +171,7 @@ SearchResponse process_search_request(
 
     // First `acquired` valid queries are accepted; rest are rejected
     for (int i = acquired; i < valid_count; i++) {
-        resp.rejected_query_ids.push_back(req.queries[valid_indices[i]].query_id);
+        resp.rejected_qseqids.push_back(req.queries[valid_indices[i]].qseqid);
     }
 
     // Build resp.results for skipped + accepted queries only
@@ -204,7 +204,7 @@ SearchResponse process_search_request(
                         contains_degenerate_base(req.queries[qi].sequence));
         if (skipped) {
             QueryResult qr;
-            qr.query_id = req.queries[qi].query_id;
+            qr.qseqid = req.queries[qi].qseqid;
             qr.skipped = 1;
             resp.results.push_back(std::move(qr));
             continue;
@@ -228,7 +228,7 @@ SearchResponse process_search_request(
 
         size_t result_idx = resp.results.size();
         QueryResult qr;
-        qr.query_id = req.queries[qi].query_id;
+        qr.qseqid = req.queries[qi].qseqid;
         if (multi_degen) {
             qr.warnings |= kWarnMultiDegen;
         }
@@ -277,31 +277,31 @@ SearchResponse process_search_request(
                         SearchResult sr;
                         if (group.kmer_type == 0) {
                             sr = search_volume<uint16_t>(
-                                query.query_id, pp16[pp_idx].qdata, k,
+                                query.qseqid, pp16[pp_idx].qdata, k,
                                 vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
                         } else {
                             sr = search_volume<uint32_t>(
-                                query.query_id, pp32[pp_idx].qdata, k,
+                                query.qseqid, pp32[pp_idx].qdata, k,
                                 vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
                         }
 
                         if (!sr.hits.empty()) {
                             for (const auto& cr : sr.hits) {
                                 ResponseHit rh;
-                                rh.accession = std::string(vol.ksx.accession(cr.seq_id));
-                                rh.strand = cr.is_reverse ? 1 : 0;
-                                rh.q_start = cr.q_start;
-                                rh.q_end = cr.q_end;
-                                rh.s_start = cr.s_start;
-                                rh.s_end = cr.s_end;
+                                rh.sseqid = std::string(vol.ksx.accession(cr.seq_id));
+                                rh.sstrand = cr.is_reverse ? 1 : 0;
+                                rh.qstart = cr.q_start;
+                                rh.qend = cr.q_end;
+                                rh.sstart = cr.s_start;
+                                rh.send = cr.s_end;
                                 rh.chainscore = static_cast<uint16_t>(cr.chainscore);
                                 if (config.stage1.stage1_score_type == 2)
                                     rh.matchscore = static_cast<uint16_t>(cr.stage1_score);
                                 else
                                     rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
                                 rh.volume = vol.volume_index;
-                                rh.q_length = static_cast<uint32_t>(query.sequence.size());
-                                rh.s_length = vol.ksx.seq_length(cr.seq_id);
+                                rh.qlen = static_cast<uint32_t>(query.sequence.size());
+                                rh.slen = vol.ksx.seq_length(cr.seq_id);
                                 local_hits.emplace_back(aq.result_idx, rh);
                             }
                         }
@@ -329,7 +329,7 @@ SearchResponse process_search_request(
         std::vector<FastaRecord> fasta_queries;
         for (const auto& aq : accepted_queries) {
             fasta_queries.push_back({
-                req.queries[aq.query_idx].query_id,
+                req.queries[aq.query_idx].qseqid,
                 req.queries[aq.query_idx].sequence
             });
         }
@@ -339,19 +339,19 @@ SearchResponse process_search_request(
         for (auto& qr : resp.results) {
             for (auto& hit : qr.hits) {
                 OutputHit oh;
-                oh.query_id = qr.query_id;
-                oh.accession = hit.accession;
-                oh.strand = (hit.strand == 0) ? '+' : '-';
-                oh.q_start = hit.q_start;
-                oh.q_end = hit.q_end;
-                oh.s_start = hit.s_start;
-                oh.s_end = hit.s_end;
+                oh.qseqid = qr.qseqid;
+                oh.sseqid = hit.sseqid;
+                oh.sstrand = (hit.sstrand == 0) ? '+' : '-';
+                oh.qstart = hit.qstart;
+                oh.qend = hit.qend;
+                oh.sstart = hit.sstart;
+                oh.send = hit.send;
                 oh.chainscore = hit.chainscore;
                 oh.coverscore = hit.coverscore;
                 oh.matchscore = hit.matchscore;
                 oh.volume = hit.volume;
-                oh.q_length = hit.q_length;
-                oh.s_length = hit.s_length;
+                oh.qlen = hit.qlen;
+                oh.slen = hit.slen;
                 output_hits.push_back(std::move(oh));
             }
         }
@@ -364,30 +364,30 @@ SearchResponse process_search_request(
         for (auto& qr : resp.results) qr.hits.clear();
         std::unordered_map<std::string, size_t> qid_to_ridx;
         for (size_t i = 0; i < resp.results.size(); i++)
-            qid_to_ridx[resp.results[i].query_id] = i;
+            qid_to_ridx[resp.results[i].qseqid] = i;
         for (const auto& oh : output_hits) {
-            auto qit = qid_to_ridx.find(oh.query_id);
+            auto qit = qid_to_ridx.find(oh.qseqid);
             if (qit == qid_to_ridx.end()) continue;
             ResponseHit rh;
-            rh.accession = oh.accession;
-            rh.strand = (oh.strand == '+') ? 0 : 1;
-            rh.q_start = oh.q_start;
-            rh.q_end = oh.q_end;
-            rh.s_start = oh.s_start;
-            rh.s_end = oh.s_end;
+            rh.sseqid = oh.sseqid;
+            rh.sstrand = (oh.sstrand == '+') ? 0 : 1;
+            rh.qstart = oh.qstart;
+            rh.qend = oh.qend;
+            rh.sstart = oh.sstart;
+            rh.send = oh.send;
             rh.chainscore = static_cast<uint16_t>(oh.chainscore);
             rh.coverscore = static_cast<uint16_t>(oh.coverscore);
             rh.matchscore = static_cast<uint16_t>(oh.matchscore);
             rh.volume = oh.volume;
-            rh.q_length = oh.q_length;
-            rh.s_length = oh.s_length;
+            rh.qlen = oh.qlen;
+            rh.slen = oh.slen;
             rh.alnscore = oh.alnscore;
             rh.nident = oh.nident;
-            rh.nmismatch = oh.nmismatch;
+            rh.mismatch = oh.mismatch;
             rh.pident_x100 = static_cast<uint16_t>(oh.pident * 100.0);
             rh.cigar = oh.cigar;
-            rh.q_seq = oh.q_seq;
-            rh.s_seq = oh.s_seq;
+            rh.qseq = oh.qseq;
+            rh.sseq = oh.sseq;
             resp.results[qit->second].hits.push_back(std::move(rh));
         }
 

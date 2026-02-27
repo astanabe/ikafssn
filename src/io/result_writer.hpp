@@ -12,13 +12,13 @@ namespace ikafssn {
 class KsxReader;
 
 struct OutputHit {
-    std::string query_id;
-    std::string accession;
-    char strand;          // '+' or '-'
-    uint32_t q_start;
-    uint32_t q_end;
-    uint32_t s_start;
-    uint32_t s_end;
+    std::string qseqid;
+    std::string sseqid;
+    char sstrand;         // '+' or '-'
+    uint32_t qstart;
+    uint32_t qend;
+    uint32_t sstart;
+    uint32_t send;
     uint32_t coverscore = 0;
     uint32_t matchscore = 0;
     uint32_t chainscore = 0;
@@ -28,12 +28,12 @@ struct OutputHit {
     int32_t alnscore = 0;
     std::string cigar;
     uint32_t nident = 0;
-    uint32_t nmismatch = 0;
+    uint32_t mismatch = 0;
     double pident = 0.0;
-    std::string q_seq;        // aligned query (with gaps, traceback only)
-    std::string s_seq;        // aligned subject (with gaps, traceback only)
-    uint32_t q_length = 0;    // query full sequence length
-    uint32_t s_length = 0;    // subject full sequence length (for SAM @SQ)
+    std::string qseq;        // aligned query (with gaps, traceback only)
+    std::string sseq;        // aligned subject (with gaps, traceback only)
+    uint32_t qlen = 0;       // query full sequence length
+    uint32_t slen = 0;       // subject full sequence length (for SAM @SQ)
 };
 
 enum class OutputFormat { kTab, kJson, kSam, kBam };

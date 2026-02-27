@@ -239,7 +239,7 @@ static void test_result_output_tab() {
     std::string output = oss.str();
 
     // Check header (mode 2 default: includes coverscore and chainscore)
-    CHECK(output.find("# query_id") != std::string::npos);
+    CHECK(output.find("# qseqid") != std::string::npos);
     CHECK(output.find("coverscore") != std::string::npos);
     CHECK(output.find("chainscore") != std::string::npos);
     // Check data
@@ -259,10 +259,10 @@ static void test_result_output_tab_mode1() {
     write_results_tab(oss, hits, 1, 1);
     std::string output = oss.str();
 
-    // Mode 1: no q_start/q_end/s_start/s_end/chainscore columns
+    // Mode 1: no qstart/qend/sstart/send/chainscore columns
     CHECK(output.find("coverscore") != std::string::npos);
     CHECK(output.find("chainscore") == std::string::npos);
-    CHECK(output.find("q_start") == std::string::npos);
+    CHECK(output.find("qstart") == std::string::npos);
 }
 
 static void test_result_output_json() {
@@ -277,7 +277,7 @@ static void test_result_output_json() {
     std::string output = oss.str();
 
     CHECK(output.find("\"results\"") != std::string::npos);
-    CHECK(output.find("\"query_id\"") != std::string::npos);
+    CHECK(output.find("\"qseqid\"") != std::string::npos);
     CHECK(output.find("\"NM_001234\"") != std::string::npos);
     CHECK(output.find("\"chainscore\": 42") != std::string::npos);
     CHECK(output.find("\"coverscore\": 10") != std::string::npos);

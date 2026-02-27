@@ -197,26 +197,26 @@ static void test_http_client_search() {
          qi < resp.results.size() && qi < local_results.size(); qi++) {
         const auto& http_qr = resp.results[qi];
         const auto& local_sr = local_results[qi];
-        CHECK(http_qr.query_id == local_sr.query_id);
+        CHECK(http_qr.qseqid == local_sr.query_id);
         CHECK_EQ(http_qr.hits.size(), local_sr.hits.size());
 
         // Sort both result sets before comparing to avoid ordering issues
         struct HitKey {
-            std::string accession;
-            uint32_t q_start, q_end, s_start, s_end;
+            std::string sseqid;
+            uint32_t qstart, qend, sstart, send;
             uint16_t chainscore;
             bool is_reverse;
             bool operator<(const HitKey& o) const {
-                if (accession != o.accession) return accession < o.accession;
-                if (s_start != o.s_start) return s_start < o.s_start;
-                return q_start < o.q_start;
+                if (sseqid != o.sseqid) return sseqid < o.sseqid;
+                if (sstart != o.sstart) return sstart < o.sstart;
+                return qstart < o.qstart;
             }
         };
 
         std::vector<HitKey> http_sorted, local_sorted;
         for (const auto& hh : http_qr.hits) {
-            http_sorted.push_back({hh.accession, hh.q_start, hh.q_end,
-                                   hh.s_start, hh.s_end, hh.chainscore, hh.strand == 1});
+            http_sorted.push_back({hh.sseqid, hh.qstart, hh.qend,
+                                   hh.sstart, hh.send, hh.chainscore, hh.sstrand == 1});
         }
         for (const auto& lh : local_sr.hits) {
             local_sorted.push_back({std::string(ksx.accession(lh.seq_id)),
@@ -228,11 +228,11 @@ static void test_http_client_search() {
 
         for (size_t hi = 0;
              hi < http_sorted.size() && hi < local_sorted.size(); hi++) {
-            CHECK(http_sorted[hi].accession == local_sorted[hi].accession);
-            CHECK_EQ(http_sorted[hi].q_start, local_sorted[hi].q_start);
-            CHECK_EQ(http_sorted[hi].q_end, local_sorted[hi].q_end);
-            CHECK_EQ(http_sorted[hi].s_start, local_sorted[hi].s_start);
-            CHECK_EQ(http_sorted[hi].s_end, local_sorted[hi].s_end);
+            CHECK(http_sorted[hi].sseqid == local_sorted[hi].sseqid);
+            CHECK_EQ(http_sorted[hi].qstart, local_sorted[hi].qstart);
+            CHECK_EQ(http_sorted[hi].qend, local_sorted[hi].qend);
+            CHECK_EQ(http_sorted[hi].sstart, local_sorted[hi].sstart);
+            CHECK_EQ(http_sorted[hi].send, local_sorted[hi].send);
             CHECK_EQ(http_sorted[hi].chainscore, local_sorted[hi].chainscore);
             CHECK(http_sorted[hi].is_reverse == local_sorted[hi].is_reverse);
         }
@@ -260,7 +260,7 @@ static void test_http_client_search() {
 
         for (const auto& qr : fresp.results) {
             for (const auto& hit : qr.hits) {
-                CHECK(hit.accession == target_acc);
+                CHECK(hit.sseqid == target_acc);
             }
         }
     }

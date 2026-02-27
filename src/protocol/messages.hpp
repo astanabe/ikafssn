@@ -16,7 +16,7 @@ enum class SeqidlistMode : uint8_t {
 
 // Query sequence within a search request
 struct QueryEntry {
-    std::string query_id;
+    std::string qseqid;
     std::string sequence;
 };
 
@@ -54,14 +54,14 @@ struct SearchRequest {
 
 // A single hit in the search response
 struct ResponseHit {
-    std::string accession;
-    uint8_t  strand;     // 0 = '+', 1 = '-'
-    uint32_t q_start;
-    uint32_t q_end;
-    uint32_t q_length = 0;    // query full sequence length
-    uint32_t s_start;
-    uint32_t s_end;
-    uint32_t s_length = 0;    // subject full sequence length
+    std::string sseqid;
+    uint8_t  sstrand;    // 0 = '+', 1 = '-'
+    uint32_t qstart;
+    uint32_t qend;
+    uint32_t qlen = 0;        // query full sequence length
+    uint32_t sstart;
+    uint32_t send;
+    uint32_t slen = 0;        // subject full sequence length
     uint16_t coverscore = 0;
     uint16_t matchscore = 0;
     uint16_t chainscore = 0;
@@ -69,11 +69,11 @@ struct ResponseHit {
     // Stage 3 fields (populated only when mode=3)
     int32_t  alnscore = 0;
     uint32_t nident = 0;
-    uint32_t nmismatch = 0;
+    uint32_t mismatch = 0;
     uint16_t pident_x100 = 0;  // percent identity * 100
     std::string cigar;          // CIGAR string (traceback only)
-    std::string q_seq;          // aligned query (traceback only)
-    std::string s_seq;          // aligned subject (traceback only)
+    std::string qseq;          // aligned query (traceback only)
+    std::string sseq;          // aligned subject (traceback only)
 };
 
 // Per-query warning flags (bitmask)
@@ -83,7 +83,7 @@ enum QueryWarning : uint8_t {
 
 // Per-query result in the search response
 struct QueryResult {
-    std::string query_id;
+    std::string qseqid;
     std::vector<ResponseHit> hits;
     uint8_t skipped = 0;   // 0 = normal, 1 = skipped (degenerate bases)
     uint8_t warnings = 0;  // bitmask of QueryWarning flags
@@ -98,7 +98,7 @@ struct SearchResponse {
     uint8_t  stage3_traceback = 0;  // echo back: 1 = traceback fields populated
     std::string db;                 // echo back database name
     std::vector<QueryResult> results;
-    std::vector<std::string> rejected_query_ids;  // queries rejected due to concurrency limit
+    std::vector<std::string> rejected_qseqids;  // queries rejected due to concurrency limit
 };
 
 // Error response message (server -> client)

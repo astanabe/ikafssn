@@ -71,13 +71,13 @@ static void write_sam_bam_impl(const std::string& output_path,
     // @HD
     sam_hdr_add_line(hdr, "HD", "VN", "1.6", "SO", "unsorted", NULL);
 
-    // @SQ: collect unique (accession, s_length) pairs, ordered by first appearance
+    // @SQ: collect unique (sseqid, slen) pairs, ordered by first appearance
     std::vector<std::string> sq_order;
     std::map<std::string, uint32_t> sq_lengths;
     for (const auto& h : hits) {
-        if (sq_lengths.find(h.accession) == sq_lengths.end()) {
-            sq_order.push_back(h.accession);
-            sq_lengths[h.accession] = h.s_length;
+        if (sq_lengths.find(h.sseqid) == sq_lengths.end()) {
+            sq_order.push_back(h.sseqid);
+            sq_lengths[h.sseqid] = h.slen;
         }
     }
     for (const auto& acc : sq_order) {
@@ -95,20 +95,20 @@ static void write_sam_bam_impl(const std::string& output_path,
 
     for (const auto& h : hits) {
         uint16_t flag = 0;
-        if (h.strand == '-') flag |= BAM_FREVERSE;
+        if (h.sstrand == '-') flag |= BAM_FREVERSE;
 
-        int32_t tid = sam_hdr_name2tid(hdr, h.accession.c_str());
-        hts_pos_t pos = static_cast<hts_pos_t>(h.s_start); // 0-based in htslib
+        int32_t tid = sam_hdr_name2tid(hdr, h.sseqid.c_str());
+        hts_pos_t pos = static_cast<hts_pos_t>(h.sstart); // 0-based in htslib
 
         // Parse CIGAR
         auto cigar = parse_cigar_to_htslib(h.cigar);
 
         // Get ungapped query sequence
-        std::string seq = ungap_sequence(h.q_seq);
+        std::string seq = ungap_sequence(h.qseq);
 
         // Set the record
         bam_set1(b,
-                 h.query_id.size(), h.query_id.c_str(),
+                 h.qseqid.size(), h.qseqid.c_str(),
                  flag, tid, pos, 255,
                  cigar.size(), cigar.data(),
                  -1, -1, 0,
@@ -122,9 +122,9 @@ static void write_sam_bam_impl(const std::string& output_path,
             bam_aux_append(b, "AS", 'i', sizeof(int32_t),
                            reinterpret_cast<const uint8_t*>(&as));
         }
-        // NM:i:nmismatch
+        // NM:i:mismatch
         {
-            int32_t nm = static_cast<int32_t>(h.nmismatch);
+            int32_t nm = static_cast<int32_t>(h.mismatch);
             bam_aux_append(b, "NM", 'i', sizeof(int32_t),
                            reinterpret_cast<const uint8_t*>(&nm));
         }

@@ -16,69 +16,69 @@ void write_results_tab(std::ostream& out,
     const char* s1name = stage1_score_name(stage1_score_type);
 
     if (mode == 1) {
-        out << "# query_id\taccession\tstrand\tq_len\ts_len\t" << s1name << "\tvolume\n";
+        out << "# qseqid\tsseqid\tsstrand\tqlen\tslen\t" << s1name << "\tvolume\n";
         for (const auto& h : hits) {
-            out << h.query_id << '\t'
-                << h.accession << '\t'
-                << h.strand << '\t'
-                << h.q_length << '\t'
-                << h.s_length << '\t'
+            out << h.qseqid << '\t'
+                << h.sseqid << '\t'
+                << h.sstrand << '\t'
+                << h.qlen << '\t'
+                << h.slen << '\t'
                 << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
                 << h.volume << '\n';
         }
     } else if (mode == 3 && stage3_traceback) {
-        out << "# query_id\taccession\tstrand\tq_start\tq_end\tq_len\ts_start\ts_end\ts_len\t"
-            << s1name << "\tchainscore\talnscore\tpident\tnident\tnmismatch\tcigar\tq_seq\ts_seq\tvolume\n";
+        out << "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t"
+            << s1name << "\tchainscore\talnscore\tpident\tnident\tmismatch\tcigar\tqseq\tsseq\tvolume\n";
         for (const auto& h : hits) {
-            out << h.query_id << '\t'
-                << h.accession << '\t'
-                << h.strand << '\t'
-                << h.q_start << '\t'
-                << h.q_end << '\t'
-                << h.q_length << '\t'
-                << h.s_start << '\t'
-                << h.s_end << '\t'
-                << h.s_length << '\t'
+            out << h.qseqid << '\t'
+                << h.sseqid << '\t'
+                << h.sstrand << '\t'
+                << h.qstart << '\t'
+                << h.qend << '\t'
+                << h.qlen << '\t'
+                << h.sstart << '\t'
+                << h.send << '\t'
+                << h.slen << '\t'
                 << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
                 << h.chainscore << '\t'
                 << h.alnscore << '\t'
                 << h.pident << '\t'
                 << h.nident << '\t'
-                << h.nmismatch << '\t'
+                << h.mismatch << '\t'
                 << h.cigar << '\t'
-                << h.q_seq << '\t'
-                << h.s_seq << '\t'
+                << h.qseq << '\t'
+                << h.sseq << '\t'
                 << h.volume << '\n';
         }
     } else if (mode == 3) {
-        out << "# query_id\taccession\tstrand\tq_end\tq_len\ts_end\ts_len\t"
+        out << "# qseqid\tsseqid\tsstrand\tqend\tqlen\tsend\tslen\t"
             << s1name << "\tchainscore\talnscore\tvolume\n";
         for (const auto& h : hits) {
-            out << h.query_id << '\t'
-                << h.accession << '\t'
-                << h.strand << '\t'
-                << h.q_end << '\t'
-                << h.q_length << '\t'
-                << h.s_end << '\t'
-                << h.s_length << '\t'
+            out << h.qseqid << '\t'
+                << h.sseqid << '\t'
+                << h.sstrand << '\t'
+                << h.qend << '\t'
+                << h.qlen << '\t'
+                << h.send << '\t'
+                << h.slen << '\t'
                 << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
                 << h.chainscore << '\t'
                 << h.alnscore << '\t'
                 << h.volume << '\n';
         }
     } else {
-        out << "# query_id\taccession\tstrand\tq_start\tq_end\tq_len\ts_start\ts_end\ts_len\t"
+        out << "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t"
             << s1name << "\tchainscore\tvolume\n";
         for (const auto& h : hits) {
-            out << h.query_id << '\t'
-                << h.accession << '\t'
-                << h.strand << '\t'
-                << h.q_start << '\t'
-                << h.q_end << '\t'
-                << h.q_length << '\t'
-                << h.s_start << '\t'
-                << h.s_end << '\t'
-                << h.s_length << '\t'
+            out << h.qseqid << '\t'
+                << h.sseqid << '\t'
+                << h.sstrand << '\t'
+                << h.qstart << '\t'
+                << h.qend << '\t'
+                << h.qlen << '\t'
+                << h.sstart << '\t'
+                << h.send << '\t'
+                << h.slen << '\t'
                 << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
                 << h.chainscore << '\t'
                 << h.volume << '\n';
@@ -108,42 +108,42 @@ void write_results_json(std::ostream& out,
                         bool stage3_traceback) {
     const char* s1name = stage1_score_name(stage1_score_type);
 
-    // Group hits by query_id (preserve order of first appearance)
+    // Group hits by qseqid (preserve order of first appearance)
     std::vector<std::string> query_order;
     std::map<std::string, std::vector<const OutputHit*>> by_query;
     for (const auto& h : hits) {
-        if (by_query.find(h.query_id) == by_query.end()) {
-            query_order.push_back(h.query_id);
+        if (by_query.find(h.qseqid) == by_query.end()) {
+            query_order.push_back(h.qseqid);
         }
-        by_query[h.query_id].push_back(&h);
+        by_query[h.qseqid].push_back(&h);
     }
 
     out << "{\n  \"results\": [\n";
     for (size_t qi = 0; qi < query_order.size(); qi++) {
         const auto& qid = query_order[qi];
         const auto& qhits = by_query[qid];
-        out << "    {\n      \"query_id\": ";
+        out << "    {\n      \"qseqid\": ";
         json_escape(out, qid);
         out << ",\n      \"hits\": [\n";
         for (size_t hi = 0; hi < qhits.size(); hi++) {
             const auto* h = qhits[hi];
             out << "        {\n";
-            out << "          \"accession\": "; json_escape(out, h->accession); out << ",\n";
-            out << "          \"strand\": \"" << h->strand << "\",\n";
+            out << "          \"sseqid\": "; json_escape(out, h->sseqid); out << ",\n";
+            out << "          \"sstrand\": \"" << h->sstrand << "\",\n";
             if (mode == 2 || (mode == 3 && stage3_traceback)) {
-                out << "          \"q_start\": " << h->q_start << ",\n";
-                out << "          \"q_end\": " << h->q_end << ",\n";
+                out << "          \"qstart\": " << h->qstart << ",\n";
+                out << "          \"qend\": " << h->qend << ",\n";
             } else if (mode == 3) {
-                out << "          \"q_end\": " << h->q_end << ",\n";
+                out << "          \"qend\": " << h->qend << ",\n";
             }
-            out << "          \"q_len\": " << h->q_length << ",\n";
+            out << "          \"qlen\": " << h->qlen << ",\n";
             if (mode == 2 || (mode == 3 && stage3_traceback)) {
-                out << "          \"s_start\": " << h->s_start << ",\n";
-                out << "          \"s_end\": " << h->s_end << ",\n";
+                out << "          \"sstart\": " << h->sstart << ",\n";
+                out << "          \"send\": " << h->send << ",\n";
             } else if (mode == 3) {
-                out << "          \"s_end\": " << h->s_end << ",\n";
+                out << "          \"send\": " << h->send << ",\n";
             }
-            out << "          \"s_len\": " << h->s_length << ",\n";
+            out << "          \"slen\": " << h->slen << ",\n";
             out << "          \"" << s1name << "\": " << ((stage1_score_type == 2) ? h->matchscore : h->coverscore) << ",\n";
             if (mode != 1) {
                 out << "          \"chainscore\": " << h->chainscore << ",\n";
@@ -153,10 +153,10 @@ void write_results_json(std::ostream& out,
                 if (stage3_traceback) {
                     out << "          \"pident\": " << h->pident << ",\n";
                     out << "          \"nident\": " << h->nident << ",\n";
-                    out << "          \"nmismatch\": " << h->nmismatch << ",\n";
+                    out << "          \"mismatch\": " << h->mismatch << ",\n";
                     out << "          \"cigar\": "; json_escape(out, h->cigar); out << ",\n";
-                    out << "          \"q_seq\": "; json_escape(out, h->q_seq); out << ",\n";
-                    out << "          \"s_seq\": "; json_escape(out, h->s_seq); out << ",\n";
+                    out << "          \"qseq\": "; json_escape(out, h->qseq); out << ",\n";
+                    out << "          \"sseq\": "; json_escape(out, h->sseq); out << ",\n";
                 }
             }
             out << "          \"volume\": " << h->volume << "\n";

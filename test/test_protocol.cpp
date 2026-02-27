@@ -157,9 +157,9 @@ static void test_search_request_serialize() {
     assert(req2.seqids[0] == "NM_001234");
     assert(req2.seqids[1] == "XM_005678");
     assert(req2.queries.size() == 2);
-    assert(req2.queries[0].query_id == "query1");
+    assert(req2.queries[0].qseqid == "query1");
     assert(req2.queries[0].sequence == "ACGTACGTACGT");
-    assert(req2.queries[1].query_id == "query2");
+    assert(req2.queries[1].qseqid == "query2");
     assert(req2.queries[1].sequence == "TTTTAAAACCCC");
 
     std::printf(" OK\n");
@@ -197,25 +197,25 @@ static void test_search_response_serialize() {
     resp.db = "testdb";
 
     QueryResult qr;
-    qr.query_id = "query1";
+    qr.qseqid = "query1";
 
     ResponseHit hit;
-    hit.accession = "NM_001234";
-    hit.strand = 0; // '+'
-    hit.q_start = 10;
-    hit.q_end = 450;
-    hit.s_start = 1020;
-    hit.s_end = 1460;
+    hit.sseqid = "NM_001234";
+    hit.sstrand = 0; // '+'
+    hit.qstart = 10;
+    hit.qend = 450;
+    hit.sstart = 1020;
+    hit.send = 1460;
     hit.chainscore = 42;
     hit.volume = 0;
     qr.hits.push_back(hit);
 
-    hit.accession = "XM_005678";
-    hit.strand = 1; // '-'
-    hit.q_start = 15;
-    hit.q_end = 430;
-    hit.s_start = 8050;
-    hit.s_end = 8465;
+    hit.sseqid = "XM_005678";
+    hit.sstrand = 1; // '-'
+    hit.qstart = 15;
+    hit.qend = 430;
+    hit.sstart = 8050;
+    hit.send = 8465;
     hit.chainscore = 38;
     hit.volume = 2;
     qr.hits.push_back(hit);
@@ -230,22 +230,22 @@ static void test_search_response_serialize() {
     assert(resp2.k == 11);
     assert(resp2.db == "testdb");
     assert(resp2.results.size() == 1);
-    assert(resp2.results[0].query_id == "query1");
+    assert(resp2.results[0].qseqid == "query1");
     assert(resp2.results[0].hits.size() == 2);
 
     const auto& h0 = resp2.results[0].hits[0];
-    assert(h0.accession == "NM_001234");
-    assert(h0.strand == 0);
-    assert(h0.q_start == 10);
-    assert(h0.q_end == 450);
-    assert(h0.s_start == 1020);
-    assert(h0.s_end == 1460);
+    assert(h0.sseqid == "NM_001234");
+    assert(h0.sstrand == 0);
+    assert(h0.qstart == 10);
+    assert(h0.qend == 450);
+    assert(h0.sstart == 1020);
+    assert(h0.send == 1460);
     assert(h0.chainscore == 42);
     assert(h0.volume == 0);
 
     const auto& h1 = resp2.results[0].hits[1];
-    assert(h1.accession == "XM_005678");
-    assert(h1.strand == 1);
+    assert(h1.sseqid == "XM_005678");
+    assert(h1.sstrand == 1);
     assert(h1.chainscore == 38);
     assert(h1.volume == 2);
 
@@ -499,20 +499,20 @@ static void test_search_response_skipped() {
     resp.k = 9;
 
     QueryResult qr1;
-    qr1.query_id = "q1";
+    qr1.qseqid = "q1";
     qr1.skipped = 1;
     resp.results.push_back(qr1);
 
     QueryResult qr2;
-    qr2.query_id = "q2";
+    qr2.qseqid = "q2";
     qr2.skipped = 0;
     ResponseHit hit;
-    hit.accession = "ACC001";
-    hit.strand = 0;
-    hit.q_start = 0;
-    hit.q_end = 100;
-    hit.s_start = 0;
-    hit.s_end = 100;
+    hit.sseqid = "ACC001";
+    hit.sstrand = 0;
+    hit.qstart = 0;
+    hit.qend = 100;
+    hit.sstart = 0;
+    hit.send = 100;
     hit.chainscore = 10;
     hit.coverscore = 5;
     hit.volume = 0;
@@ -524,10 +524,10 @@ static void test_search_response_skipped() {
     assert(deserialize(data, resp2));
 
     assert(resp2.results.size() == 2);
-    assert(resp2.results[0].query_id == "q1");
+    assert(resp2.results[0].qseqid == "q1");
     assert(resp2.results[0].skipped == 1);
     assert(resp2.results[0].hits.empty());
-    assert(resp2.results[1].query_id == "q2");
+    assert(resp2.results[1].qseqid == "q2");
     assert(resp2.results[1].skipped == 0);
     assert(resp2.results[1].hits.size() == 1);
 
@@ -573,27 +573,27 @@ static void test_search_response_stage3_fields() {
     resp.stage3_traceback = 1;
 
     QueryResult qr;
-    qr.query_id = "q1";
+    qr.qseqid = "q1";
 
     ResponseHit hit;
-    hit.accession = "ACC001";
-    hit.strand = 0;
-    hit.q_start = 10;
-    hit.q_end = 200;
-    hit.q_length = 500;
-    hit.s_start = 1000;
-    hit.s_end = 1190;
-    hit.s_length = 5000;
+    hit.sseqid = "ACC001";
+    hit.sstrand = 0;
+    hit.qstart = 10;
+    hit.qend = 200;
+    hit.qlen = 500;
+    hit.sstart = 1000;
+    hit.send = 1190;
+    hit.slen = 5000;
     hit.chainscore = 42;
     hit.coverscore = 20;
     hit.volume = 0;
     hit.alnscore = 380;
     hit.nident = 175;
-    hit.nmismatch = 15;
+    hit.mismatch = 15;
     hit.pident_x100 = 9211;  // 92.11%
     hit.cigar = "100M5I85M";
-    hit.q_seq = "ACGTACGTACGT";
-    hit.s_seq = "ACGTACGTTCGT";
+    hit.qseq = "ACGTACGTACGT";
+    hit.sseq = "ACGTACGTTCGT";
     qr.hits.push_back(hit);
     resp.results.push_back(qr);
 
@@ -606,21 +606,21 @@ static void test_search_response_stage3_fields() {
     assert(resp2.results.size() == 1);
 
     const auto& h = resp2.results[0].hits[0];
-    assert(h.q_length == 500);
-    assert(h.s_length == 5000);
+    assert(h.qlen == 500);
+    assert(h.slen == 5000);
     assert(h.alnscore == 380);
     assert(h.nident == 175);
-    assert(h.nmismatch == 15);
+    assert(h.mismatch == 15);
     assert(h.pident_x100 == 9211);
     assert(h.cigar == "100M5I85M");
-    assert(h.q_seq == "ACGTACGTACGT");
-    assert(h.s_seq == "ACGTACGTTCGT");
+    assert(h.qseq == "ACGTACGTACGT");
+    assert(h.sseq == "ACGTACGTTCGT");
 
     std::printf(" OK\n");
 }
 
-static void test_search_response_rejected_query_ids() {
-    std::printf("  test_search_response_rejected_query_ids...");
+static void test_search_response_rejected_qseqids() {
+    std::printf("  test_search_response_rejected_qseqids...");
 
     SearchResponse resp;
     resp.status = 0;
@@ -628,14 +628,14 @@ static void test_search_response_rejected_query_ids() {
 
     // One accepted query with a hit
     QueryResult qr1;
-    qr1.query_id = "q1";
+    qr1.qseqid = "q1";
     ResponseHit hit;
-    hit.accession = "ACC001";
-    hit.strand = 0;
-    hit.q_start = 0;
-    hit.q_end = 100;
-    hit.s_start = 0;
-    hit.s_end = 100;
+    hit.sseqid = "ACC001";
+    hit.sstrand = 0;
+    hit.qstart = 0;
+    hit.qend = 100;
+    hit.sstart = 0;
+    hit.send = 100;
     hit.chainscore = 10;
     hit.coverscore = 5;
     hit.volume = 0;
@@ -643,19 +643,19 @@ static void test_search_response_rejected_query_ids() {
     resp.results.push_back(qr1);
 
     // Three rejected query IDs
-    resp.rejected_query_ids = {"q2", "q3", "q4"};
+    resp.rejected_qseqids = {"q2", "q3", "q4"};
 
     auto data = serialize(resp);
     SearchResponse resp2;
     assert(deserialize(data, resp2));
 
     assert(resp2.results.size() == 1);
-    assert(resp2.results[0].query_id == "q1");
+    assert(resp2.results[0].qseqid == "q1");
     assert(resp2.results[0].hits.size() == 1);
-    assert(resp2.rejected_query_ids.size() == 3);
-    assert(resp2.rejected_query_ids[0] == "q2");
-    assert(resp2.rejected_query_ids[1] == "q3");
-    assert(resp2.rejected_query_ids[2] == "q4");
+    assert(resp2.rejected_qseqids.size() == 3);
+    assert(resp2.rejected_qseqids[0] == "q2");
+    assert(resp2.rejected_qseqids[1] == "q3");
+    assert(resp2.rejected_qseqids[2] == "q4");
 
     std::printf(" OK\n");
 }
@@ -684,8 +684,8 @@ static void test_search_request_chain_max_lookback() {
     std::printf(" OK\n");
 }
 
-static void test_search_response_q_s_length() {
-    std::printf("  test_search_response_q_s_length...");
+static void test_search_response_qlen_slen() {
+    std::printf("  test_search_response_qlen_slen...");
 
     SearchResponse resp;
     resp.status = 0;
@@ -693,17 +693,17 @@ static void test_search_response_q_s_length() {
     resp.mode = 2;
 
     QueryResult qr;
-    qr.query_id = "q1";
+    qr.qseqid = "q1";
 
     ResponseHit hit;
-    hit.accession = "ACC001";
-    hit.strand = 0;
-    hit.q_start = 0;
-    hit.q_end = 100;
-    hit.q_length = 1500;
-    hit.s_start = 200;
-    hit.s_end = 300;
-    hit.s_length = 8000;
+    hit.sseqid = "ACC001";
+    hit.sstrand = 0;
+    hit.qstart = 0;
+    hit.qend = 100;
+    hit.qlen = 1500;
+    hit.sstart = 200;
+    hit.send = 300;
+    hit.slen = 8000;
     hit.chainscore = 25;
     hit.coverscore = 10;
     hit.volume = 1;
@@ -714,8 +714,8 @@ static void test_search_response_q_s_length() {
     SearchResponse resp2;
     assert(deserialize(data, resp2));
 
-    assert(resp2.results[0].hits[0].q_length == 1500);
-    assert(resp2.results[0].hits[0].s_length == 8000);
+    assert(resp2.results[0].hits[0].qlen == 1500);
+    assert(resp2.results[0].hits[0].slen == 8000);
 
     std::printf(" OK\n");
 }
@@ -742,8 +742,8 @@ int main() {
     test_search_response_skipped();
     test_search_request_stage3_fields();
     test_search_response_stage3_fields();
-    test_search_response_rejected_query_ids();
-    test_search_response_q_s_length();
+    test_search_response_rejected_qseqids();
+    test_search_response_qlen_slen();
     test_search_request_chain_max_lookback();
 
     std::printf("All protocol tests passed.\n");

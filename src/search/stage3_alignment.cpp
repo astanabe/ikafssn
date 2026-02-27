@@ -107,12 +107,12 @@ std::vector<OutputHit> run_stage3(
     std::vector<std::vector<size_t>> hits_by_reader(readers.size());
     std::vector<bool> hit_valid(hits.size(), true);
     for (size_t i = 0; i < hits.size(); i++) {
-        auto it = acc_map.find(hits[i].accession);
+        auto it = acc_map.find(hits[i].sseqid);
         if (it != acc_map.end()) {
             hits_by_reader[it->second.first].push_back(i);
         } else {
             logger.warn("Stage 3: accession '%s' not found in BLAST DB, skipping",
-                        hits[i].accession.c_str());
+                        hits[i].sseqid.c_str());
             hit_valid[i] = false;
         }
     }
@@ -128,13 +128,13 @@ std::vector<OutputHit> run_stage3(
     fetch_arena.execute([&] {
         tbb::parallel_for(size_t(0), readers.size(), [&](size_t ri) {
             for (size_t hit_idx : hits_by_reader[ri]) {
-                auto it = acc_map.find(hits[hit_idx].accession);
+                auto it = acc_map.find(hits[hit_idx].sseqid);
                 uint32_t oid = it->second.second;
                 uint32_t seq_len = readers[ri].seq_length(oid);
 
                 // Find query length for ratio context
                 uint32_t query_len = 0;
-                auto qit = query_map.find(hits[hit_idx].query_id);
+                auto qit = query_map.find(hits[hit_idx].qseqid);
                 if (qit != query_map.end()) {
                     query_len = static_cast<uint32_t>(queries[qit->second].sequence.size());
                 }
@@ -143,9 +143,9 @@ std::vector<OutputHit> run_stage3(
                     ? static_cast<uint32_t>(query_len * context_ratio)
                     : context_abs;
 
-                uint32_t ext_start = (hits[hit_idx].s_start >= ctx)
-                    ? hits[hit_idx].s_start - ctx : 0;
-                uint32_t ext_end = std::min(hits[hit_idx].s_end + ctx, seq_len - 1);
+                uint32_t ext_start = (hits[hit_idx].sstart >= ctx)
+                    ? hits[hit_idx].sstart - ctx : 0;
+                uint32_t ext_end = std::min(hits[hit_idx].send + ctx, seq_len - 1);
 
                 std::string full_seq = readers[ri].get_sequence(oid);
                 if (!full_seq.empty() && ext_start <= ext_end && ext_end < full_seq.size()) {
@@ -158,7 +158,7 @@ std::vector<OutputHit> run_stage3(
                     }
                 }
                 ext_starts[hit_idx] = ext_start;
-                hits[hit_idx].s_length = seq_len;
+                hits[hit_idx].slen = seq_len;
             }
         });
     });
@@ -177,10 +177,10 @@ std::vector<OutputHit> run_stage3(
     // Collect unique (query_idx, strand) pairs needed
     for (size_t i = 0; i < hits.size(); i++) {
         if (!hit_valid[i] || subject_subseqs[i].empty()) continue;
-        auto qit = query_map.find(hits[i].query_id);
+        auto qit = query_map.find(hits[i].qseqid);
         if (qit == query_map.end()) continue;
         size_t qi = qit->second;
-        bool is_rev = (hits[i].strand == '-');
+        bool is_rev = (hits[i].sstrand == '-');
         std::string key = std::to_string(qi) + ":" + (is_rev ? "1" : "0");
         if (profiles.find(key) == profiles.end()) {
             ProfileEntry pe;
@@ -206,7 +206,7 @@ std::vector<OutputHit> run_stage3(
     valid_indices.reserve(hits.size());
     for (size_t i = 0; i < hits.size(); i++) {
         if (hit_valid[i] && !subject_subseqs[i].empty()) {
-            auto qit = query_map.find(hits[i].query_id);
+            auto qit = query_map.find(hits[i].qseqid);
             if (qit != query_map.end()) {
                 valid_indices.push_back(i);
             }
@@ -217,9 +217,9 @@ std::vector<OutputHit> run_stage3(
 
     tbb::parallel_for(size_t(0), valid_indices.size(), [&](size_t vi) {
         size_t idx = valid_indices[vi];
-        auto qit = query_map.find(hits[idx].query_id);
+        auto qit = query_map.find(hits[idx].qseqid);
         size_t qi = qit->second;
-        bool is_rev = (hits[idx].strand == '-');
+        bool is_rev = (hits[idx].sstrand == '-');
         std::string key = std::to_string(qi) + ":" + (is_rev ? "1" : "0");
         const auto& pe = profiles.at(key);
 
@@ -239,15 +239,15 @@ std::vector<OutputHit> run_stage3(
                 subj, slen, matrix);
 
             // Update coordinates from traceback
-            hits[idx].q_start = static_cast<uint32_t>(cigar->beg_query);
-            hits[idx].q_end = static_cast<uint32_t>(result->end_query);
-            hits[idx].s_start = ext_starts[idx] + static_cast<uint32_t>(cigar->beg_ref);
-            hits[idx].s_end = ext_starts[idx] + static_cast<uint32_t>(result->end_ref);
+            hits[idx].qstart = static_cast<uint32_t>(cigar->beg_query);
+            hits[idx].qend = static_cast<uint32_t>(result->end_query);
+            hits[idx].sstart = ext_starts[idx] + static_cast<uint32_t>(cigar->beg_ref);
+            hits[idx].send = ext_starts[idx] + static_cast<uint32_t>(result->end_ref);
 
             // Walk CIGAR for stats
             CigarStats cs = walk_cigar(cigar);
             hits[idx].nident = cs.nident;
-            hits[idx].nmismatch = cs.nmismatch;
+            hits[idx].mismatch = cs.nmismatch;
             hits[idx].cigar = cs.cigar_str;
             hits[idx].pident = (cs.aln_len > 0) ? 100.0 * cs.nident / cs.aln_len : 0.0;
 
@@ -256,8 +256,8 @@ std::vector<OutputHit> run_stage3(
                 result, pe.seq.c_str(), static_cast<int>(pe.seq.size()),
                 subj, slen, matrix, '|', '*', ' ');
             if (tb) {
-                hits[idx].q_seq = tb->query;
-                hits[idx].s_seq = tb->ref;
+                hits[idx].qseq = tb->query;
+                hits[idx].sseq = tb->ref;
                 parasail_traceback_free(tb);
             }
 
@@ -270,8 +270,8 @@ std::vector<OutputHit> run_stage3(
 
             hits[idx].alnscore = result->score;
             // Update end coordinates from alignment
-            hits[idx].q_end = static_cast<uint32_t>(result->end_query);
-            hits[idx].s_end = ext_starts[idx] + static_cast<uint32_t>(result->end_ref);
+            hits[idx].qend = static_cast<uint32_t>(result->end_query);
+            hits[idx].send = ext_starts[idx] + static_cast<uint32_t>(result->end_ref);
             // q_start and s_start remain from Stage 2 (approximate)
 
             parasail_result_free(result);
@@ -285,7 +285,7 @@ std::vector<OutputHit> run_stage3(
         if (!hit_valid[i] || subject_subseqs[i].empty()) continue;
 
         // Check query exists
-        auto qit = query_map.find(hits[i].query_id);
+        auto qit = query_map.find(hits[i].qseqid);
         if (qit == query_map.end()) continue;
 
         if (config.traceback) {

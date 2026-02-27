@@ -79,7 +79,7 @@ static std::string build_request_json(const SearchRequest& req) {
     Json::Value queries(Json::arrayValue);
     for (const auto& q : req.queries) {
         Json::Value qobj;
-        qobj["query_id"] = q.query_id;
+        qobj["qseqid"] = q.qseqid;
         qobj["sequence"] = q.sequence;
         queries.append(std::move(qobj));
     }
@@ -129,7 +129,7 @@ static bool parse_response_json(const std::string& body,
 
     for (const auto& qr : results) {
         QueryResult query_result;
-        query_result.query_id = qr.get("query_id", "").asString();
+        query_result.qseqid = qr.get("qseqid", "").asString();
         if (qr.get("skipped", false).asBool()) {
             query_result.skipped = 1;
         }
@@ -145,18 +145,18 @@ static bool parse_response_json(const std::string& body,
         if (hits.isArray()) {
             for (const auto& h : hits) {
                 ResponseHit hit;
-                hit.accession = h.get("accession", "").asString();
-                std::string strand = h.get("strand", "+").asString();
-                hit.strand = (strand == "-") ? 1 : 0;
+                hit.sseqid = h.get("sseqid", "").asString();
+                std::string strand = h.get("sstrand", "+").asString();
+                hit.sstrand = (strand == "-") ? 1 : 0;
                 if (resp.mode != 1) {
-                    hit.q_start = h.get("q_start", 0).asUInt();
-                    hit.q_end = h.get("q_end", 0).asUInt();
-                    hit.s_start = h.get("s_start", 0).asUInt();
-                    hit.s_end = h.get("s_end", 0).asUInt();
+                    hit.qstart = h.get("qstart", 0).asUInt();
+                    hit.qend = h.get("qend", 0).asUInt();
+                    hit.sstart = h.get("sstart", 0).asUInt();
+                    hit.send = h.get("send", 0).asUInt();
                     hit.chainscore = static_cast<uint16_t>(h.get("chainscore", 0).asUInt());
                 }
-                hit.q_length = h.get("q_len", 0).asUInt();
-                hit.s_length = h.get("s_len", 0).asUInt();
+                hit.qlen = h.get("qlen", 0).asUInt();
+                hit.slen = h.get("slen", 0).asUInt();
                 hit.coverscore = static_cast<uint16_t>(h.get("coverscore", 0).asUInt());
                 hit.matchscore = static_cast<uint16_t>(h.get("matchscore", 0).asUInt());
                 hit.volume = static_cast<uint16_t>(h.get("volume", 0).asUInt());
@@ -165,10 +165,10 @@ static bool parse_response_json(const std::string& body,
                     if (resp.stage3_traceback) {
                         hit.pident_x100 = static_cast<uint16_t>(h.get("pident", 0.0).asDouble() * 100.0);
                         hit.nident = h.get("nident", 0).asUInt();
-                        hit.nmismatch = h.get("nmismatch", 0).asUInt();
+                        hit.mismatch = h.get("mismatch", 0).asUInt();
                         hit.cigar = h.get("cigar", "").asString();
-                        hit.q_seq = h.get("q_seq", "").asString();
-                        hit.s_seq = h.get("s_seq", "").asString();
+                        hit.qseq = h.get("qseq", "").asString();
+                        hit.sseq = h.get("sseq", "").asString();
                     }
                 }
                 query_result.hits.push_back(std::move(hit));
@@ -179,9 +179,9 @@ static bool parse_response_json(const std::string& body,
     }
 
     // Parse rejected query IDs (optional field)
-    if (root.isMember("rejected_query_ids") && root["rejected_query_ids"].isArray()) {
-        for (const auto& qid : root["rejected_query_ids"])
-            resp.rejected_query_ids.push_back(qid.asString());
+    if (root.isMember("rejected_qseqids") && root["rejected_qseqids"].isArray()) {
+        for (const auto& qid : root["rejected_qseqids"])
+            resp.rejected_qseqids.push_back(qid.asString());
     }
 
     return true;

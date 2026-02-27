@@ -100,26 +100,26 @@ static bool parse_line_with_map(
     OutputHit& hit) {
     auto fields = split_tabs(line);
 
-    // Required columns: query_id, accession, strand
+    // Required columns: qseqid, sseqid, sstrand
     static const std::string empty;
-    const auto& qid = field_str(fields, cmap, "query_id", empty);
-    const auto& acc = field_str(fields, cmap, "accession", empty);
+    const auto& qid = field_str(fields, cmap, "qseqid", empty);
+    const auto& acc = field_str(fields, cmap, "sseqid", empty);
     if (qid.empty() || acc.empty()) return false;
 
-    char strand = field_char(fields, cmap, "strand", '\0');
-    if (strand != '+' && strand != '-') return false;
+    char sstrand = field_char(fields, cmap, "sstrand", '\0');
+    if (sstrand != '+' && sstrand != '-') return false;
 
     try {
-        hit.query_id = qid;
-        hit.accession = acc;
-        hit.strand = strand;
+        hit.qseqid = qid;
+        hit.sseqid = acc;
+        hit.sstrand = sstrand;
 
-        hit.q_start = field_u32(fields, cmap, "q_start");
-        hit.q_end = field_u32(fields, cmap, "q_end");
-        hit.q_length = field_u32(fields, cmap, "q_len");
-        hit.s_start = field_u32(fields, cmap, "s_start");
-        hit.s_end = field_u32(fields, cmap, "s_end");
-        hit.s_length = field_u32(fields, cmap, "s_len");
+        hit.qstart = field_u32(fields, cmap, "qstart");
+        hit.qend = field_u32(fields, cmap, "qend");
+        hit.qlen = field_u32(fields, cmap, "qlen");
+        hit.sstart = field_u32(fields, cmap, "sstart");
+        hit.send = field_u32(fields, cmap, "send");
+        hit.slen = field_u32(fields, cmap, "slen");
 
         hit.coverscore = field_u32(fields, cmap, "coverscore");
         hit.matchscore = field_u32(fields, cmap, "matchscore");
@@ -127,11 +127,11 @@ static bool parse_line_with_map(
         hit.alnscore = field_i32(fields, cmap, "alnscore");
         hit.pident = field_dbl(fields, cmap, "pident");
         hit.nident = field_u32(fields, cmap, "nident");
-        hit.nmismatch = field_u32(fields, cmap, "nmismatch");
+        hit.mismatch = field_u32(fields, cmap, "mismatch");
 
         hit.cigar = field_str(fields, cmap, "cigar", empty);
-        hit.q_seq = field_str(fields, cmap, "q_seq", empty);
-        hit.s_seq = field_str(fields, cmap, "s_seq", empty);
+        hit.qseq = field_str(fields, cmap, "qseq", empty);
+        hit.sseq = field_str(fields, cmap, "sseq", empty);
 
         hit.volume = field_u16(fields, cmap, "volume");
     } catch (...) {
@@ -147,59 +147,59 @@ static bool parse_line_legacy(const std::string& line, OutputHit& hit) {
 
     if (fields.size() < 7) return false;
 
-    hit.query_id = fields[0];
-    hit.accession = fields[1];
+    hit.qseqid = fields[0];
+    hit.sseqid = fields[1];
 
     if (fields[2].size() != 1 || (fields[2][0] != '+' && fields[2][0] != '-'))
         return false;
-    hit.strand = fields[2][0];
+    hit.sstrand = fields[2][0];
 
     try {
         if (fields.size() >= 20) {
-            hit.q_start = static_cast<uint32_t>(std::stoul(fields[3]));
-            hit.q_end = static_cast<uint32_t>(std::stoul(fields[4]));
-            hit.q_length = static_cast<uint32_t>(std::stoul(fields[5]));
-            hit.s_start = static_cast<uint32_t>(std::stoul(fields[6]));
-            hit.s_end = static_cast<uint32_t>(std::stoul(fields[7]));
-            hit.s_length = static_cast<uint32_t>(std::stoul(fields[8]));
+            hit.qstart = static_cast<uint32_t>(std::stoul(fields[3]));
+            hit.qend = static_cast<uint32_t>(std::stoul(fields[4]));
+            hit.qlen = static_cast<uint32_t>(std::stoul(fields[5]));
+            hit.sstart = static_cast<uint32_t>(std::stoul(fields[6]));
+            hit.send = static_cast<uint32_t>(std::stoul(fields[7]));
+            hit.slen = static_cast<uint32_t>(std::stoul(fields[8]));
             hit.coverscore = static_cast<uint32_t>(std::stoul(fields[9]));
             hit.chainscore = static_cast<uint32_t>(std::stoul(fields[10]));
             hit.alnscore = static_cast<int32_t>(std::stol(fields[11]));
             hit.pident = std::stod(fields[12]);
             hit.nident = static_cast<uint32_t>(std::stoul(fields[13]));
-            hit.nmismatch = static_cast<uint32_t>(std::stoul(fields[14]));
+            hit.mismatch = static_cast<uint32_t>(std::stoul(fields[14]));
             hit.cigar = fields[15];
-            hit.q_seq = fields[16];
-            hit.s_seq = fields[17];
+            hit.qseq = fields[16];
+            hit.sseq = fields[17];
             hit.volume = static_cast<uint16_t>(std::stoul(fields[18]));
         } else if (fields.size() >= 13) {
-            hit.q_start = static_cast<uint32_t>(std::stoul(fields[3]));
-            hit.q_end = static_cast<uint32_t>(std::stoul(fields[4]));
-            hit.q_length = static_cast<uint32_t>(std::stoul(fields[5]));
-            hit.s_start = static_cast<uint32_t>(std::stoul(fields[6]));
-            hit.s_end = static_cast<uint32_t>(std::stoul(fields[7]));
-            hit.s_length = static_cast<uint32_t>(std::stoul(fields[8]));
+            hit.qstart = static_cast<uint32_t>(std::stoul(fields[3]));
+            hit.qend = static_cast<uint32_t>(std::stoul(fields[4]));
+            hit.qlen = static_cast<uint32_t>(std::stoul(fields[5]));
+            hit.sstart = static_cast<uint32_t>(std::stoul(fields[6]));
+            hit.send = static_cast<uint32_t>(std::stoul(fields[7]));
+            hit.slen = static_cast<uint32_t>(std::stoul(fields[8]));
             hit.coverscore = static_cast<uint32_t>(std::stoul(fields[9]));
             hit.chainscore = static_cast<uint32_t>(std::stoul(fields[10]));
             hit.alnscore = static_cast<int32_t>(std::stol(fields[11]));
             hit.volume = static_cast<uint16_t>(std::stoul(fields[12]));
         } else if (fields.size() >= 12) {
-            hit.q_start = static_cast<uint32_t>(std::stoul(fields[3]));
-            hit.q_end = static_cast<uint32_t>(std::stoul(fields[4]));
-            hit.q_length = static_cast<uint32_t>(std::stoul(fields[5]));
-            hit.s_start = static_cast<uint32_t>(std::stoul(fields[6]));
-            hit.s_end = static_cast<uint32_t>(std::stoul(fields[7]));
-            hit.s_length = static_cast<uint32_t>(std::stoul(fields[8]));
+            hit.qstart = static_cast<uint32_t>(std::stoul(fields[3]));
+            hit.qend = static_cast<uint32_t>(std::stoul(fields[4]));
+            hit.qlen = static_cast<uint32_t>(std::stoul(fields[5]));
+            hit.sstart = static_cast<uint32_t>(std::stoul(fields[6]));
+            hit.send = static_cast<uint32_t>(std::stoul(fields[7]));
+            hit.slen = static_cast<uint32_t>(std::stoul(fields[8]));
             hit.coverscore = static_cast<uint32_t>(std::stoul(fields[9]));
             hit.chainscore = static_cast<uint32_t>(std::stoul(fields[10]));
             hit.volume = static_cast<uint16_t>(std::stoul(fields[11]));
         } else if (fields.size() >= 7) {
-            hit.q_start = 0;
-            hit.q_end = 0;
-            hit.s_start = 0;
-            hit.s_end = 0;
-            hit.q_length = static_cast<uint32_t>(std::stoul(fields[3]));
-            hit.s_length = static_cast<uint32_t>(std::stoul(fields[4]));
+            hit.qstart = 0;
+            hit.qend = 0;
+            hit.sstart = 0;
+            hit.send = 0;
+            hit.qlen = static_cast<uint32_t>(std::stoul(fields[3]));
+            hit.slen = static_cast<uint32_t>(std::stoul(fields[4]));
             hit.coverscore = static_cast<uint32_t>(std::stoul(fields[5]));
             hit.chainscore = 0;
             hit.volume = static_cast<uint16_t>(std::stoul(fields[6]));
@@ -245,7 +245,7 @@ std::vector<OutputHit> read_results_tab(std::istream& in) {
         auto header_body = last_header.substr(2);
         cmap = build_column_map(header_body);
         // Require at least the three mandatory columns
-        if (cmap.count("query_id") && cmap.count("accession") && cmap.count("strand")) {
+        if (cmap.count("qseqid") && cmap.count("sseqid") && cmap.count("sstrand")) {
             use_header = true;
         }
     }
