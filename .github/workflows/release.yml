@@ -3,6 +3,7 @@ name: Release
 on:
   release:
     types: [created]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -172,11 +173,12 @@ jobs:
             cp "build/src/${b}" "dist/${dir}/"
             strip "dist/${dir}/${b}" 2>/dev/null || true
           done
-          cp DEPENDENCIES INSTALL "dist/${dir}/"
+          cp DEPENDENCIES INSTALL LICENSE README.md "dist/${dir}/"
           cd dist
           tar cJf "${dir}.tar.xz" "${dir}"
 
       - name: Upload release asset
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.tar.xz
