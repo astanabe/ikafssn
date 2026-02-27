@@ -1,8 +1,11 @@
-Installation instructions for pre-built ikafssn binaries
-=========================================================
+Installation instructions for ikafssn
+=======================================
+
+A. Installing pre-built binaries
+=================================
 
 1. Install runtime dependencies
---------------------------------
+---------------------------------
 
 Ubuntu 24.04 (x86_64 / aarch64):
 
@@ -20,7 +23,7 @@ macOS 14 (aarch64):
   brew install tbb lmdb sqlite3 curl jsoncpp xz libdeflate openssl@3
 
 2. Extract and install binaries
---------------------------------
+---------------------------------
 
   tar xf ikafssn-<version>-<platform>.tar.xz
   cp ikafssn-<version>-<platform>/ikafssn* /usr/local/bin/
@@ -29,3 +32,117 @@ macOS 14 (aarch64):
 -----------------------
 
   ikafssnindex --version
+
+
+B. Building from source
+========================
+
+1. Install build dependencies
+-------------------------------
+
+Ubuntu 24.04 (x86_64 / aarch64):
+
+  sudo apt-get install -y \
+    build-essential cmake \
+    libtbb-dev liblmdb-dev libsqlite3-dev \
+    libcurl4-openssl-dev libjsoncpp-dev \
+    zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
+
+  For ikafssnhttpd (optional):
+
+    sudo apt-get install -y \
+      libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev \
+      libbrotli-dev libhiredis-dev libpq-dev
+
+macOS (Homebrew):
+
+  brew install cmake tbb lmdb sqlite3 curl jsoncpp \
+    xz libdeflate autoconf automake libtool openssl@3
+
+  For ikafssnhttpd (optional):
+
+    brew install drogon
+
+2. Build source-built libraries
+---------------------------------
+
+Run the following commands from the ikafssn source root.
+
+Parasail:
+
+  curl -L -o parasail-2.6.2.tar.gz \
+    https://github.com/jeffdaily/parasail/archive/refs/tags/v2.6.2.tar.gz
+  tar xf parasail-2.6.2.tar.gz
+  cd parasail-2.6.2
+  mkdir build && cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/parasail" \
+    -DBUILD_SHARED_LIBS=OFF
+  make -j$(nproc)
+  make install
+  cd ../..
+
+  On macOS with CMake >= 4.0, add -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+  On macOS, use make -j$(sysctl -n hw.ncpu) instead of make -j$(nproc)
+
+htslib:
+
+  curl -L -o htslib-1.23.tar.bz2 \
+    https://github.com/samtools/htslib/releases/download/1.23/htslib-1.23.tar.bz2
+  tar xf htslib-1.23.tar.bz2
+  cd htslib-1.23
+  autoreconf -i
+  ./configure --prefix="$(realpath ..)/htslib" \
+    --disable-libcurl --disable-gcs --disable-s3
+  make -j$(nproc)
+  make install
+  cd ..
+
+  On macOS, add Homebrew paths to configure:
+    ./configure --prefix="$(realpath ..)/htslib" \
+      --disable-libcurl --disable-gcs --disable-s3 \
+      CPPFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib"
+
+NCBI C++ Toolkit:
+
+  curl -L -o ncbi-cxx-toolkit-public-release-30.0.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
+  tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
+  cd ncbi-cxx-toolkit-public-release-30.0.0
+  ./cmake-configure \
+    --without-debug \
+    --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
+    --with-install="$(realpath ..)/ncbi-cxx-toolkit"
+  cd CMake-GCC*/build
+  make -j$(nproc)
+  make install
+  cd ../../..
+
+  On macOS:
+    export CFLAGS="-I$(brew --prefix)/include"
+    export CXXFLAGS="-I$(brew --prefix)/include"
+    (run cmake-configure as above, then:)
+    cd CMake-Clang*/build
+    make -j$(sysctl -n hw.ncpu)
+    make install
+    cd ../../..
+
+3. Build ikafssn
+------------------
+
+  mkdir build && cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Release
+  make -j$(nproc)
+  make test
+
+  To skip ikafssnhttpd:  cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_HTTPD=OFF
+  To skip ikafssnclient:  cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_CLIENT=OFF
+
+4. Install
+-----------
+
+  sudo make install
+
+  Executables are installed to /usr/local/bin by default.
+  To change the prefix:
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ikafssn

@@ -1,8 +1,10 @@
-Runtime dependencies for pre-built ikafssn binaries
-====================================================
+Dependencies for ikafssn
+========================
 
-Ubuntu 24.04 (x86_64 / aarch64)
---------------------------------
+Runtime dependencies (pre-built binaries)
+------------------------------------------
+
+Ubuntu 24.04 (x86_64 / aarch64):
 
   libtbb12
   liblmdb0
@@ -17,8 +19,7 @@ Ubuntu 24.04 (x86_64 / aarch64)
   Additional for ikafssnhttpd:
     libdrogon (and its transitive dependencies)
 
-macOS 14 (aarch64, Homebrew)
-----------------------------
+macOS 14 (aarch64, Homebrew):
 
   tbb
   lmdb
@@ -28,3 +29,36 @@ macOS 14 (aarch64, Homebrew)
   xz
   libdeflate
   openssl@3
+
+Build dependencies (from source)
+----------------------------------
+
+Compiler and tools:
+
+  C++17 compiler (GCC >= 10 or Clang >= 12)
+  CMake >= 3.16
+
+System packages — Ubuntu 24.04 (x86_64 / aarch64):
+
+  build-essential cmake
+  libtbb-dev liblmdb-dev libsqlite3-dev
+  libcurl4-openssl-dev libjsoncpp-dev
+  zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
+
+  Additional for ikafssnhttpd:
+    libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev
+    libbrotli-dev libhiredis-dev libpq-dev
+
+System packages — macOS (Homebrew):
+
+  cmake tbb lmdb sqlite3 curl jsoncpp
+  xz libdeflate autoconf automake libtool openssl@3
+
+  Additional for ikafssnhttpd:
+    drogon
+
+Source-built libraries:
+
+  NCBI C++ Toolkit 30.0.0  — BLAST DB access
+  Parasail 2.6.2           — Stage 3 pairwise alignment
+  htslib 1.23              — SAM/BAM output
