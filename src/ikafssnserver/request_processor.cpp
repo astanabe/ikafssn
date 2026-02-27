@@ -32,7 +32,7 @@ SearchResponse process_search_request(
     tbb::task_arena& arena) {
 
     SearchResponse resp;
-    resp.db_name = db.name;
+    resp.db = db.name;
 
     // Determine k
     int k = (req.k != 0) ? req.k : db.default_k;
@@ -294,8 +294,11 @@ SearchResponse process_search_request(
                                 rh.q_end = cr.q_end;
                                 rh.s_start = cr.s_start;
                                 rh.s_end = cr.s_end;
-                                rh.score = static_cast<uint16_t>(cr.score);
-                                rh.stage1_score = static_cast<uint16_t>(cr.stage1_score);
+                                rh.chainscore = static_cast<uint16_t>(cr.chainscore);
+                                if (config.stage1.stage1_score_type == 2)
+                                    rh.matchscore = static_cast<uint16_t>(cr.stage1_score);
+                                else
+                                    rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
                                 rh.volume = vol.volume_index;
                                 rh.q_length = static_cast<uint32_t>(query.sequence.size());
                                 rh.s_length = vol.ksx.seq_length(cr.seq_id);
@@ -343,8 +346,9 @@ SearchResponse process_search_request(
                 oh.q_end = hit.q_end;
                 oh.s_start = hit.s_start;
                 oh.s_end = hit.s_end;
-                oh.score = hit.score;
-                oh.stage1_score = hit.stage1_score;
+                oh.chainscore = hit.chainscore;
+                oh.coverscore = hit.coverscore;
+                oh.matchscore = hit.matchscore;
                 oh.volume = hit.volume;
                 oh.q_length = hit.q_length;
                 oh.s_length = hit.s_length;
@@ -371,8 +375,9 @@ SearchResponse process_search_request(
             rh.q_end = oh.q_end;
             rh.s_start = oh.s_start;
             rh.s_end = oh.s_end;
-            rh.score = static_cast<uint16_t>(oh.score);
-            rh.stage1_score = static_cast<uint16_t>(oh.stage1_score);
+            rh.chainscore = static_cast<uint16_t>(oh.chainscore);
+            rh.coverscore = static_cast<uint16_t>(oh.coverscore);
+            rh.matchscore = static_cast<uint16_t>(oh.matchscore);
             rh.volume = oh.volume;
             rh.q_length = oh.q_length;
             rh.s_length = oh.s_length;
@@ -400,7 +405,7 @@ SearchResponse process_search_request(
             if (config.sort_score == 1) {
                 std::sort(qr.hits.begin(), qr.hits.end(),
                           [](const ResponseHit& a, const ResponseHit& b) {
-                              return a.stage1_score > b.stage1_score;
+                              return (a.coverscore + a.matchscore) > (b.coverscore + b.matchscore);
                           });
             } else if (config.sort_score == 3) {
                 std::sort(qr.hits.begin(), qr.hits.end(),
@@ -410,7 +415,7 @@ SearchResponse process_search_request(
             } else {
                 std::sort(qr.hits.begin(), qr.hits.end(),
                           [](const ResponseHit& a, const ResponseHit& b) {
-                              return a.score > b.score;
+                              return a.chainscore > b.chainscore;
                           });
             }
 

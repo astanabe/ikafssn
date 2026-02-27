@@ -105,7 +105,7 @@ void HttpController::search(
     sreq.stage3_min_nident = j.get("stage3_min_nident", 0).asUInt();
     sreq.context_abs = j.get("context_abs", 0).asUInt();
     sreq.context_frac_x10000 = static_cast<uint16_t>(j.get("context_frac_x10000", 0).asUInt());
-    sreq.db_name = j.get("db_name", "").asString();
+    sreq.db = j.get("db", "").asString();
 
     // Seqidlist mode
     std::string mode_str = j.get("seqidlist_mode", "none").asString();
@@ -153,7 +153,7 @@ void HttpController::search(
     // Phase 1: cached validation (synchronous, on Drogon thread)
     {
         auto merged = manager_->merged_info();
-        std::string err = validate_info(merged, sreq.db_name,
+        std::string err = validate_info(merged, sreq.db,
                                         sreq.k, sreq.mode, false);
         if (!err.empty()) {
             callback(make_error_response(drogon::k400BadRequest, err));
@@ -205,9 +205,10 @@ void HttpController::search(
                     hobj["s_end"] = hit.s_end;
                 }
                 hobj["s_len"] = hit.s_length;
-                hobj[s1name] = hit.stage1_score;
+                hobj["coverscore"] = hit.coverscore;
+                hobj["matchscore"] = hit.matchscore;
                 if (sresp.mode != 1) {
-                    hobj["chainscore"] = hit.score;
+                    hobj["chainscore"] = hit.chainscore;
                 }
                 if (sresp.mode == 3) {
                     hobj["alnscore"] = hit.alnscore;

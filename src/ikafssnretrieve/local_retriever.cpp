@@ -104,7 +104,7 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
             << " query=" << hit.query_id
             << " strand=" << hit.strand
             << " range=" << ext_start << '-' << ext_end
-            << " score=" << hit.score
+            << " score=" << hit.chainscore
             << '\n';
 
         // Write sequence in 70-char lines

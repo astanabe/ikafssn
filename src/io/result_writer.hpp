@@ -19,8 +19,9 @@ struct OutputHit {
     uint32_t q_end;
     uint32_t s_start;
     uint32_t s_end;
-    uint32_t score;           // chainscore
-    uint32_t stage1_score = 0;
+    uint32_t coverscore = 0;
+    uint32_t matchscore = 0;
+    uint32_t chainscore = 0;
     uint16_t volume;
 
     // Stage 3 fields (populated only when mode == 3)

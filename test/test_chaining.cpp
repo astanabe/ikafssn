@@ -13,7 +13,7 @@ static void test_single_hit() {
     config.max_gap = 100;
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr.score, 1u);
+    CHECK_EQ(cr.chainscore, 1u);
     CHECK_EQ(cr.q_start, 10u);
     CHECK_EQ(cr.q_end, 17u); // 10 + k
     CHECK_EQ(cr.s_start, 100u);
@@ -34,7 +34,7 @@ static void test_perfect_chain() {
     config.max_gap = 100;
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr.score, 5u);
+    CHECK_EQ(cr.chainscore, 5u);
     CHECK_EQ(cr.q_start, 0u);
     CHECK_EQ(cr.q_end, 35u); // 28 + 7
     CHECK_EQ(cr.s_start, 90u);
@@ -54,7 +54,7 @@ static void test_chain_with_gap() {
     config.max_gap = 100; // gap_q=40, gap_s=90, diag_diff=50, within 100
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr.score, 3u);
+    CHECK_EQ(cr.chainscore, 3u);
 }
 
 static void test_chain_gap_exceeded() {
@@ -71,7 +71,7 @@ static void test_chain_gap_exceeded() {
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
     // Best chain is just one hit (score=1)
-    CHECK_EQ(cr.score, 1u);
+    CHECK_EQ(cr.chainscore, 1u);
 }
 
 static void test_min_score_filter() {
@@ -84,7 +84,7 @@ static void test_min_score_filter() {
     config.max_gap = 100;
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr.score, 0u); // filtered out
+    CHECK_EQ(cr.chainscore, 0u); // filtered out
 }
 
 static void test_reverse_strand_flag() {
@@ -99,7 +99,7 @@ static void test_reverse_strand_flag() {
     ChainResult cr = chain_hits(hits, 5, 7, true, config);
     CHECK_EQ(cr.is_reverse, true);
     CHECK_EQ(cr.seq_id, 5u);
-    CHECK_EQ(cr.score, 2u);
+    CHECK_EQ(cr.chainscore, 2u);
 }
 
 static void test_non_collinear_hits() {
@@ -116,7 +116,7 @@ static void test_non_collinear_hits() {
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
     // Each hit is independent, best chain score = 1
-    CHECK_EQ(cr.score, 1u);
+    CHECK_EQ(cr.chainscore, 1u);
 }
 
 static void test_same_qpos_not_chained() {
@@ -134,7 +134,7 @@ static void test_same_qpos_not_chained() {
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
     // Only one distinct q_pos, so the longest chain must be 1
-    CHECK_EQ(cr.score, 1u);
+    CHECK_EQ(cr.chainscore, 1u);
 }
 
 static void test_same_qpos_mixed_with_distinct() {
@@ -153,7 +153,7 @@ static void test_same_qpos_mixed_with_distinct() {
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
     // Best chain: pick one hit from q_pos=0 and one from q_pos=20 → score 2
-    CHECK_EQ(cr.score, 2u);
+    CHECK_EQ(cr.chainscore, 2u);
 }
 
 static void test_chain_max_lookback_basic() {
@@ -170,7 +170,7 @@ static void test_chain_max_lookback_basic() {
     config.chain_max_lookback = 4;
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr.score, 5u);
+    CHECK_EQ(cr.chainscore, 5u);
 }
 
 static void test_chain_max_lookback_interleaved() {
@@ -197,7 +197,7 @@ static void test_chain_max_lookback_interleaved() {
     // Best = 2
     config.chain_max_lookback = 1;
     ChainResult cr1 = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr1.score, 2u);
+    CHECK_EQ(cr1.chainscore, 2u);
 
     // B=2: each hit looks back 2 positions.
     // Index 2: looks at [0,1] -> from 0: s 104>90 yes, diag_diff=|104-14-(90-0)|=0<=100. dp=2
@@ -205,7 +205,7 @@ static void test_chain_max_lookback_interleaved() {
     // Best = 3 (chain A fully recovered)
     config.chain_max_lookback = 2;
     ChainResult cr2 = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr2.score, 3u);
+    CHECK_EQ(cr2.chainscore, 3u);
 }
 
 static void test_chain_max_lookback_zero_unlimited() {
@@ -222,7 +222,7 @@ static void test_chain_max_lookback_zero_unlimited() {
     config.chain_max_lookback = 0; // unlimited
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr.score, 5u);
+    CHECK_EQ(cr.chainscore, 5u);
 }
 
 static void test_empty_hits() {
@@ -235,7 +235,7 @@ static void test_empty_hits() {
     config.max_gap = 100;
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr.score, 0u);
+    CHECK_EQ(cr.chainscore, 0u);
 }
 
 static void test_duplicate_hits_dedup() {
@@ -250,7 +250,7 @@ static void test_duplicate_hits_dedup() {
     config.max_gap = 100;
 
     ChainResult cr = chain_hits(hits, 0, 7, false, config);
-    CHECK_EQ(cr.score, 2u);  // 2 distinct positions, not 5
+    CHECK_EQ(cr.chainscore, 2u);  // 2 distinct positions, not 5
 }
 
 int main() {

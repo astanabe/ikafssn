@@ -346,7 +346,7 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                        << " query=" << hit.query_id
                        << " strand=" << hit.strand
                        << " range=" << ext_start << '-' << ext_end
-                       << " score=" << hit.score;
+                       << " score=" << hit.chainscore;
                 write_fasta_record(out, header.str(), subseq);
                 retrieved++;
             }
@@ -399,7 +399,7 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                    << " query=" << hit.query_id
                    << " strand=" << hit.strand
                    << " range=" << hr.ext_start << '-' << hr.ext_end
-                   << " score=" << hit.score;
+                   << " score=" << hit.chainscore;
             write_fasta_record(out, header.str(), subseq);
             retrieved++;
 

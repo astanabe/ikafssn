@@ -47,7 +47,7 @@ static void test_k7_uint16() {
     {
         KixWriter writer(k, kmer_type);
         writer.set_num_sequences(1000);
-        writer.set_db_name("testdb");
+        writer.set_db("testdb");
         writer.set_volume_info(0, 1);
         writer.set_flags(KIX_FLAG_HAS_KSX);
 
@@ -67,7 +67,7 @@ static void test_k7_uint16() {
         CHECK_EQ(reader.num_sequences(), 1000u);
         CHECK_EQ(reader.table_size(), ts);
         CHECK(std::memcmp(reader.header().magic, KIX_MAGIC, 4) == 0);
-        CHECK(std::string(reader.header().db_name, reader.header().db_name_len) == "testdb");
+        CHECK(std::string(reader.header().db, reader.header().db_len) == "testdb");
 
         // Check counts
         CHECK_EQ(reader.posting_count(0), 5u);

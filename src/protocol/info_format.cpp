@@ -20,29 +20,29 @@ std::string format_all_databases(const InfoResponse& info) {
 }
 
 std::string validate_info(const InfoResponse& info,
-                          const std::string& db_name,
+                          const std::string& db,
                           uint8_t k, uint8_t mode,
                           bool check_slots) {
     // 1. Slot capacity check
-    if (check_slots && info.max_active_sequences > 0 &&
-        info.active_sequences >= info.max_active_sequences) {
+    if (check_slots && info.max_queue_size > 0 &&
+        info.queue_depth >= info.max_queue_size) {
         return "Error: server is at capacity ("
-             + std::to_string(info.active_sequences) + "/"
-             + std::to_string(info.max_active_sequences)
+             + std::to_string(info.queue_depth) + "/"
+             + std::to_string(info.max_queue_size)
              + " active sequences). Try again later.";
     }
 
     // 2. Find target database
     const DatabaseInfo* target_db = nullptr;
-    for (const auto& db : info.databases) {
-        if (db.name == db_name) {
-            target_db = &db;
+    for (const auto& dbi : info.databases) {
+        if (dbi.name == db) {
+            target_db = &dbi;
             break;
         }
     }
 
     if (!target_db) {
-        std::string msg = "Error: database '" + db_name
+        std::string msg = "Error: database '" + db
                         + "' not found on server.\nAvailable databases:\n"
                         + format_all_databases(info);
         return msg;
@@ -82,8 +82,8 @@ std::string validate_info(const InfoResponse& info,
 std::string format_server_info(const InfoResponse& info, bool verbose) {
     std::string out;
     out += "=== ikafssn Server Information ===\n\n";
-    out += "Active sequences:  " + std::to_string(info.active_sequences)
-         + "/" + std::to_string(info.max_active_sequences) + "\n";
+    out += "Active sequences:  " + std::to_string(info.queue_depth)
+         + "/" + std::to_string(info.max_queue_size) + "\n";
     if (info.max_seqs_per_req > 0) {
         out += "Max sequences/request: " + std::to_string(info.max_seqs_per_req) + "\n";
     }
@@ -124,7 +124,7 @@ std::string format_server_info(const InfoResponse& info, bool verbose) {
                         v.volume_index, v.num_sequences,
                         static_cast<unsigned long>(v.total_bases),
                         static_cast<unsigned long>(v.total_postings),
-                        v.db_name.c_str());
+                        v.db.c_str());
                     out += vline;
                 }
             }

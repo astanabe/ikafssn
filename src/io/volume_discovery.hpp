@@ -19,7 +19,7 @@ struct DiscoveredVolume {
 // e.g. "path/to/nt" -> {"path/to", "nt"}
 struct IndexPrefixParts {
     std::string parent_dir;
-    std::string db_name;
+    std::string db;
 };
 IndexPrefixParts parse_index_prefix(const std::string& ix_prefix);
 
@@ -31,7 +31,7 @@ std::string index_file_stem(const std::string& parent_dir,
 // Build the .khx file path.
 // e.g. khx_path_for("dir", "nt", 9) -> "dir/nt.09mer.khx"
 std::string khx_path_for(const std::string& parent_dir,
-                          const std::string& db_name, int k);
+                          const std::string& db, int k);
 
 // Discover index volumes from .kvx manifests.
 // If filter_k > 0, only that k value. If filter_k == 0, all available k values.

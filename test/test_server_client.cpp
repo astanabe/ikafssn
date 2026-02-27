@@ -76,8 +76,8 @@ static std::string build_test_index(int k) {
 }
 
 // Derive DB name from index prefix (same logic as server)
-static std::string db_name_from_prefix(const std::string& ix_prefix) {
-    return parse_index_prefix(ix_prefix).db_name;
+static std::string db_from_prefix(const std::string& ix_prefix) {
+    return parse_index_prefix(ix_prefix).db;
 }
 
 // Test: direct local search produces results, and server produces same results
@@ -88,7 +88,7 @@ static void test_server_client_search() {
     std::string ix_prefix = build_test_index(k);
     CHECK(!ix_prefix.empty());
 
-    std::string db_name = db_name_from_prefix(ix_prefix);
+    std::string db = db_from_prefix(ix_prefix);
 
     // Read query from derived test data
     std::string query_fasta = queries_path();
@@ -154,7 +154,7 @@ static void test_server_client_search() {
 
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
-    req.db_name = db_name;
+    req.db = db;
     for (const auto& q : queries) {
         req.queries.push_back({q.id, q.sequence});
     }
@@ -182,7 +182,7 @@ static void test_server_client_search() {
         struct HitKey {
             std::string accession;
             uint32_t q_start, q_end, s_start, s_end;
-            uint16_t score;
+            uint16_t chainscore;
             bool is_reverse;
             bool operator<(const HitKey& o) const {
                 if (accession != o.accession) return accession < o.accession;
@@ -194,12 +194,12 @@ static void test_server_client_search() {
         std::vector<HitKey> server_sorted, local_sorted;
         for (const auto& sh : server_qr.hits) {
             server_sorted.push_back({sh.accession, sh.q_start, sh.q_end,
-                                     sh.s_start, sh.s_end, sh.score, sh.strand == 1});
+                                     sh.s_start, sh.s_end, sh.chainscore, sh.strand == 1});
         }
         for (const auto& lh : local_sr.hits) {
             local_sorted.push_back({std::string(ksx.accession(lh.seq_id)),
                                     lh.q_start, lh.q_end, lh.s_start, lh.s_end,
-                                    static_cast<uint16_t>(lh.score), lh.is_reverse});
+                                    static_cast<uint16_t>(lh.chainscore), lh.is_reverse});
         }
         std::sort(server_sorted.begin(), server_sorted.end());
         std::sort(local_sorted.begin(), local_sorted.end());
@@ -210,7 +210,7 @@ static void test_server_client_search() {
             CHECK_EQ(server_sorted[hi].q_end, local_sorted[hi].q_end);
             CHECK_EQ(server_sorted[hi].s_start, local_sorted[hi].s_start);
             CHECK_EQ(server_sorted[hi].s_end, local_sorted[hi].s_end);
-            CHECK_EQ(server_sorted[hi].score, local_sorted[hi].score);
+            CHECK_EQ(server_sorted[hi].chainscore, local_sorted[hi].chainscore);
             CHECK(server_sorted[hi].is_reverse == local_sorted[hi].is_reverse);
         }
     }
@@ -263,7 +263,7 @@ static void test_seqidlist_filter_via_server() {
 
     int k = 7;
     std::string ix_prefix = g_test_dir + "/sc_index/test";
-    std::string db_name = db_name_from_prefix(ix_prefix);
+    std::string db = db_from_prefix(ix_prefix);
     std::string sock_path = g_test_dir + "/test_seqidlist.sock";
     ::unlink(sock_path.c_str());
 
@@ -308,7 +308,7 @@ static void test_seqidlist_filter_via_server() {
     // Build request with seqidlist (include mode)
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
-    req.db_name = db_name;
+    req.db = db;
     req.seqidlist_mode = SeqidlistMode::kInclude;
     req.seqids = {target_acc};
     for (const auto& q : queries) {

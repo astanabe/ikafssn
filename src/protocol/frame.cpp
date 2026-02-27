@@ -41,9 +41,9 @@ bool read_all(int fd, void* data, size_t n) {
 bool write_frame(int fd, MsgType type, const std::vector<uint8_t>& payload) {
     FrameHeader hdr;
     hdr.magic = FRAME_MAGIC;
-    hdr.payload_length = static_cast<uint32_t>(payload.size());
+    hdr.payload_size = static_cast<uint32_t>(payload.size());
     hdr.msg_type = static_cast<uint8_t>(type);
-    hdr.msg_version = 3;
+    hdr.msg_version = 4;
     hdr.reserved = 0;
 
     if (!write_all(fd, &hdr, sizeof(hdr))) return false;
@@ -57,12 +57,12 @@ bool read_frame(int fd, FrameHeader& header, std::vector<uint8_t>& payload) {
     if (!read_all(fd, &header, sizeof(header))) return false;
 
     if (header.magic != FRAME_MAGIC) return false;
-    if (header.msg_version != 3) return false;
-    if (header.payload_length > MAX_PAYLOAD_SIZE) return false;
+    if (header.msg_version != 4) return false;
+    if (header.payload_size > MAX_PAYLOAD_SIZE) return false;
 
-    payload.resize(header.payload_length);
-    if (header.payload_length > 0) {
-        if (!read_all(fd, payload.data(), header.payload_length)) return false;
+    payload.resize(header.payload_size);
+    if (header.payload_size > 0) {
+        if (!read_all(fd, payload.data(), header.payload_size)) return false;
     }
     return true;
 }

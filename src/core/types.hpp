@@ -14,7 +14,7 @@ struct Hit {
 
 struct ChainResult {
     SeqId  seq_id;
-    uint32_t score;
+    uint32_t chainscore;
     uint32_t stage1_score = 0;
     SeqPos q_start;
     SeqPos q_end;

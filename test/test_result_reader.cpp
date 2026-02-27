@@ -38,8 +38,8 @@ static void test_basic_parse() {
     CHECK_EQ(results[0].s_start, 100u);
     CHECK_EQ(results[0].s_end, 149u);
     CHECK_EQ(results[0].s_length, 2000u);
-    CHECK_EQ(results[0].stage1_score, 5u);
-    CHECK_EQ(results[0].score, 15u);
+    CHECK_EQ(results[0].coverscore, 5u);
+    CHECK_EQ(results[0].chainscore, 15u);
     CHECK_EQ(results[0].volume, 0u);
 
     CHECK(results[1].query_id == "query1");
@@ -51,8 +51,8 @@ static void test_basic_parse() {
     CHECK_EQ(results[1].s_start, 200u);
     CHECK_EQ(results[1].s_end, 229u);
     CHECK_EQ(results[1].s_length, 3000u);
-    CHECK_EQ(results[1].stage1_score, 3u);
-    CHECK_EQ(results[1].score, 10u);
+    CHECK_EQ(results[1].coverscore, 3u);
+    CHECK_EQ(results[1].chainscore, 10u);
     CHECK_EQ(results[1].volume, 1u);
 }
 
@@ -153,8 +153,8 @@ static void test_roundtrip() {
         CHECK_EQ(read_back[i].q_end, hits[i].q_end);
         CHECK_EQ(read_back[i].s_start, hits[i].s_start);
         CHECK_EQ(read_back[i].s_end, hits[i].s_end);
-        CHECK_EQ(read_back[i].stage1_score, hits[i].stage1_score);
-        CHECK_EQ(read_back[i].score, hits[i].score);
+        CHECK_EQ(read_back[i].coverscore, hits[i].coverscore);
+        CHECK_EQ(read_back[i].chainscore, hits[i].chainscore);
         CHECK_EQ(read_back[i].volume, hits[i].volume);
     }
 }
@@ -174,8 +174,8 @@ static void test_roundtrip_mode3_no_traceback() {
     h.s_start = 200;  // will NOT be written
     h.s_end = 800;
     h.s_length = 5000;
-    h.stage1_score = 10;
-    h.score = 50;
+    h.coverscore = 10;
+    h.chainscore = 50;
     h.alnscore = 120;
     h.volume = 2;
     hits.push_back(h);
@@ -203,8 +203,8 @@ static void test_roundtrip_mode3_no_traceback() {
     CHECK_EQ(read_back[0].s_start, 0u);   // not present -> default 0
     CHECK_EQ(read_back[0].s_end, 800u);
     CHECK_EQ(read_back[0].s_length, 5000u);
-    CHECK_EQ(read_back[0].stage1_score, 10u);
-    CHECK_EQ(read_back[0].score, 50u);
+    CHECK_EQ(read_back[0].coverscore, 10u);
+    CHECK_EQ(read_back[0].chainscore, 50u);
     CHECK_EQ(read_back[0].alnscore, 120);
     CHECK_EQ(read_back[0].volume, 2u);
 }
@@ -224,8 +224,8 @@ static void test_roundtrip_mode3_traceback() {
     h.s_start = 150;
     h.s_end = 750;
     h.s_length = 3000;
-    h.stage1_score = 7;
-    h.score = 40;
+    h.coverscore = 7;
+    h.chainscore = 40;
     h.alnscore = 200;
     h.pident = 95.5;
     h.nident = 90;
@@ -273,19 +273,19 @@ static void test_header_reordered_columns() {
     CHECK(results[0].query_id == "qR1");
     CHECK(results[0].accession == "ACC_R1");
     CHECK_EQ(results[0].strand, '+');
-    CHECK_EQ(results[0].stage1_score, 12u);
+    CHECK_EQ(results[0].coverscore, 12u);
     CHECK_EQ(results[0].q_length, 400u);
     CHECK_EQ(results[0].s_length, 5000u);
     CHECK_EQ(results[0].volume, 3u);
     // Missing columns default to 0
     CHECK_EQ(results[0].q_start, 0u);
     CHECK_EQ(results[0].s_start, 0u);
-    CHECK_EQ(results[0].score, 0u);
+    CHECK_EQ(results[0].chainscore, 0u);
 
     CHECK(results[1].query_id == "qR2");
     CHECK(results[1].accession == "ACC_R2");
     CHECK_EQ(results[1].strand, '-');
-    CHECK_EQ(results[1].stage1_score, 8u);
+    CHECK_EQ(results[1].coverscore, 8u);
     CHECK_EQ(results[1].volume, 0u);
 }
 
@@ -301,7 +301,7 @@ static void test_header_matchscore() {
 
     auto results = read_results_tab(path);
     CHECK_EQ(results.size(), 1u);
-    CHECK_EQ(results[0].stage1_score, 42u);
+    CHECK_EQ(results[0].matchscore, 42u);
 }
 
 static void test_legacy_no_header() {

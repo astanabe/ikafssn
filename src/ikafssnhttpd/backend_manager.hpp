@@ -55,7 +55,7 @@ public:
                       std::string& error_msg);
 
     // Return a merged InfoResponse (DB/k/mode structure only) for validate_info().
-    // Capacity fields (max_active_sequences/active_sequences) are set to 0.
+    // Capacity fields (max_queue_size/queue_depth) are set to 0.
     InfoResponse merged_info() const;
 
     // Build aggregated info JSON for the /info endpoint.
@@ -73,18 +73,18 @@ public:
 private:
     std::vector<std::unique_ptr<BackendEntry>> backends_;
 
-    // Capability map: (db_name, k, mode) -> list of backend indices
+    // Capability map: (db, k, mode) -> list of backend indices
     struct CapKey {
-        std::string db_name;
+        std::string db;
         uint8_t k;
         uint8_t mode;
         bool operator==(const CapKey& o) const {
-            return db_name == o.db_name && k == o.k && mode == o.mode;
+            return db == o.db && k == o.k && mode == o.mode;
         }
     };
     struct CapKeyHash {
         size_t operator()(const CapKey& k) const {
-            size_t h = std::hash<std::string>()(k.db_name);
+            size_t h = std::hash<std::string>()(k.db);
             h ^= std::hash<uint8_t>()(k.k) + 0x9e3779b9 + (h << 6) + (h >> 2);
             h ^= std::hash<uint8_t>()(k.mode) + 0x9e3779b9 + (h << 6) + (h >> 2);
             return h;
@@ -109,9 +109,9 @@ private:
     // Rebuild capability map from all backends' cached info.
     void rebuild_capability_map();
 
-    // Select the best backend for a given (db_name, k, mode) query.
+    // Select the best backend for a given (db, k, mode) query.
     // Returns backend index, or -1 if none available.
-    int select_backend(const std::string& db_name, uint8_t k, uint8_t mode) const;
+    int select_backend(const std::string& db, uint8_t k, uint8_t mode) const;
 
     // Exclude a backend for exclusion_seconds_.
     void exclude_backend(size_t idx, const Logger& logger);

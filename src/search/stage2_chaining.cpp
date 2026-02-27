@@ -14,7 +14,7 @@ ChainResult chain_hits(const std::vector<Hit>& raw_hits,
                        const Stage2Config& config) {
     ChainResult result{};
     result.seq_id = seq_id;
-    result.score = 0;
+    result.chainscore = 0;
     result.is_reverse = is_reverse;
 
     if (raw_hits.empty()) return result;
@@ -81,7 +81,7 @@ ChainResult chain_hits(const std::vector<Hit>& raw_hits,
         chain_start_idx = static_cast<size_t>(prev[chain_start_idx]);
     }
 
-    result.score = best_score;
+    result.chainscore = best_score;
     result.q_start = hits[chain_start_idx].q_pos;
     result.q_end = hits[best_idx].q_pos + static_cast<uint32_t>(k);
     result.s_start = hits[chain_start_idx].s_pos;

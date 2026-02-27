@@ -29,10 +29,10 @@ Server::~Server() {
 bool Server::load_database(const std::string& ix_prefix, const std::string& db_path,
                            const ServerConfig& config, const Logger& logger) {
     auto prefix_parts = parse_index_prefix(ix_prefix);
-    const std::string& db_name = prefix_parts.db_name;
+    const std::string& db_name = prefix_parts.db;
 
     // Check for duplicate DB name
-    if (db_name_index_.count(db_name)) {
+    if (db_index_.count(db_name)) {
         logger.error("Duplicate database name '%s' (from %s)", db_name.c_str(), ix_prefix.c_str());
         return false;
     }
@@ -99,7 +99,7 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
                   });
 
         // Open shared .khx for this k-mer group (non-fatal if missing)
-        group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db_name, k));
+        group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db, k));
     }
 
     // Default k = largest available
@@ -140,14 +140,14 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
 
     size_t idx = databases_.size();
     databases_.push_back(std::move(entry));
-    db_name_index_[db_name] = idx;
+    db_index_[db_name] = idx;
 
     return true;
 }
 
 const DatabaseEntry* Server::find_database(const std::string& name) const {
-    auto it = db_name_index_.find(name);
-    if (it == db_name_index_.end()) return nullptr;
+    auto it = db_index_.find(name);
+    if (it == db_index_.end()) return nullptr;
     return &databases_[it->second];
 }
 
@@ -163,15 +163,15 @@ void Server::request_shutdown() {
 int Server::try_acquire_sequences(int n) {
     std::lock_guard<std::mutex> lock(seq_mutex_);
     int capped = std::min(n, max_seqs_per_req_);
-    int available = max_active_sequences_ - active_sequences_;
+    int available = max_queue_size_ - queue_depth_;
     int acquired = std::min(capped, std::max(0, available));
-    active_sequences_ += acquired;
+    queue_depth_ += acquired;
     return acquired;
 }
 
 void Server::release_sequences(int n) {
     std::lock_guard<std::mutex> lock(seq_mutex_);
-    active_sequences_ -= n;
+    queue_depth_ -= n;
 }
 
 void Server::write_pid_file(const std::string& path) {
@@ -257,10 +257,10 @@ int Server::run(const ServerConfig& config_in) {
             num_threads = static_cast<int>(std::thread::hardware_concurrency());
             if (num_threads <= 0) num_threads = 1;
         }
-        max_active_sequences_ = config.max_query > 0 ? config.max_query : 1024;
+        max_queue_size_ = config.max_queue_size > 0 ? config.max_queue_size : 1024;
         max_seqs_per_req_ = config.max_seqs_per_req > 0 ? config.max_seqs_per_req : num_threads;
         logger.info("Max concurrent sequences: %d, max per request: %d",
-                     max_active_sequences_, max_seqs_per_req_);
+                     max_queue_size_, max_seqs_per_req_);
     }
 
     // Log total mmap count

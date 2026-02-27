@@ -130,15 +130,21 @@ static void write_sam_bam_impl(const std::string& output_path,
         }
         // cs:i:chainscore
         {
-            int32_t cs = static_cast<int32_t>(h.score);
+            int32_t cs = static_cast<int32_t>(h.chainscore);
             bam_aux_append(b, "cs", 'i', sizeof(int32_t),
                            reinterpret_cast<const uint8_t*>(&cs));
         }
-        // s1:i:stage1_score
+        // cv:i:coverscore
         {
-            int32_t s1 = static_cast<int32_t>(h.stage1_score);
-            bam_aux_append(b, "s1", 'i', sizeof(int32_t),
-                           reinterpret_cast<const uint8_t*>(&s1));
+            int32_t cv = static_cast<int32_t>(h.coverscore);
+            bam_aux_append(b, "cv", 'i', sizeof(int32_t),
+                           reinterpret_cast<const uint8_t*>(&cv));
+        }
+        // ms:i:matchscore
+        {
+            int32_t ms = static_cast<int32_t>(h.matchscore);
+            bam_aux_append(b, "ms", 'i', sizeof(int32_t),
+                           reinterpret_cast<const uint8_t*>(&ms));
         }
 
         sam_write1(fp, hdr, b);

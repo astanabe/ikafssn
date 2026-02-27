@@ -47,7 +47,7 @@ stage1_only_results(const std::vector<Stage1Candidate>& candidates,
         if (c.score < min_score) continue;
         ChainResult cr{};
         cr.seq_id = c.id;
-        cr.score = 0;
+        cr.chainscore = 0;
         cr.stage1_score = c.score;
         cr.q_start = 0;
         cr.q_end = 0;
@@ -137,7 +137,7 @@ search_one_strand_preprocessed(
         if (it == hits_per_seq.end()) continue;
 
         ChainResult cr = chain_hits(it->second, c.id, k, is_reverse, stage2_config);
-        if (cr.score >= effective_min_score) {
+        if (cr.chainscore >= effective_min_score) {
             cr.stage1_score = c.score;
             results.push_back(cr);
         }
@@ -157,7 +157,7 @@ static void sort_and_truncate(SearchResult& result, const SearchConfig& config) 
         } else {
             std::sort(result.hits.begin(), result.hits.end(),
                       [](const ChainResult& a, const ChainResult& b) {
-                          return a.score > b.score;
+                          return a.chainscore > b.chainscore;
                       });
         }
 

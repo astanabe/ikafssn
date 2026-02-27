@@ -283,7 +283,7 @@ Listener (at least one required):
 
 Options:
   -threads <int>          Worker threads (default: all cores)
-  -max_query <int>        Max concurrent query sequences globally (default: 1024)
+  -max_queue_size <int>   Max concurrent query sequences globally (default: 1024)
   -max_seqs_per_req <int> Max sequences accepted per request (default: thread count)
   -pid <path>             PID file path
   -db <path>              BLAST DB path for mode 3 (repeatable, paired with -ix;
@@ -342,7 +342,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 - If `-db` is specified, the count must match the number of `-ix` flags (paired in order). Databases without a `-db` override default to the `-ix` prefix as the BLAST DB path. A database with no `-db` path supports modes 1-2 only (max_mode=2); providing `-db` enables mode 3 (max_mode=3).
 - If the index prefix matches indexes for multiple k-mer sizes, all are loaded and clients can specify k per request.
 - On SIGTERM/SIGINT, performs graceful shutdown: stops accepting new connections, waits for in-flight requests to complete (up to `-shutdown_timeout` seconds), then exits.
-- **Per-sequence concurrency control:** The server limits concurrency at the per-sequence level, not per-connection. When a request arrives, the server attempts to acquire permits for each valid query sequence. If the global limit (`-max_query`) is reached, excess sequences are returned to the client as "rejected" for retry. The `-max_seqs_per_req` option caps how many permits a single request can acquire, preventing one large request from monopolizing all slots.
+- **Per-sequence concurrency control:** The server limits concurrency at the per-sequence level, not per-connection. When a request arrives, the server attempts to acquire permits for each valid query sequence. If the global limit (`-max_queue_size`) is reached, excess sequences are returned to the client as "rejected" for retry. The `-max_seqs_per_req` option caps how many permits a single request can acquire, preventing one large request from monopolizing all slots.
 
 ### ikafssnhttpd
 
@@ -353,7 +353,7 @@ On startup, it connects to all configured backends to cache their capabilities (
 **Routing and health:**
 
 - **Priority**: Backends are prioritized by CLI argument order (first = highest priority).
-- **Selection**: For each search request, the backend with the highest priority and available effective capacity is selected. Effective capacity considers both slot availability (`max_active_sequences - active_sequences`) and per-request cap (`max_seqs_per_req`), taking the minimum of the two. If all backends are full, the highest-priority one is used.
+- **Selection**: For each search request, the backend with the highest priority and available effective capacity is selected. Effective capacity considers both slot availability (`max_queue_size - queue_depth`) and per-request cap (`max_seqs_per_req`), taking the minimum of the two. If all backends are full, the highest-priority one is used.
 - **Pre-check**: Before each search, a fresh info request is sent to the selected backend to verify connectivity.
 - **Exclusion**: If a backend fails to respond (connection error on info or search), it is excluded for `-exclusion_time` seconds. Excluded backends are automatically re-checked during heartbeat and re-enabled once reachable.
 - **Heartbeat**: A background thread refreshes all backends' info every `-heartbeat_interval` seconds.
@@ -384,7 +384,7 @@ Options:
 | GET | `/api/v1/info` | Aggregated index information from all backends |
 | GET | `/api/v1/health` | Health check (OK if any backend is reachable) |
 
-The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_active_sequences`, `active_sequences`, and `max_seqs_per_req` (computed as `sum(min(available_i, per_req_i))` across backends) across all serving backends. A top-level `max_seqs_per_req` field reports the minimum across all modes.
+The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_queue_size`, `queue_depth`, and `max_seqs_per_req` (computed as `sum(min(available_i, per_req_i))` across backends) across all serving backends. A top-level `max_seqs_per_req` field reports the minimum across all modes.
 
 **Examples:**
 
@@ -795,7 +795,7 @@ SAM records contain:
 - **CIGAR**: extended CIGAR with =/X/I/D operators
 - **SEQ**: ungapped query sequence
 - **QUAL**: * (not available)
-- **Tags**: `AS:i` (alnscore), `NM:i` (nmismatch), `cs:i` (chainscore), `s1:i` (stage1_score)
+- **Tags**: `AS:i` (alnscore), `NM:i` (nmismatch), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
 
 ## Deployment Architecture
 
@@ -847,7 +847,7 @@ ikafssnserver -ix ./rs_index -db refseq -socket /var/run/rs.sock
 ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
 ```
 
-When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that k-value sets, total sequence counts, and total bases are identical. Requests are routed to the highest-priority backend with available effective capacity (considering both slot availability and `max_seqs_per_req`). Note that capacity values (`max_active_sequences`, `active_sequences`, `max_seqs_per_req`) are shared per server across all databases served by that server.
+When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that k-value sets, total sequence counts, and total bases are identical. Requests are routed to the highest-priority backend with available effective capacity (considering both slot availability and `max_seqs_per_req`). Note that capacity values (`max_queue_size`, `queue_depth`, `max_seqs_per_req`) are shared per server across all databases served by that server.
 
 Alternatively, separate processes with path-based HTTP routing:
 

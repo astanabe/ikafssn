@@ -85,7 +85,7 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
         uint64_t total_bases = 0;
     };
 
-    // Map: db_name -> backend_index -> DbStats
+    // Map: db -> backend_index -> DbStats
     std::unordered_map<std::string, std::vector<std::pair<size_t, DbStats>>> db_backends;
 
     for (size_t i = 0; i < backends_.size(); i++) {
@@ -107,7 +107,7 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
     }
 
     // Check consistency for DBs that appear on multiple backends
-    for (const auto& [db_name, entries] : db_backends) {
+    for (const auto& [db, entries] : db_backends) {
         if (entries.size() <= 1) continue;
 
         const auto& ref = entries[0].second;
@@ -117,14 +117,14 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
             if (ref.k_values != other.k_values) {
                 logger.error("Cross-server validation failed for DB '%s': "
                              "k-value sets differ between backend %zu and %zu",
-                             db_name.c_str(), entries[0].first, entries[j].first);
+                             db.c_str(), entries[0].first, entries[j].first);
                 return false;
             }
 
             if (ref.total_sequences != other.total_sequences) {
                 logger.error("Cross-server validation failed for DB '%s': "
                              "total sequences differ between backend %zu (%lu) and %zu (%lu)",
-                             db_name.c_str(), entries[0].first,
+                             db.c_str(), entries[0].first,
                              static_cast<unsigned long>(ref.total_sequences),
                              entries[j].first,
                              static_cast<unsigned long>(other.total_sequences));
@@ -134,7 +134,7 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
             if (ref.total_bases != other.total_bases) {
                 logger.error("Cross-server validation failed for DB '%s': "
                              "total bases differ between backend %zu (%lu) and %zu (%lu)",
-                             db_name.c_str(), entries[0].first,
+                             db.c_str(), entries[0].first,
                              static_cast<unsigned long>(ref.total_bases),
                              entries[j].first,
                              static_cast<unsigned long>(other.total_bases));
@@ -171,15 +171,15 @@ void BackendManager::rebuild_capability_map() {
     }
 }
 
-int BackendManager::select_backend(const std::string& db_name,
+int BackendManager::select_backend(const std::string& db,
                                     uint8_t k, uint8_t mode) const {
     // Try exact match first
-    CapKey key{db_name, k, mode};
+    CapKey key{db, k, mode};
     auto it = capability_map_.find(key);
 
     // Fall back to wildcard (k=0, mode=0) if exact not found
     if (it == capability_map_.end()) {
-        CapKey key0{db_name, 0, 0};
+        CapKey key0{db, 0, 0};
         it = capability_map_.find(key0);
     }
 
@@ -210,12 +210,12 @@ int BackendManager::select_backend(const std::string& db_name,
         if (!be.info_valid) continue;
 
         // Check capacity: consider both slot availability and per-request cap
-        int32_t available = be.cached_info.max_active_sequences - be.cached_info.active_sequences;
+        int32_t available = be.cached_info.max_queue_size - be.cached_info.queue_depth;
         int32_t per_req = be.cached_info.max_seqs_per_req;
         int32_t effective = std::min(std::max(static_cast<int32_t>(0), available),
                                      per_req > 0 ? per_req : INT32_MAX);
         bool has_capacity = true;
-        if (be.cached_info.max_active_sequences > 0 && effective <= 0) {
+        if (be.cached_info.max_queue_size > 0 && effective <= 0) {
             has_capacity = false;
         }
 
@@ -261,9 +261,9 @@ bool BackendManager::route_search(const SearchRequest& req, SearchResponse& resp
                                    std::string& error_msg) {
     // Try up to 3 times with re-selection on failure
     for (int attempt = 0; attempt < 3; attempt++) {
-        int idx = select_backend(req.db_name, req.k, req.mode);
+        int idx = select_backend(req.db, req.k, req.mode);
         if (idx < 0) {
-            error_msg = "No available backend for db=" + req.db_name;
+            error_msg = "No available backend for db=" + req.db;
             return false;
         }
 
@@ -292,8 +292,8 @@ bool BackendManager::route_search(const SearchRequest& req, SearchResponse& resp
 InfoResponse BackendManager::merged_info() const {
     InfoResponse merged;
     merged.status = 0;
-    merged.max_active_sequences = 0;
-    merged.active_sequences = 0;
+    merged.max_queue_size = 0;
+    merged.queue_depth = 0;
 
     // Merge databases from all healthy backends
     std::unordered_map<std::string, size_t> db_index;
@@ -377,10 +377,10 @@ Json::Value BackendManager::build_info_json() const {
                 // Accumulate capacity per mode
                 for (uint8_t m = 1; m <= db.max_mode; m++) {
                     auto& cap = mg.mode_capacity[m];
-                    cap.sum_max_active += be->cached_info.max_active_sequences;
-                    cap.sum_active += be->cached_info.active_sequences;
-                    int32_t avail = be->cached_info.max_active_sequences
-                                  - be->cached_info.active_sequences;
+                    cap.sum_max_active += be->cached_info.max_queue_size;
+                    cap.sum_active += be->cached_info.queue_depth;
+                    int32_t avail = be->cached_info.max_queue_size
+                                  - be->cached_info.queue_depth;
                     int32_t pr = be->cached_info.max_seqs_per_req;
                     cap.sum_effective_per_req += std::min(
                         std::max(static_cast<int32_t>(0), avail),
@@ -414,7 +414,7 @@ Json::Value BackendManager::build_info_json() const {
                 vobj["num_sequences"] = v.num_sequences;
                 vobj["total_postings"] = static_cast<Json::UInt64>(v.total_postings);
                 vobj["total_bases"] = static_cast<Json::UInt64>(v.total_bases);
-                vobj["db_name"] = v.db_name;
+                vobj["db"] = v.db;
                 vols_arr.append(std::move(vobj));
 
                 group_total_sequences += v.num_sequences;
@@ -432,8 +432,8 @@ Json::Value BackendManager::build_info_json() const {
             for (const auto& [m, cap] : mg.mode_capacity) {
                 Json::Value mobj;
                 mobj["mode"] = m;
-                mobj["max_active_sequences"] = static_cast<Json::Int64>(cap.sum_max_active);
-                mobj["active_sequences"] = static_cast<Json::Int64>(cap.sum_active);
+                mobj["max_queue_size"] = static_cast<Json::Int64>(cap.sum_max_active);
+                mobj["queue_depth"] = static_cast<Json::Int64>(cap.sum_active);
                 mobj["max_seqs_per_req"] = static_cast<Json::Int64>(cap.sum_effective_per_req);
                 modes_arr.append(std::move(mobj));
             }

@@ -23,7 +23,7 @@ void write_results_tab(std::ostream& out,
                 << h.strand << '\t'
                 << h.q_length << '\t'
                 << h.s_length << '\t'
-                << h.stage1_score << '\t'
+                << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
                 << h.volume << '\n';
         }
     } else if (mode == 3 && stage3_traceback) {
@@ -39,8 +39,8 @@ void write_results_tab(std::ostream& out,
                 << h.s_start << '\t'
                 << h.s_end << '\t'
                 << h.s_length << '\t'
-                << h.stage1_score << '\t'
-                << h.score << '\t'
+                << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
+                << h.chainscore << '\t'
                 << h.alnscore << '\t'
                 << h.pident << '\t'
                 << h.nident << '\t'
@@ -61,8 +61,8 @@ void write_results_tab(std::ostream& out,
                 << h.q_length << '\t'
                 << h.s_end << '\t'
                 << h.s_length << '\t'
-                << h.stage1_score << '\t'
-                << h.score << '\t'
+                << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
+                << h.chainscore << '\t'
                 << h.alnscore << '\t'
                 << h.volume << '\n';
         }
@@ -79,8 +79,8 @@ void write_results_tab(std::ostream& out,
                 << h.s_start << '\t'
                 << h.s_end << '\t'
                 << h.s_length << '\t'
-                << h.stage1_score << '\t'
-                << h.score << '\t'
+                << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
+                << h.chainscore << '\t'
                 << h.volume << '\n';
         }
     }
@@ -144,9 +144,9 @@ void write_results_json(std::ostream& out,
                 out << "          \"s_end\": " << h->s_end << ",\n";
             }
             out << "          \"s_len\": " << h->s_length << ",\n";
-            out << "          \"" << s1name << "\": " << h->stage1_score << ",\n";
+            out << "          \"" << s1name << "\": " << ((stage1_score_type == 2) ? h->matchscore : h->coverscore) << ",\n";
             if (mode != 1) {
-                out << "          \"chainscore\": " << h->score << ",\n";
+                out << "          \"chainscore\": " << h->chainscore << ",\n";
             }
             if (mode == 3) {
                 out << "          \"alnscore\": " << h->alnscore << ",\n";

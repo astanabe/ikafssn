@@ -92,8 +92,8 @@ static void test_stage3_pipeline() {
         oh.q_end = cr.q_end;
         oh.s_start = cr.s_start;
         oh.s_end = cr.s_end;
-        oh.score = cr.score;
-        oh.stage1_score = cr.stage1_score;
+        oh.chainscore = cr.chainscore;
+        oh.coverscore = cr.stage1_score;
         oh.volume = 0;
         all_hits.push_back(oh);
     }
@@ -198,8 +198,8 @@ static void test_stage3_score_only() {
         oh.q_end = cr.q_end;
         oh.s_start = cr.s_start;
         oh.s_end = cr.s_end;
-        oh.score = cr.score;
-        oh.stage1_score = cr.stage1_score;
+        oh.chainscore = cr.chainscore;
+        oh.coverscore = cr.stage1_score;
         oh.volume = 0;
         all_hits.push_back(oh);
     }
@@ -283,8 +283,8 @@ static void test_stage3_context() {
         oh.q_end = cr.q_end;
         oh.s_start = cr.s_start;
         oh.s_end = cr.s_end;
-        oh.score = cr.score;
-        oh.stage1_score = cr.stage1_score;
+        oh.chainscore = cr.chainscore;
+        oh.coverscore = cr.stage1_score;
         oh.volume = 0;
         all_hits.push_back(oh);
     }

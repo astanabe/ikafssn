@@ -39,9 +39,9 @@ static void test_frame_round_trip() {
     assert(read_frame(rfd, hdr, recv_payload));
 
     assert(hdr.magic == FRAME_MAGIC);
-    assert(hdr.payload_length == 5);
+    assert(hdr.payload_size == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 3);
+    assert(hdr.msg_version == 4);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -63,7 +63,7 @@ static void test_frame_empty_payload() {
     std::vector<uint8_t> recv_payload;
     assert(read_frame(rfd, hdr, recv_payload));
 
-    assert(hdr.payload_length == 0);
+    assert(hdr.payload_size == 0);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kHealthRequest));
     assert(recv_payload.empty());
 
@@ -81,9 +81,9 @@ static void test_frame_invalid_magic() {
     // Write a frame with bad magic
     FrameHeader bad_hdr;
     bad_hdr.magic = 0xDEADBEEF;
-    bad_hdr.payload_length = 0;
+    bad_hdr.payload_size = 0;
     bad_hdr.msg_type = 0x01;
-    bad_hdr.msg_version = 3;
+    bad_hdr.msg_version = 4;
     bad_hdr.reserved = 0;
     assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 
@@ -105,7 +105,7 @@ static void test_frame_invalid_msg_version() {
     // Write a frame with bad msg_version
     FrameHeader bad_hdr;
     bad_hdr.magic = FRAME_MAGIC;
-    bad_hdr.payload_length = 0;
+    bad_hdr.payload_size = 0;
     bad_hdr.msg_type = 0x01;
     bad_hdr.msg_version = 99;
     bad_hdr.reserved = 0;
@@ -133,7 +133,7 @@ static void test_search_request_serialize() {
     req.stage1_min_score = 2;
     req.num_results = 50;
     req.seqidlist_mode = SeqidlistMode::kInclude;
-    req.db_name = "testdb";
+    req.db = "testdb";
     req.seqids = {"NM_001234", "XM_005678"};
     req.queries.push_back({"query1", "ACGTACGTACGT"});
     req.queries.push_back({"query2", "TTTTAAAACCCC"});
@@ -151,7 +151,7 @@ static void test_search_request_serialize() {
     assert(req2.stage1_topn == 500);
     assert(req2.stage1_min_score == 2);
     assert(req2.num_results == 50);
-    assert(req2.db_name == "testdb");
+    assert(req2.db == "testdb");
     assert(req2.seqidlist_mode == SeqidlistMode::kInclude);
     assert(req2.seqids.size() == 2);
     assert(req2.seqids[0] == "NM_001234");
@@ -180,7 +180,7 @@ static void test_search_request_defaults() {
     assert(req2.stage2_min_score == 0);
     assert(req2.stage2_max_gap == 0);
     assert(req2.stage1_max_freq == 0);
-    assert(req2.db_name.empty());
+    assert(req2.db.empty());
     assert(req2.seqidlist_mode == SeqidlistMode::kNone);
     assert(req2.seqids.empty());
     assert(req2.queries.size() == 1);
@@ -194,7 +194,7 @@ static void test_search_response_serialize() {
     SearchResponse resp;
     resp.status = 0;
     resp.k = 11;
-    resp.db_name = "testdb";
+    resp.db = "testdb";
 
     QueryResult qr;
     qr.query_id = "query1";
@@ -206,7 +206,7 @@ static void test_search_response_serialize() {
     hit.q_end = 450;
     hit.s_start = 1020;
     hit.s_end = 1460;
-    hit.score = 42;
+    hit.chainscore = 42;
     hit.volume = 0;
     qr.hits.push_back(hit);
 
@@ -216,7 +216,7 @@ static void test_search_response_serialize() {
     hit.q_end = 430;
     hit.s_start = 8050;
     hit.s_end = 8465;
-    hit.score = 38;
+    hit.chainscore = 38;
     hit.volume = 2;
     qr.hits.push_back(hit);
 
@@ -228,7 +228,7 @@ static void test_search_response_serialize() {
 
     assert(resp2.status == 0);
     assert(resp2.k == 11);
-    assert(resp2.db_name == "testdb");
+    assert(resp2.db == "testdb");
     assert(resp2.results.size() == 1);
     assert(resp2.results[0].query_id == "query1");
     assert(resp2.results[0].hits.size() == 2);
@@ -240,13 +240,13 @@ static void test_search_response_serialize() {
     assert(h0.q_end == 450);
     assert(h0.s_start == 1020);
     assert(h0.s_end == 1460);
-    assert(h0.score == 42);
+    assert(h0.chainscore == 42);
     assert(h0.volume == 0);
 
     const auto& h1 = resp2.results[0].hits[1];
     assert(h1.accession == "XM_005678");
     assert(h1.strand == 1);
-    assert(h1.score == 38);
+    assert(h1.chainscore == 38);
     assert(h1.volume == 2);
 
     std::printf(" OK\n");
@@ -330,8 +330,8 @@ static void test_info_response_serialize() {
     InfoResponse resp;
     resp.status = 0;
     resp.default_k = 11;
-    resp.max_active_sequences = 1024;
-    resp.active_sequences = 42;
+    resp.max_queue_size = 1024;
+    resp.queue_depth = 42;
     resp.max_seqs_per_req = 16;
 
     DatabaseInfo db1;
@@ -347,14 +347,14 @@ static void test_info_response_serialize() {
     v1.num_sequences = 1000;
     v1.total_postings = 500000;
     v1.total_bases = 1500000;
-    v1.db_name = "testdb";
+    v1.db = "testdb";
     g1.volumes.push_back(v1);
     VolumeInfo v2;
     v2.volume_index = 1;
     v2.num_sequences = 2000;
     v2.total_postings = 900000;
     v2.total_bases = 3200000;
-    v2.db_name = "testdb";
+    v2.db = "testdb";
     g1.volumes.push_back(v2);
     db1.groups.push_back(g1);
 
@@ -366,7 +366,7 @@ static void test_info_response_serialize() {
     v3.num_sequences = 1000;
     v3.total_postings = 450000;
     v3.total_bases = 1500000;
-    v3.db_name = "testdb";
+    v3.db = "testdb";
     g2.volumes.push_back(v3);
     db1.groups.push_back(g2);
 
@@ -378,8 +378,8 @@ static void test_info_response_serialize() {
 
     assert(resp2.status == 0);
     assert(resp2.default_k == 11);
-    assert(resp2.max_active_sequences == 1024);
-    assert(resp2.active_sequences == 42);
+    assert(resp2.max_queue_size == 1024);
+    assert(resp2.queue_depth == 42);
     assert(resp2.max_seqs_per_req == 16);
     assert(resp2.databases.size() == 1);
 
@@ -396,7 +396,7 @@ static void test_info_response_serialize() {
     assert(rdb.groups[0].volumes[0].num_sequences == 1000);
     assert(rdb.groups[0].volumes[0].total_postings == 500000);
     assert(rdb.groups[0].volumes[0].total_bases == 1500000);
-    assert(rdb.groups[0].volumes[0].db_name == "testdb");
+    assert(rdb.groups[0].volumes[0].db == "testdb");
     assert(rdb.groups[0].volumes[1].volume_index == 1);
     assert(rdb.groups[0].volumes[1].num_sequences == 2000);
     assert(rdb.groups[0].volumes[1].total_postings == 900000);
@@ -417,8 +417,8 @@ static void test_info_response_empty() {
     InfoResponse resp;
     resp.status = 0;
     resp.default_k = 9;
-    resp.max_active_sequences = 512;
-    resp.active_sequences = 0;
+    resp.max_queue_size = 512;
+    resp.queue_depth = 0;
     resp.max_seqs_per_req = 0;
     // No databases
 
@@ -428,8 +428,8 @@ static void test_info_response_empty() {
 
     assert(resp2.status == 0);
     assert(resp2.default_k == 9);
-    assert(resp2.max_active_sequences == 512);
-    assert(resp2.active_sequences == 0);
+    assert(resp2.max_queue_size == 512);
+    assert(resp2.queue_depth == 0);
     assert(resp2.max_seqs_per_req == 0);
     assert(resp2.databases.empty());
 
@@ -513,8 +513,8 @@ static void test_search_response_skipped() {
     hit.q_end = 100;
     hit.s_start = 0;
     hit.s_end = 100;
-    hit.score = 10;
-    hit.stage1_score = 5;
+    hit.chainscore = 10;
+    hit.coverscore = 5;
     hit.volume = 0;
     qr2.hits.push_back(hit);
     resp.results.push_back(qr2);
@@ -584,8 +584,8 @@ static void test_search_response_stage3_fields() {
     hit.s_start = 1000;
     hit.s_end = 1190;
     hit.s_length = 5000;
-    hit.score = 42;
-    hit.stage1_score = 20;
+    hit.chainscore = 42;
+    hit.coverscore = 20;
     hit.volume = 0;
     hit.alnscore = 380;
     hit.nident = 175;
@@ -636,8 +636,8 @@ static void test_search_response_rejected_query_ids() {
     hit.q_end = 100;
     hit.s_start = 0;
     hit.s_end = 100;
-    hit.score = 10;
-    hit.stage1_score = 5;
+    hit.chainscore = 10;
+    hit.coverscore = 5;
     hit.volume = 0;
     qr1.hits.push_back(hit);
     resp.results.push_back(qr1);
@@ -704,8 +704,8 @@ static void test_search_response_q_s_length() {
     hit.s_start = 200;
     hit.s_end = 300;
     hit.s_length = 8000;
-    hit.score = 25;
-    hit.stage1_score = 10;
+    hit.chainscore = 25;
+    hit.coverscore = 10;
     hit.volume = 1;
     qr.hits.push_back(hit);
     resp.results.push_back(qr);

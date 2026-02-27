@@ -40,20 +40,20 @@ void handle_connection(
             break;
         }
 
-        // Validate db_name
-        if (req.db_name.empty()) {
-            send_error(client_fd, 400, "db_name is required");
+        // Validate db
+        if (req.db.empty()) {
+            send_error(client_fd, 400, "db is required");
             break;
         }
 
-        const DatabaseEntry* db = server.find_database(req.db_name);
+        const DatabaseEntry* db = server.find_database(req.db);
         if (!db) {
-            send_error(client_fd, 404, "Database not found: " + req.db_name);
+            send_error(client_fd, 404, "Database not found: " + req.db);
             break;
         }
 
         logger.debug("Search request: db=%s, k=%d, %zu queries, %zu seqids, mode=%d",
-                      req.db_name.c_str(), req.k, req.queries.size(), req.seqids.size(), req.mode);
+                      req.db.c_str(), req.k, req.queries.size(), req.seqids.size(), req.mode);
 
         SearchResponse resp = process_search_request(req, *db, server, arena);
 
@@ -76,8 +76,8 @@ void handle_connection(
         InfoResponse iresp;
         iresp.status = 0;
         iresp.default_k = static_cast<uint8_t>(server.default_k());
-        iresp.max_active_sequences = server.max_active_sequences();
-        iresp.active_sequences = server.active_sequences();
+        iresp.max_queue_size = server.max_queue_size();
+        iresp.queue_depth = server.queue_depth();
         iresp.max_seqs_per_req = server.max_seqs_per_req();
 
         for (const auto& db : server.databases()) {
@@ -98,8 +98,8 @@ void handle_connection(
                     vi.total_postings = vol.kix.total_postings();
                     vi.total_bases = vol.total_bases;
                     const auto& kix_hdr = vol.kix.header();
-                    vi.db_name = std::string(kix_hdr.db_name,
-                        strnlen(kix_hdr.db_name, sizeof(kix_hdr.db_name)));
+                    vi.db = std::string(kix_hdr.db,
+                        strnlen(kix_hdr.db, sizeof(kix_hdr.db)));
                     gi.volumes.push_back(std::move(vi));
                 }
 

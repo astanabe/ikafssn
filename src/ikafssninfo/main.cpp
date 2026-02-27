@@ -394,7 +394,7 @@ int main(int argc, char* argv[]) {
 
     // Try to open shared .khx
     auto prefix_parts = parse_index_prefix(ix_prefix);
-    std::string khx_path = khx_path_for(prefix_parts.parent_dir, prefix_parts.db_name, k);
+    std::string khx_path = khx_path_for(prefix_parts.parent_dir, prefix_parts.db, k);
     KhxReader shared_khx;
     bool has_khx = shared_khx.open(khx_path);
     uint64_t khx_size = has_khx ? file_size(khx_path) : 0;

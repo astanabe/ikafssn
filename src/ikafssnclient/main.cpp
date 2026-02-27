@@ -304,7 +304,7 @@ int main(int argc, char* argv[]) {
     base_req.stage1_score = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
     base_req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
     base_req.strand = static_cast<int8_t>(cli.get_int("-strand", 0));
-    base_req.db_name = cli.get_string("-db", "");
+    base_req.db = cli.get_string("-db", "");
 
     // Stage 3 parameters
     base_req.stage3_traceback = static_cast<uint8_t>(cli.get_int("-stage3_traceback", 0));
@@ -363,7 +363,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     {
-        std::string err = validate_info(server_info, base_req.db_name,
+        std::string err = validate_info(server_info, base_req.db,
                                         base_req.k, base_req.mode, true);
         if (!err.empty()) {
             std::fprintf(stderr, "%s\n", err.c_str());
@@ -382,16 +382,16 @@ int main(int argc, char* argv[]) {
     int batch_size = static_cast<int>(queries.size());
     if (server_info.max_seqs_per_req > 0)
         batch_size = std::min(batch_size, static_cast<int>(server_info.max_seqs_per_req));
-    if (server_info.max_active_sequences > 0) {
-        int available = server_info.max_active_sequences - server_info.active_sequences;
+    if (server_info.max_queue_size > 0) {
+        int available = server_info.max_queue_size - server_info.queue_depth;
         if (available > 0)
             batch_size = std::min(batch_size, available);
     }
     if (batch_size <= 0) batch_size = 1;
     logger.debug("Batch size: %d (queries=%zu, max_seqs_per_req=%d, available=%d/%d)",
                  batch_size, queries.size(), server_info.max_seqs_per_req,
-                 server_info.max_active_sequences - server_info.active_sequences,
-                 server_info.max_active_sequences);
+                 server_info.max_queue_size - server_info.queue_depth,
+                 server_info.max_queue_size);
 
     // Accumulate results across batches and retry attempts
     std::vector<OutputHit> all_hits;
@@ -430,8 +430,9 @@ int main(int argc, char* argv[]) {
                 oh.q_end = hit.q_end;
                 oh.s_start = hit.s_start;
                 oh.s_end = hit.s_end;
-                oh.score = hit.score;
-                oh.stage1_score = hit.stage1_score;
+                oh.chainscore = hit.chainscore;
+                oh.coverscore = hit.coverscore;
+                oh.matchscore = hit.matchscore;
                 oh.volume = hit.volume;
                 oh.q_length = hit.q_length;
                 oh.s_length = hit.s_length;

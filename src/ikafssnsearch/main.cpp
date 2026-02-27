@@ -362,7 +362,7 @@ int main(int argc, char* argv[]) {
     KhxReader shared_khx;
     {
         auto parts = parse_index_prefix(ix_prefix);
-        shared_khx.open(khx_path_for(parts.parent_dir, parts.db_name, k)); // non-fatal
+        shared_khx.open(khx_path_for(parts.parent_dir, parts.db, k)); // non-fatal
     }
 
     // Resolve -max_freq: fraction -> absolute threshold using total NSEQ
@@ -492,8 +492,11 @@ int main(int argc, char* argv[]) {
                                     oh.q_end = cr.q_end;
                                     oh.s_start = cr.s_start;
                                     oh.s_end = cr.s_end;
-                                    oh.score = cr.score;
-                                    oh.stage1_score = cr.stage1_score;
+                                    oh.chainscore = cr.chainscore;
+                                    if (config.stage1.stage1_score_type == 2)
+                                        oh.matchscore = cr.stage1_score;
+                                    else
+                                        oh.coverscore = cr.stage1_score;
                                     oh.volume = vd.volume_index;
                                     oh.q_length = static_cast<uint32_t>(query.sequence.size());
                                     oh.s_length = vd.ksx.seq_length(cr.seq_id);
@@ -548,8 +551,11 @@ int main(int argc, char* argv[]) {
                             oh.q_end = cr.q_end;
                             oh.s_start = cr.s_start;
                             oh.s_end = cr.s_end;
-                            oh.score = cr.score;
-                            oh.stage1_score = cr.stage1_score;
+                            oh.chainscore = cr.chainscore;
+                            if (config.stage1.stage1_score_type == 2)
+                                oh.matchscore = cr.stage1_score;
+                            else
+                                oh.coverscore = cr.stage1_score;
                             oh.volume = vd.volume_index;
                             oh.q_length = static_cast<uint32_t>(query.sequence.size());
                             oh.s_length = vd.ksx.seq_length(cr.seq_id);
@@ -584,7 +590,7 @@ int main(int argc, char* argv[]) {
             std::sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
                           if (a.query_id != b.query_id) return a.query_id < b.query_id;
-                          return a.stage1_score > b.stage1_score;
+                          return (a.coverscore + a.matchscore) > (b.coverscore + b.matchscore);
                       });
         } else if (config.sort_score == 3) {
             std::sort(all_hits.begin(), all_hits.end(),
@@ -596,7 +602,7 @@ int main(int argc, char* argv[]) {
             std::sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
                           if (a.query_id != b.query_id) return a.query_id < b.query_id;
-                          return a.score > b.score;
+                          return a.chainscore > b.chainscore;
                       });
         }
 

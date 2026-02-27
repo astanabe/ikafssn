@@ -384,8 +384,8 @@ bool build_index(BlastDbReader& db,
     kix_hdr.volume_index = volume_index;
     kix_hdr.total_volumes = total_volumes;
     size_t name_len = std::min(db_name.size(), size_t(32));
-    kix_hdr.db_name_len = static_cast<uint16_t>(name_len);
-    std::memcpy(kix_hdr.db_name, db_name.c_str(), name_len);
+    kix_hdr.db_len = static_cast<uint16_t>(name_len);
+    std::memcpy(kix_hdr.db, db_name.c_str(), name_len);
 
     std::fseek(kix_fp, 0, SEEK_SET);
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);

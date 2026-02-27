@@ -39,7 +39,7 @@ struct ServerConfig {
     std::string tcp_addr;           // "host:port"
     std::string pid_file;
     int num_threads = 0;            // 0 = auto-detect
-    int max_query = 0;              // 0 = default (1024). Max total in-flight sequences globally
+    int max_queue_size = 0;         // 0 = default (1024). Max total in-flight sequences globally
     int max_seqs_per_req = 0;       // 0 = default (same as resolved thread count). Per-request cap
     int shutdown_timeout = 30;      // seconds
     SearchConfig search_config;
@@ -76,14 +76,14 @@ public:
     // Get the default k value (first DB's default_k).
     int default_k() const;
 
-    // Get max active sequences limit.
-    int max_active_sequences() const { return max_active_sequences_; }
+    // Get max queue size limit.
+    int max_queue_size() const { return max_queue_size_; }
 
     // Get per-request sequence cap.
     int max_seqs_per_req() const { return max_seqs_per_req_; }
 
-    // Get current active sequences count.
-    int active_sequences() const { return active_sequences_; }
+    // Get current queue depth.
+    int queue_depth() const { return queue_depth_; }
 
     // Non-blocking: try to acquire up to n permits (capped by max_seqs_per_req_).
     // Returns count actually acquired.
@@ -94,13 +94,13 @@ public:
 
 private:
     std::vector<DatabaseEntry> databases_;
-    std::unordered_map<std::string, size_t> db_name_index_;
+    std::unordered_map<std::string, size_t> db_index_;
     std::atomic<bool> shutdown_requested_{false};
     std::vector<int> listen_fds_;
 
     std::mutex seq_mutex_;
-    int active_sequences_ = 0;
-    int max_active_sequences_ = 1024;  // from -max_query, default 1024; overridden in run()
+    int queue_depth_ = 0;
+    int max_queue_size_ = 1024;  // from -max_queue_size, default 1024; overridden in run()
     int max_seqs_per_req_ = 1024;      // from -max_seqs_per_req, default = threads; overridden in run()
 
     void accept_loop(int listen_fd, const ServerConfig& config, const Logger& logger);

@@ -105,8 +105,8 @@ static bool write_filtered_kix(
     kix_hdr.flags = kix_in.header().flags;
     kix_hdr.volume_index = kix_in.header().volume_index;
     kix_hdr.total_volumes = kix_in.header().total_volumes;
-    kix_hdr.db_name_len = kix_in.header().db_name_len;
-    std::memcpy(kix_hdr.db_name, kix_in.header().db_name, 32);
+    kix_hdr.db_len = kix_in.header().db_len;
+    std::memcpy(kix_hdr.db, kix_in.header().db, 32);
 
     std::fseek(kix_fp, 0, SEEK_SET);
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);

@@ -66,7 +66,7 @@ public:
     std::string get_title() const;
 
     // Static: find all volume paths for a DB prefix.
-    static std::vector<std::string> find_volume_paths(const std::string& db_name);
+    static std::vector<std::string> find_volume_paths(const std::string& db);
 
 private:
     struct Impl;

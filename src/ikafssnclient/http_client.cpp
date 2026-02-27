@@ -55,8 +55,8 @@ static std::string build_request_json(const SearchRequest& req) {
     root["stage3_min_nident"] = req.stage3_min_nident;
     root["context_abs"] = req.context_abs;
     root["context_frac_x10000"] = req.context_frac_x10000;
-    if (!req.db_name.empty())
-        root["db_name"] = req.db_name;
+    if (!req.db.empty())
+        root["db"] = req.db;
 
     switch (req.seqidlist_mode) {
     case SeqidlistMode::kInclude:
@@ -153,11 +153,12 @@ static bool parse_response_json(const std::string& body,
                     hit.q_end = h.get("q_end", 0).asUInt();
                     hit.s_start = h.get("s_start", 0).asUInt();
                     hit.s_end = h.get("s_end", 0).asUInt();
-                    hit.score = static_cast<uint16_t>(h.get("chainscore", 0).asUInt());
+                    hit.chainscore = static_cast<uint16_t>(h.get("chainscore", 0).asUInt());
                 }
                 hit.q_length = h.get("q_len", 0).asUInt();
                 hit.s_length = h.get("s_len", 0).asUInt();
-                hit.stage1_score = static_cast<uint16_t>(h.get(s1name, 0).asUInt());
+                hit.coverscore = static_cast<uint16_t>(h.get("coverscore", 0).asUInt());
+                hit.matchscore = static_cast<uint16_t>(h.get("matchscore", 0).asUInt());
                 hit.volume = static_cast<uint16_t>(h.get("volume", 0).asUInt());
                 if (resp.mode == 3) {
                     hit.alnscore = h.get("alnscore", 0).asInt();
@@ -291,8 +292,8 @@ static bool parse_info_json(const std::string& body,
 
     resp.status = (root.get("status", "").asString() == "success") ? 0 : 1;
     resp.default_k = static_cast<uint8_t>(root.get("default_k", 0).asUInt());
-    resp.max_active_sequences = root.get("max_active_sequences", 0).asInt();
-    resp.active_sequences = root.get("active_sequences", 0).asInt();
+    resp.max_queue_size = root.get("max_queue_size", 0).asInt();
+    resp.queue_depth = root.get("queue_depth", 0).asInt();
     resp.max_seqs_per_req = root.get("max_seqs_per_req", 0).asInt();
 
     if (root.isMember("databases") && root["databases"].isArray()) {
@@ -316,7 +317,7 @@ static bool parse_info_json(const std::string& body,
                             v.num_sequences = vj.get("num_sequences", 0).asUInt();
                             v.total_postings = vj.get("total_postings", 0).asUInt64();
                             v.total_bases = vj.get("total_bases", 0).asUInt64();
-                            v.db_name = vj.get("db_name", "").asString();
+                            v.db = vj.get("db", "").asString();
                             g.volumes.push_back(std::move(v));
                         }
                     }

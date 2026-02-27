@@ -81,7 +81,7 @@ static void test_full_pipeline() {
         oh.q_end = cr.q_end;
         oh.s_start = cr.s_start;
         oh.s_end = cr.s_end;
-        oh.score = cr.score;
+        oh.chainscore = cr.chainscore;
         oh.volume = 0;
         hits.push_back(oh);
     }

@@ -102,7 +102,7 @@ static std::vector<OutputHit> make_hits() {
         h.q_end = g_acc_info[i].seq_length - 1;
         h.s_start = 0;
         h.s_end = g_acc_info[i].seq_length - 1;
-        h.score = 100;
+        h.chainscore = 100;
         h.volume = 0;
         hits.push_back(h);
     }

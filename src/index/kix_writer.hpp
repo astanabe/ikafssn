@@ -17,7 +17,7 @@ public:
 
     // Set metadata (optional, call before write)
     void set_volume_info(uint16_t volume_index, uint16_t total_volumes);
-    void set_db_name(const std::string& name);
+    void set_db(const std::string& name);
     void set_num_sequences(uint32_t n);
     void set_flags(uint32_t flags);
 
@@ -36,7 +36,7 @@ private:
     uint16_t volume_index_ = 0;
     uint16_t total_volumes_ = 1;
     uint32_t flags_ = 0;
-    std::string db_name_;
+    std::string db_;
 
     uint64_t table_size_;
 

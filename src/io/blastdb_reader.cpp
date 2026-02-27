@@ -172,14 +172,14 @@ std::string BlastDbReader::get_title() const {
     return impl_->db->GetTitle();
 }
 
-std::vector<std::string> BlastDbReader::find_volume_paths(const std::string& db_name) {
+std::vector<std::string> BlastDbReader::find_volume_paths(const std::string& db) {
     std::vector<std::string> paths;
     try {
         ncbi::CSeqDB::FindVolumePaths(
-            db_name, ncbi::CSeqDB::eNucleotide, paths);
+            db, ncbi::CSeqDB::eNucleotide, paths);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "BlastDbReader: FindVolumePaths('%s') failed: %s\n",
-                     db_name.c_str(), e.what());
+                     db.c_str(), e.what());
     }
     return paths;
 }

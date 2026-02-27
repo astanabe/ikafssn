@@ -142,7 +142,7 @@ static std::vector<OutputHit> search_sequential(
                 oh.q_end = cr.q_end;
                 oh.s_start = cr.s_start;
                 oh.s_end = cr.s_end;
-                oh.score = cr.score;
+                oh.chainscore = cr.chainscore;
                 oh.volume = static_cast<uint16_t>(vi);
                 all_hits.push_back(oh);
             }
@@ -153,11 +153,11 @@ static std::vector<OutputHit> search_sequential(
         ksx.close();
     }
 
-    // Sort by (query_id, score desc, accession, volume)
+    // Sort by (query_id, chainscore desc, accession, volume)
     std::sort(all_hits.begin(), all_hits.end(),
               [](const OutputHit& a, const OutputHit& b) {
                   if (a.query_id != b.query_id) return a.query_id < b.query_id;
-                  if (a.score != b.score) return a.score > b.score;
+                  if (a.chainscore != b.chainscore) return a.chainscore > b.chainscore;
                   if (a.accession != b.accession) return a.accession < b.accession;
                   return a.volume < b.volume;
               });
@@ -238,7 +238,7 @@ static std::vector<OutputHit> search_parallel(
                         oh.q_end = cr.q_end;
                         oh.s_start = cr.s_start;
                         oh.s_end = cr.s_end;
-                        oh.score = cr.score;
+                        oh.chainscore = cr.chainscore;
                         oh.volume = vd.volume_index;
                         local.push_back(oh);
                     }
@@ -248,11 +248,11 @@ static std::vector<OutputHit> search_parallel(
             });
     });
 
-    // Sort by (query_id, score desc, accession, volume)
+    // Sort by (query_id, chainscore desc, accession, volume)
     std::sort(all_hits.begin(), all_hits.end(),
               [](const OutputHit& a, const OutputHit& b) {
                   if (a.query_id != b.query_id) return a.query_id < b.query_id;
-                  if (a.score != b.score) return a.score > b.score;
+                  if (a.chainscore != b.chainscore) return a.chainscore > b.chainscore;
                   if (a.accession != b.accession) return a.accession < b.accession;
                   return a.volume < b.volume;
               });
@@ -337,7 +337,7 @@ static void test_parallel_equals_sequential() {
         CHECK(seq_results[i].query_id == par_results[i].query_id);
         CHECK(seq_results[i].accession == par_results[i].accession);
         CHECK(seq_results[i].strand == par_results[i].strand);
-        CHECK_EQ(seq_results[i].score, par_results[i].score);
+        CHECK_EQ(seq_results[i].chainscore, par_results[i].chainscore);
         CHECK_EQ(seq_results[i].volume, par_results[i].volume);
     }
 }
@@ -366,7 +366,7 @@ static void test_result_merge_ordering() {
     // Verify results are sorted by score descending within each query
     for (size_t i = 1; i < results.size(); i++) {
         if (results[i].query_id == results[i - 1].query_id) {
-            CHECK(results[i].score <= results[i - 1].score);
+            CHECK(results[i].chainscore <= results[i - 1].chainscore);
         }
     }
 }
@@ -452,7 +452,7 @@ static void test_parallel_counting_pass() {
     CHECK_EQ(sr_st.hits.size(), sr_mt.hits.size());
     for (size_t i = 0; i < sr_st.hits.size() && i < sr_mt.hits.size(); i++) {
         CHECK_EQ(sr_st.hits[i].seq_id, sr_mt.hits[i].seq_id);
-        CHECK_EQ(sr_st.hits[i].score, sr_mt.hits[i].score);
+        CHECK_EQ(sr_st.hits[i].chainscore, sr_mt.hits[i].chainscore);
     }
 
     kix_st.close(); kix_mt.close();
@@ -488,7 +488,7 @@ static void test_multivolume_k9() {
 
     for (size_t i = 0; i < seq_results.size() && i < par_results.size(); i++) {
         CHECK(seq_results[i].query_id == par_results[i].query_id);
-        CHECK_EQ(seq_results[i].score, par_results[i].score);
+        CHECK_EQ(seq_results[i].chainscore, par_results[i].chainscore);
     }
 }
 

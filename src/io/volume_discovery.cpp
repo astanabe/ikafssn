@@ -13,7 +13,7 @@ IndexPrefixParts parse_index_prefix(const std::string& ix_prefix) {
     std::filesystem::path p(ix_prefix);
     IndexPrefixParts parts;
     parts.parent_dir = p.parent_path().string();
-    parts.db_name = p.filename().string();
+    parts.db = p.filename().string();
     if (parts.parent_dir.empty()) parts.parent_dir = ".";
     return parts;
 }
@@ -26,16 +26,16 @@ std::string index_file_stem(const std::string& parent_dir,
 }
 
 std::string khx_path_for(const std::string& parent_dir,
-                          const std::string& db_name, int k) {
-    return index_file_stem(parent_dir, db_name, k) + ".khx";
+                          const std::string& db, int k) {
+    return index_file_stem(parent_dir, db, k) + ".khx";
 }
 
 // Discover volumes for a single k value from a .kvx manifest.
 static bool discover_from_kvx(const std::string& parent_dir,
-                               const std::string& db_name,
+                               const std::string& db,
                                int k,
                                std::vector<DiscoveredVolume>& volumes) {
-    std::string stem = index_file_stem(parent_dir, db_name, k);
+    std::string stem = index_file_stem(parent_dir, db, k);
     std::string kvx_path = stem + ".kvx";
 
     auto kvx = read_kvx(kvx_path);
@@ -61,10 +61,10 @@ static bool discover_from_kvx(const std::string& parent_dir,
 
 // Scan directory for available k values matching the DB name.
 static std::set<int> scan_k_values(const std::string& parent_dir,
-                                    const std::string& db_name) {
+                                    const std::string& db) {
     std::set<int> k_values;
     std::regex kvx_pattern("(\\d+)mer\\.kvx");
-    std::string prefix_dot = db_name + ".";
+    std::string prefix_dot = db + ".";
 
     for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
         if (!entry.is_regular_file()) continue;
@@ -87,10 +87,10 @@ std::vector<DiscoveredVolume> discover_volumes(
     std::vector<DiscoveredVolume> volumes;
 
     if (filter_k > 0) {
-        discover_from_kvx(parts.parent_dir, parts.db_name, filter_k, volumes);
+        discover_from_kvx(parts.parent_dir, parts.db, filter_k, volumes);
     } else {
-        for (int k : scan_k_values(parts.parent_dir, parts.db_name)) {
-            discover_from_kvx(parts.parent_dir, parts.db_name, k, volumes);
+        for (int k : scan_k_values(parts.parent_dir, parts.db)) {
+            discover_from_kvx(parts.parent_dir, parts.db, k, volumes);
         }
     }
 
@@ -104,7 +104,7 @@ std::vector<DiscoveredVolume> discover_volumes(
 
 std::vector<int> discover_k_values(const std::string& ix_prefix) {
     auto parts = parse_index_prefix(ix_prefix);
-    auto k_set = scan_k_values(parts.parent_dir, parts.db_name);
+    auto k_set = scan_k_values(parts.parent_dir, parts.db);
     return std::vector<int>(k_set.begin(), k_set.end());
 }
 

@@ -47,7 +47,7 @@ struct SearchRequest {
     uint32_t stage3_min_nident = 0;               // 0 = no filter
     uint32_t context_abs = 0;                     // absolute context bases (when frac=0)
     uint16_t context_frac_x10000 = 0;             // ratio * 10000 (when > 0, ratio mode)
-    std::string db_name;                           // target database name (empty = error)
+    std::string db;                                // target database name (empty = error)
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
 };
@@ -62,8 +62,9 @@ struct ResponseHit {
     uint32_t s_start;
     uint32_t s_end;
     uint32_t s_length = 0;    // subject full sequence length
-    uint16_t score;           // chainscore
-    uint16_t stage1_score;
+    uint16_t coverscore = 0;
+    uint16_t matchscore = 0;
+    uint16_t chainscore = 0;
     uint16_t volume;
     // Stage 3 fields (populated only when mode=3)
     int32_t  alnscore = 0;
@@ -95,7 +96,7 @@ struct SearchResponse {
     uint8_t  mode = 2;              // 1 = stage1 only, 2 = stage1+stage2, 3 = stage1+stage2+stage3
     uint8_t  stage1_score = 1;      // 1 = coverscore, 2 = matchscore
     uint8_t  stage3_traceback = 0;  // echo back: 1 = traceback fields populated
-    std::string db_name;            // echo back database name
+    std::string db;                 // echo back database name
     std::vector<QueryResult> results;
     std::vector<std::string> rejected_query_ids;  // queries rejected due to concurrency limit
 };
@@ -123,7 +124,7 @@ struct VolumeInfo {
     uint32_t num_sequences;
     uint64_t total_postings;
     uint64_t total_bases = 0;
-    std::string db_name;
+    std::string db;
 };
 
 // Per-k group info in the info response
@@ -145,8 +146,8 @@ struct DatabaseInfo {
 struct InfoResponse {
     uint8_t  status = 0;           // 0 = success
     uint8_t  default_k = 0;       // global default (first DB's)
-    int32_t  max_active_sequences = 0;
-    int32_t  active_sequences = 0; // current in-use
+    int32_t  max_queue_size = 0;
+    int32_t  queue_depth = 0; // current in-use
     int32_t  max_seqs_per_req = 0; // per-request sequence cap (0 = unlimited)
     std::vector<DatabaseInfo> databases;
 };

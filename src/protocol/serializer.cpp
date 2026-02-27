@@ -155,7 +155,7 @@ private:
 //   u32  stage3_min_nident
 //   u32  context_abs
 //   u16  context_frac_x10000
-//   str16 db_name
+//   str16 db
 //   u32  num_seqids
 //     [str16 seqid] × num_seqids
 //   u16  num_queries
@@ -189,7 +189,7 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     put_u32(buf, req.stage3_min_nident);
     put_u32(buf, req.context_abs);
     put_u16(buf, req.context_frac_x10000);
-    put_str16(buf, req.db_name);
+    put_str16(buf, req.db);
 
     put_u32(buf, static_cast<uint32_t>(req.seqids.size()));
     for (const auto& acc : req.seqids) {
@@ -238,7 +238,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u32(req.stage3_min_nident)) return false;
     if (!r.get_u32(req.context_abs)) return false;
     if (!r.get_u16(req.context_frac_x10000)) return false;
-    if (!r.get_str16(req.db_name)) return false;
+    if (!r.get_str16(req.db)) return false;
 
     uint32_t num_seqids;
     if (!r.get_u32(num_seqids)) return false;
@@ -271,7 +271,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //   u8   mode
 //   u8   stage1_score
 //   u8   stage3_traceback
-//   str16 db_name
+//   str16 db
 //   u16  num_queries
 //   for each query:
 //     str16 query_id
@@ -287,8 +287,9 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //       u32    s_start
 //       u32    s_end
 //       u32    s_length
-//       u16    score        (chainscore)
-//       u16    stage1_score
+//       u16    coverscore
+//       u16    matchscore
+//       u16    chainscore
 //       u16    volume
 //       i32    alnscore
 //       u32    nident
@@ -309,7 +310,7 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
     put_u8(buf, resp.mode);
     put_u8(buf, resp.stage1_score);
     put_u8(buf, resp.stage3_traceback);
-    put_str16(buf, resp.db_name);
+    put_str16(buf, resp.db);
     put_u16(buf, static_cast<uint16_t>(resp.results.size()));
 
     for (const auto& qr : resp.results) {
@@ -326,8 +327,9 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
             put_u32(buf, hit.s_start);
             put_u32(buf, hit.s_end);
             put_u32(buf, hit.s_length);
-            put_u16(buf, hit.score);
-            put_u16(buf, hit.stage1_score);
+            put_u16(buf, hit.coverscore);
+            put_u16(buf, hit.matchscore);
+            put_u16(buf, hit.chainscore);
             put_u16(buf, hit.volume);
             put_i32(buf, hit.alnscore);
             put_u32(buf, hit.nident);
@@ -356,7 +358,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
     if (!r.get_u8(resp.mode)) return false;
     if (!r.get_u8(resp.stage1_score)) return false;
     if (!r.get_u8(resp.stage3_traceback)) return false;
-    if (!r.get_str16(resp.db_name)) return false;
+    if (!r.get_str16(resp.db)) return false;
 
     uint16_t num_queries;
     if (!r.get_u16(num_queries)) return false;
@@ -382,8 +384,9 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
             if (!r.get_u32(hit.s_start)) return false;
             if (!r.get_u32(hit.s_end)) return false;
             if (!r.get_u32(hit.s_length)) return false;
-            if (!r.get_u16(hit.score)) return false;
-            if (!r.get_u16(hit.stage1_score)) return false;
+            if (!r.get_u16(hit.coverscore)) return false;
+            if (!r.get_u16(hit.matchscore)) return false;
+            if (!r.get_u16(hit.chainscore)) return false;
             if (!r.get_u16(hit.volume)) return false;
             if (!r.get_i32(hit.alnscore)) return false;
             if (!r.get_u32(hit.nident)) return false;
@@ -457,11 +460,11 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format (v3):
+// Wire format (v4):
 //   u8   status
 //   u8   default_k
-//   i32  max_active_sequences
-//   i32  active_sequences
+//   i32  max_queue_size
+//   i32  queue_depth
 //   i32  max_seqs_per_req
 //   u16  num_databases
 //   for each database:
@@ -478,7 +481,7 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 //         u32 num_sequences
 //         u64 total_postings
 //         u64 total_bases
-//         str16 db_name
+//         str16 db
 
 std::vector<uint8_t> serialize(const InfoResponse& resp) {
     std::vector<uint8_t> buf;
@@ -486,8 +489,8 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
 
     put_u8(buf, resp.status);
     put_u8(buf, resp.default_k);
-    put_i32(buf, resp.max_active_sequences);
-    put_i32(buf, resp.active_sequences);
+    put_i32(buf, resp.max_queue_size);
+    put_i32(buf, resp.queue_depth);
     put_i32(buf, resp.max_seqs_per_req);
     put_u16(buf, static_cast<uint16_t>(resp.databases.size()));
 
@@ -507,7 +510,7 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
                 put_u32(buf, v.num_sequences);
                 put_u64(buf, v.total_postings);
                 put_u64(buf, v.total_bases);
-                put_str16(buf, v.db_name);
+                put_str16(buf, v.db);
             }
         }
     }
@@ -520,8 +523,8 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
 
     if (!r.get_u8(resp.status)) return false;
     if (!r.get_u8(resp.default_k)) return false;
-    if (!r.get_i32(resp.max_active_sequences)) return false;
-    if (!r.get_i32(resp.active_sequences)) return false;
+    if (!r.get_i32(resp.max_queue_size)) return false;
+    if (!r.get_i32(resp.queue_depth)) return false;
     if (!r.get_i32(resp.max_seqs_per_req)) return false;
 
     uint16_t num_databases;
@@ -553,7 +556,7 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
                 if (!r.get_u32(v.num_sequences)) return false;
                 if (!r.get_u64(v.total_postings)) return false;
                 if (!r.get_u64(v.total_bases)) return false;
-                if (!r.get_str16(v.db_name)) return false;
+                if (!r.get_str16(v.db)) return false;
             }
         }
     }

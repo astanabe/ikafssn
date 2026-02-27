@@ -121,13 +121,9 @@ static bool parse_line_with_map(
         hit.s_end = field_u32(fields, cmap, "s_end");
         hit.s_length = field_u32(fields, cmap, "s_len");
 
-        // stage1_score: either "coverscore" or "matchscore"
-        if (cmap.count("coverscore"))
-            hit.stage1_score = field_u32(fields, cmap, "coverscore");
-        else if (cmap.count("matchscore"))
-            hit.stage1_score = field_u32(fields, cmap, "matchscore");
-
-        hit.score = field_u32(fields, cmap, "chainscore");
+        hit.coverscore = field_u32(fields, cmap, "coverscore");
+        hit.matchscore = field_u32(fields, cmap, "matchscore");
+        hit.chainscore = field_u32(fields, cmap, "chainscore");
         hit.alnscore = field_i32(fields, cmap, "alnscore");
         hit.pident = field_dbl(fields, cmap, "pident");
         hit.nident = field_u32(fields, cmap, "nident");
@@ -166,8 +162,8 @@ static bool parse_line_legacy(const std::string& line, OutputHit& hit) {
             hit.s_start = static_cast<uint32_t>(std::stoul(fields[6]));
             hit.s_end = static_cast<uint32_t>(std::stoul(fields[7]));
             hit.s_length = static_cast<uint32_t>(std::stoul(fields[8]));
-            hit.stage1_score = static_cast<uint32_t>(std::stoul(fields[9]));
-            hit.score = static_cast<uint32_t>(std::stoul(fields[10]));
+            hit.coverscore = static_cast<uint32_t>(std::stoul(fields[9]));
+            hit.chainscore = static_cast<uint32_t>(std::stoul(fields[10]));
             hit.alnscore = static_cast<int32_t>(std::stol(fields[11]));
             hit.pident = std::stod(fields[12]);
             hit.nident = static_cast<uint32_t>(std::stoul(fields[13]));
@@ -183,8 +179,8 @@ static bool parse_line_legacy(const std::string& line, OutputHit& hit) {
             hit.s_start = static_cast<uint32_t>(std::stoul(fields[6]));
             hit.s_end = static_cast<uint32_t>(std::stoul(fields[7]));
             hit.s_length = static_cast<uint32_t>(std::stoul(fields[8]));
-            hit.stage1_score = static_cast<uint32_t>(std::stoul(fields[9]));
-            hit.score = static_cast<uint32_t>(std::stoul(fields[10]));
+            hit.coverscore = static_cast<uint32_t>(std::stoul(fields[9]));
+            hit.chainscore = static_cast<uint32_t>(std::stoul(fields[10]));
             hit.alnscore = static_cast<int32_t>(std::stol(fields[11]));
             hit.volume = static_cast<uint16_t>(std::stoul(fields[12]));
         } else if (fields.size() >= 12) {
@@ -194,8 +190,8 @@ static bool parse_line_legacy(const std::string& line, OutputHit& hit) {
             hit.s_start = static_cast<uint32_t>(std::stoul(fields[6]));
             hit.s_end = static_cast<uint32_t>(std::stoul(fields[7]));
             hit.s_length = static_cast<uint32_t>(std::stoul(fields[8]));
-            hit.stage1_score = static_cast<uint32_t>(std::stoul(fields[9]));
-            hit.score = static_cast<uint32_t>(std::stoul(fields[10]));
+            hit.coverscore = static_cast<uint32_t>(std::stoul(fields[9]));
+            hit.chainscore = static_cast<uint32_t>(std::stoul(fields[10]));
             hit.volume = static_cast<uint16_t>(std::stoul(fields[11]));
         } else if (fields.size() >= 7) {
             hit.q_start = 0;
@@ -204,8 +200,8 @@ static bool parse_line_legacy(const std::string& line, OutputHit& hit) {
             hit.s_end = 0;
             hit.q_length = static_cast<uint32_t>(std::stoul(fields[3]));
             hit.s_length = static_cast<uint32_t>(std::stoul(fields[4]));
-            hit.stage1_score = static_cast<uint32_t>(std::stoul(fields[5]));
-            hit.score = 0;
+            hit.coverscore = static_cast<uint32_t>(std::stoul(fields[5]));
+            hit.chainscore = 0;
             hit.volume = static_cast<uint16_t>(std::stoul(fields[6]));
         }
     } catch (...) {

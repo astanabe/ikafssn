@@ -78,7 +78,7 @@ static void test_build_and_search() {
     for (const auto& cr : result.hits) {
         if (cr.seq_id == g_fj_oid && !cr.is_reverse) {
             found_fj = true;
-            CHECK(cr.score >= 2);
+            CHECK(cr.chainscore >= 2);
         }
     }
     CHECK(found_fj);
@@ -230,8 +230,8 @@ static void test_result_output_tab() {
     std::fprintf(stderr, "-- test_result_output_tab\n");
 
     std::vector<OutputHit> hits = {
-        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 42, 10, 0},
-        {"query1", "XM_005678", '-', 15, 430, 8050, 8465, 38, 8, 2},
+        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 10, 0, 42, 0},
+        {"query1", "XM_005678", '-', 15, 430, 8050, 8465, 8, 0, 38, 2},
     };
 
     std::ostringstream oss;
@@ -252,7 +252,7 @@ static void test_result_output_tab_mode1() {
     std::fprintf(stderr, "-- test_result_output_tab_mode1\n");
 
     std::vector<OutputHit> hits = {
-        {"query1", "NM_001234", '+', 0, 0, 0, 0, 0, 10, 0},
+        {"query1", "NM_001234", '+', 0, 0, 0, 0, 10, 0, 0, 0},
     };
 
     std::ostringstream oss;
@@ -269,7 +269,7 @@ static void test_result_output_json() {
     std::fprintf(stderr, "-- test_result_output_json\n");
 
     std::vector<OutputHit> hits = {
-        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 42, 10, 0},
+        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 10, 0, 42, 0},
     };
 
     std::ostringstream oss;
@@ -347,7 +347,7 @@ static void test_search_k9() {
     if (found) {
         // Verify hits are reasonable
         for (const auto& cr : result.hits) {
-            CHECK(cr.score >= 2);
+            CHECK(cr.chainscore >= 2);
         }
     }
 

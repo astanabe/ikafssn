@@ -27,8 +27,8 @@ static std::vector<OutputHit> make_test_hits() {
     h1.q_end = 19;
     h1.s_start = 100;
     h1.s_end = 119;
-    h1.score = 50;
-    h1.stage1_score = 30;
+    h1.chainscore = 50;
+    h1.coverscore = 30;
     h1.volume = 0;
     h1.alnscore = 100;
     h1.cigar = "20=";
@@ -48,8 +48,8 @@ static std::vector<OutputHit> make_test_hits() {
     h2.q_end = 14;
     h2.s_start = 200;
     h2.s_end = 216;
-    h2.score = 30;
-    h2.stage1_score = 20;
+    h2.chainscore = 30;
+    h2.coverscore = 20;
     h2.volume = 0;
     h2.alnscore = 60;
     h2.cigar = "10=2D5=";

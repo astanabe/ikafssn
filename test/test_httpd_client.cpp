@@ -127,7 +127,7 @@ static void test_http_client_search() {
     std::string sock_path = g_test_dir + "/test_hc_server.sock";
     ::unlink(sock_path.c_str());
 
-    std::string db_name = parse_index_prefix(ix_prefix).db_name;
+    std::string db = parse_index_prefix(ix_prefix).db;
 
     ServerConfig sconfig;
     sconfig.db_entries.push_back({ix_prefix, ix_prefix});
@@ -175,7 +175,7 @@ static void test_http_client_search() {
 
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
-    req.db_name = db_name;
+    req.db = db;
     for (const auto& q : queries) {
         req.queries.push_back({q.id, q.sequence});
     }
@@ -204,7 +204,7 @@ static void test_http_client_search() {
         struct HitKey {
             std::string accession;
             uint32_t q_start, q_end, s_start, s_end;
-            uint16_t score;
+            uint16_t chainscore;
             bool is_reverse;
             bool operator<(const HitKey& o) const {
                 if (accession != o.accession) return accession < o.accession;
@@ -216,12 +216,12 @@ static void test_http_client_search() {
         std::vector<HitKey> http_sorted, local_sorted;
         for (const auto& hh : http_qr.hits) {
             http_sorted.push_back({hh.accession, hh.q_start, hh.q_end,
-                                   hh.s_start, hh.s_end, hh.score, hh.strand == 1});
+                                   hh.s_start, hh.s_end, hh.chainscore, hh.strand == 1});
         }
         for (const auto& lh : local_sr.hits) {
             local_sorted.push_back({std::string(ksx.accession(lh.seq_id)),
                                     lh.q_start, lh.q_end, lh.s_start, lh.s_end,
-                                    static_cast<uint16_t>(lh.score), lh.is_reverse});
+                                    static_cast<uint16_t>(lh.chainscore), lh.is_reverse});
         }
         std::sort(http_sorted.begin(), http_sorted.end());
         std::sort(local_sorted.begin(), local_sorted.end());
@@ -233,7 +233,7 @@ static void test_http_client_search() {
             CHECK_EQ(http_sorted[hi].q_end, local_sorted[hi].q_end);
             CHECK_EQ(http_sorted[hi].s_start, local_sorted[hi].s_start);
             CHECK_EQ(http_sorted[hi].s_end, local_sorted[hi].s_end);
-            CHECK_EQ(http_sorted[hi].score, local_sorted[hi].score);
+            CHECK_EQ(http_sorted[hi].chainscore, local_sorted[hi].chainscore);
             CHECK(http_sorted[hi].is_reverse == local_sorted[hi].is_reverse);
         }
     }
@@ -246,7 +246,7 @@ static void test_http_client_search() {
     if (!target_acc.empty()) {
         SearchRequest freq;
         freq.k = static_cast<uint8_t>(k);
-        freq.db_name = db_name;
+        freq.db = db;
         freq.seqidlist_mode = SeqidlistMode::kInclude;
         freq.seqids = {target_acc};
         for (const auto& q : queries) {

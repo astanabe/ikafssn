@@ -22,9 +22,9 @@ struct KixHeader {
     uint32_t flags;           // 0x14
     uint16_t volume_index;    // 0x18
     uint16_t total_volumes;   // 0x1A
-    uint16_t db_name_len;     // 0x1C
+    uint16_t db_len;          // 0x1C
     uint8_t  reserved[2];     // 0x1E
-    char     db_name[32];     // 0x20
+    char     db[32];          // 0x20
 };
 #pragma pack(pop)
 

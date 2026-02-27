@@ -19,8 +19,8 @@ void KixWriter::set_volume_info(uint16_t volume_index, uint16_t total_volumes) {
     total_volumes_ = total_volumes;
 }
 
-void KixWriter::set_db_name(const std::string& name) {
-    db_name_ = name;
+void KixWriter::set_db(const std::string& name) {
+    db_ = name;
 }
 
 void KixWriter::set_num_sequences(uint32_t n) {
@@ -70,9 +70,9 @@ bool KixWriter::write(const std::string& path) {
     hdr.volume_index = volume_index_;
     hdr.total_volumes = total_volumes_;
 
-    size_t name_len = std::min(db_name_.size(), size_t(32));
-    hdr.db_name_len = static_cast<uint16_t>(name_len);
-    std::memcpy(hdr.db_name, db_name_.c_str(), name_len);
+    size_t name_len = std::min(db_.size(), size_t(32));
+    hdr.db_len = static_cast<uint16_t>(name_len);
+    std::memcpy(hdr.db, db_.c_str(), name_len);
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
