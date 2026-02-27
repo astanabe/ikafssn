@@ -14,18 +14,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-linux-gnu
+          - target: x86_64-linux-gnu-22.04
+            os: ubuntu-22.04
+            ubuntu_ver: "22.04"
+            build_httpd: OFF
+            pkg_type: deb
+          - target: aarch64-linux-gnu-22.04
+            os: ubuntu-22.04-arm
+            ubuntu_ver: "22.04"
+            build_httpd: OFF
+            pkg_type: deb
+          - target: x86_64-linux-gnu-24.04
             os: ubuntu-24.04
+            ubuntu_ver: "24.04"
             build_httpd: ON
-            archive_suffix: ubuntu-24.04-x86_64
-          - target: aarch64-linux-gnu
+            pkg_type: deb
+          - target: aarch64-linux-gnu-24.04
             os: ubuntu-24.04-arm
+            ubuntu_ver: "24.04"
             build_httpd: ON
-            archive_suffix: ubuntu-24.04-aarch64
+            pkg_type: deb
           - target: aarch64-apple-darwin
             os: macos-14
-            build_httpd: OFF
-            archive_suffix: macos-14-aarch64
+            ubuntu_ver: ""
+            build_httpd: ON
+            pkg_type: bottle
 
     runs-on: ${{ matrix.os }}
 
@@ -34,22 +47,33 @@ jobs:
 
       # ---- System dependencies ----
 
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install system dependencies (Linux 24.04)
+        if: runner.os == 'Linux' && matrix.ubuntu_ver == '24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake \
+            build-essential cmake dpkg-dev \
             libtbb-dev liblmdb-dev libsqlite3-dev \
             libcurl4-openssl-dev libjsoncpp-dev \
             zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
             libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev libpq-dev
 
+      - name: Install system dependencies (Linux 22.04)
+        if: runner.os == 'Linux' && matrix.ubuntu_ver == '22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake dpkg-dev \
+            libtbb-dev liblmdb-dev libsqlite3-dev \
+            libcurl4-openssl-dev libjsoncpp-dev \
+            zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
+            libssl-dev uuid-dev
+
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install tbb lmdb sqlite3 curl jsoncpp \
-            xz libdeflate autoconf automake libtool openssl@3
+            xz libdeflate autoconf automake libtool openssl@3 drogon
 
       # ---- Environment ----
 
@@ -158,27 +182,60 @@ jobs:
           cmake -S . -B build "${cmake_args[@]}"
           cmake --build build -j"${NPROC}"
 
-      # ---- Package & Upload ----
+      # ---- Package DEB (Linux only) ----
 
-      - name: Package
+      - name: Package DEB
+        if: matrix.pkg_type == 'deb'
         run: |
-          version="${{ github.ref_name }}"
-          dir="ikafssn-${version}-${{ matrix.archive_suffix }}"
-          mkdir -p "dist/${dir}"
-          bins=(ikafssnindex ikafssnsearch ikafssnserver ikafssnclient ikafssnretrieve ikafssninfo)
-          if [ "${{ matrix.build_httpd }}" = "ON" ]; then
-            bins+=(ikafssnhttpd)
-          fi
-          for b in "${bins[@]}"; do
-            cp "build/src/${b}" "dist/${dir}/"
-            strip "dist/${dir}/${b}" 2>/dev/null || true
+          cd build
+          cpack -G DEB
+          version=$(grep 'set(IKAFSSN_VERSION' ../CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
+          arch=$(dpkg --print-architecture)
+          for f in *.deb; do
+            newname="ikafssn_${version}_ubuntu-${{ matrix.ubuntu_ver }}_${arch}.deb"
+            mv "$f" "$newname"
           done
-          cp DEPENDENCIES INSTALL LICENSE README.md "dist/${dir}/"
-          cd dist
-          tar cJf "${dir}.tar.xz" "${dir}"
+
+      # ---- Package Bottle (macOS only) ----
+
+      - name: Package Bottle
+        if: matrix.pkg_type == 'bottle'
+        run: |
+          version=$(grep 'set(IKAFSSN_VERSION' CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
+          bottle_dir="ikafssn/${version}"
+          mkdir -p "${bottle_dir}/bin"
+          mkdir -p "${bottle_dir}/share/ikafssn/systemd"
+
+          bins=(ikafssnindex ikafssnsearch ikafssnserver ikafssnclient ikafssnretrieve ikafssninfo ikafssnhttpd)
+          for b in "${bins[@]}"; do
+            cp "build/src/${b}" "${bottle_dir}/bin/"
+            strip "${bottle_dir}/bin/${b}" 2>/dev/null || true
+          done
+
+          cp doc/systemd/ikafssnserver@.service doc/systemd/ikafssnhttpd@.service \
+             doc/systemd/README.md "${bottle_dir}/share/ikafssn/systemd/"
+
+          bottle_file="ikafssn--${version}.arm64_sonoma.bottle.tar.gz"
+          tar czf "${bottle_file}" ikafssn/
+
+          sha256=$(shasum -a 256 "${bottle_file}" | awk '{print $1}')
+          echo "::notice::Bottle SHA256: ${sha256}"
+
+      # ---- Upload ----
 
       - name: Upload release asset
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.xz
+          files: |
+            build/*.deb
+            *.bottle.tar.gz
+
+      - name: Upload artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: |
+            build/*.deb
+            *.bottle.tar.gz

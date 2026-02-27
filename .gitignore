@@ -15,5 +15,8 @@ parasail/
 htslib-*
 htslib/
 
+# Homebrew tap (separate repository)
+homebrew-ikafssn/
+
 # Claude Code conversation logs
 claude*.txt

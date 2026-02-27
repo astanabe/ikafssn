@@ -125,9 +125,24 @@ endif()
 install(FILES
     doc/systemd/ikafssnserver@.service
     doc/systemd/ikafssnhttpd@.service
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system
+)
+install(FILES
     doc/systemd/README.md
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/ikafssn/systemd
 )
+
+# --- CPack DEB packaging ---
+set(CPACK_PACKAGE_NAME "ikafssn")
+set(CPACK_PACKAGE_VERSION "${IKAFSSN_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "K-mer-based alignment-free similarity search for nucleotide sequences")
+set(CPACK_PACKAGE_CONTACT "Akifumi S. Tanabe")
+set(CPACK_DEBIAN_PACKAGE_SECTION "science")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+include(CPack)
 
 enable_testing()
 add_subdirectory(test)
