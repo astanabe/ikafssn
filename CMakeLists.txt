@@ -36,16 +36,20 @@ endif()
 
 if(NOT TARGET NCBI::DL_LIBS)
     add_library(NCBI::DL_LIBS INTERFACE IMPORTED)
-    set_target_properties(NCBI::DL_LIBS PROPERTIES
-        INTERFACE_LINK_LIBRARIES "dl"
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set_target_properties(NCBI::DL_LIBS PROPERTIES
+            INTERFACE_LINK_LIBRARIES "dl"
+        )
+    endif()
 endif()
 
 if(NOT TARGET NCBI::RT_LIBS)
     add_library(NCBI::RT_LIBS INTERFACE IMPORTED)
-    set_target_properties(NCBI::RT_LIBS PROPERTIES
-        INTERFACE_LINK_LIBRARIES "rt"
-    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set_target_properties(NCBI::RT_LIBS PROPERTIES
+            INTERFACE_LINK_LIBRARIES "rt"
+        )
+    endif()
 endif()
 
 if(NOT TARGET NCBI::MATH_LIBS)
