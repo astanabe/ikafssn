@@ -73,7 +73,7 @@ target_include_directories(ikafssn_stage3 PRIVATE
     "${NCBI_TOOLKIT_INCLUDE}"
 )
 target_link_libraries(ikafssn_stage3 PUBLIC
-    ikafssn_core ikafssn_io ikafssn_blastdb parasail
+    ikafssn_core ikafssn_io ikafssn_blastdb parasail TBB::tbb
 )
 
 # SAM/BAM output library (requires htslib)
