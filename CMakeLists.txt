@@ -73,11 +73,12 @@ set_target_properties(parasail PROPERTIES
 # --- htslib (for SAM/BAM output) ---
 set(HTSLIB_DIR "${CMAKE_SOURCE_DIR}/htslib" CACHE PATH
     "Path to htslib install root")
+find_library(DEFLATE_LIB NAMES deflate REQUIRED)
 add_library(hts STATIC IMPORTED)
 set_target_properties(hts PROPERTIES
     IMPORTED_LOCATION "${HTSLIB_DIR}/lib/libhts.a"
     INTERFACE_INCLUDE_DIRECTORIES "${HTSLIB_DIR}/include"
-    INTERFACE_LINK_LIBRARIES "z;bz2;lzma;deflate;pthread;m"
+    INTERFACE_LINK_LIBRARIES "z;bz2;lzma;${DEFLATE_LIB};pthread;m"
 )
 
 # --- Intel TBB ---

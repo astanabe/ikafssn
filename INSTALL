@@ -135,6 +135,10 @@ NCBI C++ Toolkit:
   make -j$(nproc)
   make test
 
+  On macOS (Homebrew), add the Homebrew prefix so CMake can find libdeflate:
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$(brew --prefix)
+    make -j$(sysctl -n hw.ncpu)
+
   To skip ikafssnhttpd:  cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_HTTPD=OFF
   To skip ikafssnclient:  cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_CLIENT=OFF
 
