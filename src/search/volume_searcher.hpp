@@ -26,6 +26,7 @@ struct SearchConfig {
     int8_t   strand = 2;       // 1 = plus only, -1 = minus only, 2 = both
     uint8_t  accept_qdegen = 1; // 0 = skip queries with degenerate bases, 1 = accept (expand)
     double min_stage1_score_frac = 0; // 0 = disabled, 0 < P < 1 = fractional mode
+    uint16_t max_degen_expand = 16;  // max degenerate expansion per k-mer (0/1: disable)
 };
 
 struct SearchResult {

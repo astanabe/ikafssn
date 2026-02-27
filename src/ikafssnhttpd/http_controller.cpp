@@ -105,6 +105,7 @@ void HttpController::search(
     sreq.stage3_min_nident = j.get("stage3_min_nident", 0).asUInt();
     sreq.context_abs = j.get("context_abs", 0).asUInt();
     sreq.context_frac_x10000 = static_cast<uint16_t>(j.get("context_frac_x10000", 0).asUInt());
+    sreq.max_degen_expand = static_cast<uint16_t>(j.get("max_degen_expand", 0).asUInt());
     sreq.db = j.get("db", "").asString();
 
     // Seqidlist mode

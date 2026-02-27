@@ -159,7 +159,7 @@ static void test_packed_scanner_matches_kmer_scanner() {
         [&](uint32_t pos, uint16_t kmer) {
             packed_kmers.push_back({pos, kmer});
         },
-        [&](uint32_t, uint16_t, uint8_t, int) {
+        [&](uint32_t, uint16_t, const AmbigInfo*, int) {
             ambig_calls++;
         });
 
@@ -198,8 +198,9 @@ static void test_packed_scanner_single_ambig() {
         [&](uint32_t pos, uint16_t kmer) {
             normal_kmers.push_back({pos, kmer});
         },
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
-            ambig_kmers.push_back({pos, base_kmer, ncbi4na, bit_offset});
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
+            CHECK_EQ(count, 1);
+            ambig_kmers.push_back({pos, base_kmer, infos[0].ncbi4na, infos[0].bit_offset});
         });
 
     // K-mers containing position 7 are at positions 3,4,5,6,7
@@ -240,15 +241,16 @@ static void test_packed_scanner_double_ambig_skip() {
         [&](uint32_t pos, uint16_t kmer) {
             normal_kmers.push_back({pos, kmer});
         },
-        [&](uint32_t, uint16_t, uint8_t, int) {
+        [&](uint32_t, uint16_t, const AmbigInfo*, int) {
             ambig_calls++;
         });
 
     // k=5, len=8, total possible k-mers = 4
-    // pos 0: [0,4] includes pos 2,3 -> 2 ambig -> skip
-    // pos 1: [1,5] includes pos 2,3 -> 2 ambig -> skip
-    // pos 2: [2,6] includes pos 2,3 -> 2 ambig -> skip
-    // pos 3: [3,7] includes pos 3 -> 1 ambig -> ambig callback
+    // NN = N(4)×N(4) = 16 > default max_expansion(4) -> skip
+    // pos 0: [0,4] includes pos 2,3 -> 2 ambig (16 > 4) -> skip
+    // pos 1: [1,5] includes pos 2,3 -> 2 ambig (16 > 4) -> skip
+    // pos 2: [2,6] includes pos 2,3 -> 2 ambig (16 > 4) -> skip
+    // pos 3: [3,7] includes pos 3 -> 1 ambig (4 <= 4) -> ambig callback
     CHECK_EQ(normal_kmers.size(), size_t(0));
     CHECK_EQ(ambig_calls, 1);
 }
@@ -273,11 +275,12 @@ static void test_packed_scanner_ambig_expansion() {
     PackedKmerScanner<uint16_t> scanner(k);
     scanner.scan(packed.data(), len, ambig,
         [](uint32_t, uint16_t) {},
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
+            CHECK_EQ(count, 1);
             got_pos = pos;
             got_base_kmer = base_kmer;
-            got_ncbi4na = ncbi4na;
-            got_bit_offset = bit_offset;
+            got_ncbi4na = infos[0].ncbi4na;
+            got_bit_offset = infos[0].bit_offset;
         });
 
     CHECK_EQ(got_pos, uint32_t(0));
@@ -341,15 +344,10 @@ static void test_packed_scanner_all_iupac_expansion() {
         PackedKmerScanner<uint16_t> scanner(k);
         scanner.scan(packed.data(), len, ambig,
             [](uint32_t, uint16_t) {},
-            [&](uint32_t, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+            [&](uint32_t, uint16_t base_kmer, const AmbigInfo* infos, int count) {
                 ambig_calls++;
-                uint16_t clear_mask = ~(uint16_t(0x03) << bit_offset);
-                uint16_t cleared = base_kmer & clear_mask;
-                for (uint8_t b = 0; b < 4; b++) {
-                    if (ncbi4na & (1u << b)) {
-                        expanded_kmers.insert(cleared | (uint16_t(b) << bit_offset));
-                    }
-                }
+                expand_ambig_kmer_multi<uint16_t>(base_kmer, infos, count,
+                    [&](uint16_t exp) { expanded_kmers.insert(exp); });
             });
 
         CHECK_EQ(ambig_calls, 1);
@@ -403,7 +401,7 @@ static void test_packed_scanner_run_length() {
         [&](uint32_t pos, uint16_t kmer) {
             normal_kmers.push_back({pos, kmer});
         },
-        [&](uint32_t, uint16_t, uint8_t, int) {
+        [&](uint32_t, uint16_t, const AmbigInfo*, int) {
             ambig_calls++;
         });
 
@@ -447,7 +445,7 @@ static void test_packed_scanner_partial_byte() {
             [&](uint32_t pos, uint16_t kmer) {
                 packed_kmers.push_back({pos, kmer});
             },
-            [](uint32_t, uint16_t, uint8_t, int) {});
+            [](uint32_t, uint16_t, const AmbigInfo*, int) {});
 
         CHECK_EQ(packed_kmers.size(), ref_kmers.size());
         for (size_t i = 0; i < ref_kmers.size() && i < packed_kmers.size(); i++) {
@@ -481,7 +479,7 @@ static void test_packed_scanner_long_ambig_run() {
         [&](uint32_t pos, uint16_t kmer) {
             normal_kmers.push_back({pos, kmer});
         },
-        [&](uint32_t, uint16_t, uint8_t, int) {
+        [&](uint32_t, uint16_t, const AmbigInfo*, int) {
             ambig_calls++;
         });
 
@@ -504,6 +502,68 @@ static void test_packed_scanner_long_ambig_run() {
     // Let's verify: only 2 ambig callbacks, 0 normal
     CHECK_EQ(static_cast<int>(normal_kmers.size()), 0);
     CHECK_EQ(ambig_calls, 2);
+}
+
+static void test_packed_scanner_multi_ambig_expand() {
+    std::fprintf(stderr, "-- test_packed_scanner_multi_ambig_expand\n");
+
+    // Sequence with 2 R bases (A|G): 2×2=4 <= max_expansion=4, should expand
+    // "ACRAG" (5 bases), R at positions 2 and R at... wait, need 2 separate R positions
+    // Let's use: "RCRAG" - R at pos 0, R at pos 2 -> actually too small let me think...
+    // Use "RARGC" (5 bases), R at pos 0 and R at pos 2
+    // Placeholder: "AAGC" with A at 0 and A at 2 -> "AAAGC"
+    const char* raw_seq = "AAAGC";
+    uint32_t len = 5;
+    int k = 5;
+
+    auto packed = encode_ncbi2na(raw_seq, len);
+    // R at positions 0 and 2 (two separate entries)
+    std::vector<AmbiguityEntry> ambig = {{0, 1, 5}, {2, 1, 5}}; // R=A|G at pos 0 and 2
+
+    int normal_calls = 0;
+    int ambig_calls = 0;
+    std::set<uint16_t> expanded_kmers;
+
+    PackedKmerScanner<uint16_t> scanner(k);
+    scanner.scan(packed.data(), len, ambig,
+        [&](uint32_t pos, uint16_t kmer) { normal_calls++; },
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
+            ambig_calls++;
+            expand_ambig_kmer_multi<uint16_t>(base_kmer, infos, count,
+                [&](uint16_t exp) { expanded_kmers.insert(exp); });
+        },
+        4); // max_expansion=4: R(2)×R(2)=4 should pass
+
+    CHECK_EQ(normal_calls, 0);
+    CHECK_EQ(ambig_calls, 1);
+    CHECK_EQ(static_cast<int>(expanded_kmers.size()), 4); // 2×2=4
+}
+
+static void test_packed_scanner_multi_ambig_skip_exceeded() {
+    std::fprintf(stderr, "-- test_packed_scanner_multi_ambig_skip_exceeded\n");
+
+    // Sequence with 2 N bases: N(4)×N(4)=16 > max_expansion=4, should skip
+    const char* raw_seq = "AAAAC";
+    uint32_t len = 5;
+    int k = 5;
+
+    auto packed = encode_ncbi2na(raw_seq, len);
+    // N at positions 0 and 1
+    std::vector<AmbiguityEntry> ambig = {{0, 2, 15}}; // N run at pos 0-1
+
+    int normal_calls = 0;
+    int ambig_calls = 0;
+
+    PackedKmerScanner<uint16_t> scanner(k);
+    scanner.scan(packed.data(), len, ambig,
+        [&](uint32_t pos, uint16_t kmer) { normal_calls++; },
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
+            ambig_calls++;
+        },
+        4); // max_expansion=4: N(4)×N(4)=16 > 4 -> skip
+
+    CHECK_EQ(normal_calls, 0);
+    CHECK_EQ(ambig_calls, 0); // all skipped
 }
 
 // ==================== Integration tests with BLAST DB ====================
@@ -595,7 +655,7 @@ static void test_packed_scanner_matches_kmer_scanner_on_blastdb() {
             [&](uint32_t pos, uint16_t kmer) {
                 packed_kmers.push_back({pos, kmer});
             },
-            [](uint32_t, uint16_t, uint8_t, int) {});
+            [](uint32_t, uint16_t, const AmbigInfo*, int) {});
 
         std::vector<std::pair<uint32_t, uint16_t>> ref_kmers;
         KmerScanner<uint16_t> rs(k);
@@ -811,6 +871,8 @@ int main(int argc, char* argv[]) {
     test_packed_scanner_run_length();
     test_packed_scanner_partial_byte();
     test_packed_scanner_long_ambig_run();
+    test_packed_scanner_multi_ambig_expand();
+    test_packed_scanner_multi_ambig_skip_exceeded();
 
     // Integration tests
     test_blastdb_raw_sequence();

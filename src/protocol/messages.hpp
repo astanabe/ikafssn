@@ -47,6 +47,7 @@ struct SearchRequest {
     uint32_t stage3_min_nident = 0;               // 0 = no filter
     uint32_t context_abs = 0;                     // absolute context bases (when frac=0)
     uint16_t context_frac_x10000 = 0;             // ratio * 10000 (when > 0, ratio mode)
+    uint16_t max_degen_expand = 0;                 // 0 = server default
     std::string db;                                // target database name (empty = error)
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
@@ -78,7 +79,7 @@ struct ResponseHit {
 
 // Per-query warning flags (bitmask)
 enum QueryWarning : uint8_t {
-    kWarnMultiDegen = 0x01,  // k-mers with 2+ degenerate bases were skipped
+    kWarnMultiDegen = 0x01,  // k-mers exceeded max_degen_expand were skipped
 };
 
 // Per-query result in the search response

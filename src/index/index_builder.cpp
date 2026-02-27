@@ -121,12 +121,13 @@ bool build_index(BlastDbReader& db,
                             my_counts[kmer]++;
                         },
                         [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
-                                     uint8_t ncbi4na, int bit_offset) {
-                            expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                                     const AmbigInfo* infos, int count) {
+                            expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
                                 [&my_counts](KmerInt expanded) {
                                     my_counts[expanded]++;
                                 });
-                        });
+                        },
+                        config.max_degen_expand);
                     db.ret_raw_sequence(raw);
                 }
             });
@@ -259,15 +260,16 @@ bool build_index(BlastDbReader& db,
                             my_buffer.push_back({kval, oid, pos});
                         },
                         [&](uint32_t pos, KmerInt base_kmer,
-                            uint8_t ncbi4na, int bit_offset) {
-                            expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+                            const AmbigInfo* infos, int count) {
+                            expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
                                 [&](KmerInt expanded) {
                                     uint32_t kval = static_cast<uint32_t>(expanded);
                                     if (counts[kval] == 0) return;
                                     if (static_cast<int>(partition_of(kval, partition_bits, k)) != p) return;
                                     my_buffer.push_back({kval, oid, pos});
                                 });
-                        });
+                        },
+                        config.max_degen_expand);
                     db.ret_raw_sequence(raw);
                 }
                 // Atomic progress update (coarse-grained per chunk)

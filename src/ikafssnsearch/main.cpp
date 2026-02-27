@@ -76,6 +76,7 @@ static void print_usage(const char* prog) {
         "  -stage3_min_pident <num> Min percent identity filter for mode 3 (default: 0)\n"
         "  -stage3_min_nident <int> Min identical bases filter for mode 3 (default: 0)\n"
         "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, threads))\n"
+        "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
@@ -225,6 +226,15 @@ int main(int argc, char* argv[]) {
     }
 
     int accept_qdegen = cli.get_int("-accept_qdegen", 1);
+
+    {
+        int mde = cli.get_int("-max_degen_expand", 16);
+        if (mde < 0 || mde > 256) {
+            std::fprintf(stderr, "Error: -max_degen_expand must be between 0 and 256\n");
+            return 1;
+        }
+        config.max_degen_expand = static_cast<uint16_t>(mde);
+    }
 
     // Output format
     OutputFormat outfmt;
@@ -405,9 +415,10 @@ int main(int argc, char* argv[]) {
                 queries[qi].sequence, k, all_kix, khx_ptr, config)});
             if (pp16.back().qdata.has_multi_degen) {
                 std::fprintf(stderr,
-                    "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
+                    "Warning: query '%s' contains k-mers exceeding max_degen_expand=%u; "
                     "those k-mers are ignored and not used in the search\n",
-                    queries[qi].id.c_str());
+                    queries[qi].id.c_str(),
+                    static_cast<unsigned>(config.max_degen_expand));
             }
         }
     } else {
@@ -419,9 +430,10 @@ int main(int argc, char* argv[]) {
                 queries[qi].sequence, k, all_kix, khx_ptr, config)});
             if (pp32.back().qdata.has_multi_degen) {
                 std::fprintf(stderr,
-                    "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
+                    "Warning: query '%s' contains k-mers exceeding max_degen_expand=%u; "
                     "those k-mers are ignored and not used in the search\n",
-                    queries[qi].id.c_str());
+                    queries[qi].id.c_str(),
+                    static_cast<unsigned>(config.max_degen_expand));
             }
         }
     }

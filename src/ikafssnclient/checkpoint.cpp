@@ -117,6 +117,7 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "stage3_min_nident=" << req.stage3_min_nident << "\n";
     oss << "context_abs=" << req.context_abs << "\n";
     oss << "context_frac_x10000=" << req.context_frac_x10000 << "\n";
+    oss << "max_degen_expand=" << req.max_degen_expand << "\n";
     oss << "seqidlist_mode=" << static_cast<int>(req.seqidlist_mode) << "\n";
     oss << "db=" << req.db << "\n";
     oss << "db_total_sequences=" << stats.total_sequences << "\n";

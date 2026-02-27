@@ -1,5 +1,6 @@
 #include "test_util.hpp"
 #include "core/kmer_encoding.hpp"
+#include <set>
 #include <vector>
 #include <string>
 
@@ -259,6 +260,57 @@ static void test_degenerate_ncbi4na() {
     CHECK_EQ(degenerate_ncbi4na('a'), 0u);
 }
 
+static void test_ncbi4na_expansion_count() {
+    // 2-base codes
+    CHECK_EQ(ncbi4na_expansion_count(0x03), 2); // M=A|C
+    CHECK_EQ(ncbi4na_expansion_count(0x05), 2); // R=A|G
+    CHECK_EQ(ncbi4na_expansion_count(0x09), 2); // W=A|T
+    CHECK_EQ(ncbi4na_expansion_count(0x06), 2); // S=C|G
+    CHECK_EQ(ncbi4na_expansion_count(0x0A), 2); // Y=C|T
+    CHECK_EQ(ncbi4na_expansion_count(0x0C), 2); // K=G|T
+    // 3-base codes
+    CHECK_EQ(ncbi4na_expansion_count(0x07), 3); // V=A|C|G
+    CHECK_EQ(ncbi4na_expansion_count(0x0B), 3); // H=A|C|T
+    CHECK_EQ(ncbi4na_expansion_count(0x0D), 3); // D=A|G|T
+    CHECK_EQ(ncbi4na_expansion_count(0x0E), 3); // B=C|G|T
+    // 4-base code
+    CHECK_EQ(ncbi4na_expansion_count(0x0F), 4); // N=A|C|G|T
+    // single base (not really degenerate, but should return 1)
+    CHECK_EQ(ncbi4na_expansion_count(0x01), 1); // A only
+    CHECK_EQ(ncbi4na_expansion_count(0x02), 1); // C only
+}
+
+static void test_expand_ambig_kmer_multi_two_positions() {
+    // base_kmer: 5-mer with placeholder A at two positions
+    // "AACAA" = 00 00 01 00 00 = 0x10 (A at all positions)
+    // Degenerate at position 1 (bit_offset=6) and position 3 (bit_offset=2)
+    // Both are R (A|G, ncbi4na=0x05): 2*2 = 4 expansions
+    uint16_t base_kmer = 0; // AAAAA
+    AmbigInfo infos[2];
+    infos[0].ncbi4na = 0x05; // R at position 0 (bit_offset=8)
+    infos[0].bit_offset = 8;
+    infos[1].ncbi4na = 0x05; // R at position 2 (bit_offset=4)
+    infos[1].bit_offset = 4;
+
+    std::vector<uint16_t> results;
+    expand_ambig_kmer_multi<uint16_t>(base_kmer, infos, 2,
+        [&](uint16_t exp) { results.push_back(exp); });
+
+    CHECK_EQ(results.size(), 4u);
+    // Verify all 4 combinations: (A,A), (A,G), (G,A), (G,G)
+    // A=00, G=10
+    // (A at bo=8, A at bo=4) = 0
+    // (A at bo=8, G at bo=4) = 0x20
+    // (G at bo=8, A at bo=4) = 0x200
+    // (G at bo=8, G at bo=4) = 0x220
+    std::set<uint16_t> result_set(results.begin(), results.end());
+    CHECK_EQ(result_set.size(), 4u);
+    CHECK(result_set.count(0x000) == 1); // AA
+    CHECK(result_set.count(0x020) == 1); // AG
+    CHECK(result_set.count(0x200) == 1); // GA
+    CHECK(result_set.count(0x220) == 1); // GG
+}
+
 static void test_scan_ambig_no_degen() {
     // Pure ACGT sequence should produce same results as scan()
     std::string seq = "ACGTACGT";
@@ -276,7 +328,7 @@ static void test_scan_ambig_no_degen() {
         [&](uint32_t pos, uint16_t kmer) {
             ambig_results.push_back({pos, kmer});
         },
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
             ambig_count++;
         });
 
@@ -300,11 +352,12 @@ static void test_scan_ambig_single_R() {
     KmerScanner<uint16_t> scanner(k);
     scanner.scan_ambig(seq.c_str(), seq.size(),
         [&](uint32_t pos, uint16_t kmer) { normal_count++; },
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
             ambig_count++;
-            got_ncbi4na = ncbi4na;
+            CHECK_EQ(count, 1);
+            got_ncbi4na = infos[0].ncbi4na;
             CHECK_EQ(pos, 0u); // k-mer starts at position 0
-            CHECK_EQ(bit_offset, 0); // R is at the last (rightmost) position
+            CHECK_EQ(infos[0].bit_offset, 0); // R is at the last (rightmost) position
         });
 
     CHECK_EQ(normal_count, 0);
@@ -313,7 +366,7 @@ static void test_scan_ambig_single_R() {
 }
 
 static void test_scan_ambig_two_degen_skip() {
-    // "ACRSW" k=5 -> 2 degenerate bases in the window -> skip
+    // "ACRSW" k=5 -> R(2)×S(2)×W(2)=8 > default max_expansion(4) -> skip
     std::string seq = "ACRSW";
     int k = 5;
 
@@ -323,12 +376,59 @@ static void test_scan_ambig_two_degen_skip() {
     KmerScanner<uint16_t> scanner(k);
     scanner.scan_ambig(seq.c_str(), seq.size(),
         [&](uint32_t pos, uint16_t kmer) { normal_count++; },
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
             ambig_count++;
         });
 
     CHECK_EQ(normal_count, 0);
     CHECK_EQ(ambig_count, 0);
+}
+
+static void test_scan_ambig_two_degen_expand() {
+    // "ACRWT" k=5 -> R(2)×W(2)=4 <= default max_expansion(4) -> should expand
+    std::string seq = "ACRWT";
+    int k = 5;
+
+    int normal_count = 0;
+    int ambig_count = 0;
+    int total_expanded = 0;
+
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) { normal_count++; },
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
+            ambig_count++;
+            CHECK_EQ(count, 2);
+            expand_ambig_kmer_multi<uint16_t>(base_kmer, infos, count,
+                [&](uint16_t exp) { total_expanded++; });
+        });
+
+    CHECK_EQ(normal_count, 0);
+    CHECK_EQ(ambig_count, 1);
+    CHECK_EQ(total_expanded, 4); // R(2) x W(2) = 4
+}
+
+static void test_scan_ambig_max_expansion_disabled() {
+    // max_expansion=0 should skip all degenerate k-mers
+    std::string seq = "ACGTR";
+    int k = 5;
+
+    int normal_count = 0;
+    int ambig_count = 0;
+    bool multi_degen = false;
+
+    KmerScanner<uint16_t> scanner(k);
+    scanner.scan_ambig(seq.c_str(), seq.size(),
+        [&](uint32_t pos, uint16_t kmer) { normal_count++; },
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
+            ambig_count++;
+        },
+        &multi_degen,
+        0); // disabled
+
+    CHECK_EQ(normal_count, 0);
+    CHECK_EQ(ambig_count, 0);
+    CHECK(multi_degen);
 }
 
 static void test_scan_ambig_expand_correct_kmers() {
@@ -342,8 +442,8 @@ static void test_scan_ambig_expand_correct_kmers() {
     KmerScanner<uint16_t> scanner(k);
     scanner.scan_ambig(seq.c_str(), seq.size(),
         [&](uint32_t pos, uint16_t kmer) {},
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
-            expand_ambig_kmer<uint16_t>(base_kmer, ncbi4na, bit_offset,
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
+            expand_ambig_kmer_multi<uint16_t>(base_kmer, infos, count,
                 [&](uint16_t exp) { expanded.push_back(exp); });
         });
 
@@ -364,9 +464,10 @@ static void test_scan_ambig_N_expansion() {
     KmerScanner<uint16_t> scanner(k);
     scanner.scan_ambig(seq.c_str(), seq.size(),
         [&](uint32_t pos, uint16_t kmer) {},
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
-            CHECK_EQ(ncbi4na, 0x0Fu); // N = A|C|G|T
-            expand_ambig_kmer<uint16_t>(base_kmer, ncbi4na, bit_offset,
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
+            CHECK_EQ(count, 1);
+            CHECK_EQ(infos[0].ncbi4na, 0x0Fu); // N = A|C|G|T
+            expand_ambig_kmer_multi<uint16_t>(base_kmer, infos, count,
                 [&](uint16_t exp) { expanded.push_back(exp); });
         });
 
@@ -383,10 +484,11 @@ static void test_scan_ambig_degen_at_start() {
     KmerScanner<uint16_t> scanner(k);
     scanner.scan_ambig(seq.c_str(), seq.size(),
         [&](uint32_t pos, uint16_t kmer) {},
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
             ambig_count++;
+            CHECK_EQ(count, 1);
             CHECK_EQ(pos, 0u);
-            CHECK_EQ(bit_offset, 8); // (5-1-0)*2 = 8... but depends on slot mapping
+            CHECK_EQ(infos[0].bit_offset, 8); // (5-1-0)*2 = 8
         });
 
     CHECK_EQ(ambig_count, 1);
@@ -429,7 +531,7 @@ static void test_scan_ambig_sliding_window() {
     KmerScanner<uint16_t> scanner(k);
     scanner.scan_ambig(seq.c_str(), seq.size(),
         [&](uint32_t pos, uint16_t kmer) { normal_count++; },
-        [&](uint32_t pos, uint16_t base_kmer, uint8_t ncbi4na, int bit_offset) {
+        [&](uint32_t pos, uint16_t base_kmer, const AmbigInfo* infos, int count) {
             ambig_count++;
         });
 
@@ -451,9 +553,13 @@ int main() {
     test_scanner_k16_u32();
     test_contains_degenerate_base();
     test_degenerate_ncbi4na();
+    test_ncbi4na_expansion_count();
+    test_expand_ambig_kmer_multi_two_positions();
     test_scan_ambig_no_degen();
     test_scan_ambig_single_R();
     test_scan_ambig_two_degen_skip();
+    test_scan_ambig_two_degen_expand();
+    test_scan_ambig_max_expansion_disabled();
     test_scan_ambig_expand_correct_kmers();
     test_scan_ambig_N_expansion();
     test_scan_ambig_degen_at_start();

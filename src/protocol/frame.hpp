@@ -33,7 +33,7 @@ struct FrameHeader {
     uint32_t magic;           // FRAME_MAGIC
     uint32_t payload_size;    // payload size in bytes
     uint8_t  msg_type;        // MsgType
-    uint8_t  msg_version;     // message version (currently 4)
+    uint8_t  msg_version;     // message version (currently 5)
     uint16_t reserved;        // 0
 };
 static_assert(sizeof(FrameHeader) == 12, "FrameHeader must be 12 bytes");

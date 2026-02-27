@@ -143,6 +143,42 @@ inline uint8_t degenerate_ncbi4na(char c) {
     return degenerate_ncbi4na_table()[static_cast<uint8_t>(c)];
 }
 
+// Info about one degenerate position in a k-mer window.
+struct AmbigInfo {
+    uint8_t ncbi4na;    // IUPAC bitmask for this position
+    int bit_offset;     // 2-bit position in the k-mer integer
+};
+
+// Return the number of bases encoded in an ncbi4na bitmask (popcount of lower 4 bits).
+inline int ncbi4na_expansion_count(uint8_t ncbi4na) {
+    int count = 0;
+    for (uint8_t b = 0; b < 4; b++) {
+        if (ncbi4na & (1u << b)) count++;
+    }
+    return count;
+}
+
+// Expand a k-mer with multiple degenerate positions.
+// Recursively iterates through each degenerate position, substituting each
+// possible base, and calls action(expanded_kmer) for each combination.
+template <typename KmerInt, typename Action>
+inline void expand_ambig_kmer_multi(KmerInt base_kmer, const AmbigInfo* infos,
+                                    int count, Action&& action) {
+    if (count == 0) {
+        action(base_kmer);
+        return;
+    }
+    KmerInt clear_mask = ~(KmerInt(0x03) << infos[0].bit_offset);
+    KmerInt cleared = base_kmer & clear_mask;
+    for (uint8_t b = 0; b < 4; b++) {
+        if (infos[0].ncbi4na & (1u << b)) {
+            KmerInt variant = cleared | (KmerInt(b) << infos[0].bit_offset);
+            expand_ambig_kmer_multi(variant, infos + 1, count - 1,
+                                    std::forward<Action>(action));
+        }
+    }
+}
+
 // Expand a single ambiguous base in a k-mer and invoke action for each expansion.
 // base_kmer: k-mer with placeholder ncbi2na value (0=A) at the ambiguous position
 // ncbi4na: the ambiguity code bitmask (which bases it represents)
@@ -193,16 +229,19 @@ public:
         }
     }
 
-    // Scan with degenerate base expansion (1-degenerate only).
+    // Scan with degenerate base expansion.
     // callback(uint32_t pos, KmerInt kmer): normal k-mer (no degenerate bases)
-    // ambig_callback(uint32_t pos, KmerInt base_kmer, uint8_t ncbi4na, int bit_offset):
-    //   k-mer with exactly one degenerate base. Caller should use expand_ambig_kmer().
-    // K-mers with 2+ degenerate bases are skipped.
-    // has_multi_degen: if non-null, set to true when any k-mer with 2+ degenerate bases is encountered.
+    // ambig_callback(uint32_t pos, KmerInt base_kmer, const AmbigInfo* infos, int count):
+    //   k-mer with degenerate bases whose expansion product <= max_expansion.
+    //   Caller should use expand_ambig_kmer_multi().
+    // K-mers whose expansion product exceeds max_expansion are skipped.
+    // max_expansion: maximum expansion product (default 4). 0 or 1 disables all expansion.
+    // has_multi_degen: if non-null, set to true when any k-mer is skipped due to exceeding max_expansion.
     template <typename Callback, typename AmbigCallback>
     void scan_ambig(const char* seq, size_t len,
                     Callback&& callback, AmbigCallback&& ambig_callback,
-                    bool* has_multi_degen = nullptr) const {
+                    bool* has_multi_degen = nullptr,
+                    int max_expansion = 4) const {
         if (static_cast<int>(len) < k_) return;
 
         const uint8_t* ncbi4na_tbl = degenerate_ncbi4na_table();
@@ -259,21 +298,34 @@ public:
 
             if (degen_count == 0) {
                 callback(pos, kmer);
-            } else if (degen_count == 1) {
-                // Find the single degenerate slot and compute bit_offset.
-                // Window covers positions [i-k+1 .. i].
-                // Iterate j=0..k-1: slot = (i+1+j) % k, bit_offset = (k-1-j)*2
+            } else if (max_expansion <= 1) {
+                // Expansion disabled: skip all degenerate k-mers
+                if (has_multi_degen) *has_multi_degen = true;
+            } else {
+                // Compute expansion product and collect AmbigInfo
+                int product = 1;
+                int info_count = 0;
+                AmbigInfo infos[MAX_K];
+                bool exceeded = false;
                 for (int j = 0; j < k_; j++) {
                     int s = (static_cast<int>(i) + 1 + j) % k_;
                     if (window_degen[s] != 0) {
-                        int bit_offset = (k_ - 1 - j) * 2;
-                        ambig_callback(pos, kmer, window_degen[s], bit_offset);
-                        break;
+                        int ec = ncbi4na_expansion_count(window_degen[s]);
+                        product *= ec;
+                        if (product > max_expansion) {
+                            exceeded = true;
+                            break;
+                        }
+                        infos[info_count].ncbi4na = window_degen[s];
+                        infos[info_count].bit_offset = (k_ - 1 - j) * 2;
+                        info_count++;
                     }
                 }
-            } else if (has_multi_degen) {
-                // degen_count >= 2: skip, but flag it
-                *has_multi_degen = true;
+                if (!exceeded) {
+                    ambig_callback(pos, kmer, infos, info_count);
+                } else if (has_multi_degen) {
+                    *has_multi_degen = true;
+                }
             }
         }
     }

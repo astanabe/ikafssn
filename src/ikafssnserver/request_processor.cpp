@@ -81,6 +81,8 @@ SearchResponse process_search_request(
         config.stage1.stage1_score_type = req.stage1_score;
     if (req.strand != 0)
         config.strand = req.strand;
+    if (req.max_degen_expand != 0)
+        config.max_degen_expand = req.max_degen_expand;
 
     // Validate mode against max_mode
     if (config.mode > db.max_mode) {

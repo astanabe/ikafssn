@@ -53,6 +53,7 @@ static void print_usage(const char* prog) {
         "  -stage3_gapopen <int>    Default gap open penalty (default: 10)\n"
         "  -stage3_gapext <int>     Default gap extension penalty (default: 1)\n"
         "  -stage3_min_pident <num> Default min percent identity (default: 0)\n"
+        "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -stage3_min_nident <int> Default min identical bases (default: 0)\n"
         "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch (default: min(8, threads))\n"
         "  -shutdown_timeout <int>  Graceful shutdown timeout in seconds (default: 30)\n"
@@ -157,6 +158,14 @@ int main(int argc, char* argv[]) {
         static_cast<uint32_t>(cli.get_int("-num_results", 0));
     config.search_config.accept_qdegen =
         static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
+    {
+        int mde = cli.get_int("-max_degen_expand", 16);
+        if (mde < 0 || mde > 256) {
+            std::fprintf(stderr, "Error: -max_degen_expand must be between 0 and 256\n");
+            return 1;
+        }
+        config.search_config.max_degen_expand = static_cast<uint16_t>(mde);
+    }
 
     // Stage 3 config
     config.stage3_config.gapopen = cli.get_int("-stage3_gapopen", 10);

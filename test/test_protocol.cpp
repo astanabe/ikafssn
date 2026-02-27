@@ -41,7 +41,7 @@ static void test_frame_round_trip() {
     assert(hdr.magic == FRAME_MAGIC);
     assert(hdr.payload_size == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 4);
+    assert(hdr.msg_version == 5);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -83,7 +83,7 @@ static void test_frame_invalid_magic() {
     bad_hdr.magic = 0xDEADBEEF;
     bad_hdr.payload_size = 0;
     bad_hdr.msg_type = 0x01;
-    bad_hdr.msg_version = 4;
+    bad_hdr.msg_version = 5;
     bad_hdr.reserved = 0;
     assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 
@@ -132,6 +132,7 @@ static void test_search_request_serialize() {
     req.stage1_topn = 500;
     req.stage1_min_score = 2;
     req.num_results = 50;
+    req.max_degen_expand = 16;
     req.seqidlist_mode = SeqidlistMode::kInclude;
     req.db = "testdb";
     req.seqids = {"NM_001234", "XM_005678"};
@@ -151,6 +152,7 @@ static void test_search_request_serialize() {
     assert(req2.stage1_topn == 500);
     assert(req2.stage1_min_score == 2);
     assert(req2.num_results == 50);
+    assert(req2.max_degen_expand == 16);
     assert(req2.db == "testdb");
     assert(req2.seqidlist_mode == SeqidlistMode::kInclude);
     assert(req2.seqids.size() == 2);
@@ -180,10 +182,35 @@ static void test_search_request_defaults() {
     assert(req2.stage2_min_score == 0);
     assert(req2.stage2_max_gap == 0);
     assert(req2.stage1_max_freq == 0);
+    assert(req2.max_degen_expand == 0);
     assert(req2.db.empty());
     assert(req2.seqidlist_mode == SeqidlistMode::kNone);
     assert(req2.seqids.empty());
     assert(req2.queries.size() == 1);
+
+    std::printf(" OK\n");
+}
+
+static void test_search_request_max_degen_expand() {
+    std::printf("  test_search_request_max_degen_expand...");
+
+    SearchRequest req;
+    req.k = 9;
+    req.max_degen_expand = 256;
+    req.queries.push_back({"q1", "ACGTRYSWKM"});
+
+    auto data = serialize(req);
+    SearchRequest req2;
+    assert(deserialize(data, req2));
+
+    assert(req2.max_degen_expand == 256);
+
+    // Also test with 0 (server default)
+    req.max_degen_expand = 0;
+    data = serialize(req);
+    SearchRequest req3;
+    assert(deserialize(data, req3));
+    assert(req3.max_degen_expand == 0);
 
     std::printf(" OK\n");
 }
@@ -739,6 +766,7 @@ int main() {
     test_info_response_empty();
     test_frame_full_round_trip();
     test_search_request_accept_qdegen();
+    test_search_request_max_degen_expand();
     test_search_response_skipped();
     test_search_request_stage3_fields();
     test_search_response_stage3_fields();

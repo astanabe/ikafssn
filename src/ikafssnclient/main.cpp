@@ -68,6 +68,7 @@ static void print_usage(const char* prog) {
         "  -stage3_gapext <int>     Gap extension penalty (default: server default)\n"
         "  -stage3_min_pident <num> Min percent identity filter (default: server default)\n"
         "  -stage3_min_nident <int> Min identical bases filter (default: server default)\n"
+        "  -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)\n"
         "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n"
 #ifdef IKAFSSN_ENABLE_HTTP
@@ -370,6 +371,14 @@ int main(int argc, char* argv[]) {
     base_req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
     base_req.strand = static_cast<int8_t>(cli.get_int("-strand", 0));
     base_req.db = ix_name;
+    {
+        int mde = cli.get_int("-max_degen_expand", 0);
+        if (mde < 0 || mde > 256) {
+            std::fprintf(stderr, "Error: -max_degen_expand must be between 0 and 256\n");
+            return 1;
+        }
+        base_req.max_degen_expand = static_cast<uint16_t>(mde);
+    }
 
     // Stage 3 parameters
     base_req.stage3_traceback = static_cast<uint8_t>(cli.get_int("-stage3_traceback", 0));

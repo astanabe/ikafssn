@@ -21,19 +21,21 @@ namespace ikafssn {
 
 template <typename KmerInt>
 static std::vector<std::pair<uint32_t, KmerInt>>
-extract_kmers(const std::string& seq, int k) {
+extract_kmers(const std::string& seq, int k, int max_expansion = 16) {
     std::vector<std::pair<uint32_t, KmerInt>> kmers;
     KmerScanner<KmerInt> scanner(k);
     scanner.scan_ambig(seq.data(), seq.size(),
         [&](uint32_t pos, KmerInt kmer) {
             kmers.emplace_back(pos, kmer);
         },
-        [&](uint32_t pos, KmerInt base_kmer, uint8_t ncbi4na, int bit_offset) {
-            expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+        [&](uint32_t pos, KmerInt base_kmer, const AmbigInfo* infos, int count) {
+            expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
                 [&](KmerInt expanded) {
                     kmers.emplace_back(pos, expanded);
                 });
-        });
+        },
+        nullptr,
+        max_expansion);
     return kmers;
 }
 

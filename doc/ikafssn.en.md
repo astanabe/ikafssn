@@ -66,6 +66,10 @@ Options:
                           (default: min(8, threads))
   -openvol <int>          Max volumes processed simultaneously (default: 1)
                           Controls peak memory usage for multi-volume DBs
+  -max_degen_expand <int> Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)
+                          Controls how many non-degenerate k-mers are generated from
+                          a k-mer containing IUPAC degenerate bases. Expansion occurs
+                          when the product of per-position variant counts <= this limit.
   -threads <int>          Number of threads (default: all cores)
                           Parallelizes counting, partition scan, sort,
                           and volume processing
@@ -142,6 +146,7 @@ Options:
   -strand <-1|1|2>       Strand to search (default: 2)
                           1=plus only, -1=minus only, 2=both
   -accept_qdegen <0|1>    Accept queries with degenerate bases (default: 1)
+  -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose           Verbose logging
 ```
@@ -308,6 +313,7 @@ Options:
   -stage3_fetch_threads <int>  Threads for BLAST DB fetch (default: min(8, threads))
   -num_results <int>      Default max results per query (default: 0)
   -accept_qdegen <0|1>    Default accept queries with degenerate bases (default: 1)
+  -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
   -shutdown_timeout <int> Graceful shutdown timeout in seconds (default: 30)
   -v, --verbose           Verbose logging
 ```
@@ -451,6 +457,7 @@ Options:
   -negative_seqidlist <path>  Exclude listed accessions
   -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
   -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)
+  -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose            Verbose logging
 

@@ -60,6 +60,7 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         (default: 0 = no exclusion)\n"
         "  -highfreq_filter_threads <int>\n"
         "                         Threads for cross-volume filtering (default: min(8, threads))\n"
+        "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
         "  -threads <int>         Number of threads (default: all cores)\n"
@@ -185,6 +186,12 @@ int main(int argc, char* argv[]) {
     int openvol = cli.get_int("-openvol", 1);
     if (openvol < 1) openvol = 1;
 
+    int max_degen_expand = cli.get_int("-max_degen_expand", 4);
+    if (max_degen_expand < 0 || max_degen_expand > 16) {
+        std::fprintf(stderr, "Error: -max_degen_expand must be between 0 and 16\n");
+        return 1;
+    }
+
     logger.info("Database: %s (%zu volume(s))", db_path.c_str(), vol_paths.size());
     logger.info("Parameters: k=%d, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
                 k, index_mode, mem_limit_str.c_str(), openvol, threads);
@@ -202,6 +209,7 @@ int main(int argc, char* argv[]) {
     config.threads = threads;
     config.verbose = verbose;
     config.skip_kpx = (index_mode == 1);
+    config.max_degen_expand = max_degen_expand;
     // When max_freq_build is active, keep .tmp files for cross-volume filtering
     config.keep_tmp = (max_freq_build > 0);
 

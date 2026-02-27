@@ -16,6 +16,7 @@ struct IndexBuilderConfig {
     int threads = 1;                    // threads (counting + partition scan + sort)
     bool verbose = false;
     bool skip_kpx = false;              // true: skip .kpx generation (mode 1 index)
+    int max_degen_expand = 4;           // max degenerate expansion per k-mer (0/1: disable)
 };
 
 // Build .kix, .kpx, .ksx index files for a single BLAST DB volume.

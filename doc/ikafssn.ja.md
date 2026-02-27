@@ -66,6 +66,9 @@ ikafssnindex [options]
                           (デフォルト: min(8, threads))
   -openvol <int>          ボリューム同時処理数の上限 (デフォルト: 1)
                           マルチボリューム DB のピークメモリ使用量を制御
+  -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 4、最大: 16、0/1: 無効)
+                          IUPAC 縮重塩基を含む k-mer から生成する非縮重 k-mer の最大数を制御。
+                          各位置の変異数の積がこの上限以下の場合に展開を実行。
   -threads <int>          使用スレッド数 (デフォルト: 利用可能な全コア)
                           計数・パーティションスキャン・ソート・
                           ボリューム処理を並列化
@@ -142,6 +145,7 @@ ikafssnsearch [options]
   -strand <-1|1|2>       検索する鎖 (デフォルト: 2)
                           1=プラス鎖のみ、-1=マイナス鎖のみ、2=両鎖
   -accept_qdegen <0|1>    縮重塩基を含むクエリを許可 (デフォルト: 1)
+  -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)
   -outfmt <tab|json|sam|bam>  出力形式 (デフォルト: tab)
   -v, --verbose           詳細ログ出力
 ```
@@ -308,6 +312,7 @@ ikafssnserver [options]
   -stage3_fetch_threads <int>  BLAST DB 取得スレッド数 (デフォルト: min(8, threads))
   -num_results <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
+  -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)
   -shutdown_timeout <int> グレースフルシャットダウンのタイムアウト秒数 (デフォルト: 30)
   -v, --verbose           詳細ログ出力
 ```
@@ -451,6 +456,7 @@ ikafssnclient [options]
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
   -accept_qdegen <0|1>     縮重塩基を含むクエリを許可 (デフォルト: 1)
+  -max_degen_expand <int>  縮重塩基展開の最大数 (デフォルト: サーバ側デフォルト、最大: 256)
   -outfmt <tab|json|sam|bam>  出力形式 (デフォルト: tab)
   -v, --verbose            詳細ログ出力
 

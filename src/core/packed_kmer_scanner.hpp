@@ -5,6 +5,7 @@
 #include <vector>
 #include "core/config.hpp"
 #include "core/ambiguity_parser.hpp"
+#include "core/kmer_encoding.hpp"
 
 namespace ikafssn {
 
@@ -20,12 +21,12 @@ inline uint8_t ncbi2na_base_at(const char* data, uint32_t pos) {
 // Tracks ambiguous bases using the ambiguity entry list.
 //
 // callback(uint32_t pos, KmerInt kmer) - called for normal k-mers (no ambiguity)
-// ambig_callback(uint32_t pos, KmerInt base_kmer, uint8_t ncbi4na, int bit_offset)
-//   - called for k-mers with exactly 1 ambiguous base
-//   - bit_offset: position of the ambiguous 2-bit field in kmer integer
-//     (0 = rightmost/last base, 2*(k-1) = leftmost/first base)
+// ambig_callback(uint32_t pos, KmerInt base_kmer, const AmbigInfo* infos, int count)
+//   - called for k-mers with degenerate bases whose expansion product <= max_expansion
+//   - infos: array of AmbigInfo describing each degenerate position
+//   - count: number of degenerate positions
 //
-// K-mers with 2+ ambiguous bases are skipped.
+// K-mers whose expansion product exceeds max_expansion are skipped.
 template <typename KmerInt>
 class PackedKmerScanner {
 public:
@@ -35,7 +36,8 @@ public:
     void scan(const char* ncbi2na_data, uint32_t seq_length,
               const std::vector<AmbiguityEntry>& ambig_entries,
               Callback&& callback,
-              AmbigCallback&& ambig_callback) const {
+              AmbigCallback&& ambig_callback,
+              int max_expansion = 4) const {
 
         if (static_cast<int>(seq_length) < k_) return;
 
@@ -107,12 +109,50 @@ public:
 
             if (ambig_count == 0) {
                 callback(kmer_start, kmer);
+            } else if (max_expansion <= 1) {
+                // Expansion disabled: skip all degenerate k-mers
             } else if (ambig_count == 1) {
-                int bases_from_right = static_cast<int>(i - single_pos);
-                int bit_offset = bases_from_right * 2;
-                ambig_callback(kmer_start, kmer, single_ncbi4na, bit_offset);
+                // Fast path: single degenerate base
+                int ec = ncbi4na_expansion_count(single_ncbi4na);
+                if (ec <= max_expansion) {
+                    int bases_from_right = static_cast<int>(i - single_pos);
+                    AmbigInfo info;
+                    info.ncbi4na = single_ncbi4na;
+                    info.bit_offset = bases_from_right * 2;
+                    ambig_callback(kmer_start, kmer, &info, 1);
+                }
+            } else {
+                // Multi-degen path: collect positions and check expansion product
+                Cursor tmp = leave_cur;
+                uint32_t win_start = kmer_start;
+                // Advance tmp to first ambig position in window
+                while (tmp.pos(ambig_entries) < win_start) {
+                    tmp.advance(ambig_entries);
+                }
+                int product = 1;
+                int info_count = 0;
+                AmbigInfo infos[MAX_K];
+                bool exceeded = false;
+                uint32_t win_end = i;
+                while (tmp.pos(ambig_entries) <= win_end) {
+                    uint32_t apos = tmp.pos(ambig_entries);
+                    uint8_t a4na = tmp.ncbi4na(ambig_entries);
+                    int ec = ncbi4na_expansion_count(a4na);
+                    product *= ec;
+                    if (product > max_expansion) {
+                        exceeded = true;
+                        break;
+                    }
+                    int bases_from_right = static_cast<int>(i - apos);
+                    infos[info_count].ncbi4na = a4na;
+                    infos[info_count].bit_offset = bases_from_right * 2;
+                    info_count++;
+                    tmp.advance(ambig_entries);
+                }
+                if (!exceeded) {
+                    ambig_callback(kmer_start, kmer, infos, info_count);
+                }
             }
-            // ambig_count >= 2: skip
 
             // Check if the base leaving the window (kmer_start) was ambiguous
             if (leave_cur.pos(ambig_entries) == kmer_start) {

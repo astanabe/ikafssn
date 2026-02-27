@@ -15,20 +15,22 @@ namespace ikafssn {
 
 template <typename KmerInt>
 static std::vector<std::pair<uint32_t, KmerInt>>
-extract_kmers(const std::string& seq, int k, bool* has_multi_degen = nullptr) {
+extract_kmers(const std::string& seq, int k, bool* has_multi_degen = nullptr,
+              int max_expansion = 16) {
     std::vector<std::pair<uint32_t, KmerInt>> kmers;
     KmerScanner<KmerInt> scanner(k);
     scanner.scan_ambig(seq.data(), seq.size(),
         [&](uint32_t pos, KmerInt kmer) {
             kmers.emplace_back(pos, kmer);
         },
-        [&](uint32_t pos, KmerInt base_kmer, uint8_t ncbi4na, int bit_offset) {
-            expand_ambig_kmer<KmerInt>(base_kmer, ncbi4na, bit_offset,
+        [&](uint32_t pos, KmerInt base_kmer, const AmbigInfo* infos, int count) {
+            expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
                 [&](KmerInt expanded) {
                     kmers.emplace_back(pos, expanded);
                 });
         },
-        has_multi_degen);
+        has_multi_degen,
+        max_expansion);
     return kmers;
 }
 
@@ -58,7 +60,8 @@ QueryKmerData<KmerInt> preprocess_query(
     QueryKmerData<KmerInt> result;
 
     // 1. Extract forward k-mers
-    auto fwd_kmers = extract_kmers<KmerInt>(query_seq, k, &result.has_multi_degen);
+    auto fwd_kmers = extract_kmers<KmerInt>(query_seq, k, &result.has_multi_degen,
+                                            static_cast<int>(config.max_degen_expand));
     if (fwd_kmers.empty()) return result;
 
     // 2. Build reverse complement k-mers
