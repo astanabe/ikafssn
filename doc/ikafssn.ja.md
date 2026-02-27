@@ -45,7 +45,7 @@ ikafssnindex [options]
 
 必須:
   -db <path>              BLAST DB プレフィックス
-  -k <int>                k-mer 長 (5〜13)
+  -k <int>                k-mer 長 (5〜16)
   -o <dir>                出力ディレクトリ
 
 オプション:

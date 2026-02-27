@@ -156,7 +156,7 @@ static void test_scanner_k9_u32() {
 }
 
 static void test_scanner_k13_u32() {
-    // k=13 with uint32_t (max supported)
+    // k=13 with uint32_t
     std::string seq = "ACGTACGTACGTACGT"; // len=16, produces 16-13+1=4 k-mers
     std::vector<std::pair<uint32_t, uint32_t>> results;
     KmerScanner<uint32_t> scanner(13);
@@ -168,6 +168,29 @@ static void test_scanner_k13_u32() {
     uint32_t mask = kmer_mask<uint32_t>(13);
     for (auto& [pos, kmer] : results) {
         CHECK((kmer & mask) == kmer);
+    }
+}
+
+static void test_scanner_k16_u32() {
+    // k=16 with uint32_t (max supported, uses all 32 bits)
+    std::string seq = "ACGTACGTACGTACGTACGT"; // len=20, produces 20-16+1=5 k-mers
+    std::vector<std::pair<uint32_t, uint32_t>> results;
+    KmerScanner<uint32_t> scanner(16);
+    scanner.scan(seq.c_str(), seq.size(), [&](uint32_t pos, uint32_t kmer) {
+        results.push_back({pos, kmer});
+    });
+    CHECK_EQ(results.size(), 5u);
+    // k=16 uses full uint32_t: mask = 0xFFFFFFFF
+    uint32_t mask = kmer_mask<uint32_t>(16);
+    CHECK_EQ(mask, uint32_t(0xFFFFFFFF));
+    for (auto& [pos, kmer] : results) {
+        CHECK((kmer & mask) == kmer);
+    }
+    // Verify revcomp involution at k=16
+    for (auto& [pos, kmer] : results) {
+        uint32_t rc1 = kmer_revcomp<uint32_t>(kmer, 16);
+        uint32_t rc2 = kmer_revcomp<uint32_t>(rc1, 16);
+        CHECK_EQ(rc2, kmer);
     }
 }
 
@@ -425,6 +448,7 @@ int main() {
     test_scanner_k8_boundary();
     test_scanner_k9_u32();
     test_scanner_k13_u32();
+    test_scanner_k16_u32();
     test_contains_degenerate_base();
     test_degenerate_ncbi4na();
     test_scan_ambig_no_degen();

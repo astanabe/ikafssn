@@ -45,7 +45,7 @@ ikafssnindex [options]
 
 Required:
   -db <path>              BLAST DB prefix
-  -k <int>                K-mer length (5-13)
+  -k <int>                K-mer length (5-16)
   -o <dir>                Output directory
 
 Options:

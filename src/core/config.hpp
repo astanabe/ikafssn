@@ -20,7 +20,7 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 
 // k-mer length limits
 inline constexpr int MIN_K = 5;
-inline constexpr int MAX_K = 13;
+inline constexpr int MAX_K = 16;
 inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t
 
 // Format versions
