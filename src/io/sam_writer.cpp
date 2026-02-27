@@ -88,7 +88,11 @@ static void write_sam_bam_impl(const std::string& output_path,
     // @PG
     sam_hdr_add_line(hdr, "PG", "ID", "ikafssnsearch", "VN", IKAFSSN_VERSION, NULL);
 
-    sam_hdr_write(fp, hdr);
+    if (sam_hdr_write(fp, hdr) < 0) {
+        sam_hdr_destroy(hdr);
+        sam_close(fp);
+        return;
+    }
 
     // Write records
     bam1_t* b = bam_init1();
@@ -147,7 +151,7 @@ static void write_sam_bam_impl(const std::string& output_path,
                            reinterpret_cast<const uint8_t*>(&ms));
         }
 
-        sam_write1(fp, hdr, b);
+        if (sam_write1(fp, hdr, b) < 0) break;
     }
 
     bam_destroy1(b);
@@ -244,7 +248,11 @@ bool merge_sam_files(const std::vector<std::string>& batch_paths,
     samFile* out = sam_open(out_path, mode);
     if (!out) { sam_hdr_destroy(merged); return false; }
 
-    sam_hdr_write(out, merged);
+    if (sam_hdr_write(out, merged) < 0) {
+        sam_hdr_destroy(merged);
+        sam_close(out);
+        return false;
+    }
 
     // Phase 3: Read each batch file and remap tids to merged header
     bam1_t* b = bam_init1();
@@ -273,7 +281,7 @@ bool merge_sam_files(const std::vector<std::string>& batch_paths,
             if (b->core.mtid >= 0 && b->core.mtid < batch_nsq) {
                 b->core.mtid = tid_map[b->core.mtid];
             }
-            sam_write1(out, merged, b);
+            if (sam_write1(out, merged, b) < 0) break;
         }
 
         sam_hdr_destroy(batch_hdr);
