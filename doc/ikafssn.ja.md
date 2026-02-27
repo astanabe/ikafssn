@@ -1104,6 +1104,8 @@ sudo make install
 |---|---|---|
 | `NCBI_TOOLKIT_DIR` | `${CMAKE_SOURCE_DIR}/ncbi-cxx-toolkit` | NCBI C++ Toolkit のインストールルートパス |
 | `NCBI_TOOLKIT_BUILD_TAG` | `CMake-GCC1330-Release` | Toolkit ビルドサブディレクトリ名 |
+| `PARASAIL_DIR` | `${CMAKE_SOURCE_DIR}/parasail` | Parasail のインストールルートパス |
+| `HTSLIB_DIR` | `${CMAKE_SOURCE_DIR}/htslib` | htslib のインストールルートパス |
 | `BUILD_HTTPD` | ON | ikafssnhttpd をビルド (Drogon が必要) |
 | `BUILD_CLIENT` | ON | ikafssnclient をビルド (HTTP モードで libcurl が必要) |
 | `ENABLE_REMOTE_RETRIEVE` | ON | ikafssnretrieve で NCBI efetch を有効化 |

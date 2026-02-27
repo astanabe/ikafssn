@@ -1104,6 +1104,8 @@ In this example, executables are installed to `/opt/ikafssn/bin`.
 |---|---|---|
 | `NCBI_TOOLKIT_DIR` | `${CMAKE_SOURCE_DIR}/ncbi-cxx-toolkit` | Path to NCBI C++ Toolkit install root |
 | `NCBI_TOOLKIT_BUILD_TAG` | `CMake-GCC1330-Release` | Toolkit build subdirectory name |
+| `PARASAIL_DIR` | `${CMAKE_SOURCE_DIR}/parasail` | Path to Parasail install root |
+| `HTSLIB_DIR` | `${CMAKE_SOURCE_DIR}/htslib` | Path to htslib install root |
 | `BUILD_HTTPD` | ON | Build ikafssnhttpd (requires Drogon) |
 | `BUILD_CLIENT` | ON | Build ikafssnclient (requires libcurl for HTTP mode) |
 | `ENABLE_REMOTE_RETRIEVE` | ON | Enable NCBI efetch in ikafssnretrieve |
