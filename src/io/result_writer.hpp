@@ -63,6 +63,14 @@ void write_results_json(std::ostream& out,
                         uint8_t stage1_score_type = 1,
                         bool stage3_traceback = false);
 
+// Write per-query JSON objects without the outer {"results": [...]} wrapper.
+// Used for checkpoint batch intermediate files.
+void write_results_json_fragment(std::ostream& out,
+                                  const std::vector<OutputHit>& hits,
+                                  uint8_t mode = 2,
+                                  uint8_t stage1_score_type = 1,
+                                  bool stage3_traceback = false);
+
 // Write results in the specified format (tab or json).
 void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,

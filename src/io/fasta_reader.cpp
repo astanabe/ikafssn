@@ -21,7 +21,7 @@ static void finish_record(std::vector<FastaRecord>& records,
     cur_seq.clear();
 }
 
-static std::vector<FastaRecord> read_fasta_stream(std::istream& in) {
+std::vector<FastaRecord> read_fasta_stream(std::istream& in) {
     std::vector<FastaRecord> records;
     std::string line;
     std::string cur_id;

@@ -251,13 +251,13 @@ ikafssnretrieve -db nt -results results.tsv -o matches.fasta
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # サーバ経由の検索結果からも同様に利用可能
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # NCBI efetch からリモート取得
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -remote > matches.fasta
 
 # NCBI efetch + API key (高スループット)
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta \
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta \
     | ikafssnretrieve -remote -api_key XXXXXXXX > matches.fasta
 
 # マッチ領域の前後 50bp を含めて抽出
@@ -409,6 +409,8 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。クエリ送信前にサーバの能力情報を取得し、指定されたデータベース名・k-mer サイズ・モードの妥当性を事前検証 (プリフライトチェック) します。無効なパラメータが指定された場合は、クエリデータの送信前に利用可能なデータベース一覧を含むエラーメッセージが表示されます。クライアントはサーバの `max_seqs_per_req` と空きスロット数に基づいてクエリを適切なサイズのバッチに自動分割し、部分的に拒否されるような過大なリクエストを回避します。各バッチ内でサーバが同時実行制限によりクエリ配列を拒否した場合、拒否された配列を指数バックオフ (30 秒、60 秒、120 秒、120 秒、…) で自動リトライし、全配列の処理が完了するまで繰り返します。
 
+**チェックポインティング:** クライアントはバッチ処理中の中間結果を一時ディレクトリに自動保存します。プロセスが中断された場合 (例: Ctrl+C、ネットワーク障害)、同じコマンドを再実行すると中断箇所から再開し、処理済みクエリをスキップします。一時ディレクトリの命名は `{出力}.{入力}.{ix名}.{kk}.ikafssn.tmp/` で、正常完了後に自動削除されます。ディレクトリベースのロックにより同一パラメータでの同時実行を防止します。再開時の検証では検索パラメータ、入力ファイルの SHA256、各バッチファイルの整合性をチェックします。
+
 ```
 ikafssnclient [options]
 
@@ -419,6 +421,7 @@ ikafssnclient [options]
 
 必須:
   -query <path>            クエリ FASTA ファイル (- で標準入力)
+  -ix <name>               サーバ上のターゲットデータベース名
 
 オプション:
   -o <path>                出力ファイル (デフォルト: 標準出力)
@@ -444,7 +447,6 @@ ikafssnclient [options]
   -stage3_min_pident <num> 最小配列一致率フィルタ (デフォルト: サーバ側デフォルト)
   -stage3_min_nident <int> 最小一致塩基数フィルタ (デフォルト: サーバ側デフォルト)
   -num_results <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
-  -db <name>               サーバ上のターゲットデータベース名 (マルチ DB サーバでは必須)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
@@ -463,37 +465,37 @@ HTTP 認証 (HTTP モード専用):
 
 ```bash
 # UNIX ソケット経由 (ローカル)
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta
 
 # TCP 直接接続
-ikafssnclient -tcp 10.0.1.5:9100 -db nt -query query.fasta
+ikafssnclient -tcp 10.0.1.5:9100 -ix nt -query query.fasta
 
 # HTTP 経由
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta
 
 # seqidlist で検索対象を限定
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -seqidlist targets.txt
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -seqidlist targets.txt
 
 # パイプラインで ikafssnretrieve に接続
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # 特定の k-mer サイズを指定
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -k 9
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -k 9
 
 # HTTP Basic 認証 (curl 形式)
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --user admin:secret
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --user admin:secret
 
 # HTTP Basic 認証 (wget 形式)
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --http-user=admin --http-password=secret
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --http-user=admin --http-password=secret
 
 # .netrc ファイルによる認証
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --netrc-file ~/.netrc
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --netrc-file ~/.netrc
 
 # モード 3: トレースバック付きペアワイズアライメント
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -stage3_traceback 1
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1
 
 # モード 3: SAM 出力
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
 ```
 
 ### ikafssninfo
@@ -827,8 +829,8 @@ ikafssnserver → ikafssnclient (UNIX ソケット経由)
 ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
     -socket /var/run/ikafssn.sock
 
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
-ikafssnclient -socket /var/run/ikafssn.sock -db refseq_genomic -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix refseq_genomic -query query.fasta
 ```
 
 ### マルチバックエンド (負荷分散 / マルチサーバ)

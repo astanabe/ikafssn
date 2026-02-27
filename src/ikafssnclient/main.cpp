@@ -2,6 +2,7 @@
 #ifdef IKAFSSN_ENABLE_HTTP
 #include "ikafssnclient/http_client.hpp"
 #endif
+#include "ikafssnclient/checkpoint.hpp"
 #include "core/version.hpp"
 #include "protocol/info_format.hpp"
 #include "util/common_init.hpp"
@@ -18,9 +19,12 @@
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 using namespace ikafssn;
 
@@ -37,6 +41,7 @@ static void print_usage(const char* prog) {
         "\n"
         "Required:\n"
         "  -query <path>            Query FASTA file (- for stdin)\n"
+        "  -ix <name>               Target database name on server\n"
         "\n"
         "Options:\n"
         "  -o <path>                Output file (default: stdout)\n"
@@ -56,7 +61,6 @@ static void print_usage(const char* prog) {
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)\n"
-        "  -db <name>               Target database name on server (required for multi-DB servers)\n"
         "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
         "  -context <value>         Context extension (int=bases, decimal=ratio, default: 0)\n"
         "  -stage3_traceback <0|1>  Enable traceback in mode 3 (default: 0)\n"
@@ -191,6 +195,50 @@ static bool execute_search(
     return true;
 }
 
+// Convert SearchResponse results into OutputHit vector
+static void collect_results(const SearchResponse& resp,
+                             std::vector<OutputHit>& hits,
+                             bool& has_skipped) {
+    for (const auto& qr : resp.results) {
+        if (qr.skipped != 0) {
+            has_skipped = true;
+            std::fprintf(stderr, "Warning: query '%s' was skipped (degenerate bases)\n",
+                         qr.qseqid.c_str());
+            continue;
+        }
+        if (qr.warnings & kWarnMultiDegen) {
+            std::fprintf(stderr,
+                "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
+                "those k-mers are ignored and not used in the search\n",
+                qr.qseqid.c_str());
+        }
+        for (const auto& hit : qr.hits) {
+            OutputHit oh;
+            oh.qseqid = qr.qseqid;
+            oh.sseqid = hit.sseqid;
+            oh.sstrand = (hit.sstrand == 0) ? '+' : '-';
+            oh.qstart = hit.qstart;
+            oh.qend = hit.qend;
+            oh.sstart = hit.sstart;
+            oh.send = hit.send;
+            oh.chainscore = hit.chainscore;
+            oh.coverscore = hit.coverscore;
+            oh.matchscore = hit.matchscore;
+            oh.volume = hit.volume;
+            oh.qlen = hit.qlen;
+            oh.slen = hit.slen;
+            oh.alnscore = hit.alnscore;
+            oh.nident = hit.nident;
+            oh.mismatch = hit.mismatch;
+            oh.pident = static_cast<double>(hit.pident_x100) / 100.0;
+            oh.cigar = hit.cigar;
+            oh.qseq = hit.qseq;
+            oh.sseq = hit.sseq;
+            hits.push_back(std::move(oh));
+        }
+    }
+}
+
 int main(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
@@ -218,6 +266,12 @@ int main(int argc, char* argv[]) {
 
     if (!cli.has("-query")) {
         std::fprintf(stderr, "Error: -query is required\n");
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    if (!cli.has("-ix")) {
+        std::fprintf(stderr, "Error: -ix is required\n");
         print_usage(argv[0]);
         return 1;
     }
@@ -251,6 +305,7 @@ int main(int argc, char* argv[]) {
 
     std::string query_path = cli.get_string("-query");
     std::string output_path = cli.get_string("-o");
+    std::string ix_name = cli.get_string("-ix");
 
     // Output format
     OutputFormat outfmt;
@@ -262,8 +317,18 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Read query FASTA
-    auto queries = read_fasta(query_path);
+    // Read query FASTA (with stdin buffering for checkpoint)
+    std::string stdin_content;
+    std::vector<FastaRecord> queries;
+    if (query_path == "-") {
+        std::ostringstream oss;
+        oss << std::cin.rdbuf();
+        stdin_content = oss.str();
+        std::istringstream iss(stdin_content);
+        queries = read_fasta_stream(iss);
+    } else {
+        queries = read_fasta(query_path);
+    }
     if (queries.empty()) {
         std::fprintf(stderr, "Error: no query sequences found\n");
         return 1;
@@ -304,7 +369,7 @@ int main(int argc, char* argv[]) {
     base_req.stage1_score = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
     base_req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
     base_req.strand = static_cast<int8_t>(cli.get_int("-strand", 0));
-    base_req.db = cli.get_string("-db", "");
+    base_req.db = ix_name;
 
     // Stage 3 parameters
     base_req.stage3_traceback = static_cast<uint8_t>(cli.get_int("-stage3_traceback", 0));
@@ -343,13 +408,17 @@ int main(int argc, char* argv[]) {
     }
 
     // Seqidlist
+    std::string seqidlist_path;
+    std::string neg_seqidlist_path;
     if (cli.has("-seqidlist")) {
         base_req.seqidlist_mode = SeqidlistMode::kInclude;
-        base_req.seqids = read_seqidlist(cli.get_string("-seqidlist"));
+        seqidlist_path = cli.get_string("-seqidlist");
+        base_req.seqids = read_seqidlist(seqidlist_path);
         logger.info("Loaded %zu accessions (include mode)", base_req.seqids.size());
     } else if (cli.has("-negative_seqidlist")) {
         base_req.seqidlist_mode = SeqidlistMode::kExclude;
-        base_req.seqids = read_seqidlist(cli.get_string("-negative_seqidlist"));
+        neg_seqidlist_path = cli.get_string("-negative_seqidlist");
+        base_req.seqids = read_seqidlist(neg_seqidlist_path);
         logger.info("Loaded %zu accessions (exclude mode)", base_req.seqids.size());
     }
 
@@ -372,6 +441,99 @@ int main(int argc, char* argv[]) {
     }
     logger.debug("Pre-flight validation passed");
 
+    // Resolve k value from server info
+    uint8_t resolved_k = base_req.k;
+    if (resolved_k == 0) {
+        for (const auto& db : server_info.databases) {
+            if (db.name == base_req.db) {
+                resolved_k = db.default_k;
+                break;
+            }
+        }
+    }
+
+    // Compute SHA256s for checkpoint validation
+    std::string input_sha256;
+    if (query_path == "-") {
+        input_sha256 = sha256_string(stdin_content);
+    } else {
+        input_sha256 = sha256_file(query_path);
+    }
+    std::string seqidlist_sha256;
+    std::string neg_seqidlist_sha256;
+    if (!seqidlist_path.empty())
+        seqidlist_sha256 = sha256_file(seqidlist_path);
+    if (!neg_seqidlist_path.empty())
+        neg_seqidlist_sha256 = sha256_file(neg_seqidlist_path);
+
+    // Build options text and checkpoint
+    DbStats db_stats = resolve_db_stats(server_info, base_req.db, resolved_k);
+    std::string options_text = build_options_text(
+        base_req, db_stats, resolved_k, outfmt,
+        seqidlist_sha256, neg_seqidlist_sha256);
+
+    Checkpoint::Config ckpt_cfg;
+    ckpt_cfg.output_path = output_path;
+    ckpt_cfg.input_path = query_path;
+    ckpt_cfg.ix_name = ix_name;
+    ckpt_cfg.resolved_k = resolved_k;
+    ckpt_cfg.outfmt = outfmt;
+
+    Checkpoint ckpt(ckpt_cfg, logger);
+
+    // Acquire lock
+    LockGuard lock;
+    if (!ckpt.acquire_lock(lock)) {
+        // Lock dir might not exist yet if temp_dir doesn't exist
+        // Try to create temp dir first, then lock
+    }
+
+    // Resume or initialize checkpoint
+    std::unordered_set<std::string> completed_seqids;
+    int next_batch_num = 0;
+
+    if (ckpt.exists()) {
+        // Acquire lock first if we haven't already
+        if (!lock.locked()) {
+            if (!ckpt.acquire_lock(lock)) {
+                return 1;
+            }
+        }
+        if (!ckpt.resume(options_text, input_sha256,
+                          completed_seqids, next_batch_num)) {
+            logger.info("Checkpoint validation failed, starting fresh");
+            lock.release();
+            ckpt.cleanup();
+            if (!ckpt.initialize(options_text, input_sha256, stdin_content)) {
+                return 1;
+            }
+            if (!ckpt.acquire_lock(lock)) {
+                return 1;
+            }
+        } else {
+            logger.info("Resumed from checkpoint: %zu queries already completed",
+                        completed_seqids.size());
+        }
+    } else {
+        if (!ckpt.initialize(options_text, input_sha256, stdin_content)) {
+            return 1;
+        }
+        if (!lock.locked()) {
+            if (!ckpt.acquire_lock(lock)) {
+                return 1;
+            }
+        }
+    }
+
+    // Build remaining queries (filter out completed)
+    std::vector<FastaRecord> remaining;
+    for (const auto& q : queries) {
+        if (completed_seqids.find(q.id) == completed_seqids.end()) {
+            remaining.push_back(q);
+        }
+    }
+    logger.info("%zu remaining queries to process", remaining.size());
+
     // Build query_id -> sequence lookup for retry
     std::unordered_map<std::string, std::string> query_map;
     for (const auto& q : queries) {
@@ -379,7 +541,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Determine batch size from server info
-    int batch_size = static_cast<int>(queries.size());
+    int batch_size = static_cast<int>(remaining.size());
+    if (batch_size == 0) batch_size = 1;  // avoid div-by-zero
     if (server_info.max_seqs_per_req > 0)
         batch_size = std::min(batch_size, static_cast<int>(server_info.max_seqs_per_req));
     if (server_info.max_queue_size > 0) {
@@ -388,80 +551,54 @@ int main(int argc, char* argv[]) {
             batch_size = std::min(batch_size, available);
     }
     if (batch_size <= 0) batch_size = 1;
-    logger.debug("Batch size: %d (queries=%zu, max_seqs_per_req=%d, available=%d/%d)",
-                 batch_size, queries.size(), server_info.max_seqs_per_req,
-                 server_info.max_queue_size - server_info.queue_depth,
-                 server_info.max_queue_size);
+    logger.debug("Batch size: %d (remaining=%zu, max_seqs_per_req=%d)",
+                 batch_size, remaining.size(), server_info.max_seqs_per_req);
 
-    // Accumulate results across batches and retry attempts
-    std::vector<OutputHit> all_hits;
     bool has_skipped = false;
     uint8_t resp_mode = 0;
     uint8_t resp_stage1_score = 0;
     bool resp_stage3_traceback = false;
     bool first_response = true;
 
+    // Try to load response meta from checkpoint (for resume with all queries done)
+    if (!remaining.empty() || !ckpt.read_response_meta(resp_mode, resp_stage1_score,
+                                                        resp_stage3_traceback)) {
+        // Will be populated from first response
+    } else {
+        first_response = false;
+    }
+
     // Retry schedule: 30s, 60s, 120s, 120s, ...
     static constexpr int retry_delays[] = {30, 60, 120};
     static constexpr int num_retry_delays =
         static_cast<int>(sizeof(retry_delays) / sizeof(retry_delays[0]));
 
-    // Helper lambda to collect results from a response
-    auto collect_results = [&](const SearchResponse& resp) {
-        for (const auto& qr : resp.results) {
-            if (qr.skipped != 0) {
-                has_skipped = true;
-                std::fprintf(stderr, "Warning: query '%s' was skipped (degenerate bases)\n",
-                             qr.qseqid.c_str());
-                continue;
-            }
-            if (qr.warnings & kWarnMultiDegen) {
-                std::fprintf(stderr,
-                    "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
-                    "those k-mers are ignored and not used in the search\n",
-                    qr.qseqid.c_str());
-            }
-            for (const auto& hit : qr.hits) {
-                OutputHit oh;
-                oh.qseqid = qr.qseqid;
-                oh.sseqid = hit.sseqid;
-                oh.sstrand = (hit.sstrand == 0) ? '+' : '-';
-                oh.qstart = hit.qstart;
-                oh.qend = hit.qend;
-                oh.sstart = hit.sstart;
-                oh.send = hit.send;
-                oh.chainscore = hit.chainscore;
-                oh.coverscore = hit.coverscore;
-                oh.matchscore = hit.matchscore;
-                oh.volume = hit.volume;
-                oh.qlen = hit.qlen;
-                oh.slen = hit.slen;
-                oh.alnscore = hit.alnscore;
-                oh.nident = hit.nident;
-                oh.mismatch = hit.mismatch;
-                oh.pident = static_cast<double>(hit.pident_x100) / 100.0;
-                oh.cigar = hit.cigar;
-                oh.qseq = hit.qseq;
-                oh.sseq = hit.sseq;
-                all_hits.push_back(std::move(oh));
-            }
-        }
-    };
+    int batch_num = next_batch_num;
 
-    // Process queries in batches
+    // Process remaining queries in batches
     size_t sent = 0;
-    while (sent < queries.size()) {
-        size_t batch_end = std::min(sent + static_cast<size_t>(batch_size), queries.size());
+    while (sent < remaining.size()) {
+        size_t batch_end = std::min(sent + static_cast<size_t>(batch_size),
+                                     remaining.size());
+
+        // Build batch seqid list
+        std::vector<std::string> batch_seqids;
+        for (size_t i = sent; i < batch_end; i++) {
+            batch_seqids.push_back(remaining[i].id);
+        }
+
+        // Write batch seqids before sending
+        ckpt.write_batch_seqids(batch_num, batch_seqids);
 
         // Build request for this batch
         SearchRequest req = base_req;
         for (size_t i = sent; i < batch_end; i++) {
-            req.queries.push_back({queries[i].id, queries[i].sequence});
+            req.queries.push_back({remaining[i].id, remaining[i].sequence});
         }
         sent = batch_end;
 
-        logger.info("Sending batch of %zu queries (%zu/%zu)",
-                     req.queries.size(), sent, queries.size());
+        logger.info("Sending batch %d: %zu queries (%zu/%zu)",
+                     batch_num, req.queries.size(), sent, remaining.size());
 
         // Retry loop for this batch (rejected = server busy)
         for (int attempt = 0; ; attempt++) {
@@ -471,11 +608,13 @@ int main(int argc, char* argv[]) {
                     , auth
 #endif
                     )) {
+                lock.release();
                 return 1;
             }
 
             if (resp.status != 0) {
                 std::fprintf(stderr, "Error: server returned status %d\n", resp.status);
+                lock.release();
                 return 1;
             }
 
@@ -488,12 +627,39 @@ int main(int argc, char* argv[]) {
                 resp_stage1_score = resp.stage1_score;
                 resp_stage3_traceback = (resp.stage3_traceback != 0);
                 first_response = false;
+                ckpt.write_response_meta(resp_mode, resp_stage1_score,
+                                          resp_stage3_traceback);
             }
 
-            collect_results(resp);
+            // Collect accepted results
+            std::vector<OutputHit> batch_hits;
+            collect_results(resp, batch_hits, has_skipped);
 
-            // If no rejected queries, this batch is done
-            if (resp.rejected_qseqids.empty()) break;
+            if (resp.rejected_qseqids.empty()) {
+                // All accepted - save batch results
+                ckpt.write_batch_results(batch_num, batch_hits,
+                                          resp_mode, resp_stage1_score,
+                                          resp_stage3_traceback);
+                batch_num++;
+                break;
+            }
+
+            // Partial reject: save accepted results with updated seqid list
+            std::unordered_set<std::string> rejected_set(
+                resp.rejected_qseqids.begin(), resp.rejected_qseqids.end());
+
+            // Rewrite batch seqids to only include accepted
+            std::vector<std::string> accepted_seqids;
+            for (const auto& id : batch_seqids) {
+                if (rejected_set.find(id) == rejected_set.end()) {
+                    accepted_seqids.push_back(id);
+                }
+            }
+            ckpt.write_batch_seqids(batch_num, accepted_seqids);
+            ckpt.write_batch_results(batch_num, batch_hits,
+                                      resp_mode, resp_stage1_score,
+                                      resp_stage3_traceback);
+            batch_num++;
 
             // Sleep before retry
             int delay_idx = std::min(attempt, num_retry_delays - 1);
@@ -502,26 +668,46 @@ int main(int argc, char* argv[]) {
                         resp.rejected_qseqids.size(), delay);
             std::this_thread::sleep_for(std::chrono::seconds(delay));
 
-            // Rebuild request with only rejected query IDs
+            // Rebuild request with only rejected query IDs as new batch
+            batch_seqids.clear();
             req = base_req;
             for (const auto& qid : resp.rejected_qseqids) {
                 auto it = query_map.find(qid);
                 if (it != query_map.end()) {
                     req.queries.push_back({qid, it->second});
+                    batch_seqids.push_back(qid);
                 }
             }
 
             if (req.queries.empty()) break; // all resolved
+
+            // Write seqids for the new retry batch
+            ckpt.write_batch_seqids(batch_num, batch_seqids);
         }
     }
 
-    // Write output using mode/stage1_score from response
-    if (!write_all_results(output_path, all_hits, outfmt,
-                           resp_mode, resp_stage1_score,
-                           resp_stage3_traceback)) {
+    // If all queries were already completed (resume case), load meta
+    if (remaining.empty() && first_response) {
+        if (!ckpt.read_response_meta(resp_mode, resp_stage1_score,
+                                      resp_stage3_traceback)) {
+            logger.error("No response metadata found in checkpoint");
+            lock.release();
+            return 1;
+        }
+    }
+
+    // Merge all batch results
+    if (!ckpt.merge_results(output_path, resp_mode, resp_stage1_score,
+                             resp_stage3_traceback)) {
+        logger.error("Failed to merge results");
+        lock.release();
         return 1;
     }
 
-    logger.info("Done. %zu hit(s) reported.", all_hits.size());
+    // Cleanup
+    lock.release();
+    ckpt.cleanup();
+
+    logger.info("Done.");
     return has_skipped ? 2 : 0;
 }

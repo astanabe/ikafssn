@@ -101,11 +101,15 @@ static void json_escape(std::ostream& out, const std::string& s) {
     out << '"';
 }
 
-void write_results_json(std::ostream& out,
-                        const std::vector<OutputHit>& hits,
-                        uint8_t mode,
-                        uint8_t stage1_score_type,
-                        bool stage3_traceback) {
+// Inner helper: write per-query JSON objects.
+// If is_fragment is true, objects are emitted without outer wrapper and
+// with trailing comma after each (caller handles the last comma).
+static void write_results_json_inner(std::ostream& out,
+                                      const std::vector<OutputHit>& hits,
+                                      uint8_t mode,
+                                      uint8_t stage1_score_type,
+                                      bool stage3_traceback,
+                                      bool is_fragment) {
     const char* s1name = stage1_score_name(stage1_score_type);
 
     // Group hits by qseqid (preserve order of first appearance)
@@ -118,7 +122,6 @@ void write_results_json(std::ostream& out,
         by_query[h.qseqid].push_back(&h);
     }
 
-    out << "{\n  \"results\": [\n";
     for (size_t qi = 0; qi < query_order.size(); qi++) {
         const auto& qid = query_order[qi];
         const auto& qhits = by_query[qid];
@@ -165,10 +168,29 @@ void write_results_json(std::ostream& out,
             out << '\n';
         }
         out << "      ]\n    }";
-        if (qi + 1 < query_order.size()) out << ',';
+        if (is_fragment || qi + 1 < query_order.size()) out << ',';
         out << '\n';
     }
+}
+
+void write_results_json(std::ostream& out,
+                        const std::vector<OutputHit>& hits,
+                        uint8_t mode,
+                        uint8_t stage1_score_type,
+                        bool stage3_traceback) {
+    out << "{\n  \"results\": [\n";
+    write_results_json_inner(out, hits, mode, stage1_score_type,
+                              stage3_traceback, false);
     out << "  ]\n}\n";
+}
+
+void write_results_json_fragment(std::ostream& out,
+                                  const std::vector<OutputHit>& hits,
+                                  uint8_t mode,
+                                  uint8_t stage1_score_type,
+                                  bool stage3_traceback) {
+    write_results_json_inner(out, hits, mode, stage1_score_type,
+                              stage3_traceback, true);
 }
 
 void write_results(std::ostream& out,

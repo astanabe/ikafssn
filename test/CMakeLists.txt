@@ -279,6 +279,19 @@ add_test(NAME test_stage3_integration COMMAND test_stage3_integration)
 
 # --- Phase 7 tests ---
 
+# Checkpoint test (requires OpenSSL)
+add_executable(test_checkpoint test_checkpoint.cpp
+    "${CMAKE_SOURCE_DIR}/src/ikafssnclient/checkpoint.cpp"
+)
+target_link_libraries(test_checkpoint PRIVATE
+    ikafssn_sam_writer ikafssn_io ikafssn_core
+    OpenSSL::Crypto hts
+)
+target_include_directories(test_checkpoint PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src"
+)
+add_test(NAME test_checkpoint COMMAND test_checkpoint)
+
 # ikafssninfo integration test (requires NCBI Toolkit for index building)
 add_executable(test_ikafssninfo test_ikafssninfo.cpp)
 target_link_libraries(test_ikafssninfo PRIVATE

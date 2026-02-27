@@ -165,10 +165,12 @@ endif()
 
 add_executable(ikafssnclient
     ikafssnclient/main.cpp
+    ikafssnclient/checkpoint.cpp
 )
 target_link_libraries(ikafssnclient PRIVATE
     ikafssn_client_lib ikafssn_io ikafssn_util ikafssn_core
     ikafssn_sam_writer hts
+    OpenSSL::Crypto
 )
 
 # ikafssnretrieve

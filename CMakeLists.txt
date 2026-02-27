@@ -85,6 +85,9 @@ if(BUILD_HTTPD)
     find_package(Drogon REQUIRED)
 endif()
 
+# --- OpenSSL (for ikafssnclient checkpointing SHA256) ---
+find_package(OpenSSL REQUIRED)
+
 # --- libcurl + jsoncpp (optional, for ikafssnclient HTTP mode) ---
 option(ENABLE_CLIENT_HTTP "Enable HTTP mode in ikafssnclient (requires libcurl)" ON)
 if(ENABLE_CLIENT_HTTP)

@@ -251,13 +251,13 @@ ikafssnretrieve -db nt -results results.tsv -o matches.fasta
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # Server search results also work
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # Remote retrieval via NCBI efetch
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -remote > matches.fasta
 
 # Remote retrieval with API key (higher throughput)
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta \
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta \
     | ikafssnretrieve -remote -api_key XXXXXXXX > matches.fasta
 
 # Include 50bp of context around match region
@@ -409,6 +409,8 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. Invalid parameters produce an error with available database listings before any query data is transmitted. The client uses the server's `max_seqs_per_req` and available slot count to automatically split queries into appropriately-sized batches, avoiding oversized requests that would be partially rejected. Within each batch, if the server still rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
 
+**Checkpointing:** The client automatically saves intermediate results to a temporary directory during batch processing. If the process is interrupted (e.g., Ctrl+C, network failure), re-running the same command resumes from where it left off, skipping already-completed queries. The temporary directory is named `{output}.{input}.{ix_name}.{kk}.ikafssn.tmp/` and is automatically cleaned up after successful completion. A directory-based lock prevents concurrent runs with the same parameters. Resume validation checks the search parameters, input file SHA256, and integrity of each batch file.
+
 ```
 ikafssnclient [options]
 
@@ -419,6 +421,7 @@ Connection (one required):
 
 Required:
   -query <path>            Query FASTA file (- for stdin)
+  -ix <name>               Target database name on server
 
 Options:
   -o <path>                Output file (default: stdout)
@@ -444,7 +447,6 @@ Options:
   -stage3_min_pident <num> Min percent identity filter (default: server default)
   -stage3_min_nident <int> Min identical bases filter (default: server default)
   -num_results <int>       Max results per query (default: server default)
-  -db <name>               Target database name on server (required for multi-DB servers)
   -seqidlist <path>        Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
   -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
@@ -463,37 +465,37 @@ HTTP Authentication (HTTP mode only):
 
 ```bash
 # UNIX socket (local, single-DB server)
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta
 
 # TCP (local or remote)
-ikafssnclient -tcp 10.0.1.5:9100 -db nt -query query.fasta
+ikafssnclient -tcp 10.0.1.5:9100 -ix nt -query query.fasta
 
 # HTTP
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta
 
 # Restrict search scope
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -seqidlist targets.txt
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -seqidlist targets.txt
 
 # Pipe to ikafssnretrieve
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta | ikafssnretrieve -db nt > matches.fasta
 
 # Specify k-mer size
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -k 9
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -k 9
 
 # HTTP with Basic Auth (curl-style)
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --user admin:secret
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --user admin:secret
 
 # HTTP with Basic Auth (wget-style)
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --http-user=admin --http-password=secret
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --http-user=admin --http-password=secret
 
 # HTTP with .netrc credentials
-ikafssnclient -http http://search.example.com:8080 -db nt -query query.fasta --netrc-file ~/.netrc
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --netrc-file ~/.netrc
 
 # Mode 3: pairwise alignment with traceback
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -stage3_traceback 1
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1
 
 # Mode 3: SAM output
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
 ```
 
 ### ikafssninfo
@@ -827,8 +829,8 @@ A single `ikafssnserver` process can serve multiple databases simultaneously:
 ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
     -socket /var/run/ikafssn.sock
 
-ikafssnclient -socket /var/run/ikafssn.sock -db nt -query query.fasta
-ikafssnclient -socket /var/run/ikafssn.sock -db refseq_genomic -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta
+ikafssnclient -socket /var/run/ikafssn.sock -ix refseq_genomic -query query.fasta
 ```
 
 ### Multi-Backend (Load Balancing / Multi-Server)

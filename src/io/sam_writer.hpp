@@ -29,4 +29,12 @@ bool write_all_results(const std::string& output_path,
                        uint8_t stage1_score_type,
                        bool stage3_traceback);
 
+// Merge multiple SAM batch files into a single output.
+// @SQ headers are unioned across all files; @HD and @PG from the first file.
+// Records are remapped to the merged header's tid space.
+// as_bam=true writes BAM ("wb"), false writes SAM ("w").
+// Returns true on success.
+bool merge_sam_files(const std::vector<std::string>& batch_paths,
+                     const std::string& output_path, bool as_bam);
+
 } // namespace ikafssn
