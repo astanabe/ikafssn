@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-gnu
+            os: ubuntu-24.04
+            build_httpd: ON
+            archive_suffix: ubuntu-24.04-x86_64
+          - target: aarch64-linux-gnu
+            os: ubuntu-24.04-arm
+            build_httpd: ON
+            archive_suffix: ubuntu-24.04-aarch64
+          - target: aarch64-apple-darwin
+            os: macos-14
+            build_httpd: OFF
+            archive_suffix: macos-14-aarch64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- System dependencies ----
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake \
+            libtbb-dev liblmdb-dev libsqlite3-dev \
+            libcurl4-openssl-dev libjsoncpp-dev \
+            zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
+            libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev libpq-dev
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install tbb lmdb sqlite3 curl jsoncpp \
+            xz libdeflate autoconf automake libtool openssl@3
+
+      # ---- Environment ----
+
+      - name: Set environment
+        run: |
+          echo "NPROC=$(nproc 2>/dev/null || sysctl -n hw.ncpu)" >> "$GITHUB_ENV"
+
+      - name: Set Homebrew paths (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          HB=$(brew --prefix)
+          echo "HOMEBREW_PREFIX=${HB}" >> "$GITHUB_ENV"
+          {
+            echo "CMAKE_PREFIX_PATH=${HB}:${HB}/opt/openssl@3:${HB}/opt/sqlite3:${HB}/opt/curl"
+            echo "PKG_CONFIG_PATH=${HB}/opt/openssl@3/lib/pkgconfig:${HB}/opt/sqlite3/lib/pkgconfig:${HB}/opt/curl/lib/pkgconfig"
+          } >> "$GITHUB_ENV"
+
+      # ---- Cache source-built dependencies ----
+
+      - name: Cache source-built dependencies
+        uses: actions/cache@v4
+        id: deps-cache
+        with:
+          path: |
+            parasail
+            htslib
+            ncbi-cxx-toolkit
+          key: deps-${{ matrix.target }}-ncbi30.0.0-parasail2.6.2-htslib1.23-v1
+
+      # ---- Build Parasail ----
+
+      - name: Build Parasail
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L -o parasail-2.6.2.tar.gz \
+            https://github.com/jeffdaily/parasail/archive/refs/tags/v2.6.2.tar.gz
+          tar xf parasail-2.6.2.tar.gz
+          cd parasail-2.6.2
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/parasail" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          make -j"${NPROC}"
+          make install
+
+      # ---- Build htslib ----
+
+      - name: Build htslib
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L -o htslib-1.23.tar.bz2 \
+            https://github.com/samtools/htslib/releases/download/1.23/htslib-1.23.tar.bz2
+          tar xf htslib-1.23.tar.bz2
+          cd htslib-1.23
+          autoreconf -i
+          configure_args=(--prefix="${GITHUB_WORKSPACE}/htslib"
+            --disable-libcurl --disable-gcs --disable-s3)
+          if [ "$(uname)" = "Darwin" ]; then
+            configure_args+=(
+              CPPFLAGS="-I${HOMEBREW_PREFIX}/include"
+              LDFLAGS="-L${HOMEBREW_PREFIX}/lib")
+          fi
+          ./configure "${configure_args[@]}"
+          make -j"${NPROC}"
+          make install
+
+      # ---- Build NCBI C++ Toolkit ----
+
+      - name: Build NCBI C++ Toolkit
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L -o ncbi-cxx-toolkit-public-release-30.0.0.tar.gz \
+            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
+          tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
+          cd ncbi-cxx-toolkit-public-release-30.0.0
+          if [ "$(uname)" = "Darwin" ]; then
+            export CFLAGS="-I${HOMEBREW_PREFIX}/include"
+            export CXXFLAGS="-I${HOMEBREW_PREFIX}/include"
+          fi
+          ./cmake-configure \
+            --without-debug \
+            --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
+            --with-install="${GITHUB_WORKSPACE}/ncbi-cxx-toolkit"
+          cd CMake-*/build
+          make -j"${NPROC}"
+          make install
+
+      # ---- Detect NCBI build tag ----
+
+      - name: Detect NCBI build tag
+        id: ncbi
+        run: |
+          build_tag=$(basename ncbi-cxx-toolkit/CMake-*/)
+          echo "build_tag=${build_tag}" >> "$GITHUB_OUTPUT"
+
+      # ---- Build ikafssn ----
+
+      - name: Build ikafssn
+        run: |
+          cmake_args=(
+            -DCMAKE_BUILD_TYPE=Release
+            -DNCBI_TOOLKIT_BUILD_TAG="${{ steps.ncbi.outputs.build_tag }}"
+            -DBUILD_HTTPD=${{ matrix.build_httpd }}
+          )
+          cmake -S . -B build "${cmake_args[@]}"
+          cmake --build build -j"${NPROC}"
+
+      # ---- Package & Upload ----
+
+      - name: Package
+        run: |
+          version="${{ github.ref_name }}"
+          dir="ikafssn-${version}-${{ matrix.archive_suffix }}"
+          mkdir -p "dist/${dir}"
+          bins=(ikafssnindex ikafssnsearch ikafssnserver ikafssnclient ikafssnretrieve ikafssninfo)
+          if [ "${{ matrix.build_httpd }}" = "ON" ]; then
+            bins+=(ikafssnhttpd)
+          fi
+          for b in "${bins[@]}"; do
+            cp "build/src/${b}" "dist/${dir}/"
+            strip "dist/${dir}/${b}" 2>/dev/null || true
+          done
+          cp DEPENDENCIES INSTALL "dist/${dir}/"
+          cd dist
+          tar cJf "${dir}.tar.xz" "${dir}"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.xz

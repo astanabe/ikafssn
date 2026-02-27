@@ -1,0 +1,30 @@
+Runtime dependencies for pre-built ikafssn binaries
+====================================================
+
+Ubuntu 24.04 (x86_64 / aarch64)
+--------------------------------
+
+  libtbb12
+  liblmdb0
+  libsqlite3-0
+  libcurl4
+  libjsoncpp25
+  zlib1g
+  libbz2-1.0
+  liblzma5
+  libdeflate0
+
+  Additional for ikafssnhttpd:
+    libdrogon (and its transitive dependencies)
+
+macOS 14 (aarch64, Homebrew)
+----------------------------
+
+  tbb
+  lmdb
+  sqlite3
+  curl
+  jsoncpp
+  xz
+  libdeflate
+  openssl@3

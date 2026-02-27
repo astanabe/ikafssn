@@ -1,0 +1,31 @@
+Installation instructions for pre-built ikafssn binaries
+=========================================================
+
+1. Install runtime dependencies
+--------------------------------
+
+Ubuntu 24.04 (x86_64 / aarch64):
+
+  sudo apt-get install -y \
+    libtbb12 liblmdb0 libsqlite3-0 \
+    libcurl4 libjsoncpp25 \
+    zlib1g libbz2-1.0 liblzma5 libdeflate0
+
+  For ikafssnhttpd (Linux only):
+
+    sudo apt-get install -y libdrogon-dev
+
+macOS 14 (aarch64):
+
+  brew install tbb lmdb sqlite3 curl jsoncpp xz libdeflate openssl@3
+
+2. Extract and install binaries
+--------------------------------
+
+  tar xf ikafssn-<version>-<platform>.tar.xz
+  cp ikafssn-<version>-<platform>/ikafssn* /usr/local/bin/
+
+3. Verify installation
+-----------------------
+
+  ikafssnindex --version
