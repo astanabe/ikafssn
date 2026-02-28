@@ -98,14 +98,25 @@ option(ENABLE_CLIENT_HTTP "Enable HTTP mode in ikafssnclient (requires libcurl)"
 if(ENABLE_CLIENT_HTTP)
     find_package(CURL REQUIRED)
     find_package(jsoncpp REQUIRED)
-    # Determine the correct jsoncpp imported target name.
-    # Ubuntu provides jsoncpp_lib; some platforms only provide JsonCpp::JsonCpp.
+    # Determine the correct jsoncpp imported target.
+    # - Ubuntu's libjsoncpp-dev provides jsoncpp_lib + JsonCpp::JsonCpp.
+    # - Drogon's bundled Findjsoncpp.cmake only sets JSONCPP_INCLUDE_DIRS /
+    #   JSONCPP_LIBRARIES variables (no imported target).  Create one manually.
     if(TARGET jsoncpp_lib)
         set(JSONCPP_TARGET jsoncpp_lib)
     elseif(TARGET JsonCpp::JsonCpp)
         set(JSONCPP_TARGET JsonCpp::JsonCpp)
+    elseif(JSONCPP_LIBRARIES)
+        add_library(_jsoncpp_imported UNKNOWN IMPORTED)
+        set_target_properties(_jsoncpp_imported PROPERTIES
+            IMPORTED_LOCATION "${JSONCPP_LIBRARIES}")
+        if(JSONCPP_INCLUDE_DIRS)
+            set_target_properties(_jsoncpp_imported PROPERTIES
+                INTERFACE_INCLUDE_DIRECTORIES "${JSONCPP_INCLUDE_DIRS}")
+        endif()
+        set(JSONCPP_TARGET _jsoncpp_imported)
     else()
-        message(FATAL_ERROR "jsoncpp found but no known CMake target (jsoncpp_lib or JsonCpp::JsonCpp) available")
+        message(FATAL_ERROR "jsoncpp found but no target or variables available")
     endif()
 endif()
 
