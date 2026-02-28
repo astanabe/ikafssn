@@ -57,10 +57,11 @@ Options:
                           Accepts K, M, G suffixes
                           Partitions are auto-calculated to fit within this limit
   -max_freq_build <num>   Exclude k-mers with cross-volume count above this threshold
-                          >= 1: absolute count threshold
+                          1 or 1.0: disable (no exclusion, default)
                           0 < x < 1: fraction of total NSEQ across all volumes
+                          > 1: absolute count threshold
+                          0: not allowed (error)
                           Counts are aggregated across all volumes before filtering
-                          (default: 0 = no exclusion)
   -highfreq_filter_threads <int>
                           Threads for cross-volume high-frequency filtering
                           (default: min(8, threads))

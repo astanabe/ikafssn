@@ -83,7 +83,7 @@ Per BLAST DB volume, index files are generated with naming pattern `<vol_basenam
 - **`.kix`** — Header + direct-address table (offsets[4^k], counts[4^k]) + delta-compressed ID postings
 - **`.kpx`** — Header + pos_offsets[4^k] + delta-compressed position postings (correlated with .kix ID postings). Not generated when `ikafssnindex -mode 1` is used; `discover_volumes()` sets `has_kpx=false` for such indexes, and search/server/info commands handle the absence gracefully
 - **`.ksx`** — Header + seq_lengths[] + accession string table (enables standalone result display without BLAST DB)
-- **`.khx`** — Header (32B, magic "KMHX") + bitset (ceil(4^k / 8) bytes). Shared across all volumes (one per k value, naming: `<db_base>.<kk>mer.khx`). Generated only when `-max_freq_build` is used. K-mer counts are aggregated across all volumes before applying the threshold. Records which k-mers were excluded during index build (bit i = 1 means k-mer i was excluded). Used at search time for fractional `-stage1_min_score` threshold adjustment
+- **`.khx`** — Header (32B, magic "KMHX") + bitset (ceil(4^k / 8) bytes). Shared across all volumes (one per k value, naming: `<db_base>.<kk>mer.khx`). Generated only when `-max_freq_build` is set to a value other than 1 (disabled). K-mer counts are aggregated across all volumes before applying the threshold. Records which k-mers were excluded during index build (bit i = 1 means k-mer i was excluded). Used at search time for fractional `-stage1_min_score` threshold adjustment
 
 ID and position postings are in separate files so Stage 1 never touches `.kpx`, maximizing page cache efficiency.
 

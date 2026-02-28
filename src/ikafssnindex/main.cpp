@@ -54,10 +54,11 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "  -memory_limit <size>   Memory limit (default: %s = half of RAM)\n"
         "                         Accepts K, M, G suffixes\n"
         "  -max_freq_build <num>  Exclude k-mers with cross-volume count > threshold\n"
-        "                         >= 1: absolute count threshold\n"
+        "                         1 or 1.0: disable (no exclusion, default)\n"
         "                         0 < x < 1: fraction of total NSEQ across all volumes\n"
+        "                         > 1: absolute count threshold\n"
+        "                         0: not allowed (error)\n"
         "                         Counts are aggregated across all volumes before filtering\n"
-        "                         (default: 0 = no exclusion)\n"
         "  -highfreq_filter_threads <int>\n"
         "                         Threads for cross-volume filtering (default: min(8, threads))\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)\n"
@@ -136,11 +137,16 @@ int main(int argc, char* argv[]) {
         mem_limit_str = default_mem_str;
     }
 
-    double max_freq_build = 0;
+    double max_freq_build = 1.0; // default: disabled (no exclusion)
     if (cli.has("-max_freq_build")) {
-        max_freq_build = cli.get_double("-max_freq_build", 0);
+        max_freq_build = cli.get_double("-max_freq_build", 1.0);
+        if (max_freq_build == 0) {
+            std::fprintf(stderr, "Error: -max_freq_build=0 is not allowed. "
+                "Use 1 to disable or specify a threshold (0 < x < 1 for fraction, > 1 for absolute)\n");
+            return 1;
+        }
         if (max_freq_build < 0) {
-            std::fprintf(stderr, "Error: -max_freq_build must be >= 0\n");
+            std::fprintf(stderr, "Error: -max_freq_build must be > 0\n");
             return 1;
         }
     }
@@ -210,12 +216,13 @@ int main(int argc, char* argv[]) {
     config.verbose = verbose;
     config.skip_kpx = (index_mode == 1);
     config.max_degen_expand = max_degen_expand;
-    // When max_freq_build is active, keep .tmp files for cross-volume filtering
-    config.keep_tmp = (max_freq_build > 0);
+    // When max_freq_build is active (not 1.0 = disabled), keep .tmp files for cross-volume filtering
+    bool freq_filter_active = (max_freq_build != 1.0);
+    config.keep_tmp = freq_filter_active;
 
     // Resolve fractional -max_freq_build to absolute threshold
     uint64_t freq_threshold = 0;
-    if (max_freq_build > 0) {
+    if (freq_filter_active) {
         if (max_freq_build < 1.0) {
             uint64_t total_nseq = 0;
             for (const auto& vp : vol_paths) {
@@ -365,7 +372,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Post-build cross-volume frequency filtering
-    if (max_freq_build > 0) {
+    if (freq_filter_active) {
         std::string khx_path = khx_path_for(out_dir, db_base, k);
 
         if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,
