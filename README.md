@@ -11,6 +11,23 @@
 - Parallel indexing and search via Intel TBB
 - Lightweight per-command executables, each linking only its required dependencies
 
+## Comparison with minimap2
+
+ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-chain-align paradigm, but differ in design goals and key algorithmic choices:
+
+| Aspect | ikafssn | minimap2 |
+|---|---|---|
+| **Primary use case** | Database search: find all similar entries across a large sequence collection | Read mapping: map reads to a single reference genome |
+| **K-mer size** | k = 5–16 (`uint16_t` for k ≤ 8, `uint32_t` for k ≥ 9) | k = 1–28 (default 15) |
+| **Seeding** | All k-mers indexed in a direct-address table (4^k entries) | Minimizers (subsampled k-mers) indexed in a hash table |
+| **Candidate filtering** | Explicit Stage 1: scan ID posting lists to score and filter candidates before chaining | No separate filtering stage; seeds go directly to chaining |
+| **Chaining DP score** | Chain length (anchor count) with a diagonal-deviation constraint (`max_gap`) | Estimated matching bases minus a gap penalty with logarithmic distance term |
+| **Hits per subject** | One best chain per subject sequence | Multiple chains per subject (primary, secondary, supplementary) |
+| **Default result limit** | Unlimited (returns all candidates above threshold) | 1 primary + up to 5 secondary per query (`-N 5`, `-p 0.8`) |
+| **Alignment** | Parasail semi-global, 1-piece affine gap (optional Stage 3) | KSW2 with SIMD, 2-piece affine gap and Z-drop heuristic |
+| **Ambiguous bases** | IUPAC degenerate expansion (configurable limit) | Not supported (N-containing k-mers skipped) |
+| **Index partitioning** | BLAST DB multi-volume with `.kvx` manifest | `-I` batch partitioning with `--split-prefix` |
+
 ## Commands
 
 | Command | Purpose |
