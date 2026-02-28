@@ -216,7 +216,7 @@ jobs:
           cp doc/systemd/ikafssnserver@.service doc/systemd/ikafssnhttpd@.service \
              doc/systemd/README.md "${bottle_dir}/share/ikafssn/systemd/"
 
-          bottle_file="ikafssn--${version}.${{ matrix.bottle_tag }}.bottle.tar.gz"
+          bottle_file="ikafssn-${version}.${{ matrix.bottle_tag }}.bottle.tar.gz"
           tar czf "${bottle_file}" ikafssn/
 
           sha256=$(shasum -a 256 "${bottle_file}" | awk '{print $1}')
