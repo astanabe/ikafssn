@@ -18,6 +18,8 @@ ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-cha
 | Aspect | ikafssn | minimap2 |
 |---|---|---|
 | **Primary use case** | Database search: find all similar entries across a large sequence collection | Read mapping: map reads to a single reference genome |
+| **Database input format** | NCBI BLAST DB | FASTA, FASTQ |
+| **Query input format** | FASTA | FASTA, FASTQ |
 | **K-mer size** | k = 5–16 (`uint16_t` for k ≤ 8, `uint32_t` for k ≥ 9) | k = 1–28 (default 15) |
 | **Seeding** | All k-mers indexed in a direct-address table (4^k entries) | Minimizers (subsampled k-mers) indexed in a hash table |
 | **Candidate filtering** | Explicit Stage 1: scan ID posting lists to score and filter candidates before chaining | No separate filtering stage; seeds go directly to chaining |
