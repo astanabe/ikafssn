@@ -73,6 +73,16 @@ static std::string build_test_index(int k) {
         return {};
     }
 
+    // Write .kvx manifest (normally done by ikafssnindex main)
+    std::string kvx_path = ix_dir + "/test." + std::string(kk) + "mer.kvx";
+    FILE* fp = std::fopen(kvx_path.c_str(), "w");
+    if (fp) {
+        std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
+        std::fprintf(fp, "TITLE test\n");
+        std::fprintf(fp, "DBLIST \"test.00\"\n");
+        std::fclose(fp);
+    }
+
     return ix_dir + "/test";
 }
 

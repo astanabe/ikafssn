@@ -20,6 +20,7 @@
 #include "core/config.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -69,6 +70,16 @@ static std::string build_test_index(int k) {
         return {};
     }
 
+    // Write .kvx manifest (normally done by ikafssnindex main)
+    std::string kvx_path = ix_dir + "/test." + std::string(kk) + "mer.kvx";
+    FILE* fp = std::fopen(kvx_path.c_str(), "w");
+    if (fp) {
+        std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
+        std::fprintf(fp, "TITLE test\n");
+        std::fprintf(fp, "DBLIST \"test.00\"\n");
+        std::fclose(fp);
+    }
+
     return ix_dir + "/test";
 }
 
@@ -101,8 +112,19 @@ static void test_backend_search() {
     CHECK(kpx.open(base + ".kpx"));
     CHECK(ksx.open(base + ".ksx"));
 
+    // Build search config matching server defaults.
+    // ServerConfig.max_freq_raw defaults to 0.5 (fraction), which the server
+    // resolves to ceil(0.5 * total_nseq).  Use the same resolved value for
+    // the local reference search so results are comparable.
     SearchConfig config;
     config.stage2.min_score = 1;
+    {
+        uint32_t total_nseq = ksx.num_sequences();
+        auto resolved = static_cast<uint32_t>(
+            std::ceil(0.5 * total_nseq));
+        if (resolved == 0) resolved = 1;
+        config.stage1.max_freq = resolved;
+    }
     OidFilter no_filter;
 
     std::vector<const KixReader*> all_kix = {&kix};

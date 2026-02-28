@@ -812,6 +812,119 @@ static void test_ssu_db_kmer_check() {
     kix.close();
 }
 
+static void test_get_subsequence() {
+    std::fprintf(stderr, "-- test_get_subsequence\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+
+    std::string full_seq = db.get_sequence(oid);
+    uint32_t seq_len = static_cast<uint32_t>(full_seq.size());
+    CHECK(seq_len > 200);
+
+    // Middle range
+    {
+        std::string sub = db.get_subsequence(oid, 50, 149);
+        CHECK_EQ(sub.size(), size_t(100));
+        CHECK(sub == full_seq.substr(50, 100));
+    }
+
+    // Start of sequence
+    {
+        std::string sub = db.get_subsequence(oid, 0, 9);
+        CHECK_EQ(sub.size(), size_t(10));
+        CHECK(sub == full_seq.substr(0, 10));
+    }
+
+    // End of sequence
+    {
+        std::string sub = db.get_subsequence(oid, seq_len - 10, seq_len - 1);
+        CHECK_EQ(sub.size(), size_t(10));
+        CHECK(sub == full_seq.substr(seq_len - 10, 10));
+    }
+
+    // Full sequence
+    {
+        std::string sub = db.get_subsequence(oid, 0, seq_len - 1);
+        CHECK_EQ(sub.size(), full_seq.size());
+        CHECK(sub == full_seq);
+    }
+
+    // End out of range — should clamp
+    {
+        std::string sub = db.get_subsequence(oid, seq_len - 5, seq_len + 100);
+        CHECK_EQ(sub.size(), size_t(5));
+        CHECK(sub == full_seq.substr(seq_len - 5, 5));
+    }
+
+    // Invalid range: start > end after clamp
+    {
+        std::string sub = db.get_subsequence(oid, seq_len + 10, seq_len + 20);
+        CHECK(sub.empty());
+    }
+
+    // Single base
+    {
+        std::string sub = db.get_subsequence(oid, 100, 100);
+        CHECK_EQ(sub.size(), size_t(1));
+        CHECK(sub[0] == full_seq[100]);
+    }
+}
+
+static void test_get_subsequence_with_ambig() {
+    std::fprintf(stderr, "-- test_get_subsequence_with_ambig\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_ambigdb_path));
+
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+
+    std::string full_seq = db.get_sequence(oid);
+    uint32_t seq_len = static_cast<uint32_t>(full_seq.size());
+    CHECK(seq_len > 200);
+
+    // R is at position 100 — range covering ambiguity
+    {
+        std::string sub = db.get_subsequence(oid, 95, 105);
+        CHECK_EQ(sub.size(), size_t(11));
+        CHECK(sub == full_seq.substr(95, 11));
+        CHECK(sub[5] == 'R'); // position 100 within substring
+    }
+
+    // Range not covering the ambiguity
+    {
+        std::string sub = db.get_subsequence(oid, 0, 50);
+        CHECK_EQ(sub.size(), size_t(51));
+        CHECK(sub == full_seq.substr(0, 51));
+    }
+
+    // Range starting exactly at ambiguity
+    {
+        std::string sub = db.get_subsequence(oid, 100, 110);
+        CHECK_EQ(sub.size(), size_t(11));
+        CHECK(sub == full_seq.substr(100, 11));
+        CHECK(sub[0] == 'R');
+    }
+
+    // Range ending exactly at ambiguity
+    {
+        std::string sub = db.get_subsequence(oid, 90, 100);
+        CHECK_EQ(sub.size(), size_t(11));
+        CHECK(sub == full_seq.substr(90, 11));
+        CHECK(sub[10] == 'R');
+    }
+
+    // Full range comparison
+    {
+        std::string sub = db.get_subsequence(oid, 0, seq_len - 1);
+        CHECK(sub == full_seq);
+    }
+}
+
 // Test index build with odd-length sequence (DQ235612.1 = 1809bp, odd)
 static void test_ambig_db_odd_length() {
     std::fprintf(stderr, "-- test_ambig_db_odd_length\n");
@@ -880,6 +993,8 @@ int main(int argc, char* argv[]) {
     test_packed_scanner_matches_kmer_scanner_on_blastdb();
     test_ambig_db_index_build();
     test_ambig_expansion_in_index();
+    test_get_subsequence();
+    test_get_subsequence_with_ambig();
     test_ssu_db_kmer_check();
     test_ambig_db_odd_length();
 

@@ -108,6 +108,12 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
+    // Sort each volume's hit indices by OID for sequential mmap access
+    for (auto& vol_hits : hits_by_reader) {
+        std::sort(vol_hits.begin(), vol_hits.end(),
+            [&hits](size_t a, size_t b) { return hits[a].oid < hits[b].oid; });
+    }
+
     std::vector<std::string> subject_subseqs(hits.size());
     std::vector<uint32_t> ext_starts(hits.size(), 0);
 
@@ -137,16 +143,7 @@ std::vector<OutputHit> run_stage3(
                     ? hits[hit_idx].sstart - ctx : 0;
                 uint32_t ext_end = std::min(hits[hit_idx].send + ctx, seq_len - 1);
 
-                std::string full_seq = readers[ri].get_sequence(oid);
-                if (!full_seq.empty() && ext_start <= ext_end && ext_end < full_seq.size()) {
-                    subject_subseqs[hit_idx] = full_seq.substr(ext_start, ext_end - ext_start + 1);
-                } else if (!full_seq.empty()) {
-                    // Clamp
-                    if (ext_end >= full_seq.size()) ext_end = static_cast<uint32_t>(full_seq.size()) - 1;
-                    if (ext_start <= ext_end) {
-                        subject_subseqs[hit_idx] = full_seq.substr(ext_start, ext_end - ext_start + 1);
-                    }
-                }
+                subject_subseqs[hit_idx] = readers[ri].get_subsequence(oid, ext_start, ext_end);
                 ext_starts[hit_idx] = ext_start;
                 hits[hit_idx].slen = seq_len;
             }

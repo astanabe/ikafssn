@@ -135,6 +135,74 @@ std::string BlastDbReader::get_sequence(uint32_t oid) const {
     return result;
 }
 
+std::string BlastDbReader::get_subsequence(uint32_t oid, uint32_t start, uint32_t end) const {
+    if (!impl_->db) return {};
+
+    RawSequence raw = get_raw_sequence(oid);
+    if (!raw.ncbi2na_data || raw.seq_length == 0) {
+        if (raw.ncbi2na_data) ret_raw_sequence(raw);
+        return {};
+    }
+
+    // Clamp end to seq_length - 1
+    if (end >= raw.seq_length) end = raw.seq_length - 1;
+    if (start > end) {
+        ret_raw_sequence(raw);
+        return {};
+    }
+
+    uint32_t len = end - start + 1;
+
+    // Decode ncbi2na packed data for [start, end] only
+    std::string result(len, '\0');
+    for (uint32_t i = start; i <= end; i++) {
+        uint8_t byte = static_cast<uint8_t>(raw.ncbi2na_data[i >> 2]);
+        uint8_t code = (byte >> (6 - 2 * (i & 3))) & 0x03;
+        result[i - start] = ncbi2na_to_char[code];
+    }
+
+    // Apply ambiguity data only for entries overlapping [start, end]
+    auto ambig_entries = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+    if (!ambig_entries.empty()) {
+        // Find first entry that could overlap [start, end] using lower_bound on position.
+        // An entry {position=P, run_length=L} covers [P, P+L-1].
+        // We need P+L-1 >= start, i.e., the first entry where position >= start
+        // minus one entry that may still overlap via run_length.
+        auto it = std::lower_bound(ambig_entries.begin(), ambig_entries.end(), start,
+            [](const AmbiguityEntry& e, uint32_t val) {
+                return e.position < val;
+            });
+
+        // Check the entry before 'it' — its run may extend into [start, end]
+        if (it != ambig_entries.begin()) {
+            auto prev = std::prev(it);
+            if (prev->position + prev->run_length - 1 >= start) {
+                it = prev;
+            }
+        }
+
+        // Apply overlapping entries
+        for (; it != ambig_entries.end(); ++it) {
+            if (it->position > end) break;
+
+            char iupac = ncbi4na_to_iupac[it->ncbi4na];
+            uint32_t run_start = it->position;
+            uint32_t run_end = it->position + it->run_length - 1;
+
+            // Clamp to [start, end]
+            uint32_t apply_start = std::max(run_start, start);
+            uint32_t apply_end = std::min(run_end, end);
+
+            for (uint32_t j = apply_start; j <= apply_end; j++) {
+                result[j - start] = iupac;
+            }
+        }
+    }
+
+    ret_raw_sequence(raw);
+    return result;
+}
+
 std::string BlastDbReader::get_accession(uint32_t oid) const {
     if (!impl_->db) return {};
 

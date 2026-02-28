@@ -41,6 +41,12 @@ public:
     // Returns empty string on error.
     std::string get_sequence(uint32_t oid) const;
 
+    // Get subsequence [start, end] (0-based inclusive) with partial decoding.
+    // Only decodes the requested range from ncbi2na, avoiding full-sequence decode.
+    // end is clamped to seq_length-1 if out of range.
+    // Returns empty string if start > end (after clamping) or on error.
+    std::string get_subsequence(uint32_t oid, uint32_t start, uint32_t end) const;
+
     // Raw sequence data from BLAST DB (ncbi2na packed + ambiguity data).
     // Pointers are into mmap region; call ret_raw_sequence() when done.
     struct RawSequence {
