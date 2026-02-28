@@ -120,7 +120,8 @@ Options:
                           1=coverscore, 2=matchscore
   -stage1_max_freq <num>  High-frequency k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
-                          >= 1: absolute count threshold; 0 = auto
+                          1 or 1.0: disable high-freq filtering entirely
+                          > 1: absolute count threshold; 0 = auto
   -stage1_topn <int>      Stage 1 candidate limit, 0=unlimited (default: 0)
   -stage1_min_score <num> Stage 1 minimum score (default: 0.5)
                           Integer (>= 1): absolute threshold
@@ -295,7 +296,8 @@ Options:
                           default: same as corresponding -ix prefix)
   -stage1_max_freq <num>  Default high-freq k-mer skip threshold (default: 0.5)
                           0 < x < 1: fraction of total NSEQ across all volumes
-                          >= 1: absolute count threshold; 0 = auto
+                          1 or 1.0: disable high-freq filtering entirely
+                          > 1: absolute count threshold; 0 = auto
   -stage1_topn <int>      Default Stage 1 candidate limit (default: 0)
   -stage1_min_score <num> Default Stage 1 minimum score (default: 0.5)
                           Integer (>= 1) or fraction (0 < P < 1)
@@ -436,7 +438,8 @@ Options:
   -stage1_score <1|2>      Stage 1 score type (default: server default)
   -stage1_max_freq <num>   High-freq k-mer skip threshold (default: server default)
                            0 < x < 1: fraction of total NSEQ across all volumes
-                           >= 1: absolute count threshold
+                           1 or 1.0: disable high-freq filtering entirely
+                           > 1: absolute count threshold
   -stage1_topn <int>       Stage 1 candidate limit (default: server default)
   -stage1_min_score <num>  Stage 1 minimum score (default: server default)
                            Integer (>= 1) or fraction (0 < P < 1)
@@ -604,7 +607,7 @@ By default, both forward and reverse complement strands of the query are searche
 
 High-frequency k-mer filtering is performed globally across all volumes before the per-volume search loop. K-mer counts are aggregated across all volumes, and k-mers exceeding `stage1_max_freq` are removed from the query once. This ensures consistent filtering regardless of how data is partitioned across volumes. Build-time exclusions (`.khx`) are also checked globally.
 
-The default value of `-stage1_max_freq` is `0.5`, meaning k-mers occurring in more than 50% of the total sequences across all volumes are skipped. More generally, when a fractional value (0 < x < 1) is specified, the threshold is resolved as `ceil(x * total_NSEQ)` where `total_NSEQ` is the sum of sequence counts across all volumes. An integer value (>= 1) is used as an absolute count threshold directly.
+The default value of `-stage1_max_freq` is `0.5`, meaning k-mers occurring in more than 50% of the total sequences across all volumes are skipped. More generally, when a fractional value (0 < x < 1) is specified, the threshold is resolved as `ceil(x * total_NSEQ)` where `total_NSEQ` is the sum of sequence counts across all volumes. Setting `-stage1_max_freq 1` (or `1.0`) disables high-frequency k-mer filtering entirely — no k-mers are removed from the query. An integer value > 1 is used as an absolute count threshold directly.
 
 When `-stage1_max_freq 0` is specified explicitly, the threshold is auto-calculated per volume as:
 

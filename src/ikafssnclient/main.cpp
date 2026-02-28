@@ -53,7 +53,8 @@ static void print_usage(const char* prog) {
         "  -stage2_max_lookback <int>  Chaining DP lookback window (default: server default)\n"
         "  -stage1_max_freq <num>   High-freq k-mer skip threshold (default: server default)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
-        "                           >= 1: absolute count threshold\n"
+        "                           1 or 1.0: disable high-freq filtering entirely\n"
+        "                           > 1: absolute count threshold\n"
         "  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: server default)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit (default: server default)\n"
         "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: server default)\n"
@@ -347,7 +348,9 @@ int main(int argc, char* argv[]) {
     base_req.stage2_max_lookback = static_cast<uint16_t>(cli.get_int("-stage2_max_lookback", 0));
     {
         double max_freq_val = cli.get_double("-stage1_max_freq", 0.0);
-        if (max_freq_val > 0 && max_freq_val < 1.0) {
+        if (max_freq_val == 1.0) {
+            base_req.stage1_max_freq = UINT32_MAX; // disable filtering
+        } else if (max_freq_val > 0 && max_freq_val < 1.0) {
             base_req.stage1_max_freq_frac_x10000 =
                 static_cast<uint16_t>(max_freq_val * 10000.0);
         } else {

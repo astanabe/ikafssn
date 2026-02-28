@@ -61,7 +61,8 @@ static void print_usage(const char* prog) {
         "  -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage1_max_freq <num>   High-frequency k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
-        "                           >= 1: absolute count threshold; 0 = auto\n"
+        "                           1 or 1.0: disable high-freq filtering entirely\n"
+        "                           > 1: absolute count threshold; 0 = auto\n"
         "  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: 1)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
         "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
@@ -376,8 +377,11 @@ int main(int argc, char* argv[]) {
         shared_khx.open(khx_path_for(parts.parent_dir, parts.db, k)); // non-fatal
     }
 
-    // Resolve -max_freq: fraction -> absolute threshold using total NSEQ
-    if (max_freq_raw > 0 && max_freq_raw < 1.0) {
+    // Resolve -max_freq: 1/1.0 = disable, fraction -> absolute, else integer
+    if (max_freq_raw == 1.0) {
+        config.stage1.max_freq = Stage1Config::MAX_FREQ_DISABLED;
+        logger.info("-stage1_max_freq=1 -> high-frequency k-mer filtering disabled");
+    } else if (max_freq_raw > 0 && max_freq_raw < 1.0) {
         uint64_t total_nseq = 0;
         for (const auto& vd : vol_data) total_nseq += vd.ksx.num_sequences();
         config.stage1.max_freq = static_cast<uint32_t>(

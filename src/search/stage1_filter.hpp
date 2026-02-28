@@ -37,7 +37,9 @@ struct Stage1Candidate {
 };
 
 struct Stage1Config {
-    uint32_t max_freq = 0;          // 0 = auto-calculate
+    static constexpr uint32_t MAX_FREQ_DISABLED = UINT32_MAX; // 1 or 1.0 = disable
+
+    uint32_t max_freq = 0;          // 0 = auto-calculate, UINT32_MAX = disabled
     uint32_t stage1_topn = 0;       // 0 = unlimited (skip sort)
     uint32_t min_stage1_score = 1;
     uint8_t  stage1_score_type = 1; // 1 = coverscore, 2 = matchscore

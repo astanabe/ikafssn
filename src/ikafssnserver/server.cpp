@@ -108,8 +108,12 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
     // Resolve search config from server config template
     entry.resolved_search_config = config.search_config;
 
-    // Resolve -max_freq fraction per-DB
-    if (config.max_freq_raw > 0 && config.max_freq_raw < 1.0) {
+    // Resolve -max_freq: 1/1.0 = disable, fraction -> absolute, else integer
+    if (config.max_freq_raw == 1.0) {
+        entry.resolved_search_config.stage1.max_freq = Stage1Config::MAX_FREQ_DISABLED;
+        logger.info("DB '%s': -stage1_max_freq=1 -> high-frequency k-mer filtering disabled",
+                    db_name.c_str());
+    } else if (config.max_freq_raw > 0 && config.max_freq_raw < 1.0) {
         if (!entry.kmer_groups.empty()) {
             uint64_t total_nseq = 0;
             for (const auto& vol : entry.kmer_groups.begin()->second.volumes)

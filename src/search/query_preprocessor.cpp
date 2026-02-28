@@ -75,45 +75,52 @@ QueryKmerData<KmerInt> preprocess_query(
     uint32_t global_max_freq = compute_global_max_freq(
         config.stage1.max_freq, all_kix);
 
-    // 4. Build high-freq k-mer set (both fwd and RC k-mer values)
-    // Collect all distinct k-mer values from both strands
-    std::unordered_set<uint64_t> all_query_kmer_values;
-    for (const auto& [pos, kmer] : fwd_kmers) {
-        all_query_kmer_values.insert(static_cast<uint64_t>(kmer));
-    }
-    for (const auto& [pos, kmer] : rc_kmers) {
-        all_query_kmer_values.insert(static_cast<uint64_t>(kmer));
-    }
-
+    // 4-5. Build high-freq set and filter (skip entirely when disabled)
     std::unordered_set<uint64_t> highfreq_set;
-    for (uint64_t kmer_idx : all_query_kmer_values) {
-        // Check .khx exclusion
-        if (khx != nullptr && khx->is_excluded(kmer_idx)) {
-            highfreq_set.insert(kmer_idx);
-            continue;
-        }
-        // Sum counts across all volumes
-        uint64_t total_count = 0;
-        for (const auto* kix : all_kix) {
-            total_count += kix->counts()[kmer_idx];
-        }
-        if (total_count > global_max_freq) {
-            highfreq_set.insert(kmer_idx);
-        }
-    }
 
-    // 5. Filter out high-freq k-mers from both strand vectors
-    result.fwd_kmers.reserve(fwd_kmers.size());
-    for (const auto& [pos, kmer] : fwd_kmers) {
-        if (highfreq_set.count(static_cast<uint64_t>(kmer)) == 0) {
-            result.fwd_kmers.emplace_back(pos, kmer);
+    if (global_max_freq == Stage1Config::MAX_FREQ_DISABLED) {
+        // High-freq filtering disabled: use all k-mers as-is
+        result.fwd_kmers = std::move(fwd_kmers);
+        result.rc_kmers = std::move(rc_kmers);
+    } else {
+        // Collect all distinct k-mer values from both strands
+        std::unordered_set<uint64_t> all_query_kmer_values;
+        for (const auto& [pos, kmer] : fwd_kmers) {
+            all_query_kmer_values.insert(static_cast<uint64_t>(kmer));
         }
-    }
+        for (const auto& [pos, kmer] : rc_kmers) {
+            all_query_kmer_values.insert(static_cast<uint64_t>(kmer));
+        }
 
-    result.rc_kmers.reserve(rc_kmers.size());
-    for (const auto& [pos, kmer] : rc_kmers) {
-        if (highfreq_set.count(static_cast<uint64_t>(kmer)) == 0) {
-            result.rc_kmers.emplace_back(pos, kmer);
+        for (uint64_t kmer_idx : all_query_kmer_values) {
+            // Check .khx exclusion
+            if (khx != nullptr && khx->is_excluded(kmer_idx)) {
+                highfreq_set.insert(kmer_idx);
+                continue;
+            }
+            // Sum counts across all volumes
+            uint64_t total_count = 0;
+            for (const auto* kix : all_kix) {
+                total_count += kix->counts()[kmer_idx];
+            }
+            if (total_count > global_max_freq) {
+                highfreq_set.insert(kmer_idx);
+            }
+        }
+
+        // Filter out high-freq k-mers from both strand vectors
+        result.fwd_kmers.reserve(fwd_kmers.size());
+        for (const auto& [pos, kmer] : fwd_kmers) {
+            if (highfreq_set.count(static_cast<uint64_t>(kmer)) == 0) {
+                result.fwd_kmers.emplace_back(pos, kmer);
+            }
+        }
+
+        result.rc_kmers.reserve(rc_kmers.size());
+        for (const auto& [pos, kmer] : rc_kmers) {
+            if (highfreq_set.count(static_cast<uint64_t>(kmer)) == 0) {
+                result.rc_kmers.emplace_back(pos, kmer);
+            }
         }
     }
 
