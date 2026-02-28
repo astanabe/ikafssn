@@ -23,6 +23,7 @@ struct OutputHit {
     uint32_t matchscore = 0;
     uint32_t chainscore = 0;
     uint16_t volume;
+    uint32_t oid = 0;        // internal: BLAST DB OID (not written to output)
 
     // Stage 3 fields (populated only when mode == 3)
     int32_t alnscore = 0;

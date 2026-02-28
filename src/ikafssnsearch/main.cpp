@@ -35,6 +35,7 @@
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_for_each.h>
+#include <tbb/parallel_sort.h>
 #include <tbb/task_arena.h>
 
 using namespace ikafssn;
@@ -510,6 +511,7 @@ int main(int argc, char* argv[]) {
                                     else
                                         oh.coverscore = cr.stage1_score;
                                     oh.volume = vd.volume_index;
+                                    oh.oid = cr.seq_id;
                                     oh.qlen = static_cast<uint32_t>(query.sequence.size());
                                     oh.slen = vd.ksx.seq_length(cr.seq_id);
                                     local_hits.push_back(oh);
@@ -569,6 +571,7 @@ int main(int argc, char* argv[]) {
                             else
                                 oh.coverscore = cr.stage1_score;
                             oh.volume = vd.volume_index;
+                            oh.oid = cr.seq_id;
                             oh.qlen = static_cast<uint32_t>(query.sequence.size());
                             oh.slen = vd.ksx.seq_length(cr.seq_id);
                             local_hits.push_back(oh);
@@ -599,19 +602,19 @@ int main(int argc, char* argv[]) {
     if (config.num_results > 0) {
         // Sort by (query_id, sort_score desc)
         if (config.sort_score == 1) {
-            std::sort(all_hits.begin(), all_hits.end(),
+            tbb::parallel_sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
                           if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
                           return (a.coverscore + a.matchscore) > (b.coverscore + b.matchscore);
                       });
         } else if (config.sort_score == 3) {
-            std::sort(all_hits.begin(), all_hits.end(),
+            tbb::parallel_sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
                           if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
                           return a.alnscore > b.alnscore;
                       });
         } else {
-            std::sort(all_hits.begin(), all_hits.end(),
+            tbb::parallel_sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
                           if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
                           return a.chainscore > b.chainscore;

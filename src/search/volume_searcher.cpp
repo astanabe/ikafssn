@@ -151,21 +151,21 @@ search_one_strand_preprocessed(
 // Sort and truncate helper.
 static void sort_and_truncate(SearchResult& result, const SearchConfig& config) {
     if (config.num_results > 0) {
-        if (config.sort_score == 1) {
-            std::sort(result.hits.begin(), result.hits.end(),
-                      [](const ChainResult& a, const ChainResult& b) {
-                          return a.stage1_score > b.stage1_score;
-                      });
-        } else {
-            std::sort(result.hits.begin(), result.hits.end(),
-                      [](const ChainResult& a, const ChainResult& b) {
-                          return a.chainscore > b.chainscore;
-                      });
-        }
+        auto cmp = (config.sort_score == 1)
+            ? [](const ChainResult& a, const ChainResult& b) {
+                  return a.stage1_score > b.stage1_score;
+              }
+            : [](const ChainResult& a, const ChainResult& b) {
+                  return a.chainscore > b.chainscore;
+              };
 
         if (result.hits.size() > config.num_results) {
+            std::nth_element(result.hits.begin(),
+                             result.hits.begin() + config.num_results,
+                             result.hits.end(), cmp);
             result.hits.resize(config.num_results);
         }
+        std::sort(result.hits.begin(), result.hits.end(), cmp);
     }
 }
 

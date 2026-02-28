@@ -11,6 +11,7 @@
 #include "search/query_preprocessor.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
 
 #include <tbb/blocked_range.h>
@@ -302,6 +303,7 @@ SearchResponse process_search_request(
                                 else
                                     rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
                                 rh.volume = vol.volume_index;
+                                rh.oid = cr.seq_id;
                                 rh.qlen = static_cast<uint32_t>(query.sequence.size());
                                 rh.slen = vol.ksx.seq_length(cr.seq_id);
                                 local_hits.emplace_back(aq.result_idx, rh);
@@ -352,6 +354,7 @@ SearchResponse process_search_request(
                 oh.coverscore = hit.coverscore;
                 oh.matchscore = hit.matchscore;
                 oh.volume = hit.volume;
+                oh.oid = hit.oid;
                 oh.qlen = hit.qlen;
                 oh.slen = hit.slen;
                 output_hits.push_back(std::move(oh));
@@ -399,32 +402,36 @@ SearchResponse process_search_request(
     // Release permits
     server.release_sequences(acquired);
 
-    // Post-process: sort/truncate per accepted query
+    // Post-process: sort/truncate per accepted query (parallel across queries)
     if (config.num_results > 0) {
-        for (auto& qr : resp.results) {
-            if (qr.skipped != 0) continue;
-
-            if (config.sort_score == 1) {
-                std::sort(qr.hits.begin(), qr.hits.end(),
-                          [](const ResponseHit& a, const ResponseHit& b) {
-                              return (a.coverscore + a.matchscore) > (b.coverscore + b.matchscore);
-                          });
-            } else if (config.sort_score == 3) {
-                std::sort(qr.hits.begin(), qr.hits.end(),
-                          [](const ResponseHit& a, const ResponseHit& b) {
-                              return a.alnscore > b.alnscore;
-                          });
-            } else {
-                std::sort(qr.hits.begin(), qr.hits.end(),
-                          [](const ResponseHit& a, const ResponseHit& b) {
-                              return a.chainscore > b.chainscore;
-                          });
-            }
-
-            if (qr.hits.size() > config.num_results) {
-                qr.hits.resize(config.num_results);
-            }
+        std::function<bool(const ResponseHit&, const ResponseHit&)> cmp;
+        if (config.sort_score == 1) {
+            cmp = [](const ResponseHit& a, const ResponseHit& b) {
+                return (a.coverscore + a.matchscore) > (b.coverscore + b.matchscore);
+            };
+        } else if (config.sort_score == 3) {
+            cmp = [](const ResponseHit& a, const ResponseHit& b) {
+                return a.alnscore > b.alnscore;
+            };
+        } else {
+            cmp = [](const ResponseHit& a, const ResponseHit& b) {
+                return a.chainscore > b.chainscore;
+            };
         }
+
+        tbb::parallel_for(size_t(0), resp.results.size(), [&](size_t ri) {
+            auto& qr = resp.results[ri];
+            if (qr.skipped != 0) return;
+            if (qr.hits.size() <= config.num_results) {
+                std::sort(qr.hits.begin(), qr.hits.end(), cmp);
+                return;
+            }
+            std::nth_element(qr.hits.begin(),
+                             qr.hits.begin() + config.num_results,
+                             qr.hits.end(), cmp);
+            qr.hits.resize(config.num_results);
+            std::sort(qr.hits.begin(), qr.hits.end(), cmp);
+        });
     }
 
     return resp;

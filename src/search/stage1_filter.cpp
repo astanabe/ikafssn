@@ -76,14 +76,17 @@ std::vector<Stage1Candidate> stage1_filter(
             return candidates;
         }
 
-        std::sort(candidates.begin(), candidates.end(),
-                  [](const Stage1Candidate& a, const Stage1Candidate& b) {
-                      return a.score > b.score;
-                  });
+        auto cmp = [](const Stage1Candidate& a, const Stage1Candidate& b) {
+            return a.score > b.score;
+        };
 
         if (candidates.size() > config.stage1_topn) {
+            std::nth_element(candidates.begin(),
+                             candidates.begin() + config.stage1_topn,
+                             candidates.end(), cmp);
             candidates.resize(config.stage1_topn);
         }
+        std::sort(candidates.begin(), candidates.end(), cmp);
 
         return candidates;
     }
@@ -122,16 +125,17 @@ std::vector<Stage1Candidate> stage1_filter(
         return candidates;
     }
 
-    // Sort by score descending
-    std::sort(candidates.begin(), candidates.end(),
-              [](const Stage1Candidate& a, const Stage1Candidate& b) {
-                  return a.score > b.score;
-              });
+    auto cmp = [](const Stage1Candidate& a, const Stage1Candidate& b) {
+        return a.score > b.score;
+    };
 
-    // Truncate to stage1_topn
     if (candidates.size() > config.stage1_topn) {
+        std::nth_element(candidates.begin(),
+                         candidates.begin() + config.stage1_topn,
+                         candidates.end(), cmp);
         candidates.resize(config.stage1_topn);
     }
+    std::sort(candidates.begin(), candidates.end(), cmp);
 
     return candidates;
 }

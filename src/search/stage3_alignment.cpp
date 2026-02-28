@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <unordered_map>
 
 #include <tbb/blocked_range.h>
@@ -72,7 +73,7 @@ std::vector<OutputHit> run_stage3(
 {
     if (hits.empty()) return {};
 
-    // 1. Open BLAST DB volumes and build accession -> (reader_idx, oid) map
+    // 1. Open BLAST DB volumes
     auto vol_paths = BlastDbReader::find_volume_paths(db_path);
     if (vol_paths.empty()) {
         logger.error("Stage 3: no BLAST DB volumes found at '%s'", db_path.c_str());
@@ -80,19 +81,10 @@ std::vector<OutputHit> run_stage3(
     }
 
     std::vector<BlastDbReader> readers(vol_paths.size());
-    std::unordered_map<std::string, std::pair<size_t, uint32_t>> acc_map;
-
     for (size_t vi = 0; vi < vol_paths.size(); vi++) {
         if (!readers[vi].open(vol_paths[vi])) {
             logger.error("Stage 3: cannot open volume '%s'", vol_paths[vi].c_str());
             return {};
-        }
-        uint32_t nseqs = readers[vi].num_sequences();
-        for (uint32_t oid = 0; oid < nseqs; oid++) {
-            std::string acc = readers[vi].get_accession(oid);
-            if (!acc.empty()) {
-                acc_map[acc] = {vi, oid};
-            }
         }
     }
 
@@ -103,16 +95,15 @@ std::vector<OutputHit> run_stage3(
     }
 
     // 3. Pre-fetch subject subsequences (volume-parallel)
-    // Group hits by reader_idx
+    // Group hits by volume index (using OutputHit.volume directly)
     std::vector<std::vector<size_t>> hits_by_reader(readers.size());
     std::vector<bool> hit_valid(hits.size(), true);
     for (size_t i = 0; i < hits.size(); i++) {
-        auto it = acc_map.find(hits[i].sseqid);
-        if (it != acc_map.end()) {
-            hits_by_reader[it->second.first].push_back(i);
+        if (hits[i].volume < readers.size()) {
+            hits_by_reader[hits[i].volume].push_back(i);
         } else {
-            logger.warn("Stage 3: accession '%s' not found in BLAST DB, skipping",
-                        hits[i].sseqid.c_str());
+            logger.warn("Stage 3: hit volume %u out of range (max %zu), skipping",
+                        static_cast<unsigned>(hits[i].volume), readers.size());
             hit_valid[i] = false;
         }
     }
@@ -128,8 +119,7 @@ std::vector<OutputHit> run_stage3(
     fetch_arena.execute([&] {
         tbb::parallel_for(size_t(0), readers.size(), [&](size_t ri) {
             for (size_t hit_idx : hits_by_reader[ri]) {
-                auto it = acc_map.find(hits[hit_idx].sseqid);
-                uint32_t oid = it->second.second;
+                uint32_t oid = hits[hit_idx].oid;
                 uint32_t seq_len = readers[ri].seq_length(oid);
 
                 // Find query length for ratio context

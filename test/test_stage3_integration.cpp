@@ -95,6 +95,7 @@ static void test_stage3_pipeline() {
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = 0;
+        oh.oid = cr.seq_id;
         all_hits.push_back(oh);
     }
 
@@ -201,6 +202,7 @@ static void test_stage3_score_only() {
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = 0;
+        oh.oid = cr.seq_id;
         all_hits.push_back(oh);
     }
 
@@ -286,6 +288,7 @@ static void test_stage3_context() {
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = 0;
+        oh.oid = cr.seq_id;
         all_hits.push_back(oh);
     }
 

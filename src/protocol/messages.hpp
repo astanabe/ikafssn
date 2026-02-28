@@ -67,6 +67,7 @@ struct ResponseHit {
     uint16_t matchscore = 0;
     uint16_t chainscore = 0;
     uint16_t volume;
+    uint32_t oid = 0;       // internal: BLAST DB OID (not serialized)
     // Stage 3 fields (populated only when mode=3)
     int32_t  alnscore = 0;
     uint32_t nident = 0;
