@@ -159,7 +159,7 @@ target_link_libraries(ikafssn_client_lib PUBLIC
 
 if(ENABLE_CLIENT_HTTP)
     target_sources(ikafssn_client_lib PRIVATE ikafssnclient/http_client.cpp)
-    target_link_libraries(ikafssn_client_lib PUBLIC CURL::libcurl jsoncpp_lib)
+    target_link_libraries(ikafssn_client_lib PUBLIC CURL::libcurl ${JSONCPP_TARGET})
     target_compile_definitions(ikafssn_client_lib PUBLIC IKAFSSN_ENABLE_HTTP)
 endif()
 

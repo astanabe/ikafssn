@@ -98,6 +98,15 @@ option(ENABLE_CLIENT_HTTP "Enable HTTP mode in ikafssnclient (requires libcurl)"
 if(ENABLE_CLIENT_HTTP)
     find_package(CURL REQUIRED)
     find_package(jsoncpp REQUIRED)
+    # Determine the correct jsoncpp imported target name.
+    # Ubuntu provides jsoncpp_lib; some platforms only provide JsonCpp::JsonCpp.
+    if(TARGET jsoncpp_lib)
+        set(JSONCPP_TARGET jsoncpp_lib)
+    elseif(TARGET JsonCpp::JsonCpp)
+        set(JSONCPP_TARGET JsonCpp::JsonCpp)
+    else()
+        message(FATAL_ERROR "jsoncpp found but no known CMake target (jsoncpp_lib or JsonCpp::JsonCpp) available")
+    endif()
 endif()
 
 # --- libcurl (optional, for ikafssnretrieve remote mode) ---
