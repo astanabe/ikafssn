@@ -66,4 +66,4 @@ For detailed usage, command-line options, deployment architecture, and index fil
 
 ## License
 
-This project is licensed under the GNU General Public License v2.0. See [LICENSE](LICENSE) for details.
+This project is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
