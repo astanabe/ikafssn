@@ -19,7 +19,22 @@ Ubuntu 24.04 (x86_64 / aarch64):
   Additional for ikafssnhttpd:
     libdrogon (and its transitive dependencies)
 
-macOS 14 (aarch64, Homebrew):
+Ubuntu 22.04 (x86_64 / aarch64):
+
+  libtbb12
+  liblmdb0
+  libsqlite3-0
+  libcurl4
+  libjsoncpp24
+  zlib1g
+  libbz2-1.0
+  liblzma5
+  libdeflate0
+
+  Note: ikafssnhttpd is not available on Ubuntu 22.04
+  (Drogon is not packaged for this release).
+
+macOS 26 (aarch64, Homebrew):
 
   tbb
   lmdb
@@ -48,6 +63,17 @@ System packages — Ubuntu 24.04 (x86_64 / aarch64):
   Additional for ikafssnhttpd:
     libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev
     libbrotli-dev libhiredis-dev libpq-dev
+
+System packages — Ubuntu 22.04 (x86_64 / aarch64):
+
+  build-essential cmake
+  libtbb-dev liblmdb-dev libsqlite3-dev
+  libcurl4-openssl-dev libjsoncpp-dev
+  zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
+  libssl-dev uuid-dev
+
+  Note: ikafssnhttpd cannot be built on Ubuntu 22.04
+  (Drogon is not packaged for this release). Build with -DBUILD_HTTPD=OFF.
 
 System packages — macOS (Homebrew):
 

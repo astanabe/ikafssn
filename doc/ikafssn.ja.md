@@ -902,6 +902,43 @@ BLAST DB ボリュームごとに、ボリューム自身のベースネーム�
 
 ID ポスティングと位置ポスティングは別ファイルに格納されるため、Stage 1 フィルタリングが `.kpx` にアクセスすることはなく、ページキャッシュ効率が最大化されます。
 
+## インストール
+
+### Ubuntu (.deb パッケージ)
+
+Ubuntu 22.04 および 24.04 (amd64/arm64) 向けのビルド済み `.deb` パッケージが提供されています。[GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから適切なパッケージをダウンロードしてください。
+
+パッケージ命名規則:
+
+```
+ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+```
+
+パッケージのインストール:
+
+```bash
+sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+```
+
+**注意:** Ubuntu 22.04 パッケージには `ikafssnhttpd` が含まれません (22.04 では Drogon が利用できないため)。Ubuntu 24.04 パッケージには `ikafssnhttpd` を含むすべてのコマンドが含まれます。
+
+### macOS 26 Tahoe (Homebrew)
+
+macOS 26 (Tahoe) の Apple Silicon (aarch64) 環境では、Homebrew Tap 経由でインストールできます:
+
+```bash
+brew tap astanabe/ikafssn
+brew install ikafssn
+```
+
+ビルド済み Bottle が利用可能な場合はそれがインストールされ、利用できない場合はソースからビルドされます。
+
+### インストールの確認
+
+```bash
+ikafssnindex --version
+```
+
 ## ソースからのビルド
 
 ### 依存関係
@@ -929,6 +966,17 @@ sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli
 ```
 
 2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。3 行目は Drogon および Ubuntu で `libdrogon-dev` が自動的に導入しない追加依存パッケージです。ikafssnhttpd が不要な場合は 3 行目を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。
+
+**Ubuntu Server 22.04:**
+
+```bash
+sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
+    libcurl4-openssl-dev libjsoncpp-dev
+sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
+    libssl-dev uuid-dev
+```
+
+2 行目は Parasail および htslib のソースビルドに必要な依存パッケージに加え、NCBI C++ Toolkit に必要な `libssl-dev` と `uuid-dev` です。Ubuntu 22.04 では Drogon がパッケージ提供されていないため、`ikafssnhttpd` のビルドはできません。常に `-DBUILD_HTTPD=OFF` を指定してビルドしてください。
 
 **AlmaLinux 9 / Rocky Linux 9:**
 

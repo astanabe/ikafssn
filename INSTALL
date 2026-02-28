@@ -1,11 +1,59 @@
 Installation instructions for ikafssn
 =======================================
 
-A. Installing pre-built binaries
-=================================
+A. Installing pre-built packages
+==================================
+
+A1. Ubuntu (.deb package)
+---------------------------
+
+Pre-built .deb packages are available for Ubuntu 22.04 and 24.04 (amd64/arm64).
+Download the appropriate .deb file from the GitHub Releases page:
+
+  https://github.com/astanabe/ikafssn/releases
+
+Package naming convention:
+
+  ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+
+Examples:
+  ikafssn_0.1.2026.02.28_ubuntu-24.04_amd64.deb
+  ikafssn_0.1.2026.02.28_ubuntu-22.04_arm64.deb
+
+Install the package:
+
+  sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+
+Note: Ubuntu 22.04 packages do not include ikafssnhttpd (Drogon is not
+available on 22.04). Ubuntu 24.04 packages include all commands including
+ikafssnhttpd.
+
+Verify:
+
+  ikafssnindex --version
+
+
+A2. macOS 26 Tahoe (Homebrew)
+-------------------------------
+
+On macOS 26 (Tahoe) with Apple Silicon (aarch64), install via the
+Homebrew Tap:
+
+  brew tap astanabe/ikafssn
+  brew install ikafssn
+
+This installs pre-built bottles when available, or builds from source
+as a fallback.
+
+Verify:
+
+  ikafssnindex --version
+
+
+A3. Pre-built tarball (manual installation)
+---------------------------------------------
 
 1. Install runtime dependencies
----------------------------------
 
 Ubuntu 24.04 (x86_64 / aarch64):
 
@@ -18,18 +66,25 @@ Ubuntu 24.04 (x86_64 / aarch64):
 
     sudo apt-get install -y libdrogon-dev
 
-macOS 14 (aarch64):
+Ubuntu 22.04 (x86_64 / aarch64):
+
+  sudo apt-get install -y \
+    libtbb12 liblmdb0 libsqlite3-0 \
+    libcurl4 libjsoncpp24 \
+    zlib1g libbz2-1.0 liblzma5 libdeflate0
+
+  Note: ikafssnhttpd is not available on Ubuntu 22.04.
+
+macOS 26 (aarch64):
 
   brew install tbb lmdb sqlite3 curl jsoncpp xz libdeflate openssl@3
 
 2. Extract and install binaries
----------------------------------
 
   tar xf ikafssn-<version>-<platform>.tar.xz
   cp ikafssn-<version>-<platform>/ikafssn* /usr/local/bin/
 
 3. Verify installation
------------------------
 
   ikafssnindex --version
 
@@ -53,6 +108,18 @@ Ubuntu 24.04 (x86_64 / aarch64):
     sudo apt-get install -y \
       libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev \
       libbrotli-dev libhiredis-dev libpq-dev
+
+Ubuntu 22.04 (x86_64 / aarch64):
+
+  sudo apt-get install -y \
+    build-essential cmake \
+    libtbb-dev liblmdb-dev libsqlite3-dev \
+    libcurl4-openssl-dev libjsoncpp-dev \
+    zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
+    libssl-dev uuid-dev
+
+  Note: ikafssnhttpd cannot be built on Ubuntu 22.04 (Drogon is not
+  packaged for this release). Build with -DBUILD_HTTPD=OFF.
 
 macOS (Homebrew):
 

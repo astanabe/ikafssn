@@ -903,6 +903,43 @@ The `.khx` file contains a 32-byte header (magic "KMHX", format version, k) foll
 
 ID and position postings are stored in separate files so that Stage 1 filtering never touches `.kpx`, maximizing page cache efficiency.
 
+## Installation
+
+### Ubuntu (.deb package)
+
+Pre-built `.deb` packages are available for Ubuntu 22.04 and 24.04 (amd64 and arm64). Download the appropriate package from the [GitHub Releases](https://github.com/astanabe/ikafssn/releases) page.
+
+Package naming convention:
+
+```
+ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+```
+
+Install the package:
+
+```bash
+sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+```
+
+**Note:** Ubuntu 22.04 packages do not include `ikafssnhttpd` (Drogon is not available on 22.04). Ubuntu 24.04 packages include all commands including `ikafssnhttpd`.
+
+### macOS 26 Tahoe (Homebrew)
+
+On macOS 26 (Tahoe) with Apple Silicon (aarch64), install via the Homebrew Tap:
+
+```bash
+brew tap astanabe/ikafssn
+brew install ikafssn
+```
+
+This installs pre-built bottles when available, or builds from source as a fallback.
+
+### Verify installation
+
+```bash
+ikafssnindex --version
+```
+
 ## Building from Source
 
 ### Dependencies
@@ -930,6 +967,17 @@ sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli
 ```
 
 The second line installs dependencies required for building Parasail and htslib from source. The third line installs Drogon and its additional dependencies that are not automatically pulled in by `libdrogon-dev` on Ubuntu. If ikafssnhttpd is not needed, omit the third line and build with `-DBUILD_HTTPD=OFF`.
+
+**Ubuntu Server 22.04:**
+
+```bash
+sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
+    libcurl4-openssl-dev libjsoncpp-dev
+sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
+    libssl-dev uuid-dev
+```
+
+The second line installs dependencies for building Parasail and htslib from source, plus `libssl-dev` and `uuid-dev` which are needed for the NCBI C++ Toolkit. Drogon is not packaged for Ubuntu 22.04, so `ikafssnhttpd` cannot be built. Always build with `-DBUILD_HTTPD=OFF`.
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
