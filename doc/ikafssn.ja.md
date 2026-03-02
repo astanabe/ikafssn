@@ -1103,6 +1103,7 @@ curl -L -o ncbi-cxx-toolkit-public-release-30.0.0.tar.gz \
     https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
 tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
 cd ncbi-cxx-toolkit-public-release-30.0.0
+patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch  # BLAST DB mmap のページキャッシュ汚染を防止
 ./cmake-configure \
     --without-debug \
     --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
@@ -1120,6 +1121,7 @@ macOS では、Homebrew の include パスをコンパイラに認識させる�
 ```bash
 export CFLAGS="-I$(brew --prefix)/include"
 export CXXFLAGS="-I$(brew --prefix)/include"
+patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch  # BLAST DB mmap のページキャッシュ汚染を防止
 ./cmake-configure \
     --without-debug \
     --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \

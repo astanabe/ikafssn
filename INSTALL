@@ -176,6 +176,7 @@ NCBI C++ Toolkit:
     https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
   tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
   cd ncbi-cxx-toolkit-public-release-30.0.0
+  patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
   ./cmake-configure \
     --without-debug \
     --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
@@ -188,7 +189,7 @@ NCBI C++ Toolkit:
   On macOS:
     export CFLAGS="-I$(brew --prefix)/include"
     export CXXFLAGS="-I$(brew --prefix)/include"
-    (run cmake-configure as above, then:)
+    (apply the same patch as above, then run cmake-configure:)
     cd CMake-Clang*/build
     make -j$(sysctl -n hw.ncpu)
     make install

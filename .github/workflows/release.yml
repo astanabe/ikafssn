@@ -102,7 +102,7 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.0.0-parasail2.6.2-htslib1.23-v1
+          key: deps-${{ matrix.target }}-ncbi30.0.0-parasail2.6.2-htslib1.23-v2
 
       # ---- Build Parasail ----
 
@@ -151,6 +151,7 @@ jobs:
             https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
           tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
           cd ncbi-cxx-toolkit-public-release-30.0.0
+          patch -p1 < "${GITHUB_WORKSPACE}/patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch"
           if [ "$(uname)" = "Darwin" ]; then
             export CFLAGS="-I${HOMEBREW_PREFIX}/include"
             export CXXFLAGS="-I${HOMEBREW_PREFIX}/include"

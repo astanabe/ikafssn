@@ -1,0 +1,10 @@
+--- a/include/objtools/blast/seqdb_reader/impl/seqdbatlas.hpp
++++ b/include/objtools/blast/seqdb_reader/impl/seqdbatlas.hpp
+@@ -577,6 +577,7 @@
+     		else {
+     			m_isIsam = false;
+     		}
++    		MemMapAdvise(eMMA_Random);
+     	}
+     	~CAtlasMappedFile() {
+     		_ASSERT(m_Count == 0);
