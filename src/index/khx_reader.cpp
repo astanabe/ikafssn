@@ -46,7 +46,9 @@ bool KhxReader::open(const std::string& path) {
 
     bitset_ = mmap_.data() + sizeof(KhxHeader);
 
-    mmap_.advise(MADV_RANDOM);
+    // Bitset is a direct-address lookup table accessed per k-mer for threshold
+    // adjustment — pre-load into page cache so it resists eviction.
+    mmap_.advise(MADV_WILLNEED);
 
     return true;
 }

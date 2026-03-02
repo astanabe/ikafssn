@@ -47,8 +47,15 @@ bool KixReader::open(const std::string& path) {
     posting_data_ = ptr;
     posting_data_size_ = mmap_.size() - (ptr - mmap_.data());
 
-    // Search accesses offsets/counts tables and posting data by k-mer index (random)
-    mmap_.advise(MADV_RANDOM);
+    // Dictionary tables (offsets + counts) are direct-address arrays accessed for every
+    // query k-mer — pre-load into page cache so they resist eviction.
+    size_t dict_size = sizeof(KixHeader)
+                     + sizeof(uint64_t) * table_size_
+                     + sizeof(uint32_t) * table_size_;
+    mmap_.advise(0, dict_size, MADV_WILLNEED);
+
+    // Posting data is accessed randomly by k-mer offset — disable readahead.
+    mmap_.advise(dict_size, posting_data_size_, MADV_RANDOM);
 
     return true;
 }
