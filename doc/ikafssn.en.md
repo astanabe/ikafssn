@@ -361,7 +361,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 
 HTTP REST API daemon. Connects to one or more `ikafssnserver` instances and exposes search as an HTTP API. Uses the Drogon framework. Multiple backends can be specified for multi-database support or load balancing of same-database replicas.
 
-On startup, it connects to all configured backends to cache their capabilities (retrying with exponential backoff for up to 30 seconds). If the same database name appears on multiple backends, cross-server validation ensures that k-value sets, total sequence counts, and total bases are identical; mismatches cause a startup error. Search requests are validated against the merged capabilities (synchronous, no backend round-trip) to reject obviously invalid requests immediately, then routed to the best available backend based on priority and slot availability.
+On startup, it connects to all configured backends to cache their capabilities (retrying with exponential backoff for up to 30 seconds). If the same database name appears on multiple backends, cross-server validation ensures that for each shared (db, k) pair, total sequence counts and total bases are identical; mismatches cause a startup error. Backends are allowed to have different k-value sets for the same database (e.g., server A has k=10, server B has k=10 and k=11); the merged capabilities expose the union of all k-value groups. Search requests are validated against the merged capabilities (synchronous, no backend round-trip) to reject obviously invalid requests immediately, then routed to the best available backend based on priority and slot availability.
 
 **Routing and health:**
 
@@ -864,7 +864,7 @@ ikafssnserver -ix ./rs_index -db refseq -socket /var/run/rs.sock
 ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
 ```
 
-When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that k-value sets, total sequence counts, and total bases are identical. Requests are routed to the highest-priority backend with available effective capacity (considering both slot availability and `max_seqs_per_req`). Note that capacity values (`max_queue_size`, `queue_depth`, `max_seqs_per_req`) are shared per server across all databases served by that server.
+When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that for each shared (db, k) pair, total sequence counts and total bases are identical. Backends may have different k-value sets for the same database; the merged capabilities expose the union of all k-value groups, so requests for a k-value available on only some backends are naturally routed to those backends. Requests are routed to the highest-priority backend with available effective capacity (considering both slot availability and `max_seqs_per_req`). Note that capacity values (`max_queue_size`, `queue_depth`, `max_seqs_per_req`) are shared per server across all databases served by that server.
 
 Alternatively, separate processes with path-based HTTP routing:
 

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <set>
 #include <thread>
 
 namespace ikafssn {
@@ -78,15 +77,31 @@ bool BackendManager::init(int timeout_seconds, const Logger& logger) {
 }
 
 bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
-    // Collect per-DB aggregate info across backends
-    struct DbStats {
-        std::set<uint8_t> k_values;
+    // Per-(db, k) volume statistics for a single backend
+    struct KStats {
         uint64_t total_sequences = 0;
         uint64_t total_bases = 0;
     };
 
-    // Map: db -> backend_index -> DbStats
-    std::unordered_map<std::string, std::vector<std::pair<size_t, DbStats>>> db_backends;
+    // Key: (db_name, k)
+    struct DbKKey {
+        std::string db;
+        uint8_t k;
+        bool operator==(const DbKKey& o) const {
+            return db == o.db && k == o.k;
+        }
+    };
+    struct DbKKeyHash {
+        size_t operator()(const DbKKey& key) const {
+            size_t h = std::hash<std::string>()(key.db);
+            h ^= std::hash<uint8_t>()(key.k) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+
+    // Map: (db, k) -> list of (backend_index, KStats)
+    std::unordered_map<DbKKey, std::vector<std::pair<size_t, KStats>>, DbKKeyHash>
+        dbk_backends;
 
     for (size_t i = 0; i < backends_.size(); i++) {
         auto& be = *backends_[i];
@@ -94,37 +109,30 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
         if (!be.info_valid) continue;
 
         for (const auto& db : be.cached_info.databases) {
-            DbStats stats;
             for (const auto& g : db.groups) {
-                stats.k_values.insert(g.k);
+                KStats stats;
                 for (const auto& v : g.volumes) {
                     stats.total_sequences += v.num_sequences;
                     stats.total_bases += v.total_bases;
                 }
+                dbk_backends[{db.name, g.k}].push_back({i, stats});
             }
-            db_backends[db.name].push_back({i, stats});
         }
     }
 
-    // Check consistency for DBs that appear on multiple backends
-    for (const auto& [db, entries] : db_backends) {
+    // Check consistency for (db, k) pairs that appear on multiple backends
+    for (const auto& [dbk, entries] : dbk_backends) {
         if (entries.size() <= 1) continue;
 
         const auto& ref = entries[0].second;
         for (size_t j = 1; j < entries.size(); j++) {
             const auto& other = entries[j].second;
 
-            if (ref.k_values != other.k_values) {
-                logger.error("Cross-server validation failed for DB '%s': "
-                             "k-value sets differ between backend %zu and %zu",
-                             db.c_str(), entries[0].first, entries[j].first);
-                return false;
-            }
-
             if (ref.total_sequences != other.total_sequences) {
-                logger.error("Cross-server validation failed for DB '%s': "
+                logger.error("Cross-server validation failed for DB '%s' k=%u: "
                              "total sequences differ between backend %zu (%lu) and %zu (%lu)",
-                             db.c_str(), entries[0].first,
+                             dbk.db.c_str(), static_cast<unsigned>(dbk.k),
+                             entries[0].first,
                              static_cast<unsigned long>(ref.total_sequences),
                              entries[j].first,
                              static_cast<unsigned long>(other.total_sequences));
@@ -132,9 +140,10 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
             }
 
             if (ref.total_bases != other.total_bases) {
-                logger.error("Cross-server validation failed for DB '%s': "
+                logger.error("Cross-server validation failed for DB '%s' k=%u: "
                              "total bases differ between backend %zu (%lu) and %zu (%lu)",
-                             db.c_str(), entries[0].first,
+                             dbk.db.c_str(), static_cast<unsigned>(dbk.k),
+                             entries[0].first,
                              static_cast<unsigned long>(ref.total_bases),
                              entries[j].first,
                              static_cast<unsigned long>(other.total_bases));
@@ -315,8 +324,25 @@ InfoResponse BackendManager::merged_info() const {
                 if (merged.default_k == 0) {
                     merged.default_k = db.default_k;
                 }
+            } else {
+                // Same DB exists - merge new k-value groups and update max_mode
+                auto& existing = merged.databases[it->second];
+                if (db.max_mode > existing.max_mode) {
+                    existing.max_mode = db.max_mode;
+                }
+                for (const auto& g : db.groups) {
+                    bool found = false;
+                    for (const auto& eg : existing.groups) {
+                        if (eg.k == g.k) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        existing.groups.push_back(g);
+                    }
+                }
             }
-            // Same DB already exists - no need to merge (validated identical)
         }
     }
 
