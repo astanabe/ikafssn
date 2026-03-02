@@ -20,6 +20,7 @@
 using namespace ikafssn;
 
 static void print_usage(const char* prog) {
+    print_version_header("ikafssnretrieve");
     std::fprintf(stderr,
         "Usage: %s [options]\n"
         "\n"

@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
 set(IKAFSSN_VERSION "0.1.2026.03.03")
+
+# Get timezone offset in +HH:MM format for build timestamp
+string(TIMESTAMP _tz "%z")
+string(REGEX REPLACE "^([+-][0-9][0-9])([0-9][0-9])$" "\\1:\\2" IKAFSSN_BUILD_TZ_OFFSET "${_tz}")
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/src/core/version.hpp.in"
     "${CMAKE_BINARY_DIR}/generated/core/version.hpp"

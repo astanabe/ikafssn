@@ -36,6 +36,23 @@ ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db mydb > m
 
 ## コマンド
 
+### 共通オプション
+
+すべてのコマンドで以下のオプションが利用可能です。
+
+```
+  -h, --help              使用法の表示 (バージョンヘッダ付き)
+  -version, --version     バージョン・ビルド情報の表示
+  -v, --verbose           詳細出力
+```
+
+`-version` の出力形式:
+
+```
+<コマンド名>: <バージョン>
+ Package: ikafssn <バージョン>, build <ISO 8601 タイムスタンプ>
+```
+
 ### ikafssnindex
 
 BLAST DB から k-mer 転置インデックスを構築します。各ボリュームに対して `.kix` (ID ポスティング)、`.kpx` (位置ポスティング、`-mode 1` の場合は省略)、`.ksx` (配列メタデータ) のファイルを生成します。`-max_freq_build` 使用時は共有 `.khx` (構築時除外ビットセット) も生成されます。`.khx` ファイルは全ボリューム共通 (k 値ごとに 1 つ) です。
@@ -944,7 +961,7 @@ brew install ikafssn
 ### インストールの確認
 
 ```bash
-ikafssnindex --version
+ikafssnindex -version
 ```
 
 ## ソースからのビルド

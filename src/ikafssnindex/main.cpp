@@ -29,6 +29,7 @@
 using namespace ikafssn;
 
 static void print_usage(const char* prog, const std::string& default_mem) {
+    print_version_header("ikafssnindex");
     std::fprintf(stderr,
         "Usage: %s [options]\n\n"
         "Required:\n"

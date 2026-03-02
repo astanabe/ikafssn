@@ -36,6 +36,23 @@ ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db mydb > m
 
 ## Commands
 
+### Common options
+
+All commands support the following options:
+
+```
+  -h, --help              Show usage information (with version header)
+  -version, --version     Print version and build information
+  -v, --verbose           Verbose output
+```
+
+The `-version` output format is:
+
+```
+<command>: <version>
+ Package: ikafssn <version>, build <ISO 8601 timestamp>
+```
+
 ### ikafssnindex
 
 Build a k-mer inverted index from a BLAST database. For each volume, index files are generated: `.kix` (ID postings), `.kpx` (position postings, unless `-mode 1`), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a shared `.khx` file (build-time exclusion bitset) is also generated. The `.khx` file is shared across all volumes (one per k value, not per volume).
@@ -945,7 +962,7 @@ This installs pre-built bottles when available, or builds from source as a fallb
 ### Verify installation
 
 ```bash
-ikafssnindex --version
+ikafssnindex -version
 ```
 
 ## Building from Source
