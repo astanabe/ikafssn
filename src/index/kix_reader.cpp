@@ -76,6 +76,7 @@ void KixReader::apply_madvise(bool willneed) {
     } else {
         mmap_.advise(MADV_RANDOM);
     }
+    mmap_.advise(0, dict_size, MADV_HUGEPAGE);
 }
 
 } // namespace ikafssn
