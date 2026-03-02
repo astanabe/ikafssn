@@ -56,7 +56,7 @@ static void print_usage(const char* prog) {
         prog);
 }
 
-static std::string format_size(uint64_t bytes) {
+static std::string format_size_display(uint64_t bytes) {
     if (bytes >= uint64_t(1) << 30) {
         return std::to_string(bytes / (uint64_t(1) << 30)) + "."
              + std::to_string((bytes % (uint64_t(1) << 30)) * 10 / (uint64_t(1) << 30))
@@ -368,21 +368,21 @@ int main(int argc, char* argv[]) {
                     static_cast<unsigned long>(vs.total_postings));
         std::printf("  File sizes:\n");
         std::printf("    .kix:          %s (%lu bytes)\n",
-                    format_size(vs.kix_size).c_str(),
+                    format_size_display(vs.kix_size).c_str(),
                     static_cast<unsigned long>(vs.kix_size));
         if (vs.has_kpx) {
             std::printf("    .kpx:          %s (%lu bytes)\n",
-                        format_size(vs.kpx_size).c_str(),
+                        format_size_display(vs.kpx_size).c_str(),
                         static_cast<unsigned long>(vs.kpx_size));
         } else {
             std::printf("    .kpx:          (not built)\n");
         }
         std::printf("    .ksx:          %s (%lu bytes)\n",
-                    format_size(vs.ksx_size).c_str(),
+                    format_size_display(vs.ksx_size).c_str(),
                     static_cast<unsigned long>(vs.ksx_size));
         uint64_t vol_total = vs.kix_size + vs.kpx_size + vs.ksx_size;
         std::printf("    Total:         %s (%lu bytes)\n",
-                    format_size(vol_total).c_str(),
+                    format_size_display(vol_total).c_str(),
                     static_cast<unsigned long>(vol_total));
 
         if (verbose) {
@@ -404,7 +404,7 @@ int main(int argc, char* argv[]) {
         std::printf("--- Shared .khx ---\n\n");
         std::printf("  Path:            %s\n", khx_path.c_str());
         std::printf("  Size:            %s (%lu bytes)\n",
-                    format_size(khx_size).c_str(),
+                    format_size_display(khx_size).c_str(),
                     static_cast<unsigned long>(khx_size));
         std::printf("  Excluded k-mers: %lu\n\n",
                     static_cast<unsigned long>(khx_excluded));
@@ -416,17 +416,17 @@ int main(int argc, char* argv[]) {
     std::printf("Total postings:    %lu\n", static_cast<unsigned long>(total_postings));
     uint64_t total_index_size = total_kix_size + total_kpx_size + total_ksx_size + khx_size;
     std::printf("Total index size:  %s (%lu bytes)\n",
-                format_size(total_index_size).c_str(),
+                format_size_display(total_index_size).c_str(),
                 static_cast<unsigned long>(total_index_size));
-    std::printf("  .kix total:      %s\n", format_size(total_kix_size).c_str());
+    std::printf("  .kix total:      %s\n", format_size_display(total_kix_size).c_str());
     if (total_kpx_size > 0) {
-        std::printf("  .kpx total:      %s\n", format_size(total_kpx_size).c_str());
+        std::printf("  .kpx total:      %s\n", format_size_display(total_kpx_size).c_str());
     } else {
         std::printf("  .kpx total:      (not built)\n");
     }
-    std::printf("  .ksx total:      %s\n", format_size(total_ksx_size).c_str());
+    std::printf("  .ksx total:      %s\n", format_size_display(total_ksx_size).c_str());
     if (has_khx) {
-        std::printf("  .khx:            %s\n", format_size(khx_size).c_str());
+        std::printf("  .khx:            %s\n", format_size_display(khx_size).c_str());
     }
 
     // Compression ratio: compare delta-compressed posting size vs uncompressed
@@ -452,9 +452,9 @@ int main(int argc, char* argv[]) {
                      / static_cast<double>(uncompressed_posting_size);
         std::printf("\nCompression:\n");
         std::printf("  Uncompressed posting size: %s\n",
-                    format_size(uncompressed_posting_size).c_str());
+                    format_size_display(uncompressed_posting_size).c_str());
         std::printf("  Compressed posting size:   %s\n",
-                    format_size(compressed_posting_size).c_str());
+                    format_size_display(compressed_posting_size).c_str());
         std::printf("  Compression ratio:         %.3f (%.1f%% of original)\n",
                     ratio, ratio * 100.0);
     }

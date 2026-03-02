@@ -1,7 +1,9 @@
 #include "ikafssnserver/server.hpp"
 #include "ikafssnserver/connection_handler.hpp"
 #include "core/config.hpp"
+#include "core/version.hpp"
 #include "io/volume_discovery.hpp"
+#include "util/common_init.hpp"
 #include "util/socket_utils.hpp"
 
 #include <algorithm>
@@ -185,6 +187,43 @@ void Server::write_pid_file(const std::string& path) {
     }
 }
 
+void Server::apply_madvise_budget(uint64_t budget, const Logger& logger) {
+    uint64_t total = budget;
+    auto try_willneed = [&budget](auto& reader) {
+        uint64_t sz = reader.willneed_size();
+        bool fits = (sz > 0 && budget >= sz);
+        reader.apply_madvise(fits);
+        if (fits) budget -= sz;
+    };
+
+    // Priority 1: khx (one per k-mer group per DB)
+    for (auto& db : databases_)
+        for (auto& [k, group] : db.kmer_groups)
+            try_willneed(group.khx);
+
+    // Priority 2: kix dictionaries
+    for (auto& db : databases_)
+        for (auto& [k, group] : db.kmer_groups)
+            for (auto& vol : group.volumes)
+                try_willneed(vol.kix);
+
+    // Priority 3: kpx dictionaries
+    for (auto& db : databases_)
+        for (auto& [k, group] : db.kmer_groups)
+            for (auto& vol : group.volumes)
+                try_willneed(vol.kpx);
+
+    // Priority 4: ksx metadata
+    for (auto& db : databases_)
+        for (auto& [k, group] : db.kmer_groups)
+            for (auto& vol : group.volumes)
+                try_willneed(vol.ksx);
+
+    logger.info("madvise budget: %s used / %s total",
+                format_size(total - budget).c_str(),
+                format_size(total).c_str());
+}
+
 void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger& logger) {
     int num_threads = config.num_threads;
     if (num_threads <= 0) {
@@ -247,6 +286,12 @@ int Server::run(const ServerConfig& config_in) {
     if (databases_.empty()) {
         logger.error("No databases loaded");
         return 1;
+    }
+
+    // Apply madvise budget
+    {
+        uint64_t budget = config.memory_limit > 0 ? config.memory_limit : default_memory_limit();
+        apply_madvise_budget(budget, logger);
     }
 
     // Write PID file if requested

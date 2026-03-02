@@ -113,6 +113,8 @@ ikafssnsearch [options]
   -k <int>                使用する k-mer サイズ (複数の k 値が存在する場合は必須)
   -o <path>               出力ファイル (デフォルト: 標準出力)
   -threads <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
+  -memory_limit <size>    madvise WILLNEED 予算 (デフォルト: 物理メモリの半分)
+                          接尾辞 K, M, G を認識
   -mode <1|2|3>           検索モード (デフォルト: 2)
                           1=Stage 1 のみ、2=Stage 1+2、3=Stage 1+2+3
   -db <path>              モード 3 用 BLAST DB パス (デフォルト: -ix と同じ)
@@ -316,6 +318,8 @@ ikafssnserver [options]
   -num_results <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
   -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)
+  -memory_limit <size>    madvise WILLNEED 予算 (デフォルト: 物理メモリの半分)
+                          接尾辞 K, M, G を認識
   -shutdown_timeout <int> グレースフルシャットダウンのタイムアウト秒数 (デフォルト: 30)
   -v, --verbose           詳細ログ出力
 ```

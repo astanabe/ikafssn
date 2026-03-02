@@ -45,9 +45,6 @@ bool KsxReader::open(const std::string& path) {
 
     acc_strings_ = reinterpret_cast<const char*>(ptr);
 
-    // Accession lookups are random (by OID from search results)
-    mmap_.advise(MADV_RANDOM);
-
     return true;
 }
 
@@ -67,6 +64,16 @@ std::string_view KsxReader::accession(uint32_t oid) const {
     uint32_t start = acc_offsets_[oid];
     uint32_t len = acc_offsets_[oid + 1] - start;
     return std::string_view(acc_strings_ + start, len);
+}
+
+size_t KsxReader::willneed_size() const {
+    if (!mmap_.is_open()) return 0;
+    return mmap_.size();
+}
+
+void KsxReader::apply_madvise(bool willneed) {
+    if (!mmap_.is_open()) return;
+    mmap_.advise(willneed ? MADV_WILLNEED : MADV_RANDOM);
 }
 
 } // namespace ikafssn

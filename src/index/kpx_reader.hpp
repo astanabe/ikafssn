@@ -26,6 +26,10 @@ public:
 
     uint64_t pos_offset(uint64_t kmer) const { return pos_offsets_[kmer]; }
 
+    // madvise budget API
+    size_t willneed_size() const;
+    void apply_madvise(bool willneed);
+
 private:
     MmapFile mmap_;
     const KpxHeader* header_ = nullptr;

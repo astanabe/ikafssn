@@ -3,6 +3,7 @@
 #include "util/cli_parser.hpp"
 #include "util/common_init.hpp"
 #include "util/context_parser.hpp"
+#include "util/size_parser.hpp"
 #include "io/volume_discovery.hpp"
 
 #include <csignal>
@@ -57,6 +58,8 @@ static void print_usage(const char* prog) {
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -stage3_min_nident <int> Default min identical bases (default: 0)\n"
         "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch (default: min(8, threads))\n"
+        "  -memory_limit <size>     madvise WILLNEED budget (default: half of RAM)\n"
+        "                           Accepts K, M, G suffixes\n"
         "  -shutdown_timeout <int>  Graceful shutdown timeout in seconds (default: 30)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
@@ -132,6 +135,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     config.shutdown_timeout = cli.get_int("-shutdown_timeout", 30);
+
+    if (cli.has("-memory_limit")) {
+        std::string mem_str = cli.get_string("-memory_limit");
+        config.memory_limit = parse_size_string(mem_str);
+        if (config.memory_limit == 0) {
+            std::fprintf(stderr, "Error: invalid -memory_limit '%s'\n", mem_str.c_str());
+            return 1;
+        }
+    }
 
     config.log_level = make_logger(cli).level();
 

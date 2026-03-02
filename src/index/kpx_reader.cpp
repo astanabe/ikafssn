@@ -44,14 +44,6 @@ bool KpxReader::open(const std::string& path) {
     posting_data_ = ptr;
     posting_data_size_ = mmap_.size() - (ptr - mmap_.data());
 
-    // pos_offsets table is a direct-address array accessed for every Stage 2 k-mer
-    // — pre-load into page cache so it resists eviction.
-    size_t dict_size = sizeof(KpxHeader) + sizeof(uint64_t) * table_size_;
-    mmap_.advise(0, dict_size, MADV_WILLNEED);
-
-    // Position posting data is accessed randomly by k-mer offset — disable readahead.
-    mmap_.advise(dict_size, posting_data_size_, MADV_RANDOM);
-
     return true;
 }
 
@@ -62,6 +54,22 @@ void KpxReader::close() {
     posting_data_ = nullptr;
     posting_data_size_ = 0;
     table_size_ = 0;
+}
+
+size_t KpxReader::willneed_size() const {
+    if (!mmap_.is_open()) return 0;
+    return sizeof(KpxHeader) + sizeof(uint64_t) * table_size_;
+}
+
+void KpxReader::apply_madvise(bool willneed) {
+    if (!mmap_.is_open()) return;
+    size_t dict_size = willneed_size();
+    if (willneed) {
+        mmap_.advise(0, dict_size, MADV_WILLNEED);
+        mmap_.advise(dict_size, posting_data_size_, MADV_RANDOM);
+    } else {
+        mmap_.advise(MADV_RANDOM);
+    }
 }
 
 } // namespace ikafssn

@@ -23,6 +23,10 @@ public:
     // Count total number of excluded k-mers.
     uint64_t count_excluded() const;
 
+    // madvise budget API
+    size_t willneed_size() const;
+    void apply_madvise(bool willneed);
+
 private:
     MmapFile mmap_;
     int k_ = 0;

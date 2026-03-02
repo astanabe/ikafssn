@@ -27,6 +27,10 @@ public:
     const uint8_t* posting_data() const { return posting_data_; }
     size_t posting_data_size() const { return posting_data_size_; }
 
+    // madvise budget API
+    size_t willneed_size() const;
+    void apply_madvise(bool willneed);
+
     // Convenience: get posting offset and count for a k-mer
     uint64_t posting_offset(uint64_t kmer) const { return offsets_[kmer]; }
     uint32_t posting_count(uint64_t kmer) const { return counts_[kmer]; }

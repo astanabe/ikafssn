@@ -42,6 +42,7 @@ struct ServerConfig {
     int max_queue_size = 0;         // 0 = default (1024). Max total in-flight sequences globally
     int max_seqs_per_req = 0;       // 0 = default (same as resolved thread count). Per-request cap
     int shutdown_timeout = 30;      // seconds
+    uint64_t memory_limit = 0;     // 0 = auto (half of RAM)
     SearchConfig search_config;
     double max_freq_raw = 0.5;          // raw -max_freq value (fraction or absolute)
     Logger::Level log_level = Logger::kInfo;
@@ -103,6 +104,7 @@ private:
     int max_queue_size_ = 1024;  // from -max_queue_size, default 1024; overridden in run()
     int max_seqs_per_req_ = 1024;      // from -max_seqs_per_req, default = threads; overridden in run()
 
+    void apply_madvise_budget(uint64_t budget, const Logger& logger);
     void accept_loop(int listen_fd, const ServerConfig& config, const Logger& logger);
     void write_pid_file(const std::string& path);
 };

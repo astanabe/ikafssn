@@ -114,6 +114,8 @@ Options:
   -k <int>                K-mer size to use (required if multiple k values exist)
   -o <path>               Output file (default: stdout)
   -threads <int>          Parallel search threads (default: all cores)
+  -memory_limit <size>    madvise WILLNEED budget (default: half of RAM)
+                          Accepts K, M, G suffixes
   -mode <1|2|3>           Search mode (default: 2)
                           1=Stage 1 only, 2=Stage 1+2, 3=Stage 1+2+3
   -db <path>              BLAST DB path for mode 3 (default: same as -ix)
@@ -317,6 +319,8 @@ Options:
   -num_results <int>      Default max results per query (default: 0)
   -accept_qdegen <0|1>    Default accept queries with degenerate bases (default: 1)
   -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
+  -memory_limit <size>    madvise WILLNEED budget (default: half of RAM)
+                          Accepts K, M, G suffixes
   -shutdown_timeout <int> Graceful shutdown timeout in seconds (default: 30)
   -v, --verbose           Verbose logging
 ```

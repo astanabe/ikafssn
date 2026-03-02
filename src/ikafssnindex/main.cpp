@@ -28,17 +28,6 @@
 
 using namespace ikafssn;
 
-// Detect physical memory and return half of it (minimum 1 GB).
-static uint64_t default_memory_limit() {
-    long pages = sysconf(_SC_PHYS_PAGES);
-    long page_size = sysconf(_SC_PAGE_SIZE);
-    if (pages > 0 && page_size > 0) {
-        uint64_t half = static_cast<uint64_t>(pages) * static_cast<uint64_t>(page_size) / 2;
-        if (half >= (uint64_t(1) << 30)) return half;
-    }
-    return uint64_t(1) << 30; // fallback: 1 GB
-}
-
 static void print_usage(const char* prog, const std::string& default_mem) {
     std::fprintf(stderr,
         "Usage: %s [options]\n\n"
@@ -74,11 +63,7 @@ int main(int argc, char* argv[]) {
 
     // Compute default memory limit string for help display
     uint64_t default_mem = default_memory_limit();
-    std::string default_mem_str;
-    if (default_mem >= (uint64_t(1) << 30) && default_mem % (uint64_t(1) << 30) == 0)
-        default_mem_str = std::to_string(default_mem >> 30) + "G";
-    else
-        default_mem_str = std::to_string(default_mem >> 20) + "M";
+    std::string default_mem_str = format_size(default_mem);
 
     if (check_version(cli, "ikafssnindex")) return 0;
 

@@ -20,6 +20,7 @@
 #include "util/common_init.hpp"
 #include "util/context_parser.hpp"
 #include "util/logger.hpp"
+#include "util/size_parser.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -52,6 +53,8 @@ static void print_usage(const char* prog) {
         "  -k <int>                 K-mer size to use (required if multiple k values exist)\n"
         "  -o <path>                Output file (default: stdout)\n"
         "  -threads <int>           Parallel search threads (default: all cores)\n"
+        "  -memory_limit <size>     madvise WILLNEED budget (default: half of RAM)\n"
+        "                           Accepts K, M, G suffixes\n"
         "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: 2)\n"
         "  -db <path>               BLAST DB path for mode 3 (default: same as -ix)\n"
         "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: 1)\n"
@@ -126,6 +129,19 @@ int main(int argc, char* argv[]) {
     std::string output_path = cli.get_string("-o");
     int num_threads = resolve_threads(cli);
     Logger logger = make_logger(cli);
+
+    // Memory limit for madvise budget
+    uint64_t memory_limit;
+    if (cli.has("-memory_limit")) {
+        std::string mem_str = cli.get_string("-memory_limit");
+        memory_limit = parse_size_string(mem_str);
+        if (memory_limit == 0) {
+            std::fprintf(stderr, "Error: invalid -memory_limit '%s'\n", mem_str.c_str());
+            return 1;
+        }
+    } else {
+        memory_limit = default_memory_limit();
+    }
 
     // Search config
     SearchConfig config;
@@ -375,6 +391,24 @@ int main(int argc, char* argv[]) {
     {
         auto parts = parse_index_prefix(ix_prefix);
         shared_khx.open(khx_path_for(parts.parent_dir, parts.db, k)); // non-fatal
+    }
+
+    // Apply madvise budget: prioritize khx > kix dict > kpx dict > ksx
+    {
+        uint64_t budget = memory_limit;
+        auto try_willneed = [&budget](auto& reader) {
+            uint64_t sz = reader.willneed_size();
+            bool fits = (sz > 0 && budget >= sz);
+            reader.apply_madvise(fits);
+            if (fits) budget -= sz;
+        };
+        try_willneed(shared_khx);
+        for (auto& vd : vol_data) try_willneed(vd.kix);
+        for (auto& vd : vol_data) try_willneed(vd.kpx);
+        for (auto& vd : vol_data) try_willneed(vd.ksx);
+        logger.info("madvise budget: %s used / %s total",
+                    format_size(memory_limit - budget).c_str(),
+                    format_size(memory_limit).c_str());
     }
 
     // Resolve -max_freq: 1/1.0 = disable, fraction -> absolute, else integer

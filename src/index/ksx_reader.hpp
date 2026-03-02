@@ -12,9 +12,14 @@ public:
     bool open(const std::string& path);
     void close();
 
+    bool is_open() const { return mmap_.is_open(); }
     uint32_t num_sequences() const { return num_sequences_; }
     uint32_t seq_length(uint32_t oid) const;
     std::string_view accession(uint32_t oid) const;
+
+    // madvise budget API
+    size_t willneed_size() const;
+    void apply_madvise(bool willneed);
 
 private:
     MmapFile mmap_;
