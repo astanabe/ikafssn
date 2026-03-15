@@ -156,6 +156,7 @@ private:
 //   u32  context_abs
 //   u16  context_frac_x10000
 //   u16  max_degen_expand
+//   u16  stage2_max_nhit_per_subject
 //   str16 db
 //   u32  num_seqids
 //     [str16 seqid] × num_seqids
@@ -191,6 +192,7 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     put_u32(buf, req.context_abs);
     put_u16(buf, req.context_frac_x10000);
     put_u16(buf, req.max_degen_expand);
+    put_u16(buf, req.stage2_max_nhit_per_subject);
     put_str16(buf, req.db);
 
     put_u32(buf, static_cast<uint32_t>(req.seqids.size()));
@@ -241,6 +243,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u32(req.context_abs)) return false;
     if (!r.get_u16(req.context_frac_x10000)) return false;
     if (!r.get_u16(req.max_degen_expand)) return false;
+    if (!r.get_u16(req.stage2_max_nhit_per_subject)) return false;
     if (!r.get_str16(req.db)) return false;
 
     uint32_t num_seqids;

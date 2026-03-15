@@ -63,6 +63,7 @@ static void print_usage(const char* prog) {
         "                           0 = use resolved Stage 1 threshold\n"
         "  -stage2_max_gap <int>    Chaining diagonal gap tolerance (default: 100)\n"
         "  -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
+        "  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: 1, 0=unlimited)\n"
         "  -stage1_max_freq <num>   High-frequency k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           1 or 1.0: disable high-freq filtering entirely\n"
@@ -75,7 +76,7 @@ static void print_usage(const char* prog) {
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: 2)\n"
         "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
-        "  -context <value>         Context extension for mode 3 (int=bases, decimal=query length multiplier, default: 0)\n"
+        "  -context <value>         Context extension for mode 3 (int=bases, decimal=query length multiplier, default: 2.0)\n"
         "  -stage3_traceback <0|1>  Enable traceback in mode 3 (default: 0)\n"
         "  -stage3_gapopen <int>    Gap open penalty for mode 3 (default: 10)\n"
         "  -stage3_gapext <int>     Gap extension penalty for mode 3 (default: 1)\n"
@@ -151,6 +152,7 @@ int main(int argc, char* argv[]) {
     config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-stage2_max_gap", 100));
     config.stage2.chain_max_lookback = static_cast<uint32_t>(cli.get_int("-stage2_max_lookback", 64));
+    config.stage2.max_nhit_per_subject = static_cast<uint32_t>(cli.get_int("-stage2_max_nhit_per_subject", 1));
     config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-stage2_min_diag_hits", 1));
     config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-stage2_min_score", 0));
     config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 0));
@@ -197,7 +199,7 @@ int main(int argc, char* argv[]) {
     ContextParam ctx_param;
     {
         std::string err;
-        if (!parse_context(cli.get_string("-context", "0"), ctx_param, err)) {
+        if (!parse_context(cli.get_string("-context", "2.0"), ctx_param, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }

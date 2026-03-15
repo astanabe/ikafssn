@@ -41,7 +41,7 @@ static void test_frame_round_trip() {
     assert(hdr.magic == FRAME_MAGIC);
     assert(hdr.payload_size == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 5);
+    assert(hdr.msg_version == 6);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -83,7 +83,7 @@ static void test_frame_invalid_magic() {
     bad_hdr.magic = 0xDEADBEEF;
     bad_hdr.payload_size = 0;
     bad_hdr.msg_type = 0x01;
-    bad_hdr.msg_version = 5;
+    bad_hdr.msg_version = 6;
     bad_hdr.reserved = 0;
     assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 
@@ -153,6 +153,7 @@ static void test_search_request_serialize() {
     assert(req2.stage1_min_score == 2);
     assert(req2.num_results == 50);
     assert(req2.max_degen_expand == 16);
+    assert(req2.stage2_max_nhit_per_subject == 0);
     assert(req2.db == "testdb");
     assert(req2.seqidlist_mode == SeqidlistMode::kInclude);
     assert(req2.seqids.size() == 2);
@@ -711,6 +712,30 @@ static void test_search_request_chain_max_lookback() {
     std::printf(" OK\n");
 }
 
+static void test_search_request_max_nhit_per_subject() {
+    std::printf("  test_search_request_max_nhit_per_subject...");
+
+    SearchRequest req;
+    req.k = 9;
+    req.stage2_max_nhit_per_subject = 5;
+    req.queries.push_back({"q1", "ACGTACGT"});
+
+    auto data = serialize(req);
+    SearchRequest req2;
+    assert(deserialize(data, req2));
+
+    assert(req2.stage2_max_nhit_per_subject == 5);
+
+    // Also test with 0 (server default)
+    req.stage2_max_nhit_per_subject = 0;
+    data = serialize(req);
+    SearchRequest req3;
+    assert(deserialize(data, req3));
+    assert(req3.stage2_max_nhit_per_subject == 0);
+
+    std::printf(" OK\n");
+}
+
 static void test_search_response_qlen_slen() {
     std::printf("  test_search_response_qlen_slen...");
 
@@ -773,6 +798,7 @@ int main() {
     test_search_response_rejected_qseqids();
     test_search_response_qlen_slen();
     test_search_request_chain_max_lookback();
+    test_search_request_max_nhit_per_subject();
 
     std::printf("All protocol tests passed.\n");
     return 0;

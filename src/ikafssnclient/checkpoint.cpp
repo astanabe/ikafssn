@@ -106,6 +106,7 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "has_stage2_min_score=" << static_cast<int>(req.has_stage2_min_score) << "\n";
     oss << "stage2_max_gap=" << req.stage2_max_gap << "\n";
     oss << "stage2_max_lookback=" << req.stage2_max_lookback << "\n";
+    oss << "stage2_max_nhit_per_subject=" << req.stage2_max_nhit_per_subject << "\n";
     oss << "stage2_min_diag_hits=" << static_cast<int>(req.stage2_min_diag_hits) << "\n";
     oss << "num_results=" << req.num_results << "\n";
     oss << "accept_qdegen=" << static_cast<int>(req.accept_qdegen) << "\n";

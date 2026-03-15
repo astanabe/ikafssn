@@ -52,6 +52,7 @@ static void print_usage(const char* prog) {
         "  -stage2_min_score <int>  Minimum chain score (default: server default)\n"
         "  -stage2_max_gap <int>    Chaining gap tolerance (default: server default)\n"
         "  -stage2_max_lookback <int>  Chaining DP lookback window (default: server default)\n"
+        "  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: server default)\n"
         "  -stage1_max_freq <num>   High-freq k-mer skip threshold (default: server default)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           1 or 1.0: disable high-freq filtering entirely\n"
@@ -64,7 +65,7 @@ static void print_usage(const char* prog) {
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)\n"
         "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
-        "  -context <value>         Context extension (int=bases, decimal=ratio, default: 0)\n"
+        "  -context <value>         Context extension (int=bases, decimal=ratio, default: 2.0)\n"
         "  -stage3_traceback <0|1>  Enable traceback in mode 3 (default: 0)\n"
         "  -stage3_gapopen <int>    Gap open penalty (default: server default)\n"
         "  -stage3_gapext <int>     Gap extension penalty (default: server default)\n"
@@ -347,6 +348,7 @@ int main(int argc, char* argv[]) {
     }
     base_req.stage2_max_gap = static_cast<uint16_t>(cli.get_int("-stage2_max_gap", 0));
     base_req.stage2_max_lookback = static_cast<uint16_t>(cli.get_int("-stage2_max_lookback", 0));
+    base_req.stage2_max_nhit_per_subject = static_cast<uint16_t>(cli.get_int("-stage2_max_nhit_per_subject", 0));
     {
         double max_freq_val = cli.get_double("-stage1_max_freq", 0.0);
         if (max_freq_val == 1.0) {
@@ -400,7 +402,7 @@ int main(int argc, char* argv[]) {
 
     // Context
     {
-        std::string context_str = cli.get_string("-context", "0");
+        std::string context_str = cli.get_string("-context", "2.0");
         if (context_str.find('.') != std::string::npos) {
             double ratio = std::stod(context_str);
             base_req.context_frac_x10000 = static_cast<uint16_t>(ratio * 10000.0);

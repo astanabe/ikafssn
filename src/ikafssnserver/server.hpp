@@ -24,8 +24,8 @@ struct DatabaseEntry {
     uint8_t max_mode = 2;                   // 2 or 3
     SearchConfig resolved_search_config;    // max_freq resolved per-DB
     Stage3Config stage3_config;
-    bool context_is_ratio = false;
-    double context_ratio = 0.0;
+    bool context_is_ratio = true;
+    double context_ratio = 2.0;
     uint32_t context_abs = 0;
 };
 
@@ -48,8 +48,8 @@ struct ServerConfig {
     Logger::Level log_level = Logger::kInfo;
     // Stage 3 / BLAST DB config
     Stage3Config stage3_config;     // default stage3 config
-    bool context_is_ratio = false;
-    double context_ratio = 0.0;
+    bool context_is_ratio = true;
+    double context_ratio = 2.0;
     uint32_t context_abs = 0;
 };
 

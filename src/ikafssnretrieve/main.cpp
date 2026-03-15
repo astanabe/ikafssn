@@ -36,7 +36,7 @@ static void print_usage(const char* prog) {
         "\n"
         "Common options:\n"
         "  -o <path>               Output FASTA file (default: stdout)\n"
-        "  -context <value>        Context extension: integer=bases, decimal=multiplier of q_len (default: 0)\n"
+        "  -context <value>        Context extension: integer=bases, decimal=multiplier of q_len (default: 2.0)\n"
         "  -v, --verbose           Verbose logging\n"
 #ifdef IKAFSSN_ENABLE_REMOTE
         "\n"
@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
     ContextParam ctx_param;
     {
         std::string err;
-        if (!parse_context(cli.get_string("-context", "0"), ctx_param, err)) {
+        if (!parse_context(cli.get_string("-context", "2.0"), ctx_param, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }

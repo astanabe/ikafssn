@@ -138,8 +138,8 @@ search_one_strand_preprocessed(
         auto it = hits_per_seq.find(c.id);
         if (it == hits_per_seq.end()) continue;
 
-        ChainResult cr = chain_hits(it->second, c.id, k, is_reverse, stage2_config);
-        if (cr.chainscore >= effective_min_score) {
+        auto chains = chain_hits(it->second, c.id, k, is_reverse, stage2_config);
+        for (auto& cr : chains) {
             cr.stage1_score = c.score;
             results.push_back(cr);
         }

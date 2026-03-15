@@ -48,6 +48,7 @@ struct SearchRequest {
     uint32_t context_abs = 0;                     // absolute context bases (when frac=0)
     uint16_t context_frac_x10000 = 0;             // ratio * 10000 (when > 0, ratio mode)
     uint16_t max_degen_expand = 0;                 // 0 = server default
+    uint16_t stage2_max_nhit_per_subject = 0;      // 0 = server default
     std::string db;                                // target database name (empty = error)
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;

@@ -265,6 +265,185 @@ std::vector<OutputHit> run_stage3(
         }
     });
 
+    // 5.5. Overlap resolution for multi-chain hits (context > 0 only)
+    // When multiple chains exist for the same (qseqid, sseqid, sstrand),
+    // context extension may cause overlapping alignment regions.
+    // Clamp the lower-scoring hit's context and re-align.
+    {
+        bool has_context = context_is_ratio ? (context_ratio > 0) : (context_abs > 0);
+        if (has_context) {
+            // Group hits by (qseqid, sseqid, sstrand)
+            struct HitGroup {
+                std::vector<size_t> indices;
+            };
+            std::unordered_map<std::string, HitGroup> groups;
+            for (size_t i = 0; i < hits.size(); i++) {
+                if (!hit_valid[i] || subject_subseqs[i].empty()) continue;
+                std::string key = hits[i].qseqid + "\t" + hits[i].sseqid + "\t" + hits[i].sstrand;
+                groups[key].indices.push_back(i);
+            }
+
+            for (auto& [key, group] : groups) {
+                if (group.indices.size() < 2) continue;
+
+                // Sort by sstart ascending
+                std::sort(group.indices.begin(), group.indices.end(),
+                    [&hits](size_t a, size_t b) {
+                        return hits[a].sstart < hits[b].sstart;
+                    });
+
+                // Iterative overlap resolution
+                bool changed = true;
+                while (changed) {
+                    changed = false;
+
+                    for (size_t gi = 0; gi + 1 < group.indices.size(); gi++) {
+                        size_t idx_a = group.indices[gi];
+                        size_t idx_b = group.indices[gi + 1];
+
+                        if (!hit_valid[idx_a] || !hit_valid[idx_b]) continue;
+
+                        // Check overlap: hit_a.send >= hit_b.sstart
+                        if (hits[idx_a].send < hits[idx_b].sstart) continue;
+
+                        // Determine which has higher chainscore (keep that one intact)
+                        size_t keep_idx, clamp_idx;
+                        if (hits[idx_a].chainscore >= hits[idx_b].chainscore) {
+                            keep_idx = idx_a;
+                            clamp_idx = idx_b;
+                        } else {
+                            keep_idx = idx_b;
+                            clamp_idx = idx_a;
+                        }
+
+                        // Clamp the lower-scoring hit's overlapping side
+                        // If clamp_idx is before keep_idx: clamp its send
+                        // If clamp_idx is after keep_idx: clamp its sstart
+                        uint32_t new_ext_start, new_ext_end;
+                        uint32_t oid = hits[clamp_idx].oid;
+                        uint32_t seq_len = hits[clamp_idx].slen;
+                        if (seq_len == 0) seq_len = 1; // safety
+
+                        auto qit2 = query_map.find(hits[clamp_idx].qseqid);
+                        if (qit2 == query_map.end()) continue;
+                        uint32_t query_len2 = static_cast<uint32_t>(queries[qit2->second].sequence.size());
+                        uint32_t ctx2 = context_is_ratio
+                            ? static_cast<uint32_t>(query_len2 * context_ratio)
+                            : context_abs;
+
+                        if (hits[clamp_idx].sstart <= hits[keep_idx].sstart) {
+                            // clamp_idx is before keep_idx; clamp its end
+                            uint32_t boundary = hits[keep_idx].sstart;
+                            // Original stage2 region for clamp hit
+                            // We need the stage2 s_end to check if the entire region is consumed
+                            if (hits[clamp_idx].sstart >= boundary) {
+                                // Entire clamp hit is consumed by keep hit
+                                hit_valid[clamp_idx] = false;
+                                changed = true;
+                                continue;
+                            }
+                            new_ext_start = ext_starts[clamp_idx];
+                            new_ext_end = (boundary > 0) ? boundary - 1 : 0;
+                        } else {
+                            // clamp_idx is after keep_idx; clamp its start
+                            uint32_t boundary = hits[keep_idx].send + 1;
+                            if (boundary >= hits[clamp_idx].send) {
+                                // Entire clamp hit is consumed
+                                hit_valid[clamp_idx] = false;
+                                changed = true;
+                                continue;
+                            }
+                            new_ext_start = boundary;
+                            new_ext_end = std::min(hits[clamp_idx].send + ctx2, seq_len - 1);
+                        }
+
+                        if (new_ext_start >= new_ext_end) {
+                            hit_valid[clamp_idx] = false;
+                            changed = true;
+                            continue;
+                        }
+
+                        // Re-fetch subject subsequence
+                        uint16_t vol = hits[clamp_idx].volume;
+                        if (vol >= readers.size()) {
+                            hit_valid[clamp_idx] = false;
+                            changed = true;
+                            continue;
+                        }
+                        subject_subseqs[clamp_idx] = readers[vol].get_subsequence(
+                            oid, new_ext_start, new_ext_end);
+                        ext_starts[clamp_idx] = new_ext_start;
+
+                        // Re-align
+                        size_t qi2 = qit2->second;
+                        bool is_rev2 = (hits[clamp_idx].sstrand == '-');
+                        std::string pkey = std::to_string(qi2) + ":" + (is_rev2 ? "1" : "0");
+                        auto pit = profiles.find(pkey);
+                        if (pit == profiles.end()) continue;
+                        const auto& pe2 = pit->second;
+
+                        const char* subj2 = subject_subseqs[clamp_idx].c_str();
+                        int slen2 = static_cast<int>(subject_subseqs[clamp_idx].size());
+
+                        if (config.traceback) {
+                            parasail_result_t* result2 = parasail_sg_trace_striped_profile_sat(
+                                pe2.profile, subj2, slen2, config.gapopen, config.gapext);
+                            hits[clamp_idx].alnscore = result2->score;
+
+                            parasail_cigar_t* cigar2 = parasail_result_get_cigar(
+                                result2, pe2.seq.c_str(), static_cast<int>(pe2.seq.size()),
+                                subj2, slen2, matrix);
+                            hits[clamp_idx].qstart = static_cast<uint32_t>(cigar2->beg_query);
+                            hits[clamp_idx].qend = static_cast<uint32_t>(result2->end_query);
+                            hits[clamp_idx].sstart = new_ext_start + static_cast<uint32_t>(cigar2->beg_ref);
+                            hits[clamp_idx].send = new_ext_start + static_cast<uint32_t>(result2->end_ref);
+
+                            CigarStats cs2 = walk_cigar(cigar2);
+                            hits[clamp_idx].nident = cs2.nident;
+                            hits[clamp_idx].mismatch = cs2.nmismatch;
+                            hits[clamp_idx].cigar = cs2.cigar_str;
+                            hits[clamp_idx].pident = (cs2.aln_len > 0) ? 100.0 * cs2.nident / cs2.aln_len : 0.0;
+
+                            parasail_traceback_t* tb2 = parasail_result_get_traceback(
+                                result2, pe2.seq.c_str(), static_cast<int>(pe2.seq.size()),
+                                subj2, slen2, matrix, '|', '*', ' ');
+                            if (tb2) {
+                                hits[clamp_idx].qseq = tb2->query;
+                                hits[clamp_idx].sseq = tb2->ref;
+                                parasail_traceback_free(tb2);
+                            }
+
+                            parasail_cigar_free(cigar2);
+                            parasail_result_free(result2);
+                        } else {
+                            parasail_result_t* result2 = parasail_sg_striped_profile_sat(
+                                pe2.profile, subj2, slen2, config.gapopen, config.gapext);
+                            hits[clamp_idx].alnscore = result2->score;
+                            hits[clamp_idx].qend = static_cast<uint32_t>(result2->end_query);
+                            hits[clamp_idx].send = new_ext_start + static_cast<uint32_t>(result2->end_ref);
+                            parasail_result_free(result2);
+                        }
+
+                        changed = true;
+                    }
+
+                    // Re-sort by sstart after changes
+                    if (changed) {
+                        // Remove invalidated indices
+                        group.indices.erase(
+                            std::remove_if(group.indices.begin(), group.indices.end(),
+                                [&hit_valid](size_t i) { return !hit_valid[i]; }),
+                            group.indices.end());
+                        std::sort(group.indices.begin(), group.indices.end(),
+                            [&hits](size_t a, size_t b) {
+                                return hits[a].sstart < hits[b].sstart;
+                            });
+                    }
+                }
+            }
+        }
+    }
+
     // 6. Filter by min_pident / min_nident (only meaningful with traceback)
     std::vector<OutputHit> filtered;
     filtered.reserve(hits.size());

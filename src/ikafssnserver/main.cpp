@@ -42,6 +42,7 @@ static void print_usage(const char* prog) {
         "  -stage2_min_score <int>  Default minimum chain score (default: 0 = adaptive)\n"
         "  -stage2_max_gap <int>    Default chaining gap tolerance (default: 100)\n"
         "  -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)\n"
+        "  -stage2_max_nhit_per_subject <int>  Default max chains per subject (default: 1, 0=unlimited)\n"
         "  -stage1_max_freq <num>   Default high-freq k-mer skip threshold (default: 0.5)\n"
         "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
         "                           1 or 1.0: disable high-freq filtering entirely\n"
@@ -51,7 +52,7 @@ static void print_usage(const char* prog) {
         "  -stage1_min_score <num>  Default Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
         "  -num_results <int>       Default max results per query (default: 0)\n"
         "  -accept_qdegen <0|1>     Default accept queries with degenerate bases (default: 1)\n"
-        "  -context <value>         Default context extension (int=bases, decimal=ratio, default: 0)\n"
+        "  -context <value>         Default context extension (int=bases, decimal=ratio, default: 2.0)\n"
         "  -stage3_traceback <0|1>  Default traceback mode (default: 0)\n"
         "  -stage3_gapopen <int>    Default gap open penalty (default: 10)\n"
         "  -stage3_gapext <int>     Default gap extension penalty (default: 1)\n"
@@ -164,6 +165,8 @@ int main(int argc, char* argv[]) {
         static_cast<uint32_t>(cli.get_int("-stage2_max_gap", 100));
     config.search_config.stage2.chain_max_lookback =
         static_cast<uint32_t>(cli.get_int("-stage2_max_lookback", 64));
+    config.search_config.stage2.max_nhit_per_subject =
+        static_cast<uint32_t>(cli.get_int("-stage2_max_nhit_per_subject", 1));
     config.search_config.stage2.min_diag_hits =
         static_cast<uint32_t>(cli.get_int("-stage2_min_diag_hits", 1));
     config.search_config.stage2.min_score =
@@ -206,7 +209,7 @@ int main(int argc, char* argv[]) {
     {
         ContextParam ctx_param;
         std::string err;
-        if (!parse_context(cli.get_string("-context", "0"), ctx_param, err)) {
+        if (!parse_context(cli.get_string("-context", "2.0"), ctx_param, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }

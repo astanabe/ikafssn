@@ -55,6 +55,8 @@ SearchResponse process_search_request(
         config.stage2.max_gap = req.stage2_max_gap;
     if (req.stage2_max_lookback != 0)
         config.stage2.chain_max_lookback = req.stage2_max_lookback;
+    if (req.stage2_max_nhit_per_subject != 0)
+        config.stage2.max_nhit_per_subject = req.stage2_max_nhit_per_subject;
     if (req.stage1_max_freq_frac_x10000 != 0) {
         double frac = static_cast<double>(req.stage1_max_freq_frac_x10000) / 10000.0;
         uint64_t total_nseq = 0;

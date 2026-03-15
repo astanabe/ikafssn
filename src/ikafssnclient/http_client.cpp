@@ -28,6 +28,7 @@ static std::string build_request_json(const SearchRequest& req) {
     }
     root["stage2_max_gap"] = req.stage2_max_gap;
     root["stage2_max_lookback"] = req.stage2_max_lookback;
+    root["stage2_max_nhit_per_subject"] = req.stage2_max_nhit_per_subject;
     if (req.stage1_max_freq_frac_x10000 != 0) {
         root["stage1_max_freq_frac"] = static_cast<double>(req.stage1_max_freq_frac_x10000) / 10000.0;
     } else {

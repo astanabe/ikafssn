@@ -152,8 +152,9 @@ Options:
                           >= 1: absolute minimum chain score
   -stage2_max_gap <int>   Chaining diagonal gap tolerance (default: 100)
   -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)
+  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: 1, 0=unlimited)
   -stage2_min_diag_hits <int>  Diagonal filter min hits (default: 1)
-  -context <value>        Context extension for mode 3 (default: 0)
+  -context <value>        Context extension for mode 3 (default: 2.0)
                           Integer: bases to extend; Decimal: query length multiplier
   -stage3_traceback <0|1> Enable traceback in mode 3 (default: 0)
   -stage3_gapopen <int>   Gap open penalty for mode 3 (default: 10)
@@ -253,7 +254,7 @@ Input:
 
 Common options:
   -o <path>               Output FASTA file (default: stdout)
-  -context <value>        Context extension (default: 0)
+  -context <value>        Context extension (default: 2.0)
                           Integer: bases to add before/after match region
                           Decimal: multiplier of query length (qlen)
   -v, --verbose           Verbose logging
@@ -324,8 +325,9 @@ Options:
   -stage2_min_score <int> Default minimum chain score (default: 0 = adaptive)
   -stage2_max_gap <int>   Default chaining gap tolerance (default: 100)
   -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)
+  -stage2_max_nhit_per_subject <int>  Default max chains per subject (default: 1, 0=unlimited)
   -stage2_min_diag_hits <int> Default diagonal filter min hits (default: 1)
-  -context <value>        Default context extension (default: 0)
+  -context <value>        Default context extension (default: 2.0)
                           Integer: bases to extend; Decimal: query length multiplier
   -stage3_traceback <0|1> Default traceback mode (default: 0)
   -stage3_gapopen <int>   Default gap open penalty (default: 10)
@@ -469,8 +471,9 @@ Options:
                            0 = explicitly request adaptive mode
   -stage2_max_gap <int>    Chaining gap tolerance (default: server default)
   -stage2_max_lookback <int>  Chaining DP lookback window (default: server default)
+  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: server default)
   -stage2_min_diag_hits <int> Diagonal filter min hits (default: server default)
-  -context <value>         Context extension (default: server default)
+  -context <value>         Context extension (default: 2.0)
                            Integer: bases to extend; Decimal: query length multiplier
   -stage3_traceback <0|1>  Enable traceback (default: server default)
   -stage3_gapopen <int>    Gap open penalty (default: server default)
@@ -613,7 +616,7 @@ The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0
 
 1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `stage1_min_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0` (default), all qualifying candidates are returned without sorting.
 
-2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= stage2_min_score` are reported. The DP inner loop is limited by `-stage2_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior).
+2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= stage2_min_score` are reported. The DP inner loop is limited by `-stage2_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior). When `-stage2_max_nhit_per_subject` is greater than 1 (or 0 for unlimited), multiple non-overlapping chains are extracted per subject using greedy best-chain removal: the best chain is found and its hits are removed, then the DP is re-run on the remaining hits, repeating until the limit is reached or no chain meets `min_score`.
 
 3. **Stage 3 (Pairwise Alignment):** For each Stage 2 hit, retrieves the subject subsequence from the BLAST DB (with optional context extension via `-context`), and performs semi-global pairwise alignment using the Parasail library (nuc44 scoring matrix). The alignment score (**alnscore**) is computed for all hits. When `-stage3_traceback 1` is enabled, CIGAR strings, percent identity, identical base count, mismatch count, and aligned sequences (with gaps) are also computed. Hits can be filtered by `-stage3_min_pident` and `-stage3_min_nident` (traceback mode only). Subject sequences are pre-fetched in parallel across BLAST DB volumes controlled by `-stage3_fetch_threads`.
 

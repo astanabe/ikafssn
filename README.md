@@ -11,6 +11,26 @@
 - Parallel indexing and search via Intel TBB
 - Lightweight per-command executables, each linking only its required dependencies
 
+## Comparison with BLAST (blastn)
+
+ikafssn and [BLAST](https://blast.ncbi.nlm.nih.gov/Blast.cgi) (blastn) both search NCBI BLAST databases, but differ in indexing strategy, search algorithm, and deployment model:
+
+| Aspect | ikafssn | blastn |
+|---|---|---|
+| **Primary use case** | K-mer-based similarity search across large nucleotide collections | Local alignment search for homologous sequences |
+| **Search algorithm** | Seed-chain-align: k-mer inverted index → candidate filtering → collinear chaining → pairwise alignment | Seed-extend: word seeds → ungapped extension → gapped alignment (Smith-Waterman) |
+| **Database format** | NCBI BLAST DB (reads via C++ Toolkit) | NCBI BLAST DB (native) |
+| **Index structure** | Pre-built k-mer inverted index (direct-address table, 4^k entries) stored on disk | Seeds generated on-the-fly per query from the database (no pre-built k-mer index) |
+| **Seeding** | All k-mers indexed exhaustively; high-frequency filtering at search time | Exact word matches (default word size 11 for megablast, 7 for blastn) |
+| **Scoring model** | K-mer match count (Stage 1), chain length (Stage 2), semi-global alignment score (Stage 3) | E-value based on local alignment score (bit score) with statistical significance model |
+| **Alignment** | Parasail semi-global, 1-piece affine gap (optional Stage 3) | BLAST gapped extension, affine gap penalties, with X-drop heuristic |
+| **Hits per subject** | Configurable via `-stage2_max_nhit_per_subject` (default: 1; 0 = unlimited) | Multiple HSPs per subject by default |
+| **Ambiguous bases** | IUPAC degenerate expansion in both index and query (configurable limit) | Not expanded; seeds at ambiguous positions are skipped, extension penalizes via scoring matrix |
+| **Client-server mode** | Built-in: `ikafssnserver` + `ikafssnclient` (UNIX/TCP socket), `ikafssnhttpd` (HTTP REST) | Not built-in (requires external wrappers or NCBI cloud BLAST) |
+| **Parallelization** | Intel TBB (`parallel_for`, `parallel_sort`); multi-query and multi-volume parallelism | OpenMP-based multi-threading (`-num_threads`) |
+| **Output format** | TSV, JSON, SAM, BAM | Tabular, XML, ASN.1, HTML, SAM, and others (`-outfmt`) |
+| **Expected query sequences** | Short to moderate-length sequences (PCR amplicons, marker genes) | Any length (short queries to full chromosomes) |
+
 ## Comparison with minimap2
 
 ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-chain-align paradigm, but differ in design goals and key algorithmic choices:
@@ -26,7 +46,7 @@ ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-cha
 | **Seeding** | All k-mers indexed in a direct-address table (4^k entries) | Minimizers (subsampled k-mers) indexed in a hash table |
 | **Candidate filtering** | Explicit Stage 1: scan ID posting lists to score and filter candidates before chaining | No separate filtering stage; seeds go directly to chaining |
 | **Chaining DP score** | Chain length (anchor count) with a diagonal-deviation constraint (`max_gap`) | Estimated matching bases minus a gap penalty with logarithmic distance term |
-| **Hits per subject** | One best chain per subject sequence | Multiple chains per subject (primary, secondary, supplementary) |
+| **Hits per subject** | Configurable via `-stage2_max_nhit_per_subject` (default: 1 best chain; set >1 or 0 for unlimited) | Multiple chains per subject (primary, secondary, supplementary) |
 | **Default result limit** | Unlimited (returns all candidates above threshold) | 1 primary + up to 5 secondary per query (`-N 5`, `-p 0.8`) |
 | **Alignment** | Parasail semi-global, 1-piece affine gap (optional Stage 3) | KSW2 with SIMD, 2-piece affine gap and Z-drop heuristic |
 | **Ambiguous bases** | IUPAC degenerate expansion (configurable limit) | Not supported (N-containing k-mers skipped) |
