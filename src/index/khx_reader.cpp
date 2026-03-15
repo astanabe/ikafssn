@@ -36,6 +36,8 @@ bool KhxReader::open(const std::string& path) {
 
     k_ = hdr->k;
     tbl_size_ = table_size(k_);
+    t_ = hdr->t;
+    template_type_ = hdr->template_type;
     uint64_t bitset_bytes = (tbl_size_ + 7) / 8;
 
     if (mmap_.size() < sizeof(KhxHeader) + bitset_bytes) {
@@ -52,6 +54,8 @@ bool KhxReader::open(const std::string& path) {
 void KhxReader::close() {
     mmap_.close();
     k_ = 0;
+    t_ = 0;
+    template_type_ = 0;
     bitset_ = nullptr;
     tbl_size_ = 0;
 }

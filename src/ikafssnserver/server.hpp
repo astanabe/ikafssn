@@ -19,14 +19,23 @@ struct DatabaseEntry {
     std::string name;                       // DB name (basename of ix_prefix)
     std::string ix_prefix;                  // original (for logging)
     std::string db_path;                    // BLAST DB path (empty = max_mode 2)
-    std::map<int, KmerGroup> kmer_groups;
+    std::vector<KmerGroup> kmer_groups;
     int default_k = 0;                      // largest k for this DB
+    uint8_t default_t = 0;
+    uint8_t default_template_type = 0;
     uint8_t max_mode = 2;                   // 2 or 3
     SearchConfig resolved_search_config;    // max_freq resolved per-DB
     Stage3Config stage3_config;
     bool context_is_ratio = true;
     double context_ratio = 2.0;
     uint32_t context_abs = 0;
+
+    const KmerGroup* find_group(int k, uint8_t t = 0, uint8_t template_type = 0) const {
+        for (const auto& g : kmer_groups) {
+            if (g.k == k && g.t == t && g.template_type == template_type) return &g;
+        }
+        return nullptr;
+    }
 };
 
 struct ServerConfig {

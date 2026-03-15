@@ -3,6 +3,7 @@
 
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/spaced_seed.hpp"
 #include <climits>
 #include <cmath>
 #include "io/fasta_reader.hpp"
@@ -35,17 +36,19 @@ SearchResponse process_search_request(
     SearchResponse resp;
     resp.db = db.name;
 
-    // Determine k
+    // Determine k and t
     int k = (req.k != 0) ? req.k : db.default_k;
+    uint8_t t = (req.t != 0) ? req.t : db.default_t;
+    uint8_t tt = (req.template_type != 0) ? req.template_type : db.default_template_type;
     resp.k = static_cast<uint8_t>(k);
+    resp.t = t;
 
-    auto it = db.kmer_groups.find(k);
-    if (it == db.kmer_groups.end()) {
+    const KmerGroup* group_ptr = db.find_group(k, t, tt);
+    if (!group_ptr) {
         resp.status = 1;
         return resp;
     }
-
-    const KmerGroup& group = it->second;
+    const KmerGroup& group = *group_ptr;
 
     // Build search config, using request values if non-zero, else DB defaults
     SearchConfig config = db.resolved_search_config;
@@ -86,6 +89,22 @@ SearchResponse process_search_request(
         config.strand = req.strand;
     if (req.max_degen_expand != 0)
         config.max_degen_expand = req.max_degen_expand;
+    config.t = t;
+
+    // Get seed masks and tags for spaced seed preprocessing.
+    // For a "both" index, tags ensure cross-template isolation.
+    // A "both" index can serve coding-only or optimal-only searches
+    // because the tag bit routes to the correct portion of the table.
+    std::vector<uint32_t> seed_masks;
+    std::vector<uint32_t> seed_tags;  // KmerInt = uint32_t for k=11,12
+    if (t > 0) {
+        // index_tt = group's template_type (what the index has)
+        // tt = search template_type (what the user wants)
+        auto [m, tg] = get_tagged_masks<uint32_t>(
+            k, t, group.template_type, tt);
+        seed_masks = std::move(m);
+        seed_tags = std::move(tg);
+    }
 
     // Validate mode against max_mode
     if (config.mode > db.max_mode) {
@@ -222,12 +241,13 @@ SearchResponse process_search_request(
         if (group.kmer_type == 0) {
             query_pp_idx[qi] = pp16.size();
             pp16.push_back({preprocess_query<uint16_t>(
-                req.queries[qi].sequence, k, all_kix, khx_ptr, config)});
+                req.queries[qi].sequence, k, all_kix, khx_ptr, config, t, seed_masks,
+                std::vector<uint16_t>(seed_tags.begin(), seed_tags.end()))});
             multi_degen = pp16.back().qdata.has_multi_degen;
         } else {
             query_pp_idx[qi] = pp32.size();
             pp32.push_back({preprocess_query<uint32_t>(
-                req.queries[qi].sequence, k, all_kix, khx_ptr, config)});
+                req.queries[qi].sequence, k, all_kix, khx_ptr, config, t, seed_masks, seed_tags)});
             multi_degen = pp32.back().qdata.has_multi_degen;
         }
 

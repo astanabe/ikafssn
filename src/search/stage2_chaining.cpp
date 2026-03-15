@@ -9,7 +9,7 @@ namespace ikafssn {
 
 std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
                                     SeqId seq_id,
-                                    int k,
+                                    int span,
                                     bool is_reverse,
                                     const Stage2Config& config) {
     if (raw_hits.empty()) return {};
@@ -95,9 +95,9 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
         cr.chainscore = best_score;
         cr.is_reverse = is_reverse;
         cr.q_start = remaining[chain_start_idx].q_pos;
-        cr.q_end = remaining[chain_end_idx].q_pos + static_cast<uint32_t>(k);
+        cr.q_end = remaining[chain_end_idx].q_pos + static_cast<uint32_t>(span);
         cr.s_start = remaining[chain_start_idx].s_pos;
-        cr.s_end = remaining[chain_end_idx].s_pos + static_cast<uint32_t>(k);
+        cr.s_end = remaining[chain_end_idx].s_pos + static_cast<uint32_t>(span);
 
         results.push_back(cr);
 

@@ -17,6 +17,8 @@ public:
     uint8_t kmer_type() const { return header_->kmer_type; }
     uint32_t num_sequences() const { return header_->num_sequences; }
     uint64_t total_postings() const { return header_->total_postings; }
+    uint8_t t() const { return header_->t; }
+    uint8_t template_type() const { return header_->template_type; }
     uint64_t table_size() const { return table_size_; }
 
     // Direct access to tables

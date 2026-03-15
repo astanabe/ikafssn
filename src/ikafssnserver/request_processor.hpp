@@ -35,6 +35,8 @@ struct ServerVolumeData {
 struct KmerGroup {
     int k;
     uint8_t kmer_type; // 0 = uint16_t, 1 = uint32_t
+    uint8_t t = 0;              // template length
+    uint8_t template_type = 0;  // TemplateType enum value
     std::vector<ServerVolumeData> volumes;
     KhxReader khx;  // shared .khx for this k-mer size
 };

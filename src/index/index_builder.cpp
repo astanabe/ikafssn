@@ -6,6 +6,7 @@
 #include "core/packed_kmer_scanner.hpp"
 #include "core/ambiguity_parser.hpp"
 #include "core/varint.hpp"
+#include "core/spaced_seed.hpp"
 #include "index/ksx_writer.hpp"
 #include "index/kix_format.hpp"
 #include "index/kpx_format.hpp"
@@ -40,9 +41,10 @@ struct TempEntry {
 static_assert(sizeof(TempEntry) == 12, "TempEntry must be 12 bytes");
 
 // Determine partition for a kmer based on upper bits.
-static inline uint32_t partition_of(uint32_t kmer, int partition_bits, int k) {
+// effective_bits is the total number of significant bits (2*k, or 2*k+1 for tagged).
+static inline uint32_t partition_of(uint32_t kmer, int partition_bits, int effective_bits) {
     if (partition_bits == 0) return 0;
-    return (kmer >> (2 * k - partition_bits)) & ((1u << partition_bits) - 1);
+    return (kmer >> (effective_bits - partition_bits)) & ((1u << partition_bits) - 1);
 }
 
 // Compute ceiling log2 for powers of 2.
@@ -63,7 +65,6 @@ bool build_index(BlastDbReader& db,
                  const Logger& logger) {
 
     const int k = config.k;
-    const uint64_t tbl_size = table_size(k);
     const uint32_t num_seqs = db.num_sequences();
 
     logger.info("Building index: k=%d, sequences=%u", k, num_seqs);
@@ -99,6 +100,23 @@ bool build_index(BlastDbReader& db,
         logger.info("Phase 0: wrote %s (%u sequences)", ksx_tmp.c_str(), num_seqs);
     }
 
+    // Pre-compute spaced seed masks and tags (shared across all phases).
+    // For "both" mode, tags embed a 1-bit template identity into k-mer values.
+    std::vector<uint32_t> seed_masks;
+    std::vector<KmerInt> seed_tags; // pre-shifted tag values; empty = no tagging
+    if (config.t > 0) {
+        auto [m, t] = get_tagged_masks<KmerInt>(k, config.t,
+                           config.template_type, config.template_type);
+        seed_masks = std::move(m);
+        seed_tags = std::move(t);
+    }
+
+    // Effective table size: doubles for "both" mode (tag bit per mask)
+    const int num_masks = static_cast<int>(seed_masks.size());
+    const uint64_t tbl_size = spaced_table_size(k, num_masks > 0 ? num_masks : 1);
+    // Effective bit width for partitioning (2*k, or 2*k+1 for tagged both mode)
+    const int effective_bits = 2 * k + ((num_masks > 1) ? 1 : 0);
+
     // =========== Phase 1: Counting pass (TBB parallel) ===========
     logger.info("Phase 1: counting k-mers (threads=%d)...", config.threads);
     std::vector<uint64_t> counts64(tbl_size, 0);
@@ -116,18 +134,35 @@ bool build_index(BlastDbReader& db,
                 for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
                     auto raw = db.get_raw_sequence(oid);
                     auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
-                    scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
-                        [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
-                            my_counts[kmer]++;
-                        },
-                        [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
-                                     const AmbigInfo* infos, int count) {
-                            expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
-                                [&my_counts](KmerInt expanded) {
-                                    my_counts[expanded]++;
-                                });
-                        },
-                        config.max_degen_expand);
+                    if (config.t > 0) {
+                        scanner.scan_spaced(raw.ncbi2na_data, raw.seq_length, ambig,
+                            seed_masks, static_cast<int>(config.t),
+                            [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
+                                my_counts[kmer]++;
+                            },
+                            [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
+                                         const AmbigInfo* infos, int count) {
+                                expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
+                                    [&my_counts](KmerInt expanded) {
+                                        my_counts[expanded]++;
+                                    });
+                            },
+                            config.max_degen_expand,
+                            seed_tags);
+                    } else {
+                        scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
+                            [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
+                                my_counts[kmer]++;
+                            },
+                            [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
+                                         const AmbigInfo* infos, int count) {
+                                expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
+                                    [&my_counts](KmerInt expanded) {
+                                        my_counts[expanded]++;
+                                    });
+                            },
+                            config.max_degen_expand);
+                    }
                     db.ret_raw_sequence(raw);
                 }
             });
@@ -156,7 +191,14 @@ bool build_index(BlastDbReader& db,
     counts64.clear();
     counts64.shrink_to_fit();
 
-    logger.info("Phase 1: total postings = %lu", static_cast<unsigned long>(total_postings));
+    logger.info("Phase 1: total postings = %lu (estimated)", static_cast<unsigned long>(total_postings));
+
+    // When using spaced seeds with both templates, two different masks may
+    // produce the same (kmer, seq_id, pos) entry. Track actual counts after
+    // deduplication in Phase 2-3 and rewrite the counts table in Phase 4.
+    const bool need_dedup = (config.t > 0);
+    std::vector<uint32_t> actual_counts(tbl_size, 0);
+    uint64_t actual_total_postings = 0;
 
     // =========== Determine partition count from memory_limit ===========
     int num_partitions = 1;
@@ -252,24 +294,33 @@ bool build_index(BlastDbReader& db,
                 for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
                     auto raw = db.get_raw_sequence(oid);
                     auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
-                    scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
-                        [&](uint32_t pos, KmerInt kmer) {
-                            uint32_t kval = static_cast<uint32_t>(kmer);
-                            if (counts[kval] == 0) return;
-                            if (static_cast<int>(partition_of(kval, partition_bits, k)) != p) return;
-                            my_buffer.push_back({kval, oid, pos});
-                        },
-                        [&](uint32_t pos, KmerInt base_kmer,
-                            const AmbigInfo* infos, int count) {
-                            expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
-                                [&](KmerInt expanded) {
-                                    uint32_t kval = static_cast<uint32_t>(expanded);
-                                    if (counts[kval] == 0) return;
-                                    if (static_cast<int>(partition_of(kval, partition_bits, k)) != p) return;
-                                    my_buffer.push_back({kval, oid, pos});
-                                });
-                        },
-                        config.max_degen_expand);
+                    auto normal_cb = [&](uint32_t pos, KmerInt kmer) {
+                        uint32_t kval = static_cast<uint32_t>(kmer);
+                        if (counts[kval] == 0) return;
+                        if (static_cast<int>(partition_of(kval, partition_bits, effective_bits)) != p) return;
+                        my_buffer.push_back({kval, oid, pos});
+                    };
+                    auto ambig_cb = [&](uint32_t pos, KmerInt base_kmer,
+                                        const AmbigInfo* infos, int count) {
+                        expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
+                            [&](KmerInt expanded) {
+                                uint32_t kval = static_cast<uint32_t>(expanded);
+                                if (counts[kval] == 0) return;
+                                if (static_cast<int>(partition_of(kval, partition_bits, effective_bits)) != p) return;
+                                my_buffer.push_back({kval, oid, pos});
+                            });
+                    };
+                    if (config.t > 0) {
+                        scanner.scan_spaced(raw.ncbi2na_data, raw.seq_length, ambig,
+                            seed_masks, static_cast<int>(config.t),
+                            normal_cb, ambig_cb,
+                            config.max_degen_expand,
+                            seed_tags);
+                    } else {
+                        scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
+                            normal_cb, ambig_cb,
+                            config.max_degen_expand);
+                    }
                     db.ret_raw_sequence(raw);
                 }
                 // Atomic progress update (coarse-grained per chunk)
@@ -317,6 +368,19 @@ bool build_index(BlastDbReader& db,
                 return a.pos < b.pos;
             });
 
+        // Deduplicate entries with identical (kmer_value, seq_id, pos).
+        // This occurs when multiple spaced seed masks produce the same k-mer
+        // at the same position for the same sequence.
+        if (need_dedup) {
+            auto new_end = std::unique(buffer.begin(), buffer.end(),
+                [](const TempEntry& a, const TempEntry& b) {
+                    return a.kmer_value == b.kmer_value
+                        && a.seq_id == b.seq_id
+                        && a.pos == b.pos;
+                });
+            buffer.erase(new_end, buffer.end());
+        }
+
         // Write sorted postings grouped by kmer (sequential — I/O bound)
         size_t i = 0;
         while (i < buffer.size()) {
@@ -328,9 +392,11 @@ bool build_index(BlastDbReader& db,
                 j++;
             }
 
-            // Record offsets for this kmer
+            // Record offsets and actual counts for this kmer
             kix_offsets[cur_kmer] = kix_data_pos;
             if (!config.skip_kpx) kpx_offsets[cur_kmer] = kpx_data_pos;
+            actual_counts[cur_kmer] = static_cast<uint32_t>(j - i);
+            actual_total_postings += (j - i);
 
             // Write delta-compressed ID postings to kix
             {
@@ -372,6 +438,13 @@ bool build_index(BlastDbReader& db,
                      static_cast<unsigned long>(buffer.size()));
     }
 
+    if (need_dedup && actual_total_postings < total_postings) {
+        logger.info("Deduplicated: %lu -> %lu postings (removed %lu duplicates)",
+                    static_cast<unsigned long>(total_postings),
+                    static_cast<unsigned long>(actual_total_postings),
+                    static_cast<unsigned long>(total_postings - actual_total_postings));
+    }
+
     // =========== Phase 4: Finalize ===========
     logger.info("Phase 4: finalizing...");
 
@@ -381,13 +454,15 @@ bool build_index(BlastDbReader& db,
     kix_hdr.k = static_cast<uint8_t>(k);
     kix_hdr.kmer_type = kmer_type_for_k(k);
     kix_hdr.num_sequences = num_seqs;
-    kix_hdr.total_postings = total_postings;
+    kix_hdr.total_postings = actual_total_postings;
     kix_hdr.flags = KIX_FLAG_HAS_KSX;
     kix_hdr.volume_index = volume_index;
     kix_hdr.total_volumes = total_volumes;
     size_t name_len = std::min(db_name.size(), size_t(32));
     kix_hdr.db_len = static_cast<uint16_t>(name_len);
     std::memcpy(kix_hdr.db, db_name.c_str(), name_len);
+    kix_hdr.t = config.t;
+    kix_hdr.template_type = config.template_type;
 
     std::fseek(kix_fp, 0, SEEK_SET);
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
@@ -395,8 +470,9 @@ bool build_index(BlastDbReader& db,
     // Write kix offsets table
     std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size, kix_fp);
 
-    // Counts table was already written correctly during reservation
-    // (we wrote the actual counts array, not zeros)
+    // Rewrite counts table with actual counts (may differ from Phase 1
+    // estimates due to spaced seed deduplication)
+    std::fwrite(actual_counts.data(), sizeof(uint32_t), tbl_size, kix_fp);
 
     std::fclose(kix_fp);
 
@@ -405,7 +481,9 @@ bool build_index(BlastDbReader& db,
         std::memcpy(kpx_hdr.magic, KPX_MAGIC, 4);
         kpx_hdr.format_version = KPX_FORMAT_VERSION;
         kpx_hdr.k = static_cast<uint8_t>(k);
-        kpx_hdr.total_postings = total_postings;
+        kpx_hdr.t = config.t;
+        kpx_hdr.template_type = config.template_type;
+        kpx_hdr.total_postings = actual_total_postings;
 
         std::fseek(kpx_fp, 0, SEEK_SET);
         std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);

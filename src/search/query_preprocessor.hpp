@@ -28,22 +28,33 @@ struct QueryKmerData {
 //
 // all_kix: pointers to KixReaders for ALL volumes (for global count aggregation).
 // khx: nullable pointer to shared KhxReader for build-time exclusion info.
+// mask_tags: pre-shifted tag values for each mask (empty = no tagging).
+//   For "both" indexes, tags embed template identity to prevent cross-template matching.
 template <typename KmerInt>
 QueryKmerData<KmerInt> preprocess_query(
     const std::string& query_seq, int k,
     const std::vector<const KixReader*>& all_kix,
     const KhxReader* khx,
-    const SearchConfig& config);
+    const SearchConfig& config,
+    uint8_t t = 0,
+    const std::vector<uint32_t>& masks = {},
+    const std::vector<KmerInt>& mask_tags = {});
 
 extern template QueryKmerData<uint16_t> preprocess_query<uint16_t>(
     const std::string&, int,
     const std::vector<const KixReader*>&,
     const KhxReader*,
-    const SearchConfig&);
+    const SearchConfig&,
+    uint8_t,
+    const std::vector<uint32_t>&,
+    const std::vector<uint16_t>&);
 extern template QueryKmerData<uint32_t> preprocess_query<uint32_t>(
     const std::string&, int,
     const std::vector<const KixReader*>&,
     const KhxReader*,
-    const SearchConfig&);
+    const SearchConfig&,
+    uint8_t,
+    const std::vector<uint32_t>&,
+    const std::vector<uint32_t>&);
 
 } // namespace ikafssn

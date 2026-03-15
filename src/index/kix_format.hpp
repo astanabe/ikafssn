@@ -23,7 +23,8 @@ struct KixHeader {
     uint16_t volume_index;    // 0x18
     uint16_t total_volumes;   // 0x1A
     uint16_t db_len;          // 0x1C
-    uint8_t  reserved[2];     // 0x1E
+    uint8_t  t;               // 0x1E: template length (0=contiguous, 16/18/21=spaced)
+    uint8_t  template_type;   // 0x1F: TemplateType enum value (0=contiguous)
     char     db[32];          // 0x20
 };
 #pragma pack(pop)

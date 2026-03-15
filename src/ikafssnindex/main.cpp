@@ -3,6 +3,7 @@
 #include "index/index_builder.hpp"
 #include "index/index_filter.hpp"
 #include "core/config.hpp"
+#include "core/spaced_seed.hpp"
 #include "core/types.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
@@ -52,6 +53,10 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "  -highfreq_filter_threads <int>\n"
         "                         Threads for cross-volume filtering (default: min(8, threads))\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)\n"
+        "  -t <int>               Template length for spaced seeds\n"
+        "                         0: contiguous k-mers (default)\n"
+        "                         16, 18, 21: spaced seed template length (requires -k 11 or 12)\n"
+        "  -template_type <str>   Template type: coding, optimal, both (default: both)\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
         "  -threads <int>         Number of threads (default: all cores)\n"
@@ -184,9 +189,38 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    int cli_t = cli.get_int("-t", 0);
+    if (cli_t != 0 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
+        std::fprintf(stderr, "Error: -t must be 0, 16, 18, or 21\n");
+        return 1;
+    }
+    uint8_t spaced_t = static_cast<uint8_t>(cli_t);
+
+    TemplateType spaced_type = TemplateType::kBoth;
+    if (cli.has("-template_type")) {
+        spaced_type = template_type_from_string(cli.get_string("-template_type"));
+        if (spaced_type == TemplateType::kContiguous) {
+            std::fprintf(stderr, "Error: -template_type must be coding, optimal, or both\n");
+            return 1;
+        }
+    }
+
+    if (spaced_t > 0) {
+        if (!validate_spaced_seed(k, spaced_t)) {
+            std::fprintf(stderr, "Error: -t %d requires -k 11 or 12\n", spaced_t);
+            return 1;
+        }
+    }
+
     logger.info("Database: %s (%zu volume(s))", db_path.c_str(), vol_paths.size());
-    logger.info("Parameters: k=%d, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
-                k, index_mode, mem_limit_str.c_str(), openvol, threads);
+    if (spaced_t > 0) {
+        logger.info("Parameters: k=%d, t=%d, template_type=%s, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
+                    k, spaced_t, template_type_to_string(spaced_type).c_str(),
+                    index_mode, mem_limit_str.c_str(), openvol, threads);
+    } else {
+        logger.info("Parameters: k=%d, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
+                    k, index_mode, mem_limit_str.c_str(), openvol, threads);
+    }
 
     // Extract DB base name from path
     std::string db_base = std::filesystem::path(db_path).filename().string();
@@ -202,6 +236,8 @@ int main(int argc, char* argv[]) {
     config.verbose = verbose;
     config.skip_kpx = (index_mode == 1);
     config.max_degen_expand = max_degen_expand;
+    config.t = spaced_t;
+    config.template_type = static_cast<uint8_t>(spaced_type);
     // When max_freq_build is active (not 1.0 = disabled), keep .tmp files for cross-volume filtering
     bool freq_filter_active = (max_freq_build != 1.0);
     config.keep_tmp = freq_filter_active;
@@ -253,7 +289,7 @@ int main(int argc, char* argv[]) {
     // Pre-compute per-volume output prefixes
     std::vector<std::string> vol_prefixes(total_volumes);
     for (uint16_t vi = 0; vi < total_volumes; vi++) {
-        vol_prefixes[vi] = index_file_stem(out_dir, vol_basenames[vi], k);
+        vol_prefixes[vi] = index_file_stem(out_dir, vol_basenames[vi], k, spaced_t, static_cast<uint8_t>(spaced_type));
     }
 
     // Process volumes via TBB task_group with concurrency limited by -openvol.
@@ -340,7 +376,7 @@ int main(int argc, char* argv[]) {
 
     // Write .kvx manifest
     {
-        std::string kvx_path = index_file_stem(out_dir, db_base, k) + ".kvx";
+        std::string kvx_path = index_file_stem(out_dir, db_base, k, spaced_t, static_cast<uint8_t>(spaced_type)) + ".kvx";
         FILE* fp = std::fopen(kvx_path.c_str(), "w");
         if (!fp) {
             std::fprintf(stderr, "Error: cannot write %s\n", kvx_path.c_str());
@@ -359,7 +395,7 @@ int main(int argc, char* argv[]) {
 
     // Post-build cross-volume frequency filtering
     if (freq_filter_active) {
-        std::string khx_path = khx_path_for(out_dir, db_base, k);
+        std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, static_cast<uint8_t>(spaced_type));
 
         if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,
                                          freq_threshold, highfreq_filter_threads,

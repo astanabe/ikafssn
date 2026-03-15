@@ -88,6 +88,13 @@ Options:
                           Controls how many non-degenerate k-mers are generated from
                           a k-mer containing IUPAC degenerate bases. Expansion occurs
                           when the product of per-position variant counts <= this limit.
+  -t <int>                Template length for spaced seeds (default: 0)
+                          0: contiguous k-mers (traditional mode)
+                          16, 18, 21: spaced seed template length (requires -k 11 or 12)
+  -template_type <str>    Template type for spaced seeds (default: both)
+                          coding: coding template only
+                          optimal: optimal template only
+                          both: both coding and optimal templates
   -threads <int>          Number of threads (default: all cores)
                           Parallelizes counting, partition scan, sort,
                           and volume processing
@@ -114,6 +121,15 @@ ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
 
 # Build mode 1 index (Stage 1 only, no .kpx files)
 ikafssnindex -db mydb -k 11 -o ./index -mode 1
+
+# Build spaced seed index (k=11, t=16, both coding and optimal templates)
+ikafssnindex -db mydb -k 11 -t 16 -o ./index
+
+# Build spaced seed index with coding template only
+ikafssnindex -db mydb -k 11 -t 18 -template_type coding -o ./index
+
+# Build spaced seed index with k=12, t=21
+ikafssnindex -db mydb -k 12 -t 21 -o ./index
 ```
 
 ### ikafssnsearch
@@ -169,6 +185,11 @@ Options:
                           1=plus only, -1=minus only, 2=both
   -accept_qdegen <0|1>    Accept queries with degenerate bases (default: 1)
   -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
+  -t <int>                Template length for spaced seeds (default: 0)
+                          0: contiguous k-mers (traditional mode)
+                          16, 18, 21: spaced seed template length (requires -k 11 or 12)
+  -template_type <str>    Template type for spaced seeds (default: both)
+                          coding, optimal, or both
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose           Verbose logging
 ```
@@ -486,6 +507,10 @@ Options:
   -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
   -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)
   -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)
+  -t <int>                 Template length for spaced seeds (default: server default)
+                           0: contiguous k-mers; 16, 18, 21: spaced seed template length
+  -template_type <str>     Template type for spaced seeds (default: server default)
+                           coding, optimal, or both
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose            Verbose logging
 
@@ -930,6 +955,27 @@ Examples:
 The `.khx` file contains a 32-byte header (magic "KMHX", format version, k) followed by a bitset of `ceil(4^k / 8)` bytes. Bit *i* = 1 indicates that k-mer *i* was excluded during index build based on cross-volume aggregated counts.
 
 ID and position postings are stored in separate files so that Stage 1 filtering never touches `.kpx`, maximizing page cache efficiency.
+
+### Spaced Seed Index File Naming
+
+When spaced seeds are enabled (`-t > 0`), the file naming includes the template length and type:
+
+```
+<vol_basename>.<kk>mer.<tt>mer.<type>.kix
+<vol_basename>.<kk>mer.<tt>mer.<type>.kpx
+<vol_basename>.<kk>mer.<tt>mer.<type>.ksx
+<db_base>.<kk>mer.<tt>mer.<type>.kvx
+<db_base>.<kk>mer.<tt>mer.<type>.khx
+```
+
+Where `<tt>` is the zero-padded template length and `<type>` is `cod` (coding), `opt` (optimal), or `bot` (both).
+
+Examples:
+- Spaced seed with k=11, t=16, both templates: `nt.00.11mer.16mer.bot.kix`
+- Spaced seed with k=12, t=21, coding only: `nt.00.12mer.21mer.cod.kix`
+- Manifest: `nt.11mer.16mer.bot.kvx`
+
+**Index format version:** Spaced seed indexes use format version 2 (`.kix`/`.kpx`/`.ksx`/`.khx` headers contain the template length `t` and template type fields). These v2 index files are not compatible with older versions of ikafssn that only support format version 1. Contiguous indexes (t=0) also use format version 2 but are backward-compatible in structure.
 
 ## Installation
 

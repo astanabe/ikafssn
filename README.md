@@ -5,6 +5,7 @@
 ## Features
 
 - Builds a k-mer inverted index directly from NCBI BLAST databases
+- Supports both contiguous k-mers and discontiguous megablast-style spaced seeds (`-t 16/18/21` with k=11 or 12, coding/optimal/both templates)
 - Three-stage search pipeline: fast candidate filtering (Stage 1), position-aware collinear chaining (Stage 2), and Parasail pairwise alignment with CIGAR/percent identity output (Stage 3), with configurable mode selection (1/2/3)
 - Client-server architecture with UNIX/TCP socket and HTTP REST API support, with multi-database serving from a single process
 - Handles IUPAC ambiguous bases by expanding degenerate k-mers during indexing and search (configurable expansion limit)
@@ -21,7 +22,7 @@ ikafssn and [BLAST](https://blast.ncbi.nlm.nih.gov/Blast.cgi) (blastn) both sear
 | **Search algorithm** | Seed-chain-align: k-mer inverted index → candidate filtering → collinear chaining → pairwise alignment | Seed-extend: word seeds → ungapped extension → gapped alignment (Smith-Waterman) |
 | **Database format** | NCBI BLAST DB (reads via C++ Toolkit) | NCBI BLAST DB (native) |
 | **Index structure** | Pre-built k-mer inverted index (direct-address table, 4^k entries) stored on disk | Seeds generated on-the-fly per query from the database (no pre-built k-mer index) |
-| **Seeding** | All k-mers indexed exhaustively; high-frequency filtering at search time | Exact word matches (default word size 11 for megablast, 7 for blastn) |
+| **Seeding** | All k-mers indexed exhaustively (contiguous or spaced seeds); high-frequency filtering at search time | Exact word matches (default word size 11 for megablast, 7 for blastn); discontiguous megablast templates |
 | **Scoring model** | K-mer match count (Stage 1), chain length (Stage 2), semi-global alignment score (Stage 3) | E-value based on local alignment score (bit score) with statistical significance model |
 | **Alignment** | Parasail semi-global, 1-piece affine gap (optional Stage 3) | BLAST gapped extension, affine gap penalties, with X-drop heuristic |
 | **Hits per subject** | Configurable via `-stage2_max_nhit_per_subject` (default: 1; 0 = unlimited) | Multiple HSPs per subject by default |
@@ -43,7 +44,7 @@ ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-cha
 | **Expected query sequences** | Short to moderate-length sequences such as PCR amplicons and marker genes (hundreds to a few thousand bases) | Genomic reads (Illumina short reads, PacBio/ONT long reads) and assembled sequences (contigs, chromosomes) |
 | **Expected query quality** | High-accuracy sequences with few or no sequencing errors (e.g., Sanger, error-corrected consensus) | Designed to tolerate high error rates (ONT ~5–15%, PacBio CLR ~10–15%; also handles HiFi and Illumina) |
 | **K-mer size** | k = 5–16 (`uint16_t` for k ≤ 8, `uint32_t` for k ≥ 9) | k = 1–28 (default 15) |
-| **Seeding** | All k-mers indexed in a direct-address table (4^k entries) | Minimizers (subsampled k-mers) indexed in a hash table |
+| **Seeding** | All k-mers indexed in a direct-address table (4^k entries; 2×4^k for spaced seed "both" mode) | Minimizers (subsampled k-mers) indexed in a hash table |
 | **Candidate filtering** | Explicit Stage 1: scan ID posting lists to score and filter candidates before chaining | No separate filtering stage; seeds go directly to chaining |
 | **Chaining DP score** | Chain length (anchor count) with a diagonal-deviation constraint (`max_gap`) | Estimated matching bases minus a gap penalty with logarithmic distance term |
 | **Hits per subject** | Configurable via `-stage2_max_nhit_per_subject` (default: 1 best chain; set >1 or 0 for unlimited) | Multiple chains per subject (primary, secondary, supplementary) |

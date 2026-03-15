@@ -15,11 +15,13 @@ std::string format_server_info(const InfoResponse& info, bool verbose);
 
 // Validate db/k/mode against server capabilities.
 // check_slots=true adds soft slot check (active >= max -> error).
+// t/template_type: spaced seed parameters (0 = contiguous, always valid).
 // Returns "" on success, or error message string on failure.
 // Error messages include full server capability listing.
 std::string validate_info(const InfoResponse& info,
                           const std::string& db,
                           uint8_t k, uint8_t mode,
-                          bool check_slots);
+                          bool check_slots,
+                          uint8_t t = 0, uint8_t template_type = 0);
 
 } // namespace ikafssn

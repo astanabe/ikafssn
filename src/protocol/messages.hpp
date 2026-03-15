@@ -49,6 +49,8 @@ struct SearchRequest {
     uint16_t context_frac_x10000 = 0;             // ratio * 10000 (when > 0, ratio mode)
     uint16_t max_degen_expand = 0;                 // 0 = server default
     uint16_t stage2_max_nhit_per_subject = 0;      // 0 = server default
+    uint8_t  t = 0;               // template length (0/16/18/21)
+    uint8_t  template_type = 0;   // 0=server default, 1=coding, 2=optimal, 3=both
     std::string db;                                // target database name (empty = error)
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
@@ -99,6 +101,7 @@ struct SearchResponse {
     uint8_t  mode = 2;              // 1 = stage1 only, 2 = stage1+stage2, 3 = stage1+stage2+stage3
     uint8_t  stage1_score = 1;      // 1 = coverscore, 2 = matchscore
     uint8_t  stage3_traceback = 0;  // echo back: 1 = traceback fields populated
+    uint8_t  t = 0;
     std::string db;                 // echo back database name
     std::vector<QueryResult> results;
     std::vector<std::string> rejected_qseqids;  // queries rejected due to concurrency limit
@@ -134,6 +137,8 @@ struct VolumeInfo {
 struct KmerGroupInfo {
     uint8_t  k;
     uint8_t  kmer_type; // 0 = uint16, 1 = uint32
+    uint8_t  t = 0;
+    uint8_t  template_type = 0;
     std::vector<VolumeInfo> volumes;
 };
 

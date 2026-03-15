@@ -15,6 +15,8 @@ public:
 
     const KpxHeader& header() const { return *header_; }
     int k() const { return header_->k; }
+    uint8_t t() const { return header_->t; }
+    uint8_t template_type() const { return header_->template_type; }
     uint64_t total_postings() const { return header_->total_postings; }
     uint64_t table_size() const { return table_size_; }
 

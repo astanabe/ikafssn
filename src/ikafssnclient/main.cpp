@@ -3,6 +3,7 @@
 #include "ikafssnclient/http_client.hpp"
 #endif
 #include "ikafssnclient/checkpoint.hpp"
+#include "core/spaced_seed.hpp"
 #include "core/version.hpp"
 #include "protocol/info_format.hpp"
 #include "util/common_init.hpp"
@@ -72,6 +73,8 @@ static void print_usage(const char* prog) {
         "  -stage3_min_pident <num> Min percent identity filter (default: server default)\n"
         "  -stage3_min_nident <int> Min identical bases filter (default: server default)\n"
         "  -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)\n"
+        "  -t <int>                 Template length for spaced seeds (0/16/18/21, default: 0)\n"
+        "  -template_type <string>  Template type: coding, optimal, both (default: server default)\n"
         "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n"
 #ifdef IKAFSSN_ENABLE_HTTP
@@ -385,6 +388,22 @@ int main(int argc, char* argv[]) {
         }
         base_req.max_degen_expand = static_cast<uint16_t>(mde);
     }
+    {
+        int cli_t = cli.get_int("-t", 0);
+        if (cli_t != 0 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
+            std::fprintf(stderr, "Error: -t must be 0, 16, 18, or 21\n");
+            return 1;
+        }
+        base_req.t = static_cast<uint8_t>(cli_t);
+    }
+    if (cli.has("-template_type")) {
+        TemplateType tt = template_type_from_string(cli.get_string("-template_type"));
+        if (tt == TemplateType::kContiguous) {
+            std::fprintf(stderr, "Error: -template_type must be coding, optimal, or both\n");
+            return 1;
+        }
+        base_req.template_type = static_cast<uint8_t>(tt);
+    }
 
     // Stage 3 parameters
     base_req.stage3_traceback = static_cast<uint8_t>(cli.get_int("-stage3_traceback", 0));
@@ -448,7 +467,8 @@ int main(int argc, char* argv[]) {
     }
     {
         std::string err = validate_info(server_info, base_req.db,
-                                        base_req.k, base_req.mode, true);
+                                        base_req.k, base_req.mode, true,
+                                        base_req.t, base_req.template_type);
         if (!err.empty()) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;

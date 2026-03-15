@@ -36,6 +36,12 @@ bool KpxReader::open(const std::string& path) {
 
     table_size_ = ikafssn::table_size(header_->k);
 
+    // For spaced seed "both" mode (template_type == 3), the table size doubles
+    // to accommodate the mask tag bit that prevents cross-template matching.
+    if (header_->t > 0 && header_->template_type == 3) {
+        table_size_ *= 2;
+    }
+
     const uint8_t* ptr = mmap_.data() + sizeof(KpxHeader);
 
     pos_offsets_ = reinterpret_cast<const uint64_t*>(ptr);

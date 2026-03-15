@@ -1,4 +1,5 @@
 #include "core/config.hpp"
+#include "core/spaced_seed.hpp"
 #include "core/types.hpp"
 #include "core/version.hpp"
 #include "util/common_init.hpp"
@@ -303,7 +304,20 @@ int main(int argc, char* argv[]) {
     }
 
     int k = vol_files[0].k;
-    uint64_t tbl_size = table_size(k);
+    uint8_t vol_t = vol_files[0].t;
+    uint8_t vol_template_type = vol_files[0].template_type;
+    // Determine effective table size from first volume's reader
+    // (accounts for mask tag doubling in spaced seed "both" mode)
+    uint64_t tbl_size = 0;
+    {
+        KixReader kix0;
+        if (!kix0.open(vol_files[0].kix_path)) {
+            std::fprintf(stderr, "Error: cannot open %s\n", vol_files[0].kix_path.c_str());
+            return 1;
+        }
+        tbl_size = kix0.table_size();
+        kix0.close();
+    }
 
     // Read all volumes
     std::vector<VolumeStats> vol_stats;
@@ -357,7 +371,17 @@ int main(int argc, char* argv[]) {
     std::printf("Index prefix:      %s\n", ix_prefix.c_str());
     std::printf("K-mer length (k):  %d\n", k);
     std::printf("K-mer integer type: %s\n", k < K_TYPE_THRESHOLD ? "uint16" : "uint32");
-    std::printf("Table size (4^k):  %lu\n", static_cast<unsigned long>(tbl_size));
+    if (vol_t > 0) {
+        std::printf("Template length:   %u\n", static_cast<unsigned>(vol_t));
+        std::printf("Template type:     %s\n",
+                     template_type_to_string(static_cast<TemplateType>(vol_template_type)).c_str());
+    }
+    if (tbl_size > table_size(k)) {
+        std::printf("Table size:        %lu (effective, 2*4^k for both mode)\n",
+                     static_cast<unsigned long>(tbl_size));
+    } else {
+        std::printf("Table size (4^k):  %lu\n", static_cast<unsigned long>(tbl_size));
+    }
     std::printf("Number of volumes: %zu\n\n", vol_stats.size());
 
     // Per-volume info

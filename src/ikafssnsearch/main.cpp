@@ -1,4 +1,5 @@
 #include "core/config.hpp"
+#include "core/spaced_seed.hpp"
 #include "core/types.hpp"
 #include "core/version.hpp"
 #include "core/kmer_encoding.hpp"
@@ -84,6 +85,8 @@ static void print_usage(const char* prog) {
         "  -stage3_min_nident <int> Min identical bases filter for mode 3 (default: 0)\n"
         "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, threads))\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
+        "  -t <int>                 Template length for spaced seeds (0=contiguous, 16/18/21; default: 0)\n"
+        "  -template_type <string>  Template type: coding, optimal, both (default: both)\n"
         "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
@@ -257,6 +260,31 @@ int main(int argc, char* argv[]) {
         config.max_degen_expand = static_cast<uint16_t>(mde);
     }
 
+    int cli_t = cli.get_int("-t", 0);
+    if (cli_t != 0 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
+        std::fprintf(stderr, "Error: -t must be 0, 16, 18, or 21\n");
+        return 1;
+    }
+    uint8_t spaced_t = static_cast<uint8_t>(cli_t);
+
+    TemplateType spaced_type = TemplateType::kBoth;
+    if (cli.has("-template_type")) {
+        spaced_type = template_type_from_string(cli.get_string("-template_type"));
+        if (spaced_type == TemplateType::kContiguous) {
+            std::fprintf(stderr, "Error: -template_type must be coding, optimal, or both\n");
+            return 1;
+        }
+    }
+
+    if (spaced_t > 0) {
+        if (!validate_spaced_seed(filter_k > 0 ? filter_k : 0, spaced_t)) {
+            std::fprintf(stderr, "Error: -t %d requires -k 11 or 12\n", spaced_t);
+            return 1;
+        }
+    }
+
+    config.t = spaced_t;
+
     // Output format
     OutputFormat outfmt;
     {
@@ -287,7 +315,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Discover volumes
-    auto vol_files = discover_volumes(ix_prefix, filter_k);
+    auto vol_files = discover_volumes(ix_prefix, filter_k, spaced_t,
+                                       spaced_t > 0 ? static_cast<uint8_t>(spaced_type) : uint8_t(0));
     if (vol_files.empty()) {
         if (filter_k > 0) {
             std::fprintf(stderr, "Error: no index files found for prefix %s with k=%d\n",
@@ -319,6 +348,12 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
+
+    if (spaced_t > 0 && !validate_spaced_seed(k, spaced_t)) {
+        std::fprintf(stderr, "Error: -t %d requires k=11 or k=12 but found k=%d\n", spaced_t, k);
+        return 1;
+    }
+
     logger.info("Found %zu volume(s), k=%d, threads=%d", vol_files.size(), k, num_threads);
 
     // Read query FASTA
@@ -393,7 +428,8 @@ int main(int argc, char* argv[]) {
     KhxReader shared_khx;
     {
         auto parts = parse_index_prefix(ix_prefix);
-        shared_khx.open(khx_path_for(parts.parent_dir, parts.db, k)); // non-fatal
+        shared_khx.open(khx_path_for(parts.parent_dir, parts.db, k,
+                                     spaced_t, static_cast<uint8_t>(spaced_type))); // non-fatal
     }
 
     // Apply madvise budget: prioritize khx > kix dict > kpx dict > ksx
@@ -439,6 +475,19 @@ int main(int argc, char* argv[]) {
     }
     const KhxReader* khx_ptr = shared_khx.is_open() ? &shared_khx : nullptr;
 
+    // Resolve seed masks and tags based on index and search template types.
+    // A "both" index can be searched with coding-only or optimal-only thanks
+    // to the tag bit that isolates each template's k-mers in the table.
+    std::vector<uint32_t> seed_masks;
+    std::vector<uint32_t> seed_tags;  // KmerInt = uint32_t for k>=9
+    if (spaced_t > 0) {
+        uint8_t index_tt = vol_data[0].kix.template_type();
+        auto [m, tg] = get_tagged_masks<uint32_t>(
+            k, spaced_t, index_tt, static_cast<uint8_t>(spaced_type));
+        seed_masks = std::move(m);
+        seed_tags = std::move(tg);
+    }
+
     // Phase 1: preprocess queries (sequential per-query, global high-freq determination)
     // Store preprocessed data per non-skipped query
     struct PreprocessedQuery16 { QueryKmerData<uint16_t> qdata; };
@@ -454,7 +503,9 @@ int main(int argc, char* argv[]) {
             if (query_skipped[qi]) continue;
             query_pp_idx[qi] = pp16.size();
             pp16.push_back({preprocess_query<uint16_t>(
-                queries[qi].sequence, k, all_kix, khx_ptr, config)});
+                queries[qi].sequence, k, all_kix, khx_ptr, config,
+                spaced_t, seed_masks,
+                std::vector<uint16_t>(seed_tags.begin(), seed_tags.end()))});
             if (pp16.back().qdata.has_multi_degen) {
                 std::fprintf(stderr,
                     "Warning: query '%s' contains k-mers exceeding max_degen_expand=%u; "
@@ -469,7 +520,8 @@ int main(int argc, char* argv[]) {
             if (query_skipped[qi]) continue;
             query_pp_idx[qi] = pp32.size();
             pp32.push_back({preprocess_query<uint32_t>(
-                queries[qi].sequence, k, all_kix, khx_ptr, config)});
+                queries[qi].sequence, k, all_kix, khx_ptr, config,
+                spaced_t, seed_masks, seed_tags)});
             if (pp32.back().qdata.has_multi_degen) {
                 std::fprintf(stderr,
                     "Warning: query '%s' contains k-mers exceeding max_degen_expand=%u; "

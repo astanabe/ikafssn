@@ -107,6 +107,20 @@ void HttpController::search(
     sreq.context_abs = j.get("context_abs", 0).asUInt();
     sreq.context_frac_x10000 = static_cast<uint16_t>(j.get("context_frac_x10000", 0).asUInt());
     sreq.max_degen_expand = static_cast<uint16_t>(j.get("max_degen_expand", 0).asUInt());
+    if (j.isMember("t")) {
+        sreq.t = static_cast<uint8_t>(j["t"].asInt());
+    }
+    if (j.isMember("template_type")) {
+        auto val = j["template_type"];
+        if (val.isString()) {
+            std::string s = val.asString();
+            if (s == "coding") sreq.template_type = 1;
+            else if (s == "optimal") sreq.template_type = 2;
+            else if (s == "both") sreq.template_type = 3;
+        } else if (val.isInt()) {
+            sreq.template_type = static_cast<uint8_t>(val.asInt());
+        }
+    }
     sreq.db = j.get("db", "").asString();
 
     // Seqidlist mode
@@ -156,7 +170,8 @@ void HttpController::search(
     {
         auto merged = manager_->merged_info();
         std::string err = validate_info(merged, sreq.db,
-                                        sreq.k, sreq.mode, false);
+                                        sreq.k, sreq.mode, false,
+                                        sreq.t, sreq.template_type);
         if (!err.empty()) {
             callback(make_error_response(drogon::k400BadRequest, err));
             return;
@@ -185,6 +200,9 @@ void HttpController::search(
         result["stage1_score"] = sresp.stage1_score;
         if (sresp.stage3_traceback)
             result["stage3_traceback"] = sresp.stage3_traceback;
+        if (sresp.t > 0) {
+            result["t"] = sresp.t;
+        }
         const char* s1name = (sresp.stage1_score == 2) ? "matchscore" : "coverscore";
 
         Json::Value results_arr(Json::arrayValue);

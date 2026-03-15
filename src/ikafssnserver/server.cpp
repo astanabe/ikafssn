@@ -1,6 +1,7 @@
 #include "ikafssnserver/server.hpp"
 #include "ikafssnserver/connection_handler.hpp"
 #include "core/config.hpp"
+#include "core/spaced_seed.hpp"
 #include "core/version.hpp"
 #include "io/volume_discovery.hpp"
 #include "util/common_init.hpp"
@@ -53,11 +54,23 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
 
     bool all_have_kpx = true;
 
-    // Group by k and open index files
+    // Helper to find or create a KmerGroup by (k, t, template_type)
+    auto find_or_create_group = [&](int k, uint8_t t, uint8_t tt) -> KmerGroup& {
+        for (auto& g : entry.kmer_groups) {
+            if (g.k == k && g.t == t && g.template_type == tt) return g;
+        }
+        entry.kmer_groups.push_back({});
+        auto& g = entry.kmer_groups.back();
+        g.k = k;
+        g.kmer_type = kmer_type_for_k(k);
+        g.t = t;
+        g.template_type = tt;
+        return g;
+    };
+
+    // Group by (k, t, template_type) and open index files
     for (const auto& dv : discovered) {
-        auto& group = entry.kmer_groups[dv.k];
-        group.k = dv.k;
-        group.kmer_type = kmer_type_for_k(dv.k);
+        auto& group = find_or_create_group(dv.k, dv.t, dv.template_type);
 
         ServerVolumeData svd;
         svd.volume_index = dv.volume_index;
@@ -94,18 +107,25 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
     }
 
     // Sort volumes within each group, then open shared .khx per group
-    for (auto& [k, group] : entry.kmer_groups) {
+    for (auto& group : entry.kmer_groups) {
         std::sort(group.volumes.begin(), group.volumes.end(),
                   [](const ServerVolumeData& a, const ServerVolumeData& b) {
                       return a.volume_index < b.volume_index;
                   });
 
         // Open shared .khx for this k-mer group (non-fatal if missing)
-        group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db, k));
+        group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db,
+                                     group.k, group.t, group.template_type));
     }
 
-    // Default k = largest available
-    entry.default_k = entry.kmer_groups.rbegin()->first;
+    // Default k = largest available (groups sorted by k ascending)
+    if (!entry.kmer_groups.empty()) {
+        auto max_k_it = std::max_element(entry.kmer_groups.begin(), entry.kmer_groups.end(),
+            [](const KmerGroup& a, const KmerGroup& b) { return a.k < b.k; });
+        entry.default_k = max_k_it->k;
+        entry.default_t = max_k_it->t;
+        entry.default_template_type = max_k_it->template_type;
+    }
 
     // Resolve search config from server config template
     entry.resolved_search_config = config.search_config;
@@ -118,7 +138,7 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
     } else if (config.max_freq_raw > 0 && config.max_freq_raw < 1.0) {
         if (!entry.kmer_groups.empty()) {
             uint64_t total_nseq = 0;
-            for (const auto& vol : entry.kmer_groups.begin()->second.volumes)
+            for (const auto& vol : entry.kmer_groups.front().volumes)
                 total_nseq += vol.ksx.num_sequences();
             auto resolved = static_cast<uint32_t>(
                 std::ceil(config.max_freq_raw * total_nseq));
@@ -140,8 +160,13 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
     entry.context_abs = config.context_abs;
 
     logger.info("Loaded DB '%s' (%zu k-mer group(s)):", db_name.c_str(), entry.kmer_groups.size());
-    for (const auto& [k, group] : entry.kmer_groups) {
-        logger.info("  k=%d: %zu volume(s)", k, group.volumes.size());
+    for (const auto& group : entry.kmer_groups) {
+        if (group.t > 0)
+            logger.info("  k=%d t=%d %s: %zu volume(s)", group.k, group.t,
+                        template_type_to_string(static_cast<TemplateType>(group.template_type)).c_str(),
+                        group.volumes.size());
+        else
+            logger.info("  k=%d: %zu volume(s)", group.k, group.volumes.size());
     }
 
     size_t idx = databases_.size();
@@ -198,24 +223,24 @@ void Server::apply_madvise_budget(uint64_t budget, const Logger& logger) {
 
     // Priority 1: khx (one per k-mer group per DB)
     for (auto& db : databases_)
-        for (auto& [k, group] : db.kmer_groups)
+        for (auto& group : db.kmer_groups)
             try_willneed(group.khx);
 
     // Priority 2: kix dictionaries
     for (auto& db : databases_)
-        for (auto& [k, group] : db.kmer_groups)
+        for (auto& group : db.kmer_groups)
             for (auto& vol : group.volumes)
                 try_willneed(vol.kix);
 
     // Priority 3: kpx dictionaries
     for (auto& db : databases_)
-        for (auto& [k, group] : db.kmer_groups)
+        for (auto& group : db.kmer_groups)
             for (auto& vol : group.volumes)
                 try_willneed(vol.kpx);
 
     // Priority 4: ksx metadata
     for (auto& db : databases_)
-        for (auto& [k, group] : db.kmer_groups)
+        for (auto& group : db.kmer_groups)
             for (auto& vol : group.volumes)
                 try_willneed(vol.ksx);
 
@@ -315,7 +340,7 @@ int Server::run(const ServerConfig& config_in) {
     // Log total mmap count
     size_t total_mmaps = 0;
     for (const auto& db : databases_) {
-        for (const auto& [k, group] : db.kmer_groups) {
+        for (const auto& group : db.kmer_groups) {
             for (const auto& vol : group.volumes) {
                 total_mmaps += 2; // kix + ksx always
                 if (vol.kpx.is_open()) total_mmaps++;

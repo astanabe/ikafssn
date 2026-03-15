@@ -11,9 +11,10 @@ struct KpxHeader {
     char     magic[4];        // 0x00: "KMPX"
     uint16_t format_version;  // 0x04
     uint8_t  k;               // 0x06
-    uint8_t  reserved1;       // 0x07
+    uint8_t  t;               // 0x07: template length (0=contiguous)
     uint64_t total_postings;  // 0x08
-    uint8_t  reserved2[16];   // 0x10
+    uint8_t  template_type;   // 0x10: TemplateType enum value (0=contiguous)
+    uint8_t  reserved2[15];   // 0x11
 };
 #pragma pack(pop)
 

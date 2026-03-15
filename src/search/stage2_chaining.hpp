@@ -25,7 +25,7 @@ struct Stage2Config {
 // Returns vector of ChainResult (empty if no chain passes min_score).
 std::vector<ChainResult> chain_hits(const std::vector<Hit>& hits,
                                     SeqId seq_id,
-                                    int k,
+                                    int span,
                                     bool is_reverse,
                                     const Stage2Config& config);
 

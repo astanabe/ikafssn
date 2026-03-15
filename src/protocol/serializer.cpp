@@ -157,6 +157,8 @@ private:
 //   u16  context_frac_x10000
 //   u16  max_degen_expand
 //   u16  stage2_max_nhit_per_subject
+//   u8   t
+//   u8   template_type
 //   str16 db
 //   u32  num_seqids
 //     [str16 seqid] × num_seqids
@@ -193,6 +195,8 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     put_u16(buf, req.context_frac_x10000);
     put_u16(buf, req.max_degen_expand);
     put_u16(buf, req.stage2_max_nhit_per_subject);
+    put_u8(buf, req.t);
+    put_u8(buf, req.template_type);
     put_str16(buf, req.db);
 
     put_u32(buf, static_cast<uint32_t>(req.seqids.size()));
@@ -244,6 +248,8 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u16(req.context_frac_x10000)) return false;
     if (!r.get_u16(req.max_degen_expand)) return false;
     if (!r.get_u16(req.stage2_max_nhit_per_subject)) return false;
+    if (!r.get_u8(req.t)) return false;
+    if (!r.get_u8(req.template_type)) return false;
     if (!r.get_str16(req.db)) return false;
 
     uint32_t num_seqids;
@@ -277,6 +283,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //   u8   mode
 //   u8   stage1_score
 //   u8   stage3_traceback
+//   u8   t
 //   str16 db
 //   u16  num_queries
 //   for each query:
@@ -316,6 +323,7 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
     put_u8(buf, resp.mode);
     put_u8(buf, resp.stage1_score);
     put_u8(buf, resp.stage3_traceback);
+    put_u8(buf, resp.t);
     put_str16(buf, resp.db);
     put_u16(buf, static_cast<uint16_t>(resp.results.size()));
 
@@ -364,6 +372,7 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
     if (!r.get_u8(resp.mode)) return false;
     if (!r.get_u8(resp.stage1_score)) return false;
     if (!r.get_u8(resp.stage3_traceback)) return false;
+    if (!r.get_u8(resp.t)) return false;
     if (!r.get_str16(resp.db)) return false;
 
     uint16_t num_queries;
@@ -466,7 +475,7 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format (v4):
+// Wire format (v7):
 //   u8   status
 //   u8   default_k
 //   i32  max_queue_size
@@ -481,6 +490,8 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 //     for each group:
 //       u8  k
 //       u8  kmer_type
+//       u8  t
+//       u8  template_type
 //       u16 num_volumes
 //       for each volume:
 //         u16 volume_index
@@ -509,6 +520,8 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
         for (const auto& g : db.groups) {
             put_u8(buf, g.k);
             put_u8(buf, g.kmer_type);
+            put_u8(buf, g.t);
+            put_u8(buf, g.template_type);
             put_u16(buf, static_cast<uint16_t>(g.volumes.size()));
 
             for (const auto& v : g.volumes) {
@@ -551,6 +564,8 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
             auto& g = db.groups[gi];
             if (!r.get_u8(g.k)) return false;
             if (!r.get_u8(g.kmer_type)) return false;
+            if (!r.get_u8(g.t)) return false;
+            if (!r.get_u8(g.template_type)) return false;
 
             uint16_t num_vols;
             if (!r.get_u16(num_vols)) return false;

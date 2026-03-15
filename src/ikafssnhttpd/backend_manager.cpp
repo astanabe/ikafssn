@@ -83,23 +83,28 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
         uint64_t total_bases = 0;
     };
 
-    // Key: (db_name, k)
+    // Key: (db_name, k, t, template_type)
     struct DbKKey {
         std::string db;
         uint8_t k;
+        uint8_t t;
+        uint8_t template_type;
         bool operator==(const DbKKey& o) const {
-            return db == o.db && k == o.k;
+            return db == o.db && k == o.k && t == o.t
+                && template_type == o.template_type;
         }
     };
     struct DbKKeyHash {
         size_t operator()(const DbKKey& key) const {
             size_t h = std::hash<std::string>()(key.db);
             h ^= std::hash<uint8_t>()(key.k) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= std::hash<uint8_t>()(key.t) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= std::hash<uint8_t>()(key.template_type) + 0x9e3779b9 + (h << 6) + (h >> 2);
             return h;
         }
     };
 
-    // Map: (db, k) -> list of (backend_index, KStats)
+    // Map: (db, k, t, template_type) -> list of (backend_index, KStats)
     std::unordered_map<DbKKey, std::vector<std::pair<size_t, KStats>>, DbKKeyHash>
         dbk_backends;
 
@@ -115,12 +120,12 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
                     stats.total_sequences += v.num_sequences;
                     stats.total_bases += v.total_bases;
                 }
-                dbk_backends[{db.name, g.k}].push_back({i, stats});
+                dbk_backends[{db.name, g.k, g.t, g.template_type}].push_back({i, stats});
             }
         }
     }
 
-    // Check consistency for (db, k) pairs that appear on multiple backends
+    // Check consistency for (db, k, t, template_type) tuples that appear on multiple backends
     for (const auto& [dbk, entries] : dbk_backends) {
         if (entries.size() <= 1) continue;
 
@@ -129,9 +134,10 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
             const auto& other = entries[j].second;
 
             if (ref.total_sequences != other.total_sequences) {
-                logger.error("Cross-server validation failed for DB '%s' k=%u: "
+                logger.error("Cross-server validation failed for DB '%s' k=%u t=%u: "
                              "total sequences differ between backend %zu (%lu) and %zu (%lu)",
                              dbk.db.c_str(), static_cast<unsigned>(dbk.k),
+                             static_cast<unsigned>(dbk.t),
                              entries[0].first,
                              static_cast<unsigned long>(ref.total_sequences),
                              entries[j].first,
@@ -140,9 +146,10 @@ bool BackendManager::validate_cross_server_dbs(const Logger& logger) const {
             }
 
             if (ref.total_bases != other.total_bases) {
-                logger.error("Cross-server validation failed for DB '%s' k=%u: "
+                logger.error("Cross-server validation failed for DB '%s' k=%u t=%u: "
                              "total bases differ between backend %zu (%lu) and %zu (%lu)",
                              dbk.db.c_str(), static_cast<unsigned>(dbk.k),
+                             static_cast<unsigned>(dbk.t),
                              entries[0].first,
                              static_cast<unsigned long>(ref.total_bases),
                              entries[j].first,
@@ -333,7 +340,8 @@ InfoResponse BackendManager::merged_info() const {
                 for (const auto& g : db.groups) {
                     bool found = false;
                     for (const auto& eg : existing.groups) {
-                        if (eg.k == g.k) {
+                        if (eg.k == g.k && eg.t == g.t
+                            && eg.template_type == g.template_type) {
                             found = true;
                             break;
                         }
@@ -363,15 +371,29 @@ Json::Value BackendManager::build_info_json() const {
     struct MergedGroup {
         uint8_t k;
         uint8_t kmer_type;
+        uint8_t t = 0;
+        uint8_t template_type = 0;
         std::vector<VolumeInfo> volumes;
         std::map<uint8_t, ModeCapInfo> mode_capacity;
+    };
+
+    // Composite key for group map: (k, t, template_type)
+    struct GroupKey {
+        uint8_t k;
+        uint8_t t;
+        uint8_t template_type;
+        bool operator<(const GroupKey& o) const {
+            if (k != o.k) return k < o.k;
+            if (t != o.t) return t < o.t;
+            return template_type < o.template_type;
+        }
     };
 
     struct MergedDb {
         std::string name;
         uint8_t default_k;
         uint8_t max_mode;
-        std::map<uint8_t, MergedGroup> groups; // key=k
+        std::map<GroupKey, MergedGroup> groups;
     };
 
     std::map<std::string, MergedDb> merged_dbs;
@@ -393,10 +415,13 @@ Json::Value BackendManager::build_info_json() const {
             }
 
             for (const auto& g : db.groups) {
-                auto& mg = mdb.groups[g.k];
+                GroupKey gkey{g.k, g.t, g.template_type};
+                auto& mg = mdb.groups[gkey];
                 if (mg.k == 0) {
                     mg.k = g.k;
                     mg.kmer_type = g.kmer_type;
+                    mg.t = g.t;
+                    mg.template_type = g.template_type;
                     mg.volumes = g.volumes;
                 }
 
@@ -424,10 +449,14 @@ Json::Value BackendManager::build_info_json() const {
         dbobj["max_mode"] = mdb.max_mode;
 
         Json::Value groups_arr(Json::arrayValue);
-        for (const auto& [k, mg] : mdb.groups) {
+        for (const auto& [gkey, mg] : mdb.groups) {
             Json::Value gobj;
             gobj["k"] = mg.k;
             gobj["kmer_type"] = (mg.kmer_type == 0) ? "uint16" : "uint32";
+            if (mg.t > 0) {
+                gobj["t"] = mg.t;
+                gobj["template_type"] = mg.template_type;
+            }
 
             uint64_t group_total_sequences = 0;
             uint64_t group_total_bases = 0;
@@ -474,7 +503,7 @@ Json::Value BackendManager::build_info_json() const {
     int64_t global_max_seqs_per_req = 0;
     bool has_any_mode = false;
     for (const auto& [name, mdb] : merged_dbs) {
-        for (const auto& [k, mg] : mdb.groups) {
+        for (const auto& [gkey, mg] : mdb.groups) {
             for (const auto& [m, cap] : mg.mode_capacity) {
                 if (!has_any_mode) {
                     global_max_seqs_per_req = cap.sum_effective_per_req;

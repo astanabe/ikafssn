@@ -4,6 +4,7 @@
 #include "index/kix_reader.hpp"
 #include "index/khx_reader.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/spaced_seed.hpp"
 #include "core/config.hpp"
 
 #include <algorithm>
@@ -34,6 +35,31 @@ extract_kmers(const std::string& seq, int k, bool* has_multi_degen = nullptr,
     return kmers;
 }
 
+template <typename KmerInt>
+static std::vector<std::pair<uint32_t, KmerInt>>
+extract_kmers_spaced(const std::string& seq, int k,
+                     const std::vector<uint32_t>& masks, int t,
+                     const std::vector<KmerInt>& mask_tags = {},
+                     bool* has_multi_degen = nullptr,
+                     int max_expansion = 16) {
+    std::vector<std::pair<uint32_t, KmerInt>> kmers;
+    KmerScanner<KmerInt> scanner(k);
+    scanner.scan_spaced_ambig(seq.data(), seq.size(), masks, t,
+        [&](uint32_t pos, KmerInt kmer) {
+            kmers.emplace_back(pos, kmer);
+        },
+        [&](uint32_t pos, KmerInt base_kmer, const AmbigInfo* infos, int count) {
+            expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
+                [&](KmerInt expanded) {
+                    kmers.emplace_back(pos, expanded);
+                });
+        },
+        has_multi_degen,
+        max_expansion,
+        mask_tags);
+    return kmers;
+}
+
 // Compute global max_freq: aggregate across all volumes if auto mode.
 static uint32_t compute_global_max_freq(
     uint32_t config_max_freq,
@@ -55,20 +81,46 @@ QueryKmerData<KmerInt> preprocess_query(
     const std::string& query_seq, int k,
     const std::vector<const KixReader*>& all_kix,
     const KhxReader* khx,
-    const SearchConfig& config) {
+    const SearchConfig& config,
+    uint8_t t,
+    const std::vector<uint32_t>& masks,
+    const std::vector<KmerInt>& mask_tags) {
 
     QueryKmerData<KmerInt> result;
 
     // 1. Extract forward k-mers
-    auto fwd_kmers = extract_kmers<KmerInt>(query_seq, k, &result.has_multi_degen,
-                                            static_cast<int>(config.max_degen_expand));
+    std::vector<std::pair<uint32_t, KmerInt>> fwd_kmers;
+    if (t > 0 && !masks.empty()) {
+        fwd_kmers = extract_kmers_spaced<KmerInt>(query_seq, k, masks,
+                        static_cast<int>(t), mask_tags, &result.has_multi_degen,
+                        static_cast<int>(config.max_degen_expand));
+    } else {
+        fwd_kmers = extract_kmers<KmerInt>(query_seq, k, &result.has_multi_degen,
+                        static_cast<int>(config.max_degen_expand));
+    }
     if (fwd_kmers.empty()) return result;
 
     // 2. Build reverse complement k-mers
     std::vector<std::pair<uint32_t, KmerInt>> rc_kmers;
-    rc_kmers.reserve(fwd_kmers.size());
-    for (const auto& [pos, kmer] : fwd_kmers) {
-        rc_kmers.emplace_back(pos, kmer_revcomp(kmer, k));
+    if (t > 0 && !masks.empty()) {
+        // Spaced seed: scan RC string with same templates, remap positions
+        std::string rc_seq = reverse_complement_string(query_seq);
+        auto rc_raw = extract_kmers_spaced<KmerInt>(rc_seq, k, masks,
+                          static_cast<int>(t), mask_tags, &result.has_multi_degen,
+                          static_cast<int>(config.max_degen_expand));
+        int span = static_cast<int>(t);
+        rc_kmers.reserve(rc_raw.size());
+        for (const auto& [pos, kmer] : rc_raw) {
+            // Remap position: rc position p corresponds to fwd position (len - p - span)
+            uint32_t fwd_pos = static_cast<uint32_t>(query_seq.size()) - pos - static_cast<uint32_t>(span);
+            rc_kmers.emplace_back(fwd_pos, kmer);
+        }
+    } else {
+        // Contiguous: existing kmer_revcomp() approach
+        rc_kmers.reserve(fwd_kmers.size());
+        for (const auto& [pos, kmer] : fwd_kmers) {
+            rc_kmers.emplace_back(pos, kmer_revcomp(kmer, k));
+        }
     }
 
     // 3. Determine global max_freq
@@ -93,8 +145,10 @@ QueryKmerData<KmerInt> preprocess_query(
         }
 
         for (uint64_t kmer_idx : all_query_kmer_values) {
+            // Strip mask tag bit for KHX lookup (KHX uses base 4^k table)
+            uint64_t khx_idx = kmer_idx & (ikafssn::table_size(k) - 1);
             // Check .khx exclusion
-            if (khx != nullptr && khx->is_excluded(kmer_idx)) {
+            if (khx != nullptr && khx->is_excluded(khx_idx)) {
                 highfreq_set.insert(kmer_idx);
                 continue;
             }
@@ -213,11 +267,17 @@ template QueryKmerData<uint16_t> preprocess_query<uint16_t>(
     const std::string&, int,
     const std::vector<const KixReader*>&,
     const KhxReader*,
-    const SearchConfig&);
+    const SearchConfig&,
+    uint8_t,
+    const std::vector<uint32_t>&,
+    const std::vector<uint16_t>&);
 template QueryKmerData<uint32_t> preprocess_query<uint32_t>(
     const std::string&, int,
     const std::vector<const KixReader*>&,
     const KhxReader*,
-    const SearchConfig&);
+    const SearchConfig&,
+    uint8_t,
+    const std::vector<uint32_t>&,
+    const std::vector<uint32_t>&);
 
 } // namespace ikafssn

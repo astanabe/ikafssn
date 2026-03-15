@@ -10,6 +10,7 @@
 #include "index/ksx_reader.hpp"
 #include "index/khx_reader.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/spaced_seed.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -138,7 +139,7 @@ search_one_strand_preprocessed(
         auto it = hits_per_seq.find(c.id);
         if (it == hits_per_seq.end()) continue;
 
-        auto chains = chain_hits(it->second, c.id, k, is_reverse, stage2_config);
+        auto chains = chain_hits(it->second, c.id, seed_span(config.t, k), is_reverse, stage2_config);
         for (auto& cr : chains) {
             cr.stage1_score = c.score;
             results.push_back(cr);

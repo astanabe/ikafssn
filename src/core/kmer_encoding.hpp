@@ -5,6 +5,7 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <vector>
 #include "core/config.hpp"
 
 namespace ikafssn {
@@ -325,6 +326,130 @@ public:
                     ambig_callback(pos, kmer, infos, info_count);
                 } else if (has_multi_degen) {
                     *has_multi_degen = true;
+                }
+            }
+        }
+    }
+
+    // Scan with spaced seed templates.
+    // For each window position p (0 to len-t) and each mask,
+    // extract k-mer from the set-bit positions within the window.
+    // mask bit j (from LSB) corresponds to sequence position p + (t-1-j).
+    //
+    // mask_tags: if non-empty, mask_tags[mi] is OR'd into each k-mer produced
+    //   by masks[mi]. Caller pre-shifts the tag (e.g. tag = idx << 2k).
+    //   This embeds a template identity bit that prevents cross-template matching.
+    template <typename Callback>
+    void scan_spaced(const char* seq, size_t len, const std::vector<uint32_t>& masks,
+                     int t, Callback&& callback,
+                     const std::vector<KmerInt>& mask_tags = {}) const {
+        if (static_cast<int>(len) < t) return;
+        const uint8_t* enc_tbl = base_encode_table();
+        const size_t last_start = len - static_cast<size_t>(t);
+        const bool has_tags = !mask_tags.empty();
+
+        for (size_t p = 0; p <= last_start; p++) {
+            for (size_t mi = 0; mi < masks.size(); mi++) {
+                uint32_t mask = masks[mi];
+                KmerInt kmer = 0;
+                bool valid = true;
+                int bit_pos = 0;
+                for (int j = t - 1; j >= 0; j--) {
+                    if (mask & (1u << j)) {
+                        size_t seq_pos = p + (static_cast<size_t>(t) - 1 - static_cast<size_t>(j));
+                        uint8_t enc = enc_tbl[static_cast<uint8_t>(seq[seq_pos])];
+                        if (enc == BASE_ENCODE_INVALID) {
+                            valid = false;
+                            break;
+                        }
+                        kmer |= static_cast<KmerInt>(enc) << (2 * (k_ - 1 - bit_pos));
+                        bit_pos++;
+                    }
+                }
+                if (valid) {
+                    if (has_tags) kmer |= mask_tags[mi];
+                    callback(static_cast<uint32_t>(p), kmer);
+                }
+            }
+        }
+    }
+
+    // Scan with spaced seed templates, handling degenerate bases.
+    // mask_tags: same semantics as scan_spaced (pre-shifted tag per mask).
+    template <typename Callback, typename AmbigCallback>
+    void scan_spaced_ambig(const char* seq, size_t len,
+                            const std::vector<uint32_t>& masks, int t,
+                            Callback&& callback, AmbigCallback&& ambig_callback,
+                            bool* has_multi_degen = nullptr,
+                            int max_expansion = 16,
+                            const std::vector<KmerInt>& mask_tags = {}) const {
+        if (static_cast<int>(len) < t) return;
+        const uint8_t* enc_tbl = base_encode_table();
+        const uint8_t* ncbi4na_tbl = degenerate_ncbi4na_table();
+        const size_t last_start = len - static_cast<size_t>(t);
+        const bool has_tags = !mask_tags.empty();
+
+        for (size_t p = 0; p <= last_start; p++) {
+            for (size_t mi = 0; mi < masks.size(); mi++) {
+                uint32_t mask = masks[mi];
+                KmerInt kmer = 0;
+                bool valid = true;
+                int bit_pos = 0;
+                int degen_count = 0;
+                AmbigInfo infos[MAX_K];
+
+                for (int j = t - 1; j >= 0; j--) {
+                    if (!(mask & (1u << j))) continue;
+
+                    size_t seq_pos = p + (static_cast<size_t>(t) - 1 - static_cast<size_t>(j));
+                    char ch = seq[seq_pos];
+                    uint8_t enc = enc_tbl[static_cast<uint8_t>(ch)];
+                    uint8_t ncbi4na = ncbi4na_tbl[static_cast<uint8_t>(ch)];
+
+                    if (enc == BASE_ENCODE_INVALID && ncbi4na == 0) {
+                        valid = false;
+                        break;
+                    }
+
+                    int kmer_bit_offset = (k_ - 1 - bit_pos) * 2;
+
+                    if (ncbi4na != 0) {
+                        // Degenerate base: use placeholder 0
+                        kmer |= static_cast<KmerInt>(0) << kmer_bit_offset;
+                        infos[degen_count].ncbi4na = ncbi4na;
+                        infos[degen_count].bit_offset = kmer_bit_offset;
+                        degen_count++;
+                    } else {
+                        kmer |= static_cast<KmerInt>(enc) << kmer_bit_offset;
+                    }
+                    bit_pos++;
+                }
+
+                if (!valid) continue;
+
+                uint32_t pos = static_cast<uint32_t>(p);
+                if (degen_count == 0) {
+                    if (has_tags) kmer |= mask_tags[mi];
+                    callback(pos, kmer);
+                } else if (max_expansion <= 1) {
+                    if (has_multi_degen) *has_multi_degen = true;
+                } else {
+                    // Check expansion product
+                    int product = 1;
+                    bool exceeded = false;
+                    for (int d = 0; d < degen_count; d++) {
+                        product *= ncbi4na_expansion_count(infos[d].ncbi4na);
+                        if (product > max_expansion) {
+                            exceeded = true;
+                            break;
+                        }
+                    }
+                    if (!exceeded) {
+                        if (has_tags) kmer |= mask_tags[mi];
+                        ambig_callback(pos, kmer, infos, degen_count);
+                    } else if (has_multi_degen) {
+                        *has_multi_degen = true;
+                    }
                 }
             }
         }

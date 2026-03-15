@@ -11,8 +11,9 @@ struct KhxHeader {
     char     magic[4];        // 0x00: "KMHX"
     uint16_t format_version;  // 0x04
     uint8_t  k;               // 0x06
-    uint8_t  reserved1;       // 0x07
-    uint8_t  reserved2[24];   // 0x08
+    uint8_t  t;               // 0x07: template length (0=contiguous)
+    uint8_t  template_type;   // 0x08: TemplateType enum value (0=contiguous)
+    uint8_t  reserved2[23];   // 0x09
 };
 #pragma pack(pop)
 

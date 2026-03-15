@@ -17,6 +17,8 @@ struct IndexBuilderConfig {
     bool verbose = false;
     bool skip_kpx = false;              // true: skip .kpx generation (mode 1 index)
     int max_degen_expand = 4;           // max degenerate expansion per k-mer (0/1: disable)
+    uint8_t t = 0;                      // template length (0=contiguous, 16/18/21=spaced)
+    uint8_t template_type = 0;          // TemplateType enum value
 };
 
 // Build .kix, .kpx, .ksx index files for a single BLAST DB volume.

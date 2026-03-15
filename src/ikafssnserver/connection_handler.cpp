@@ -86,10 +86,12 @@ void handle_connection(
             dbi.default_k = static_cast<uint8_t>(db.default_k);
             dbi.max_mode = db.max_mode;
 
-            for (const auto& [k, group] : db.kmer_groups) {
+            for (const auto& group : db.kmer_groups) {
                 KmerGroupInfo gi;
-                gi.k = static_cast<uint8_t>(k);
+                gi.k = static_cast<uint8_t>(group.k);
                 gi.kmer_type = group.kmer_type;
+                gi.t = group.t;
+                gi.template_type = group.template_type;
 
                 for (const auto& vol : group.volumes) {
                     VolumeInfo vi;

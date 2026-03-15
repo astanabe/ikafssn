@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <string>
 
+#include "core/spaced_seed.hpp"
+
 namespace ikafssn {
 
 std::string format_all_databases(const InfoResponse& info) {
@@ -11,8 +13,13 @@ std::string format_all_databases(const InfoResponse& info) {
         result += "  " + db.name + "    ";
         for (size_t i = 0; i < db.groups.size(); i++) {
             if (i > 0) result += ", ";
-            result += "k=" + std::to_string(db.groups[i].k)
-                    + " (mode 1-" + std::to_string(db.max_mode) + ")";
+            const auto& g = db.groups[i];
+            result += "k=" + std::to_string(g.k);
+            if (g.t > 0) {
+                result += " t=" + std::to_string(g.t)
+                        + " " + template_type_to_string(static_cast<TemplateType>(g.template_type));
+            }
+            result += " (mode 1-" + std::to_string(db.max_mode) + ")";
         }
         result += "\n";
     }
@@ -22,7 +29,8 @@ std::string format_all_databases(const InfoResponse& info) {
 std::string validate_info(const InfoResponse& info,
                           const std::string& db,
                           uint8_t k, uint8_t mode,
-                          bool check_slots) {
+                          bool check_slots,
+                          uint8_t t, uint8_t template_type) {
     // 1. Slot capacity check
     if (check_slots && info.max_queue_size > 0 &&
         info.queue_depth >= info.max_queue_size) {
@@ -61,6 +69,26 @@ std::string validate_info(const InfoResponse& info,
             std::string msg = "Error: k=" + std::to_string(k)
                             + " is not available for database '"
                             + target_db->name + "'.\nAvailable databases:\n"
+                            + format_all_databases(info);
+            return msg;
+        }
+    }
+
+    // 3b. Check t/template_type (t==0 means contiguous, always valid)
+    if (t != 0) {
+        bool t_found = false;
+        for (const auto& g : target_db->groups) {
+            if (g.k == k && g.t == t &&
+                (template_type == 0 || g.template_type == template_type)) {
+                t_found = true;
+                break;
+            }
+        }
+        if (!t_found) {
+            std::string msg = "Error: t=" + std::to_string(t)
+                            + " is not available for database '"
+                            + target_db->name + "' with k=" + std::to_string(k)
+                            + ".\nAvailable databases:\n"
                             + format_all_databases(info);
             return msg;
         }
@@ -108,12 +136,23 @@ std::string format_server_info(const InfoResponse& info, bool verbose) {
 
             const char* type_str = (g.kmer_type == 0) ? "uint16" : "uint32";
             char line[512];
-            std::snprintf(line, sizeof(line),
-                "    k=%-3u (%s)  %zu volume(s)   %lu sequences   %lu bases   %lu postings\n",
-                g.k, type_str, g.volumes.size(),
-                static_cast<unsigned long>(group_seqs),
-                static_cast<unsigned long>(group_bases),
-                static_cast<unsigned long>(group_postings));
+            if (g.t > 0) {
+                std::snprintf(line, sizeof(line),
+                    "    k=%-3u t=%-2u %-8s (%s)  %zu volume(s)   %lu sequences   %lu bases   %lu postings\n",
+                    g.k, g.t,
+                    template_type_to_string(static_cast<TemplateType>(g.template_type)).c_str(),
+                    type_str, g.volumes.size(),
+                    static_cast<unsigned long>(group_seqs),
+                    static_cast<unsigned long>(group_bases),
+                    static_cast<unsigned long>(group_postings));
+            } else {
+                std::snprintf(line, sizeof(line),
+                    "    k=%-3u (%s)  %zu volume(s)   %lu sequences   %lu bases   %lu postings\n",
+                    g.k, type_str, g.volumes.size(),
+                    static_cast<unsigned long>(group_seqs),
+                    static_cast<unsigned long>(group_bases),
+                    static_cast<unsigned long>(group_postings));
+            }
             out += line;
 
             if (verbose) {

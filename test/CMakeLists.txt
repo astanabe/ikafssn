@@ -7,6 +7,7 @@ endfunction()
 
 add_ikafssn_test(test_varint test_varint.cpp)
 add_ikafssn_test(test_kmer_encoding test_kmer_encoding.cpp)
+add_ikafssn_test(test_spaced_seed test_spaced_seed.cpp)
 add_ikafssn_test(test_ksx_io test_ksx_io.cpp)
 add_ikafssn_test(test_kix_io test_kix_io.cpp)
 add_ikafssn_test(test_kpx_io test_kpx_io.cpp)

@@ -41,7 +41,7 @@ static void test_frame_round_trip() {
     assert(hdr.magic == FRAME_MAGIC);
     assert(hdr.payload_size == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 6);
+    assert(hdr.msg_version == 7);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -83,7 +83,7 @@ static void test_frame_invalid_magic() {
     bad_hdr.magic = 0xDEADBEEF;
     bad_hdr.payload_size = 0;
     bad_hdr.msg_type = 0x01;
-    bad_hdr.msg_version = 6;
+    bad_hdr.msg_version = 7;
     bad_hdr.reserved = 0;
     assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 

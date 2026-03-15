@@ -175,6 +175,79 @@ public:
         }
     }
 
+    // Scan with spaced seed templates (packed ncbi2na data).
+    // mask_tags: if non-empty, mask_tags[mi] is OR'd into each k-mer from masks[mi].
+    //   Caller pre-shifts the tag (e.g. tag = idx << 2k).
+    template <typename Callback, typename AmbigCallback>
+    void scan_spaced(const char* ncbi2na_data, uint32_t seq_length,
+                      const std::vector<AmbiguityEntry>& ambig_entries,
+                      const std::vector<uint32_t>& masks, int t,
+                      Callback&& callback,
+                      AmbigCallback&& ambig_callback,
+                      int max_expansion = 4,
+                      const std::vector<KmerInt>& mask_tags = {}) const {
+        if (static_cast<int>(seq_length) < t) return;
+        const uint32_t last_start = seq_length - static_cast<uint32_t>(t);
+        const bool has_tags = !mask_tags.empty();
+
+        for (uint32_t p = 0; p <= last_start; p++) {
+            for (size_t mi = 0; mi < masks.size(); mi++) {
+                uint32_t mask = masks[mi];
+                KmerInt kmer = 0;
+                int bit_pos = 0;
+                int degen_count = 0;
+                AmbigInfo infos[MAX_K];
+
+                for (int j = t - 1; j >= 0; j--) {
+                    if (!(mask & (1u << j))) continue;
+
+                    uint32_t seq_pos = p + (static_cast<uint32_t>(t) - 1 - static_cast<uint32_t>(j));
+                    uint8_t code = ncbi2na_base_at(ncbi2na_data, seq_pos);
+                    int kmer_bit_offset = (k_ - 1 - bit_pos) * 2;
+
+                    uint8_t amb_ncbi4na = 0;
+                    for (const auto& ae : ambig_entries) {
+                        if (seq_pos >= ae.position && seq_pos < ae.position + ae.run_length) {
+                            amb_ncbi4na = ae.ncbi4na;
+                            break;
+                        }
+                        if (ae.position > seq_pos) break;
+                    }
+
+                    if (amb_ncbi4na != 0) {
+                        infos[degen_count].ncbi4na = amb_ncbi4na;
+                        infos[degen_count].bit_offset = kmer_bit_offset;
+                        degen_count++;
+                    } else {
+                        kmer |= static_cast<KmerInt>(code) << kmer_bit_offset;
+                    }
+                    bit_pos++;
+                }
+
+                if (degen_count == 0) {
+                    if (has_tags) kmer |= mask_tags[mi];
+                    callback(p, kmer);
+                } else if (max_expansion <= 1) {
+                    // skip
+                } else {
+                    int product = 1;
+                    bool exceeded = false;
+                    for (int d = 0; d < degen_count; d++) {
+                        product *= ncbi4na_expansion_count(infos[d].ncbi4na);
+                        if (product > max_expansion) {
+                            exceeded = true;
+                            break;
+                        }
+                    }
+                    if (!exceeded) {
+                        if (has_tags) kmer |= mask_tags[mi];
+                        ambig_callback(p, kmer, infos, degen_count);
+                    }
+                }
+            }
+        }
+    }
+
 private:
     int k_;
     KmerInt mask_;
