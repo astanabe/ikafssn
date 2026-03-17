@@ -21,8 +21,8 @@ ikafssn and [BLAST](https://blast.ncbi.nlm.nih.gov/Blast.cgi) (blastn) both sear
 | **Primary use case** | K-mer-based similarity search across large nucleotide collections | Local alignment search for homologous sequences |
 | **Search algorithm** | Seed-chain-align: k-mer inverted index → candidate filtering → collinear chaining → pairwise alignment | Seed-extend: word seeds → ungapped extension → gapped alignment (Smith-Waterman) |
 | **Database format** | NCBI BLAST DB (reads via C++ Toolkit) | NCBI BLAST DB (native) |
-| **Index structure** | Pre-built k-mer inverted index (direct-address table, 4^k entries) stored on disk | Seeds generated on-the-fly per query from the database (no pre-built k-mer index) |
-| **Seeding** | All k-mers indexed exhaustively (contiguous or spaced seeds); high-frequency filtering at search time | Exact word matches (default word size 11 for megablast, 7 for blastn); discontiguous megablast templates |
+| **Index structure** | Pre-built k-mer inverted index (direct-address table, 4^k entries) stored on disk | No pre-built database index; per-query lookup table built from query words, database scanned sequentially |
+| **Seeding** | All k-mers indexed exhaustively (contiguous or spaced seeds); high-frequency filtering at build time (optional `-max_freq_build`) and/or search time | Exact word matches (default word size 28 for megablast, 11 for blastn); discontiguous megablast templates |
 | **Scoring model** | K-mer match count (Stage 1), chain length (Stage 2), semi-global alignment score (Stage 3) | E-value based on local alignment score (bit score) with statistical significance model |
 | **Alignment** | Parasail semi-global, 1-piece affine gap (optional Stage 3) | BLAST gapped extension, affine gap penalties, with X-drop heuristic |
 | **Hits per subject** | Configurable via `-stage2_max_nhit_per_subject` (default: 1; 0 = unlimited) | Multiple HSPs per subject by default |
@@ -51,7 +51,7 @@ ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-cha
 | **Default result limit** | Unlimited (returns all candidates above threshold) | 1 primary + up to 5 secondary per query (`-N 5`, `-p 0.8`) |
 | **Alignment** | Parasail semi-global, 1-piece affine gap (optional Stage 3) | KSW2 with SIMD, 2-piece affine gap and Z-drop heuristic |
 | **Ambiguous bases** | IUPAC degenerate expansion (configurable limit) | Not supported (N-containing k-mers skipped) |
-| **Output format** | TSV, JSON, SAM, BAM | PAF, SAM, BAM |
+| **Output format** | TSV, JSON, SAM, BAM | PAF, SAM |
 | **Index partitioning** | BLAST DB multi-volume with `.kvx` manifest | `-I` batch partitioning with `--split-prefix` |
 
 ## Commands
