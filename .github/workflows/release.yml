@@ -1,8 +1,6 @@
 name: Release
 
 on:
-  release:
-    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -102,7 +100,7 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.0.0-parasail2.6.2-htslib1.23-v2
+          key: deps-${{ matrix.target }}-ncbi30.1.0-parasail2.6.2-htslib1.23-v2
 
       # ---- Build Parasail ----
 
@@ -147,10 +145,10 @@ jobs:
       - name: Build NCBI C++ Toolkit
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          curl -L -o ncbi-cxx-toolkit-public-release-30.0.0.tar.gz \
-            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
-          tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
-          cd ncbi-cxx-toolkit-public-release-30.0.0
+          curl -L -o ncbi-cxx-toolkit-public-release-30.1.0.tar.gz \
+            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.1.0.tar.gz
+          tar xf ncbi-cxx-toolkit-public-release-30.1.0.tar.gz
+          cd ncbi-cxx-toolkit-public-release-30.1.0
           patch -p1 < "${GITHUB_WORKSPACE}/patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch"
           if [ "$(uname)" = "Darwin" ]; then
             export CFLAGS="-I${HOMEBREW_PREFIX}/include"
@@ -225,19 +223,28 @@ jobs:
 
       # ---- Upload ----
 
-      - name: Upload release asset
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            build/*.deb
-            *.bottle.tar.gz
-
       - name: Upload artifact
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: package-${{ matrix.target }}
           path: |
             build/*.deb
             *.bottle.tar.gz
+
+      - name: Upload release asset
+        run: |
+          version=$(grep 'set(IKAFSSN_VERSION' CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
+          tag="v${version}"
+          if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            echo "::notice::Release ${tag} not found — skipping asset upload"
+            exit 0
+          fi
+          shopt -s nullglob
+          files=(build/*.deb *.bottle.tar.gz)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::notice::No package files to upload"
+            exit 0
+          fi
+          gh release upload "${tag}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

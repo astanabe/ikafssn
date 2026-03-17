@@ -8,7 +8,7 @@ Adds `MemMapAdvise(eMMA_Random)` to `CAtlasMappedFile`'s constructor in the NCBI
 
 ### How to apply
 
-From the NCBI C++ Toolkit source directory (e.g. `ncbi-cxx-toolkit-public-release-30.0.0/`):
+From the NCBI C++ Toolkit source directory (e.g. `ncbi-cxx-toolkit-public-release-30.1.0/`):
 
 ```bash
 patch -p1 < /path/to/ikafssn/patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
