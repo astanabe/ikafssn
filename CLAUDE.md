@@ -34,7 +34,7 @@ This project's external dependencies and their status on this dev machine (Ubunt
 |---|---|---|---|
 | g++ | 13.3.0 | system | apt (pre-installed) |
 | CMake | 3.28.3 | system | apt (pre-installed) |
-| NCBI C++ Toolkit 30.0.0 | 30.0.0 | `./ncbi-toolkit/` | source build |
+| NCBI C++ Toolkit 30.1.0 | 30.1.0 | `./ncbi-toolkit/` | source build |
 | Intel TBB (oneTBB) | 2021.11.0 | system | `sudo apt install libtbb-dev` |
 | Drogon | 1.8.7 | system | `sudo apt install libdrogon-dev` |
 | libcurl | 8.5.0 | system | apt (pre-installed) |

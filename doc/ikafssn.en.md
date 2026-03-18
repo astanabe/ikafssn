@@ -1251,6 +1251,7 @@ curl -L -o parasail-2.6.2.tar.gz \
     https://github.com/jeffdaily/parasail/archive/refs/tags/v2.6.2.tar.gz
 tar xf parasail-2.6.2.tar.gz
 cd parasail-2.6.2
+patch -p1 < ../patches/parasail-degmatch-cigar-score.patch
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/parasail" \
     -DBUILD_SHARED_LIBS=OFF
@@ -1295,10 +1296,10 @@ The build subdirectory name within the toolkit (e.g. `CMake-GCC1330-Release`) is
 To download, build, and install the toolkit into `./ncbi-cxx-toolkit`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-public-release-30.0.0.tar.gz \
-    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
-tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
-cd ncbi-cxx-toolkit-public-release-30.0.0
+curl -L -o ncbi-cxx-toolkit-public-release-30.1.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.1.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.1.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.1.0
 patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
 ./cmake-configure \
     --without-debug \

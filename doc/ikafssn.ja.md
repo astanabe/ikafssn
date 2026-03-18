@@ -295,7 +295,7 @@ fwd + N×insert_length + RC(rev)
 - `0 < v ≤ 1` (割合): Stage 1 閾値は `ceil(Nprimer_kmer * v)` に解決されます (Nprimer_kmer はプライマー由来の k-mer 数)
 - `v ≥ 2` (絶対値): そのまま絶対閾値として使用されます
 
-Stage 2 では、Stage 1 の解決済みプライマー閾値に `-stage2_primer_score_add` を加算した値が最小チェインスコアとして使用されます。
+Stage 2 では、最小チェインスコアが `max(Lf, Lr) + stage2_primer_score_add` に設定されます。ここで Lf と Lr はそれぞれフォワードプライマーとリバースプライマーの k-mer 位置数です。また、`-stage2_max_gap` はコマンドラインで明示的に指定しない限り、自動的にインサート長に設定されます。
 
 **使用例:**
 
@@ -726,57 +726,6 @@ ikafssn は 3 段階の検索パイプラインを使用します。
 
 **Mode 3 (全パイプライン):** `-mode 3` を指定すると全 3 段階が実行されます。BLAST DB が必要です (`-db` で指定、デフォルトはインデックスプレフィックスと同じ)。ソート基準は alnscore に自動設定されます。SAM/BAM 出力には `-mode 3` と `-stage3_traceback 1` の両方が必要です。
 
-### Stage 3 スコア行列
-
-Stage 3 のペアワイズアライメントで使用するスコア行列は `-stage3_score_matrix` オプションで選択できます。利用可能な行列は以下の 3 種類です。
-
-| 行列名 | 説明 |
-|---|---|
-| **degmatch** (デフォルト) | DEGMATCH 行列。IUPAC 縮重塩基ペアに正のスコアを付与する 16×16 行列 |
-| **dnafull** | EMBOSS の DNAfull 行列。標準的な DNA スコア行列 |
-| **nuc44** | NCBI の nuc44 行列。BLAST で使用される標準行列 |
-
-**DEGMATCH 行列について:**
-
-DEGMATCH 行列は新しいデフォルトスコア行列です。従来の nuc44 行列では縮重塩基同士のペアに 0 または負のスコアが付与されていましたが、DEGMATCH 行列では縮重塩基が表す塩基集合に共通要素がある場合に正のスコアを付与します。これにより、縮重塩基を含む配列のアライメント精度が向上します。
-
-**CIGAR の `=`/`X` 判定の変更:**
-
-DEGMATCH 行列の導入に伴い、CIGAR 文字列における sequence match (`=`) と sequence mismatch (`X`) の判定基準がスコアベースに変更されました。従来は塩基が同一の場合に `=`、異なる場合に `X` としていましたが、現在はスコア行列で正のスコア (> 0) が付与されるペアを `=` (match)、0 以下のスコアが付与されるペアを `X` (mismatch) として判定します。
-
-**`nident`/`pident` から `npositive`/`ppositive` へのリネーム:**
-
-上記のスコアベース判定への変更に伴い、出力カラム名が変更されました:
-
-- `nident` → `npositive`: 「同一塩基数」から「正スコア塩基数」へ。スコア行列で正のスコアが付与された塩基ペアの数を表します。
-- `pident` → `ppositive`: 「配列一致率」から「正スコア率」へ。アライメント長に対する正スコア塩基の割合を表します。
-- `mismatch` → `nnegative`: 「ミスマッチ数」から「負スコア数」へ。スコア行列で 0 以下のスコアが付与された塩基ペアの数を表します。
-
-これらの変更により、フィルタオプションも `-stage3_min_pident` → `-stage3_min_ppositive`、`-stage3_min_nident` → `-stage3_min_npositive` にリネームされています。
-
-**DEGMATCH 16×16 行列:**
-
-```
-        A   T   G   C   R   Y   S   W   K   M   B   D   H   V   N
-  A     2  -3  -3  -3   1  -3  -3   1  -3   1  -3   1   1   1   1
-  T    -3   2  -3  -3  -3   1  -3   1   1  -3   1  -3   1  -3   1
-  G    -3  -3   2  -3   1  -3   1  -3   1  -3   1   1  -3   1   1
-  C    -3  -3  -3   2  -3   1   1  -3  -3   1   1  -3   1   1   1
-  R     1  -3   1  -3   1  -3  -3  -3   1   1   1   1  -3   1   1
-  Y    -3   1  -3   1  -3   1   1   1   1  -3   1  -3   1   1   1
-  S    -3  -3   1   1  -3   1   1  -3   1   1   1   1   1   1   1
-  W     1   1  -3  -3  -3   1  -3   1   1   1   1   1   1  -3   1
-  K    -3   1   1  -3   1   1   1   1   1  -3   1   1   1   1   1
-  M     1  -3  -3   1   1  -3   1   1  -3   1   1   1   1   1   1
-  B    -3   1   1   1   1   1   1   1   1   1   1   1   1   1   1
-  D     1  -3   1  -3   1  -3   1   1   1   1   1   1   1   1   1
-  H     1   1  -3   1  -3   1   1   1   1   1   1   1   1   1   1
-  V     1  -3   1   1   1   1   1  -3   1   1   1   1   1   1   1
-  N     1   1   1   1   1   1   1   1   1   1   1   1   1   1   1
-```
-
-行列の値は、2 つの IUPAC コードが表す塩基集合に共通要素がある場合 (交差が空でない場合) は正 (+1 または +2)、共通要素がない場合 (交差が空の場合) は負 (-3) です。同一の確定塩基同士 (A-A, T-T, G-G, C-C) は +2、それ以外の正スコアペアは +1 です。N は全塩基を表すため、任意のコードとの組み合わせで +1 となります。
-
 デフォルトではクエリのフォワード鎖とリバースコンプリメント鎖の両方を検索します。`-strand 1` でプラス (フォワード) 鎖のみ、`-strand -1` でマイナス (リバースコンプリメント) 鎖のみの検索に制限できます。
 
 ### 高頻度 k-mer フィルタリング
@@ -821,11 +770,61 @@ ikafssn は 3 種類のスコアを計算します。
 | **coverscore** | 参照配列にマッチしたクエリ k-mer の種類数。各クエリ k-mer は参照配列あたり最大 1 回カウントされます (複数位置にマッチしても重複計上されません)。 | Stage 1 |
 | **matchscore** | (クエリ k-mer, 参照配列位置) の総マッチ数。1 つのクエリ k-mer が参照配列の複数位置にマッチした場合、その分だけ加算されます。 | Stage 1 |
 | **chainscore** | チェイニング DP が求めた最良コリニアチェインの長さ (k-mer ヒット数)。`.kpx` の位置データを使用します。 | Stage 2 |
-| **alnscore** | Parasail による半大域ペアワイズアライメントスコア (nuc44 マトリクス)。BLAST DB からのサブジェクト配列取得が必要です。 | Stage 3 |
+| **alnscore** | Parasail による半大域ペアワイズアライメントスコア (`-stage3_score_matrix` で指定、デフォルト: degmatch)。BLAST DB からのサブジェクト配列取得が必要です。 | Stage 3 |
 
 - `-stage1_score` で Stage 1 が使用するスコア種別を選択します (1=coverscore, 2=matchscore)。候補のランキングと出力される Stage 1 スコアに影響します。
 - ソート基準はモードにより自動決定: mode 1 は Stage 1 スコア、mode 2 は chainscore、mode 3 は alnscore。
 - `-mode 1` では Stage 1 スコアのみが利用可能で、chainscore と alnscore は計算されません。
+
+### Stage 3 スコア行列
+
+Stage 3 のペアワイズアライメントで使用するスコア行列は `-stage3_score_matrix` オプションで選択できます。利用可能な行列は以下の 3 種類です。
+
+| 行列名 | 説明 |
+|---|---|
+| **degmatch** (デフォルト) | 縮重塩基ペアが少なくとも 1 つのヌクレオチドを共有する場合に正のスコアを付与します。プライマーマッチングや縮重塩基を含む検索に適しています。 |
+| **dnafull** | EMBOSS の DNAfull 行列 (Todd Lowe 作成)。あいまいなヌクレオチドコードを確率に基づいて最も近い整数に丸めた値を使用します。部分重複する縮重ペアには負または低いスコアが付与されます。 |
+| **nuc44** | NCBI BLAST のヌクレオチド行列。dnafull と類似していますが、縮重塩基のスコアリングがやや異なります。 |
+
+**CIGAR `=`/`X` 判定:** 拡張 CIGAR オペレータ `=` (sequence match) と `X` (sequence mismatch) は、厳密な塩基一致ではなくアライメントスコアに基づいて判定されます。スコア行列で正のスコア (score > 0) が付与される位置は `=`、0 以下のスコアが付与される位置は `X` として報告されます。つまり、DEGMATCH 行列では N-A のような縮重塩基ペア (スコア 1) は match (`=`) としてカウントされますが、NUC44/DNAFULL では mismatch (`X`) としてカウントされます。
+
+**カラム名の変更:** 出力カラムの `pident` (配列一致率)、`nident` (一致塩基数)、`mismatch` (ミスマッチ数) は、それぞれ `ppositive` (正スコア率)、`npositive` (正スコア塩基数)、`nnegative` (負スコア数) にリネームされました。これは DEGMATCH 行列では、これらのカウントが厳密な一致位置ではなく正スコア位置を表すことを反映しています。対応するフィルタオプションも `-stage3_min_pident`/`-stage3_min_nident` から `-stage3_min_ppositive`/`-stage3_min_npositive` にリネームされています。
+
+**DEGMATCH 行列 (16×16):**
+
+行と列は 16 種類のシンボルに対応します: A, T, G, C, S (G/C), W (A/T), R (A/G), Y (T/C), K (G/T), M (A/C), B (G/T/C), V (A/G/C), H (A/T/C), D (A/G/T), N (A/T/G/C), `*` (stop/invalid)。
+
+|   | A | T | G | C | S | W | R | Y | K | M | B | V | H | D | N | * |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **A** | 5 | -4 | -4 | -4 | -4 | 3 | 3 | -4 | -4 | 3 | -4 | 2 | 2 | 2 | 1 | -4 |
+| **T** | -4 | 5 | -4 | -4 | -4 | 3 | -4 | 3 | 3 | -4 | 2 | -4 | 2 | 2 | 1 | -4 |
+| **G** | -4 | -4 | 5 | -4 | 3 | -4 | 3 | -4 | 3 | -4 | 2 | 2 | -4 | 2 | 1 | -4 |
+| **C** | -4 | -4 | -4 | 5 | 3 | -4 | -4 | 3 | -4 | 3 | 2 | 2 | 2 | -4 | 1 | -4 |
+| **S** | -4 | -4 | 3 | 3 | 4 | -4 | 1 | 1 | 1 | 1 | 2 | 2 | 1 | 1 | 1 | -4 |
+| **W** | 3 | 3 | -4 | -4 | -4 | 4 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 2 | 1 | -4 |
+| **R** | 3 | -4 | 3 | -4 | 1 | 1 | 4 | -4 | 1 | 1 | 1 | 2 | 1 | 2 | 1 | -4 |
+| **Y** | -4 | 3 | -4 | 3 | 1 | 1 | -4 | 4 | 1 | 1 | 2 | 1 | 2 | 1 | 1 | -4 |
+| **K** | -4 | 3 | 3 | -4 | 1 | 1 | 1 | 1 | 4 | -4 | 2 | 1 | 1 | 2 | 1 | -4 |
+| **M** | 3 | -4 | -4 | 3 | 1 | 1 | 1 | 1 | -4 | 4 | 1 | 2 | 2 | 1 | 1 | -4 |
+| **B** | -4 | 2 | 2 | 2 | 2 | 1 | 1 | 2 | 2 | 1 | 3 | 1 | 1 | 1 | 1 | -4 |
+| **V** | 2 | -4 | 2 | 2 | 2 | 1 | 2 | 1 | 1 | 2 | 1 | 3 | 1 | 1 | 1 | -4 |
+| **H** | 2 | 2 | -4 | 2 | 1 | 2 | 1 | 2 | 1 | 2 | 1 | 1 | 3 | 1 | 1 | -4 |
+| **D** | 2 | 2 | 2 | -4 | 1 | 2 | 2 | 1 | 2 | 1 | 1 | 1 | 1 | 3 | 1 | -4 |
+| **N** | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | -4 |
+| **\*** | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 |
+
+スコアルール:
+- 確定塩基同士の一致 (A-A, T-T, G-G, C-C) = 5
+- 確定塩基同士の不一致 (例: A-T, A-G) = -4
+- 2 重縮重の自己対 (S-S, W-W, R-R, Y-Y, K-K, M-M) = 4
+- 2 重縮重 vs 含有される確定塩基 (例: R-A, R-G) = 3
+- 2 重縮重 vs 部分重複する別の 2 重縮重 (例: R-K) = 1
+- 2 重縮重 vs 重複なし (例: S-W) = -4
+- 3 重縮重の自己対 (B-B, V-V, H-H, D-D) = 3
+- 3 重縮重 vs 含有される確定塩基/2 重縮重 (例: B-T, B-K) = 2
+- 3 重縮重 vs 部分重複 = 1
+- N vs 任意 (`*` 以外) = 1, N-N = 1
+- `*` vs 任意 = -4
 
 ## 出力形式
 
@@ -1248,6 +1247,7 @@ curl -L -o parasail-2.6.2.tar.gz \
     https://github.com/jeffdaily/parasail/archive/refs/tags/v2.6.2.tar.gz
 tar xf parasail-2.6.2.tar.gz
 cd parasail-2.6.2
+patch -p1 < ../patches/parasail-degmatch-cigar-score.patch
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/parasail" \
     -DBUILD_SHARED_LIBS=OFF
@@ -1292,10 +1292,10 @@ Toolkit 内のビルドサブディレクトリ名 (例: `CMake-GCC1330-Release`
 Toolkit のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-public-release-30.0.0.tar.gz \
-    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.0.0.tar.gz
-tar xf ncbi-cxx-toolkit-public-release-30.0.0.tar.gz
-cd ncbi-cxx-toolkit-public-release-30.0.0
+curl -L -o ncbi-cxx-toolkit-public-release-30.1.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.1.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.1.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.1.0
 patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch  # BLAST DB mmap のページキャッシュ汚染を防止
 ./cmake-configure \
     --without-debug \
