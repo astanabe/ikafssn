@@ -48,7 +48,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # ---- System dependencies ----
 
@@ -99,7 +99,7 @@ jobs:
       # ---- Cache source-built dependencies ----
 
       - name: Cache source-built dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: deps-cache
         with:
           path: |
@@ -231,7 +231,7 @@ jobs:
       # ---- Upload ----
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-${{ matrix.target }}
           path: |
