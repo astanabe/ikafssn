@@ -1,0 +1,136 @@
+diff -ruN a/parasail/matrices/degmatch.h b/parasail/matrices/degmatch.h
+--- a/parasail/matrices/degmatch.h
++++ b/parasail/matrices/degmatch.h
+@@ -0,0 +1,91 @@
++/**
++ * @file
++ *
++ * DEGMATCH scoring matrix for nucleotide sequences with degenerate bases.
++ *
++ * Unlike NUC44/DNAFULL, DEGMATCH assigns positive scores to degenerate
++ * base pairs that share at least one possible nucleotide identity.
++ * This makes the matrix suitable for in-silico PCR and primer matching
++ * where N-containing regions should be treated as potential matches.
++ *
++ * Score rules:
++ *   Standard match (A-A, T-T, etc.) = 5
++ *   Standard mismatch = -4
++ *   2-fold degenerate self (S-S, W-W, etc.) = 4
++ *   2-fold degenerate vs contained base = 3
++ *   2-fold degenerate vs partial overlap = 1
++ *   2-fold degenerate vs non-overlapping = -4
++ *   3-fold degenerate self (B-B, V-V, etc.) = 3
++ *   3-fold degenerate vs contained base/2-fold = 2
++ *   3-fold degenerate vs partial overlap = 1
++ *   N vs any (non-*) = 1, N-N = 1
++ *   * vs any = -4
++ */
++#ifndef _PARASAIL_DEGMATCH_H_
++#define _PARASAIL_DEGMATCH_H_
++
++#include "parasail.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++static const int parasail_degmatch_[] = {
++/*       0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15 */
++/*       A   T   G   C   S   W   R   Y   K   M   B   V   H   D   N   * */
++/* A */  5, -4, -4, -4, -4,  3,  3, -4, -4,  3, -4,  2,  2,  2,  1, -4,
++/* T */ -4,  5, -4, -4, -4,  3, -4,  3,  3, -4,  2, -4,  2,  2,  1, -4,
++/* G */ -4, -4,  5, -4,  3, -4,  3, -4,  3, -4,  2,  2, -4,  2,  1, -4,
++/* C */ -4, -4, -4,  5,  3, -4, -4,  3, -4,  3,  2,  2,  2, -4,  1, -4,
++/* S */ -4, -4,  3,  3,  4, -4,  1,  1,  1,  1,  2,  2,  1,  1,  1, -4,
++/* W */  3,  3, -4, -4, -4,  4,  1,  1,  1,  1,  1,  1,  2,  2,  1, -4,
++/* R */  3, -4,  3, -4,  1,  1,  4, -4,  1,  1,  1,  2,  1,  2,  1, -4,
++/* Y */ -4,  3, -4,  3,  1,  1, -4,  4,  1,  1,  2,  1,  2,  1,  1, -4,
++/* K */ -4,  3,  3, -4,  1,  1,  1,  1,  4, -4,  2,  1,  1,  2,  1, -4,
++/* M */  3, -4, -4,  3,  1,  1,  1,  1, -4,  4,  1,  2,  2,  1,  1, -4,
++/* B */ -4,  2,  2,  2,  2,  1,  1,  2,  2,  1,  3,  1,  1,  1,  1, -4,
++/* V */  2, -4,  2,  2,  2,  1,  2,  1,  1,  2,  1,  3,  1,  1,  1, -4,
++/* H */  2,  2, -4,  2,  1,  2,  1,  2,  1,  2,  1,  1,  3,  1,  1, -4,
++/* D */  2,  2,  2, -4,  1,  2,  2,  1,  2,  1,  1,  1,  1,  3,  1, -4,
++/* N */  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1, -4,
++/* * */ -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4
++};
++
++static const int parasail_degmatch_map_[256] = {
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15,  0, 10,  3, 13, 15, 15,  2, 12, 15, 15,  8, 15,  9, 14, 15,
++     15, 15,  6,  4,  1, 15, 11,  5, 15,  7, 15, 15, 15, 15, 15, 15,
++     15,  0, 10,  3, 13, 15, 15,  2, 12, 15, 15,  8, 15,  9, 14, 15,
++     15, 15,  6,  4,  1, 15, 11,  5, 15,  7, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
++     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15
++};
++
++static const parasail_matrix_t parasail_degmatch = {
++    "degmatch",
++    parasail_degmatch_,
++    parasail_degmatch_map_,
++    16,
++    5,
++    -4,
++    0,
++    PARASAIL_MATRIX_TYPE_SQUARE,
++    16,
++    "ATGCSWRYKMBVHDN*",
++    NULL
++};
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _PARASAIL_DEGMATCH_H_ */
+diff -ruN a/parasail/matrix_lookup.h b/parasail/matrix_lookup.h
+--- a/parasail/matrix_lookup.h
++++ b/parasail/matrix_lookup.h
+@@ -76,6 +76,7 @@
+ #include "parasail/matrices/pam90.h"
+ #include "parasail/matrices/nuc44.h"
+ #include "parasail/matrices/dnafull.h"
++#include "parasail/matrices/degmatch.h"
+ #include "parasail/matrices/blosum_map.h"
+ #include "parasail/matrices/pam_map.h"
+
+@@ -152,6 +153,7 @@
+     &parasail_pam90,
+     &parasail_nuc44,
+     &parasail_dnafull,
++    &parasail_degmatch,
+     NULL
+ };
+
+diff -ruN a/src/cigar_template.c b/src/cigar_template.c
+--- a/src/cigar_template.c
++++ b/src/cigar_template.c
+@@ -117,7 +117,7 @@
+     cigar->len = 0;
+     cigar->beg_query = 0;
+     cigar->beg_ref = 0;
+-    UNUSED(matrix);
++    /* matrix is used for score-based match determination */
+     /* semi-global alignment includes the end gaps */
+     if (result->flag & PARASAIL_FLAG_SG) {
+         int64_t k;
+@@ -166,7 +166,8 @@
+             if (HT[loc] & PARASAIL_DIAG) {
+                 char a = case_sensitive ? seqA[i] : toupper(seqA[i]);
+                 char b = case_sensitive ? seqB[j] : toupper(seqB[j]);
+-                int matches = (a == b);
++                int matches = matrix->matrix[matrix->mapper[(unsigned char)a] * matrix->size
++                                           + matrix->mapper[(unsigned char)b]] > 0;
+                 if (NULL != alphabet_aliases_) {
+                     size_t i;
+                     for (i=0; i<aliases_size; i+=1) {

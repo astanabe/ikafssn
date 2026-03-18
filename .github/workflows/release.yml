@@ -1,7 +1,13 @@
 name: Release
 
+run-name: "ikafssn v${{ inputs.version }}"
+
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string (e.g. 0.1.2026.03.18)"
+        required: true
 
 permissions:
   contents: write

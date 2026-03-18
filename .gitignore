@@ -8,7 +8,7 @@ ncbi-cxx-toolkit-public-release-*
 ncbi-toolkit/
 
 # Parasail (source, tarball, and install)
-parasail-*
+/parasail-*
 parasail/
 
 # htslib (source, tarball, and install)
