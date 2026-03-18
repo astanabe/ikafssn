@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.03.16")
+set(IKAFSSN_VERSION "0.1.2026.03.18")
 
 # Get timezone offset in +HH:MM format for build timestamp
 string(TIMESTAMP _tz "%z")

@@ -123,25 +123,25 @@ static void test_stage3_pipeline() {
         CHECK(h.alnscore > 0);
         // CIGAR should be non-empty
         CHECK(!h.cigar.empty());
-        // pident should be reasonable (at least some identity)
-        CHECK(h.pident > 0.0);
-        // nident should be positive
-        CHECK(h.nident > 0);
+        // ppositive should be reasonable (at least some identity)
+        CHECK(h.ppositive > 0.0);
+        // npositive should be positive
+        CHECK(h.npositive > 0);
         // Coordinates should be within sequence bounds
         CHECK(h.slen > 0);
         CHECK(h.sstart < h.slen);
         CHECK(h.send < h.slen);
     }
 
-    // The exact match hit (FJ876973.1) should have high pident
-    bool found_high_pident = false;
+    // The exact match hit (FJ876973.1) should have high ppositive
+    bool found_high_ppositive = false;
     for (const auto& h : filtered) {
         if (h.sseqid == ACC_FJ && h.sstrand == '+') {
-            CHECK(h.pident > 90.0);
-            found_high_pident = true;
+            CHECK(h.ppositive > 90.0);
+            found_high_ppositive = true;
         }
     }
-    CHECK(found_high_pident);
+    CHECK(found_high_ppositive);
 }
 
 static void test_stage3_score_only() {
@@ -222,8 +222,8 @@ static void test_stage3_score_only() {
         CHECK(h.alnscore > 0);
         // CIGAR should be empty (no traceback)
         CHECK(h.cigar.empty());
-        // pident should be 0 (not computed without traceback)
-        CHECK(h.pident == 0.0);
+        // ppositive should be 0 (not computed without traceback)
+        CHECK(h.ppositive == 0.0);
     }
 }
 

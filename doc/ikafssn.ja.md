@@ -174,8 +174,10 @@ ikafssnsearch [options]
   -stage3_traceback <0|1> モード 3 でトレースバックを有効化 (デフォルト: 0)
   -stage3_gapopen <int>   モード 3 のギャップオープンペナルティ (デフォルト: 10)
   -stage3_gapext <int>    モード 3 のギャップ伸長ペナルティ (デフォルト: 1)
-  -stage3_min_pident <num>  モード 3 の最小配列一致率フィルタ (デフォルト: 0)
-  -stage3_min_nident <int>  モード 3 の最小一致塩基数フィルタ (デフォルト: 0)
+  -stage3_min_ppositive <num>  モード 3 の最小正スコア率フィルタ (デフォルト: 0)
+  -stage3_min_npositive <int>  モード 3 の最小正スコア塩基数フィルタ (デフォルト: 0)
+  -stage3_score_matrix <str>  モード 3 のスコア行列 (デフォルト: degmatch)
+                          利用可能: degmatch、dnafull、nuc44
   -stage3_fetch_threads <int>  モード 3 の BLAST DB 取得スレッド数 (デフォルト: min(8, threads); -threads を超えるとエラー)
   -num_results <int>      最終出力件数、0=無制限 (デフォルト: 0)
   -seqidlist <path>       検索対象を指定アクセッションに限定
@@ -244,8 +246,8 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -o
 # モード 3: BAM 出力
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt bam -o result.bam
 
-# モード 3: 配列一致率でフィルタ
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_pident 90
+# モード 3: 正スコア率でフィルタ
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_ppositive 90
 
 # モード 3: コンテクスト拡張 (前後各50塩基)
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 50 -num_results 5
@@ -255,6 +257,59 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 0.1 -num_resu
 
 # パイプラインで ikafssnretrieve に接続
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+```
+
+#### In-Silico PCR（プライマーモード）
+
+`ikafssnsearch` および `ikafssnclient` は `-primer` オプションでプライマーモードを利用できます。このモードでは、プライマーペアから仮想的な PCR アンプリコンクエリを構成し、インデックスに対して検索を行います。`ikafssnclient` ではクライアント側でプライマーからクエリへの変換を行うため、サーバ側の変更は不要です。
+
+**オプション:**
+
+```
+  -primer <path>              プライマー FASTA ファイル (-query と排他)
+  -insert_length <int>        予想インサート長 (-primer 時必須)
+  -stage1_primer_score <num>  プライマーの Stage 1 閾値 (デフォルト: 0.5)
+                              0 < v ≤ 1: クエリ k-mer に対する割合
+                              v ≥ 2: 絶対値
+  -stage2_primer_score_add <int>  Stage 2 プライマースコア加算値 (デフォルト: 1)
+```
+
+`-primer` と `-query` は排他的であり、同時に指定できません。`-primer` 使用時は `-insert_length` が必須です。
+
+**プライマーペアの処理方法:**
+
+プライマー FASTA ファイルには偶数本の配列を含める必要があります。連続する 2 配列がペア (奇数番目 = フォワードプライマー、偶数番目 = リバースプライマー) として解釈されます。
+
+各プライマーペアから以下の構成でクエリ配列が生成されます:
+
+```
+fwd + N×insert_length + RC(rev)
+```
+
+ここで `fwd` はフォワードプライマー配列、`N×insert_length` は指定長の N 文字列 (未知領域)、`RC(rev)` はリバースプライマーの逆相補配列です。
+
+**閾値解決ロジック:**
+
+プライマーモードでは、クエリ全体の k-mer のうちプライマー由来の k-mer のみが実際にマッチに寄与します (N 領域の k-mer は N を含むためスキップされます)。`-stage1_primer_score` は以下のように解決されます:
+
+- `0 < v ≤ 1` (割合): Stage 1 閾値は `ceil(Nprimer_kmer * v)` に解決されます (Nprimer_kmer はプライマー由来の k-mer 数)
+- `v ≥ 2` (絶対値): そのまま絶対閾値として使用されます
+
+Stage 2 では、Stage 1 の解決済みプライマー閾値に `-stage2_primer_score_add` を加算した値が最小チェインスコアとして使用されます。
+
+**使用例:**
+
+```bash
+# 基本的な In-Silico PCR
+ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500
+
+# Stage 1 閾値をプライマー k-mer の 80% に設定
+ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 300 \
+    -stage1_primer_score 0.8
+
+# モード 3 でアライメントまで実行
+ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
+    -mode 3 -stage3_traceback 1 -num_results 10
 ```
 
 ### ikafssnretrieve
@@ -352,8 +407,10 @@ ikafssnserver [options]
   -stage3_traceback <0|1> デフォルトトレースバックモード (デフォルト: 0)
   -stage3_gapopen <int>   デフォルトギャップオープンペナルティ (デフォルト: 10)
   -stage3_gapext <int>    デフォルトギャップ伸長ペナルティ (デフォルト: 1)
-  -stage3_min_pident <num>  デフォルト最小配列一致率 (デフォルト: 0)
-  -stage3_min_nident <int>  デフォルト最小一致塩基数 (デフォルト: 0)
+  -stage3_min_ppositive <num>  デフォルト最小正スコア率 (デフォルト: 0)
+  -stage3_min_npositive <int>  デフォルト最小正スコア塩基数 (デフォルト: 0)
+  -stage3_score_matrix <str>  デフォルトスコア行列 (デフォルト: degmatch)
+                          利用可能: degmatch、dnafull、nuc44
   -stage3_fetch_threads <int>  BLAST DB 取得スレッド数 (デフォルト: min(8, threads))
   -num_results <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
@@ -475,6 +532,12 @@ ikafssnclient [options]
   -query <path>            クエリ FASTA ファイル (- で標準入力)
   -ix <name>               サーバ上のターゲットデータベース名
 
+プライマーモード (-query の代替):
+  -primer <path>           プライマーペア FASTA ファイル (-query と排他)
+  -insert_length <int>     予想インサート長 (-primer 時必須)
+  -stage1_primer_score <num>  Stage 1 閾値 (0<v≤1: 割合、v≥2: 絶対値; デフォルト: 0.5)
+  -stage2_primer_score_add <int>  Stage 2 閾値加算値: max(Lf,Lr) + N (デフォルト: 1)
+
 オプション:
   -o <path>                出力ファイル (デフォルト: 標準出力)
   -k <int>                 使用する k-mer サイズ (デフォルト: サーバ側デフォルト)
@@ -498,8 +561,10 @@ ikafssnclient [options]
   -stage3_traceback <0|1>  トレースバック有効化 (デフォルト: サーバ側デフォルト)
   -stage3_gapopen <int>    ギャップオープンペナルティ (デフォルト: サーバ側デフォルト)
   -stage3_gapext <int>     ギャップ伸長ペナルティ (デフォルト: サーバ側デフォルト)
-  -stage3_min_pident <num> 最小配列一致率フィルタ (デフォルト: サーバ側デフォルト)
-  -stage3_min_nident <int> 最小一致塩基数フィルタ (デフォルト: サーバ側デフォルト)
+  -stage3_min_ppositive <num> 最小正スコア率フィルタ (デフォルト: サーバ側デフォルト)
+  -stage3_min_npositive <int> 最小正スコア塩基数フィルタ (デフォルト: サーバ側デフォルト)
+  -stage3_score_matrix <str> スコア行列 (デフォルト: サーバ側デフォルト)
+                           利用可能: degmatch、dnafull、nuc44
   -num_results <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
@@ -555,6 +620,17 @@ ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -s
 
 # モード 3: SAM 出力
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+
+# In-Silico PCR (プライマーモード)
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500
+
+# プライマーモードでカスタム閾値を指定
+ikafssnclient -tcp 10.0.1.5:9100 -ix nt -primer primers.fasta -insert_length 300 \
+    -stage1_primer_score 0.8
+
+# プライマーモードでモード 3 アライメント
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500 \
+    -mode 3 -stage3_traceback 1 -num_results 10
 ```
 
 ### ikafssninfo
@@ -642,13 +718,64 @@ ikafssn は 3 段階の検索パイプラインを使用します。
 
 2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。`-stage2_max_nhit_per_subject` が 1 より大きい値 (または 0 で無制限) の場合、貪欲な最良チェイン除去により同一サブジェクトから重複のない複数のチェインを抽出します: 最良チェインを見つけてそのヒットを除去し、残りのヒットで DP を再実行する処理を、制限に達するか `min_score` を満たすチェインがなくなるまで繰り返します。
 
-3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context` による拡張オプション付き)、Parasail ライブラリ (nuc44 スコアリングマトリクス) を使って半大域ペアワイズアライメントを実行します。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、配列一致率、一致塩基数、不一致数、ギャップ付きアライメント配列も計算されます。`-stage3_min_pident` と `-stage3_min_nident` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト配列は `-stage3_fetch_threads` で制御されるボリューム並列プリフェッチで取得されます。
+3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context` による拡張オプション付き)、Parasail ライブラリを使って半大域ペアワイズアライメントを実行します (`-stage3_score_matrix` で指定されたスコア行列を使用、デフォルト: DEGMATCH)。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、正スコア率、正スコア塩基数、負スコア数、ギャップ付きアライメント配列も計算されます。`-stage3_min_ppositive` と `-stage3_min_npositive` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト配列は `-stage3_fetch_threads` で制御されるボリューム並列プリフェッチで取得されます。
 
 **適応的 `-stage2_min_score` (デフォルト):** `-stage2_min_score 0` (デフォルト) の場合、最小チェインスコアはクエリごとに適応的に設定され、解決済みの Stage 1 閾値が使用されます。割合指定の `-stage1_min_score` (例: `0.5`) との組み合わせでは、各クエリの k-mer 構成に基づくクエリごとの適応的閾値が設定されます。絶対値指定の `-stage1_min_score` の場合は、その設定値がそのまま使用されます。固定閾値を使用する場合は `-stage2_min_score` に正の整数を指定してください。
 
 **Mode 1 (Stage 1 のみ):** `-mode 1` を指定すると Stage 2, 3 が省略されます。`.kpx` ファイルへのアクセスが不要となり、I/O とメモリを節約できます。結果には Stage 1 スコアのみが含まれ、位置フィールド (qstart, qend, sstart, send) と chainscore は省略されます。ソート基準は Stage 1 スコアに強制されます。
 
 **Mode 3 (全パイプライン):** `-mode 3` を指定すると全 3 段階が実行されます。BLAST DB が必要です (`-db` で指定、デフォルトはインデックスプレフィックスと同じ)。ソート基準は alnscore に自動設定されます。SAM/BAM 出力には `-mode 3` と `-stage3_traceback 1` の両方が必要です。
+
+### Stage 3 スコア行列
+
+Stage 3 のペアワイズアライメントで使用するスコア行列は `-stage3_score_matrix` オプションで選択できます。利用可能な行列は以下の 3 種類です。
+
+| 行列名 | 説明 |
+|---|---|
+| **degmatch** (デフォルト) | DEGMATCH 行列。IUPAC 縮重塩基ペアに正のスコアを付与する 16×16 行列 |
+| **dnafull** | EMBOSS の DNAfull 行列。標準的な DNA スコア行列 |
+| **nuc44** | NCBI の nuc44 行列。BLAST で使用される標準行列 |
+
+**DEGMATCH 行列について:**
+
+DEGMATCH 行列は新しいデフォルトスコア行列です。従来の nuc44 行列では縮重塩基同士のペアに 0 または負のスコアが付与されていましたが、DEGMATCH 行列では縮重塩基が表す塩基集合に共通要素がある場合に正のスコアを付与します。これにより、縮重塩基を含む配列のアライメント精度が向上します。
+
+**CIGAR の `=`/`X` 判定の変更:**
+
+DEGMATCH 行列の導入に伴い、CIGAR 文字列における sequence match (`=`) と sequence mismatch (`X`) の判定基準がスコアベースに変更されました。従来は塩基が同一の場合に `=`、異なる場合に `X` としていましたが、現在はスコア行列で正のスコア (> 0) が付与されるペアを `=` (match)、0 以下のスコアが付与されるペアを `X` (mismatch) として判定します。
+
+**`nident`/`pident` から `npositive`/`ppositive` へのリネーム:**
+
+上記のスコアベース判定への変更に伴い、出力カラム名が変更されました:
+
+- `nident` → `npositive`: 「同一塩基数」から「正スコア塩基数」へ。スコア行列で正のスコアが付与された塩基ペアの数を表します。
+- `pident` → `ppositive`: 「配列一致率」から「正スコア率」へ。アライメント長に対する正スコア塩基の割合を表します。
+- `mismatch` → `nnegative`: 「ミスマッチ数」から「負スコア数」へ。スコア行列で 0 以下のスコアが付与された塩基ペアの数を表します。
+
+これらの変更により、フィルタオプションも `-stage3_min_pident` → `-stage3_min_ppositive`、`-stage3_min_nident` → `-stage3_min_npositive` にリネームされています。
+
+**DEGMATCH 16×16 行列:**
+
+```
+        A   T   G   C   R   Y   S   W   K   M   B   D   H   V   N
+  A     2  -3  -3  -3   1  -3  -3   1  -3   1  -3   1   1   1   1
+  T    -3   2  -3  -3  -3   1  -3   1   1  -3   1  -3   1  -3   1
+  G    -3  -3   2  -3   1  -3   1  -3   1  -3   1   1  -3   1   1
+  C    -3  -3  -3   2  -3   1   1  -3  -3   1   1  -3   1   1   1
+  R     1  -3   1  -3   1  -3  -3  -3   1   1   1   1  -3   1   1
+  Y    -3   1  -3   1  -3   1   1   1   1  -3   1  -3   1   1   1
+  S    -3  -3   1   1  -3   1   1  -3   1   1   1   1   1   1   1
+  W     1   1  -3  -3  -3   1  -3   1   1   1   1   1   1  -3   1
+  K    -3   1   1  -3   1   1   1   1   1  -3   1   1   1   1   1
+  M     1  -3  -3   1   1  -3   1   1  -3   1   1   1   1   1   1
+  B    -3   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  D     1  -3   1  -3   1  -3   1   1   1   1   1   1   1   1   1
+  H     1   1  -3   1  -3   1   1   1   1   1   1   1   1   1   1
+  V     1  -3   1   1   1   1   1  -3   1   1   1   1   1   1   1
+  N     1   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+```
+
+行列の値は、2 つの IUPAC コードが表す塩基集合に共通要素がある場合 (交差が空でない場合) は正 (+1 または +2)、共通要素がない場合 (交差が空の場合) は負 (-3) です。同一の確定塩基同士 (A-A, T-T, G-G, C-C) は +2、それ以外の正スコアペアは +1 です。N は全塩基を表すため、任意のコードとの組み合わせで +1 となります。
 
 デフォルトではクエリのフォワード鎖とリバースコンプリメント鎖の両方を検索します。`-strand 1` でプラス (フォワード) 鎖のみ、`-strand -1` でマイナス (リバースコンプリメント) 鎖のみの検索に制限できます。
 
@@ -729,7 +856,7 @@ ikafssn は 3 種類のスコアを計算します。
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
 ```
-# qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  alnscore  pident  nident  mismatch  cigar  qseq  sseq  volume
+# qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  alnscore  ppositive  npositive  nnegative  cigar  qseq  sseq  volume
 ```
 
 ### JSON 形式
@@ -829,9 +956,9 @@ ikafssn は 3 種類のスコアを計算します。
           "coverscore": 8,
           "chainscore": 12,
           "alnscore": 240,
-          "pident": 95.3,
-          "nident": 143,
-          "mismatch": 7,
+          "ppositive": 95.3,
+          "npositive": 143,
+          "nnegative": 7,
           "cigar": "50=2X48=1I50=",
           "qseq": "ACGT...",
           "sseq": "ACGT...",
@@ -856,7 +983,7 @@ SAM レコードの構成:
 - **CIGAR**: 拡張 CIGAR (=/X/I/D 演算子)
 - **SEQ**: ギャップなしクエリ配列
 - **QUAL**: * (利用不可)
-- **タグ**: `AS:i` (alnscore), `NM:i` (mismatch), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
+- **タグ**: `AS:i` (alnscore), `NM:i` (nnegative), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
 
 ## デプロイ構成
 

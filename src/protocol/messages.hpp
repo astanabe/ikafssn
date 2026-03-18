@@ -43,14 +43,15 @@ struct SearchRequest {
     uint8_t  stage3_traceback = 0;                // 0 = score only, 1 = full traceback
     int16_t  stage3_gapopen = INT16_MIN;          // INT16_MIN = server default
     int16_t  stage3_gapext = INT16_MIN;           // INT16_MIN = server default
-    uint16_t stage3_min_pident_x100 = 0;          // pident * 100; 0 = no filter
-    uint32_t stage3_min_nident = 0;               // 0 = no filter
+    uint16_t stage3_min_ppositive_x100 = 0;        // ppositive * 100; 0 = no filter
+    uint32_t stage3_min_npositive = 0;             // 0 = no filter
     uint32_t context_abs = 0;                     // absolute context bases (when frac=0)
     uint16_t context_frac_x10000 = 0;             // ratio * 10000 (when > 0, ratio mode)
     uint16_t max_degen_expand = 0;                 // 0 = server default
     uint16_t stage2_max_nhit_per_subject = 0;      // 0 = server default
     uint8_t  t = 0;               // template length (0/16/18/21)
     uint8_t  template_type = 0;   // 0=server default, 1=coding, 2=optimal, 3=both
+    uint8_t  score_matrix = 0;   // 0=server default, 1=degmatch, 2=dnafull, 3=nuc44
     std::string db;                                // target database name (empty = error)
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
@@ -73,9 +74,9 @@ struct ResponseHit {
     uint32_t oid = 0;       // internal: BLAST DB OID (not serialized)
     // Stage 3 fields (populated only when mode=3)
     int32_t  alnscore = 0;
-    uint32_t nident = 0;
-    uint32_t mismatch = 0;
-    uint16_t pident_x100 = 0;  // percent identity * 100
+    uint32_t npositive = 0;
+    uint32_t nnegative = 0;
+    uint16_t ppositive_x100 = 0;  // percent positive * 100
     std::string cigar;          // CIGAR string (traceback only)
     std::string qseq;          // aligned query (traceback only)
     std::string sseq;          // aligned subject (traceback only)

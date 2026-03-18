@@ -100,7 +100,7 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.1.0-parasail2.6.2-htslib1.23-v2
+          key: deps-${{ matrix.target }}-ncbi30.1.0-parasail2.6.2+degmatch-htslib1.23-v3
 
       # ---- Build Parasail ----
 
@@ -111,6 +111,7 @@ jobs:
             https://github.com/jeffdaily/parasail/archive/refs/tags/v2.6.2.tar.gz
           tar xf parasail-2.6.2.tar.gz
           cd parasail-2.6.2
+          patch -p1 < "${GITHUB_WORKSPACE}/patches/parasail-degmatch-cigar-score.patch"
           mkdir build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/parasail" \

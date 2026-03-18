@@ -151,14 +151,15 @@ private:
 //   u8   stage3_traceback
 //   i16  stage3_gapopen
 //   i16  stage3_gapext
-//   u16  stage3_min_pident_x100
-//   u32  stage3_min_nident
+//   u16  stage3_min_ppositive_x100
+//   u32  stage3_min_npositive
 //   u32  context_abs
 //   u16  context_frac_x10000
 //   u16  max_degen_expand
 //   u16  stage2_max_nhit_per_subject
 //   u8   t
 //   u8   template_type
+//   u8   score_matrix
 //   str16 db
 //   u32  num_seqids
 //     [str16 seqid] × num_seqids
@@ -189,14 +190,15 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     put_u8(buf, req.stage3_traceback);
     put_i16(buf, req.stage3_gapopen);
     put_i16(buf, req.stage3_gapext);
-    put_u16(buf, req.stage3_min_pident_x100);
-    put_u32(buf, req.stage3_min_nident);
+    put_u16(buf, req.stage3_min_ppositive_x100);
+    put_u32(buf, req.stage3_min_npositive);
     put_u32(buf, req.context_abs);
     put_u16(buf, req.context_frac_x10000);
     put_u16(buf, req.max_degen_expand);
     put_u16(buf, req.stage2_max_nhit_per_subject);
     put_u8(buf, req.t);
     put_u8(buf, req.template_type);
+    put_u8(buf, req.score_matrix);
     put_str16(buf, req.db);
 
     put_u32(buf, static_cast<uint32_t>(req.seqids.size()));
@@ -242,14 +244,15 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u8(req.stage3_traceback)) return false;
     if (!r.get_i16(req.stage3_gapopen)) return false;
     if (!r.get_i16(req.stage3_gapext)) return false;
-    if (!r.get_u16(req.stage3_min_pident_x100)) return false;
-    if (!r.get_u32(req.stage3_min_nident)) return false;
+    if (!r.get_u16(req.stage3_min_ppositive_x100)) return false;
+    if (!r.get_u32(req.stage3_min_npositive)) return false;
     if (!r.get_u32(req.context_abs)) return false;
     if (!r.get_u16(req.context_frac_x10000)) return false;
     if (!r.get_u16(req.max_degen_expand)) return false;
     if (!r.get_u16(req.stage2_max_nhit_per_subject)) return false;
     if (!r.get_u8(req.t)) return false;
     if (!r.get_u8(req.template_type)) return false;
+    if (!r.get_u8(req.score_matrix)) return false;
     if (!r.get_str16(req.db)) return false;
 
     uint32_t num_seqids;
@@ -305,9 +308,9 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //       u16    chainscore
 //       u16    volume
 //       i32    alnscore
-//       u32    nident
-//       u32    mismatch
-//       u16    pident_x100
+//       u32    npositive
+//       u32    nnegative
+//       u16    ppositive_x100
 //       str16  cigar
 //       str16  qseq
 //       str16  sseq
@@ -346,9 +349,9 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
             put_u16(buf, hit.chainscore);
             put_u16(buf, hit.volume);
             put_i32(buf, hit.alnscore);
-            put_u32(buf, hit.nident);
-            put_u32(buf, hit.mismatch);
-            put_u16(buf, hit.pident_x100);
+            put_u32(buf, hit.npositive);
+            put_u32(buf, hit.nnegative);
+            put_u16(buf, hit.ppositive_x100);
             put_str16(buf, hit.cigar);
             put_str16(buf, hit.qseq);
             put_str16(buf, hit.sseq);
@@ -404,9 +407,9 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
             if (!r.get_u16(hit.chainscore)) return false;
             if (!r.get_u16(hit.volume)) return false;
             if (!r.get_i32(hit.alnscore)) return false;
-            if (!r.get_u32(hit.nident)) return false;
-            if (!r.get_u32(hit.mismatch)) return false;
-            if (!r.get_u16(hit.pident_x100)) return false;
+            if (!r.get_u32(hit.npositive)) return false;
+            if (!r.get_u32(hit.nnegative)) return false;
+            if (!r.get_u16(hit.ppositive_x100)) return false;
             if (!r.get_str16(hit.cigar)) return false;
             if (!r.get_str16(hit.qseq)) return false;
             if (!r.get_str16(hit.sseq)) return false;
@@ -475,7 +478,7 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format (v7):
+// Wire format (v8):
 //   u8   status
 //   u8   default_k
 //   i32  max_queue_size

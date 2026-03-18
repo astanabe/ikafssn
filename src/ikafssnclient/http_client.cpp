@@ -52,11 +52,12 @@ static std::string build_request_json(const SearchRequest& req) {
         root["stage3_gapopen"] = req.stage3_gapopen;
     if (req.stage3_gapext != INT16_MIN)
         root["stage3_gapext"] = req.stage3_gapext;
-    root["stage3_min_pident_x100"] = req.stage3_min_pident_x100;
-    root["stage3_min_nident"] = req.stage3_min_nident;
+    root["stage3_min_ppositive_x100"] = req.stage3_min_ppositive_x100;
+    root["stage3_min_npositive"] = req.stage3_min_npositive;
     root["context_abs"] = req.context_abs;
     root["context_frac_x10000"] = req.context_frac_x10000;
     root["max_degen_expand"] = req.max_degen_expand;
+    if (req.score_matrix != 0) root["stage3_score_matrix"] = req.score_matrix;
     if (!req.db.empty())
         root["db"] = req.db;
 
@@ -165,9 +166,9 @@ static bool parse_response_json(const std::string& body,
                 if (resp.mode == 3) {
                     hit.alnscore = h.get("alnscore", 0).asInt();
                     if (resp.stage3_traceback) {
-                        hit.pident_x100 = static_cast<uint16_t>(h.get("pident", 0.0).asDouble() * 100.0);
-                        hit.nident = h.get("nident", 0).asUInt();
-                        hit.mismatch = h.get("mismatch", 0).asUInt();
+                        hit.ppositive_x100 = static_cast<uint16_t>(h.get("ppositive", 0.0).asDouble() * 100.0);
+                        hit.npositive = h.get("npositive", 0).asUInt();
+                        hit.nnegative = h.get("nnegative", 0).asUInt();
                         hit.cigar = h.get("cigar", "").asString();
                         hit.qseq = h.get("qseq", "").asString();
                         hit.sseq = h.get("sseq", "").asString();

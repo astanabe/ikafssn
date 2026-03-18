@@ -68,15 +68,15 @@ static void test_parasail_with_mismatches() {
     CHECK(cigar != nullptr);
 
     // Walk CIGAR to count matches and mismatches
-    uint32_t nident = 0, nmismatch = 0;
+    uint32_t npositive = 0, nnegative = 0;
     for (int i = 0; i < cigar->len; i++) {
         char op = parasail_cigar_decode_op(cigar->seq[i]);
         uint32_t len = parasail_cigar_decode_len(cigar->seq[i]);
-        if (op == '=') nident += len;
-        else if (op == 'X') nmismatch += len;
+        if (op == '=') npositive += len;
+        else if (op == 'X') nnegative += len;
     }
-    CHECK(nident == 19);
-    CHECK(nmismatch == 1);
+    CHECK(npositive == 19);
+    CHECK(nnegative == 1);
 
     parasail_cigar_free(cigar);
     parasail_result_free(result);
@@ -199,10 +199,10 @@ static void test_reverse_complement_alignment() {
     parasail_result_free(result);
 }
 
-static void test_pident_calculation() {
-    std::fprintf(stderr, "-- test_pident_calculation\n");
+static void test_ppositive_calculation() {
+    std::fprintf(stderr, "-- test_ppositive_calculation\n");
 
-    // 18 matches + 2 mismatches = 20 bases, pident = 90%
+    // 18 matches + 2 mismatches = 20 bases, ppositive = 90%
     const char* query = "ACGTACGTACGTACGTACGT";
     const char* subj  = "ACTTACGTACGTACGTACTT";
     //                     ^                ^^  mismatches
@@ -218,18 +218,18 @@ static void test_pident_calculation() {
         result, query, qlen, subj, slen, matrix);
     CHECK(cigar != nullptr);
 
-    uint32_t nident = 0, nmismatch = 0, aln_len = 0;
+    uint32_t npositive = 0, nnegative = 0, aln_len = 0;
     for (int i = 0; i < cigar->len; i++) {
         char op = parasail_cigar_decode_op(cigar->seq[i]);
         uint32_t len = parasail_cigar_decode_len(cigar->seq[i]);
         aln_len += len;
-        if (op == '=') nident += len;
-        else if (op == 'X') nmismatch += len;
+        if (op == '=') npositive += len;
+        else if (op == 'X') nnegative += len;
     }
 
-    double pident = (aln_len > 0) ? 100.0 * nident / aln_len : 0.0;
-    CHECK(nident + nmismatch == 20);
-    CHECK(pident > 85.0 && pident <= 100.0);
+    double ppositive = (aln_len > 0) ? 100.0 * npositive / aln_len : 0.0;
+    CHECK(npositive + nnegative == 20);
+    CHECK(ppositive > 85.0 && ppositive <= 100.0);
 
     parasail_cigar_free(cigar);
     parasail_result_free(result);
@@ -242,7 +242,7 @@ int main() {
     test_parasail_score_only();
     test_parasail_profile();
     test_reverse_complement_alignment();
-    test_pident_calculation();
+    test_ppositive_calculation();
 
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;

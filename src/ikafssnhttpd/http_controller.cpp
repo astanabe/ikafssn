@@ -102,11 +102,22 @@ void HttpController::search(
     sreq.stage3_gapext = j.isMember("stage3_gapext")
         ? static_cast<int16_t>(j["stage3_gapext"].asInt())
         : INT16_MIN;
-    sreq.stage3_min_pident_x100 = static_cast<uint16_t>(j.get("stage3_min_pident_x100", 0).asUInt());
-    sreq.stage3_min_nident = j.get("stage3_min_nident", 0).asUInt();
+    sreq.stage3_min_ppositive_x100 = static_cast<uint16_t>(j.get("stage3_min_ppositive_x100", 0).asUInt());
+    sreq.stage3_min_npositive = j.get("stage3_min_npositive", 0).asUInt();
     sreq.context_abs = j.get("context_abs", 0).asUInt();
     sreq.context_frac_x10000 = static_cast<uint16_t>(j.get("context_frac_x10000", 0).asUInt());
     sreq.max_degen_expand = static_cast<uint16_t>(j.get("max_degen_expand", 0).asUInt());
+    if (j.isMember("stage3_score_matrix")) {
+        auto val = j["stage3_score_matrix"];
+        if (val.isString()) {
+            std::string sm = val.asString();
+            if (sm == "degmatch") sreq.score_matrix = 1;
+            else if (sm == "dnafull") sreq.score_matrix = 2;
+            else if (sm == "nuc44") sreq.score_matrix = 3;
+        } else if (val.isInt()) {
+            sreq.score_matrix = static_cast<uint8_t>(val.asInt());
+        }
+    }
     if (j.isMember("t")) {
         sreq.t = static_cast<uint8_t>(j["t"].asInt());
     }
@@ -233,9 +244,9 @@ void HttpController::search(
                 if (sresp.mode == 3) {
                     hobj["alnscore"] = hit.alnscore;
                     if (sresp.stage3_traceback) {
-                        hobj["pident"] = static_cast<double>(hit.pident_x100) / 100.0;
-                        hobj["nident"] = hit.nident;
-                        hobj["mismatch"] = hit.mismatch;
+                        hobj["ppositive"] = static_cast<double>(hit.ppositive_x100) / 100.0;
+                        hobj["npositive"] = hit.npositive;
+                        hobj["nnegative"] = hit.nnegative;
                         hobj["cigar"] = hit.cigar;
                         hobj["qseq"] = hit.qseq;
                         hobj["sseq"] = hit.sseq;

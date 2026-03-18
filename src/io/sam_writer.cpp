@@ -126,9 +126,9 @@ static void write_sam_bam_impl(const std::string& output_path,
             bam_aux_append(b, "AS", 'i', sizeof(int32_t),
                            reinterpret_cast<const uint8_t*>(&as));
         }
-        // NM:i:mismatch
+        // NM:i:nnegative
         {
-            int32_t nm = static_cast<int32_t>(h.mismatch);
+            int32_t nm = static_cast<int32_t>(h.nnegative);
             bam_aux_append(b, "NM", 'i', sizeof(int32_t),
                            reinterpret_cast<const uint8_t*>(&nm));
         }

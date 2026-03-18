@@ -1,4 +1,5 @@
 #include "search/stage3_alignment.hpp"
+#include "core/spaced_seed.hpp"
 #include "io/blastdb_reader.hpp"
 
 #include <algorithm>
@@ -15,29 +16,10 @@
 
 namespace ikafssn {
 
-// Reverse complement a DNA string (returns a new string).
-static std::string reverse_complement(const std::string& seq) {
-    std::string rc(seq.rbegin(), seq.rend());
-    for (auto& c : rc) {
-        switch (c) {
-            case 'A': c = 'T'; break;
-            case 'T': c = 'A'; break;
-            case 'C': c = 'G'; break;
-            case 'G': c = 'C'; break;
-            case 'a': c = 't'; break;
-            case 't': c = 'a'; break;
-            case 'c': c = 'g'; break;
-            case 'g': c = 'c'; break;
-            // N and others stay as-is
-        }
-    }
-    return rc;
-}
-
-// Walk a parasail CIGAR to compute nident, nmismatch, and build a CIGAR string.
+// Walk a parasail CIGAR to compute npositive, nnegative, and build a CIGAR string.
 struct CigarStats {
-    uint32_t nident = 0;
-    uint32_t nmismatch = 0;
+    uint32_t npositive = 0;
+    uint32_t nnegative = 0;
     uint32_t aln_len = 0;
     std::string cigar_str;
 };
@@ -49,8 +31,8 @@ static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
         uint32_t len = parasail_cigar_decode_len(cigar->seq[i]);
         stats.aln_len += len;
         switch (op) {
-            case '=': stats.nident += len; break;
-            case 'X': stats.nmismatch += len; break;
+            case '=': stats.npositive += len; break;
+            case 'X': stats.nnegative += len; break;
             case 'I': break; // insertion in query
             case 'D': break; // deletion in query (insertion in ref)
             default: break;
@@ -152,7 +134,11 @@ std::vector<OutputHit> run_stage3(
 
     // 4. Build query profiles (per unique query_id x strand)
     // Key: (query_idx, is_reverse)
-    const parasail_matrix_t* matrix = parasail_matrix_lookup("nuc44");
+    const parasail_matrix_t* matrix = parasail_matrix_lookup(config.score_matrix.c_str());
+    if (!matrix) {
+        logger.error("Stage 3: unknown score matrix '%s'", config.score_matrix.c_str());
+        return {};
+    }
 
     struct ProfileEntry {
         parasail_profile_t* profile = nullptr;
@@ -172,7 +158,7 @@ std::vector<OutputHit> run_stage3(
         if (profiles.find(key) == profiles.end()) {
             ProfileEntry pe;
             if (is_rev) {
-                pe.seq = reverse_complement(queries[qi].sequence);
+                pe.seq = reverse_complement_string(queries[qi].sequence);
             } else {
                 pe.seq = queries[qi].sequence;
             }
@@ -233,10 +219,10 @@ std::vector<OutputHit> run_stage3(
 
             // Walk CIGAR for stats
             CigarStats cs = walk_cigar(cigar);
-            hits[idx].nident = cs.nident;
-            hits[idx].mismatch = cs.nmismatch;
+            hits[idx].npositive = cs.npositive;
+            hits[idx].nnegative = cs.nnegative;
             hits[idx].cigar = cs.cigar_str;
-            hits[idx].pident = (cs.aln_len > 0) ? 100.0 * cs.nident / cs.aln_len : 0.0;
+            hits[idx].ppositive = (cs.aln_len > 0) ? 100.0 * cs.npositive / cs.aln_len : 0.0;
 
             // Get traceback strings
             parasail_traceback_t* tb = parasail_result_get_traceback(
@@ -399,10 +385,10 @@ std::vector<OutputHit> run_stage3(
                             hits[clamp_idx].send = new_ext_start + static_cast<uint32_t>(result2->end_ref);
 
                             CigarStats cs2 = walk_cigar(cigar2);
-                            hits[clamp_idx].nident = cs2.nident;
-                            hits[clamp_idx].mismatch = cs2.nmismatch;
+                            hits[clamp_idx].npositive = cs2.npositive;
+                            hits[clamp_idx].nnegative = cs2.nnegative;
                             hits[clamp_idx].cigar = cs2.cigar_str;
-                            hits[clamp_idx].pident = (cs2.aln_len > 0) ? 100.0 * cs2.nident / cs2.aln_len : 0.0;
+                            hits[clamp_idx].ppositive = (cs2.aln_len > 0) ? 100.0 * cs2.npositive / cs2.aln_len : 0.0;
 
                             parasail_traceback_t* tb2 = parasail_result_get_traceback(
                                 result2, pe2.seq.c_str(), static_cast<int>(pe2.seq.size()),
@@ -444,7 +430,7 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 6. Filter by min_pident / min_nident (only meaningful with traceback)
+    // 6. Filter by min_ppositive / min_npositive (only meaningful with traceback)
     std::vector<OutputHit> filtered;
     filtered.reserve(hits.size());
     for (size_t i = 0; i < hits.size(); i++) {
@@ -455,8 +441,8 @@ std::vector<OutputHit> run_stage3(
         if (qit == query_map.end()) continue;
 
         if (config.traceback) {
-            if (config.min_pident > 0 && hits[i].pident < config.min_pident) continue;
-            if (config.min_nident > 0 && hits[i].nident < config.min_nident) continue;
+            if (config.min_ppositive > 0 && hits[i].ppositive < config.min_ppositive) continue;
+            if (config.min_npositive > 0 && hits[i].npositive < config.min_npositive) continue;
         }
         filtered.push_back(std::move(hits[i]));
     }

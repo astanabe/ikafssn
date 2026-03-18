@@ -8,6 +8,7 @@
 #include "protocol/info_format.hpp"
 #include "util/common_init.hpp"
 #include "io/fasta_reader.hpp"
+#include "io/primer_query.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
 #include "io/sam_writer.hpp"
@@ -45,6 +46,12 @@ static void print_usage(const char* prog) {
         "  -query <path>            Query FASTA file (- for stdin)\n"
         "  -ix <name>               Target database name on server\n"
         "\n"
+        "Primer mode (alternative to -query):\n"
+        "  -primer <path>           Primer pair FASTA (mutually exclusive with -query)\n"
+        "  -insert_length <int>     Expected insert length (required with -primer)\n"
+        "  -stage1_primer_score <num>  Stage 1 threshold (0<v<=1: fraction, v>=2: absolute; default: 0.5)\n"
+        "  -stage2_primer_score_add <int>  Stage 2 threshold addon: max(Lf,Lr) + N (default: 1)\n"
+        "\n"
         "Options:\n"
         "  -o <path>                Output file (default: stdout)\n"
         "  -k <int>                 K-mer size (default: server default)\n"
@@ -70,8 +77,9 @@ static void print_usage(const char* prog) {
         "  -stage3_traceback <0|1>  Enable traceback in mode 3 (default: 0)\n"
         "  -stage3_gapopen <int>    Gap open penalty (default: server default)\n"
         "  -stage3_gapext <int>     Gap extension penalty (default: server default)\n"
-        "  -stage3_min_pident <num> Min percent identity filter (default: server default)\n"
-        "  -stage3_min_nident <int> Min identical bases filter (default: server default)\n"
+        "  -stage3_min_ppositive <num> Min percent positive filter (default: server default)\n"
+        "  -stage3_min_npositive <int> Min positive-scoring positions filter (default: server default)\n"
+        "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: server default)\n"
         "  -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)\n"
         "  -t <int>                 Template length for spaced seeds (0/16/18/21, default: 0)\n"
         "  -template_type <string>  Template type: coding, optimal, both (default: server default)\n"
@@ -235,9 +243,9 @@ static void collect_results(const SearchResponse& resp,
             oh.qlen = hit.qlen;
             oh.slen = hit.slen;
             oh.alnscore = hit.alnscore;
-            oh.nident = hit.nident;
-            oh.mismatch = hit.mismatch;
-            oh.pident = static_cast<double>(hit.pident_x100) / 100.0;
+            oh.npositive = hit.npositive;
+            oh.nnegative = hit.nnegative;
+            oh.ppositive = static_cast<double>(hit.ppositive_x100) / 100.0;
             oh.cigar = hit.cigar;
             oh.qseq = hit.qseq;
             oh.sseq = hit.sseq;
@@ -271,10 +279,34 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (!cli.has("-query")) {
-        std::fprintf(stderr, "Error: -query is required\n");
+    bool has_query = cli.has("-query");
+    bool has_primer = cli.has("-primer");
+
+    if (!has_query && !has_primer) {
+        std::fprintf(stderr, "Error: -query or -primer is required\n");
         print_usage(argv[0]);
         return 1;
+    }
+
+    if (has_query && has_primer) {
+        std::fprintf(stderr, "Error: -query and -primer are mutually exclusive\n");
+        return 1;
+    }
+
+    // Primer mode validation
+    if (has_primer) {
+        if (cli.has("-stage1_min_score")) {
+            std::fprintf(stderr, "Error: -stage1_min_score cannot be used with -primer; use -stage1_primer_score instead\n");
+            return 1;
+        }
+        if (cli.has("-stage2_min_score")) {
+            std::fprintf(stderr, "Error: -stage2_min_score cannot be used with -primer; use -stage2_primer_score_add instead\n");
+            return 1;
+        }
+        if (!cli.has("-insert_length")) {
+            std::fprintf(stderr, "Error: -insert_length is required with -primer\n");
+            return 1;
+        }
     }
 
     if (!cli.has("-ix")) {
@@ -310,9 +342,26 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    std::string query_path = cli.get_string("-query");
+    std::string query_path = has_query ? cli.get_string("-query") : "";
+    std::string primer_path = has_primer ? cli.get_string("-primer") : "";
+    std::string input_path = has_primer ? primer_path : query_path;
     std::string output_path = cli.get_string("-o");
     std::string ix_name = cli.get_string("-ix");
+
+    // Primer mode parameters
+    uint32_t insert_length = 0;
+    double stage1_primer_score = 0.5;
+    int stage2_primer_score_add = 1;
+    if (has_primer) {
+        insert_length = static_cast<uint32_t>(cli.get_int("-insert_length", 0));
+        stage1_primer_score = cli.get_double("-stage1_primer_score", 0.5);
+        stage2_primer_score_add = cli.get_int("-stage2_primer_score_add", 1);
+
+        if (stage1_primer_score > 1.0 && stage1_primer_score < 2.0) {
+            std::fprintf(stderr, "Error: -stage1_primer_score must be 0<v<=1 (fraction) or v>=2 (absolute)\n");
+            return 1;
+        }
+    }
 
     // Output format
     OutputFormat outfmt;
@@ -324,23 +373,25 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Read query FASTA (with stdin buffering for checkpoint)
+    // Read FASTA (query or primer, with stdin buffering for checkpoint)
     std::string stdin_content;
     std::vector<FastaRecord> queries;
-    if (query_path == "-") {
+    if (input_path == "-") {
         std::ostringstream oss;
         oss << std::cin.rdbuf();
         stdin_content = oss.str();
         std::istringstream iss(stdin_content);
         queries = read_fasta_stream(iss);
     } else {
-        queries = read_fasta(query_path);
+        queries = read_fasta(input_path);
     }
     if (queries.empty()) {
-        std::fprintf(stderr, "Error: no query sequences found\n");
+        std::fprintf(stderr, "Error: no %s sequences found\n",
+                     has_primer ? "primer" : "query");
         return 1;
     }
-    logger.info("Read %zu query sequence(s)", queries.size());
+    logger.info("Read %zu %s sequence(s)", queries.size(),
+                has_primer ? "primer" : "query");
 
     // Build base search request parameters (shared across retries)
     SearchRequest base_req;
@@ -414,10 +465,20 @@ int main(int argc, char* argv[]) {
         ? static_cast<int16_t>(cli.get_int("-stage3_gapext", 0))
         : INT16_MIN;
     {
-        double min_pident = cli.get_double("-stage3_min_pident", 0.0);
-        base_req.stage3_min_pident_x100 = static_cast<uint16_t>(min_pident * 100.0);
+        double min_ppositive = cli.get_double("-stage3_min_ppositive", 0.0);
+        base_req.stage3_min_ppositive_x100 = static_cast<uint16_t>(min_ppositive * 100.0);
     }
-    base_req.stage3_min_nident = static_cast<uint32_t>(cli.get_int("-stage3_min_nident", 0));
+    base_req.stage3_min_npositive = static_cast<uint32_t>(cli.get_int("-stage3_min_npositive", 0));
+    if (cli.has("-stage3_score_matrix")) {
+        std::string sm = cli.get_string("-stage3_score_matrix");
+        if (sm == "degmatch") base_req.score_matrix = 1;
+        else if (sm == "dnafull") base_req.score_matrix = 2;
+        else if (sm == "nuc44") base_req.score_matrix = 3;
+        else {
+            std::fprintf(stderr, "Error: -stage3_score_matrix must be degmatch, dnafull, or nuc44\n");
+            return 1;
+        }
+    }
 
     // Context
     {
@@ -487,12 +548,100 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Primer mode: parse pairs and generate query sequences (needs resolved_k)
+    if (has_primer) {
+        // Resolve seed masks from server info
+        std::vector<uint32_t> seed_masks;
+        if (base_req.t > 0) {
+            uint8_t index_tt = 0;
+            for (const auto& db : server_info.databases) {
+                if (db.name == base_req.db) {
+                    for (const auto& kg : db.groups) {
+                        if (kg.k == resolved_k && kg.t == base_req.t) {
+                            index_tt = kg.template_type;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+            auto [m, tg] = get_tagged_masks<uint32_t>(
+                resolved_k, base_req.t, index_tt, base_req.template_type);
+            seed_masks = std::move(m);
+        }
+
+        PrimerConfig pcfg;
+        pcfg.insert_length = insert_length;
+        pcfg.k = resolved_k;
+        pcfg.t = base_req.t;
+        pcfg.masks = base_req.t > 0 ? &seed_masks : nullptr;
+
+        std::vector<PrimerPair> primer_pairs;
+        std::string primer_err = parse_primer_pairs(queries, pcfg, primer_pairs);
+        if (!primer_err.empty()) {
+            std::fprintf(stderr, "%s\n", primer_err.c_str());
+            return 1;
+        }
+
+        // Replace queries with generated primer pair queries and resolve thresholds
+        queries.clear();
+        uint32_t min_stage2_score = UINT32_MAX;
+        for (const auto& pp : primer_pairs) {
+            FastaRecord qr;
+            qr.id = pp.query_id;
+            qr.sequence = pp.query_seq;
+            queries.push_back(std::move(qr));
+
+            uint32_t total_pos = pp.fwd_kmer_positions + pp.rev_kmer_positions;
+
+            // Validate stage1_primer_score (absolute mode)
+            if (stage1_primer_score >= 2.0) {
+                if (static_cast<uint32_t>(stage1_primer_score) > total_pos) {
+                    std::fprintf(stderr,
+                        "Error: -stage1_primer_score (%u) exceeds total k-mer positions (%u) for pair %s\n",
+                        static_cast<unsigned>(stage1_primer_score), total_pos, pp.query_id.c_str());
+                    return 1;
+                }
+            }
+
+            // Compute stage2 threshold: max(fwd_pos, rev_pos) + add
+            uint32_t s2_score = std::max(pp.fwd_kmer_positions, pp.rev_kmer_positions)
+                                + static_cast<uint32_t>(stage2_primer_score_add);
+            if (s2_score > total_pos) {
+                std::fprintf(stderr,
+                    "Error: stage2 threshold (%u) exceeds total k-mer positions (%u) for pair %s\n",
+                    s2_score, total_pos, pp.query_id.c_str());
+                return 1;
+            }
+            min_stage2_score = std::min(min_stage2_score, s2_score);
+        }
+
+        // Set stage1 threshold
+        if (stage1_primer_score > 0 && stage1_primer_score <= 1.0) {
+            base_req.stage1_min_score_frac_x10000 =
+                static_cast<uint16_t>(stage1_primer_score * 10000.0);
+        } else if (stage1_primer_score >= 2.0) {
+            base_req.stage1_min_score = static_cast<uint16_t>(stage1_primer_score);
+        }
+
+        // Set stage2 threshold (use minimum across all pairs)
+        base_req.stage2_min_score = static_cast<uint16_t>(min_stage2_score);
+        base_req.has_stage2_min_score = 1;
+
+        // Set stage2 max_gap to insert_length (unless explicitly overridden)
+        if (!cli.has("-stage2_max_gap")) {
+            base_req.stage2_max_gap = static_cast<uint16_t>(insert_length);
+        }
+
+        logger.info("Generated %zu primer pair queries", primer_pairs.size());
+    }
+
     // Compute SHA256s for checkpoint validation
     std::string input_sha256;
-    if (query_path == "-") {
+    if (input_path == "-") {
         input_sha256 = sha256_string(stdin_content);
     } else {
-        input_sha256 = sha256_file(query_path);
+        input_sha256 = sha256_file(input_path);
     }
     std::string seqidlist_sha256;
     std::string neg_seqidlist_sha256;
@@ -507,9 +656,17 @@ int main(int argc, char* argv[]) {
         base_req, db_stats, resolved_k, outfmt,
         seqidlist_sha256, neg_seqidlist_sha256);
 
+    // Append primer mode parameters to options text
+    if (has_primer) {
+        options_text += "primer=1\n";
+        options_text += "insert_length=" + std::to_string(insert_length) + "\n";
+        options_text += "stage1_primer_score=" + std::to_string(stage1_primer_score) + "\n";
+        options_text += "stage2_primer_score_add=" + std::to_string(stage2_primer_score_add) + "\n";
+    }
+
     Checkpoint::Config ckpt_cfg;
     ckpt_cfg.output_path = output_path;
-    ckpt_cfg.input_path = query_path;
+    ckpt_cfg.input_path = input_path;
     ckpt_cfg.ix_name = ix_name;
     ckpt_cfg.resolved_k = resolved_k;
     ckpt_cfg.outfmt = outfmt;

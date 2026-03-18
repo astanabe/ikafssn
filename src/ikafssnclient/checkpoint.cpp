@@ -114,8 +114,8 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "stage3_traceback=" << static_cast<int>(req.stage3_traceback) << "\n";
     oss << "stage3_gapopen=" << req.stage3_gapopen << "\n";
     oss << "stage3_gapext=" << req.stage3_gapext << "\n";
-    oss << "stage3_min_pident_x100=" << req.stage3_min_pident_x100 << "\n";
-    oss << "stage3_min_nident=" << req.stage3_min_nident << "\n";
+    oss << "stage3_min_ppositive_x100=" << req.stage3_min_ppositive_x100 << "\n";
+    oss << "stage3_min_npositive=" << req.stage3_min_npositive << "\n";
     oss << "context_abs=" << req.context_abs << "\n";
     oss << "context_frac_x10000=" << req.context_frac_x10000 << "\n";
     oss << "max_degen_expand=" << req.max_degen_expand << "\n";

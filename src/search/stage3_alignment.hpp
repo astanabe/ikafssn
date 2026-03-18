@@ -14,8 +14,9 @@ struct Stage3Config {
     int gapopen = 10;
     int gapext = 1;
     bool traceback = false;
-    double min_pident = 0.0;
-    uint32_t min_nident = 0;
+    double min_ppositive = 0.0;
+    uint32_t min_npositive = 0;
+    std::string score_matrix = "degmatch";
     int fetch_threads = 8;   // threads for BLAST DB sequence fetch
 };
 
@@ -25,7 +26,7 @@ struct Stage3Config {
 // - db_path: BLAST DB path for subject sequence retrieval
 // - context_is_ratio/context_ratio/context_abs: -context option values
 // - Fetch thread count is controlled by config.fetch_threads
-// Returns filtered hits (min_pident/min_nident applied).
+// Returns filtered hits (min_ppositive/min_npositive applied).
 std::vector<OutputHit> run_stage3(
     std::vector<OutputHit>& hits,
     const std::vector<FastaRecord>& queries,

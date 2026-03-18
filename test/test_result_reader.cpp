@@ -227,9 +227,9 @@ static void test_roundtrip_mode3_traceback() {
     h.coverscore = 7;
     h.chainscore = 40;
     h.alnscore = 200;
-    h.pident = 95.5;
-    h.nident = 90;
-    h.mismatch = 4;
+    h.ppositive = 95.5;
+    h.npositive = 90;
+    h.nnegative = 4;
     h.cigar = "50M2I48M";
     h.qseq = "ACGT";
     h.sseq = "ACGT";

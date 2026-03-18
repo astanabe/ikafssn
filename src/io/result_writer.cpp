@@ -28,7 +28,7 @@ void write_results_tab(std::ostream& out,
         }
     } else if (mode == 3 && stage3_traceback) {
         out << "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t"
-            << s1name << "\tchainscore\talnscore\tpident\tnident\tmismatch\tcigar\tqseq\tsseq\tvolume\n";
+            << s1name << "\tchainscore\talnscore\tppositive\tnpositive\tnnegative\tcigar\tqseq\tsseq\tvolume\n";
         for (const auto& h : hits) {
             out << h.qseqid << '\t'
                 << h.sseqid << '\t'
@@ -42,9 +42,9 @@ void write_results_tab(std::ostream& out,
                 << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
                 << h.chainscore << '\t'
                 << h.alnscore << '\t'
-                << h.pident << '\t'
-                << h.nident << '\t'
-                << h.mismatch << '\t'
+                << h.ppositive << '\t'
+                << h.npositive << '\t'
+                << h.nnegative << '\t'
                 << h.cigar << '\t'
                 << h.qseq << '\t'
                 << h.sseq << '\t'
@@ -154,9 +154,9 @@ static void write_results_json_inner(std::ostream& out,
             if (mode == 3) {
                 out << "          \"alnscore\": " << h->alnscore << ",\n";
                 if (stage3_traceback) {
-                    out << "          \"pident\": " << h->pident << ",\n";
-                    out << "          \"nident\": " << h->nident << ",\n";
-                    out << "          \"mismatch\": " << h->mismatch << ",\n";
+                    out << "          \"ppositive\": " << h->ppositive << ",\n";
+                    out << "          \"npositive\": " << h->npositive << ",\n";
+                    out << "          \"nnegative\": " << h->nnegative << ",\n";
                     out << "          \"cigar\": "; json_escape(out, h->cigar); out << ",\n";
                     out << "          \"qseq\": "; json_escape(out, h->qseq); out << ",\n";
                     out << "          \"sseq\": "; json_escape(out, h->sseq); out << ",\n";

@@ -125,9 +125,9 @@ static bool parse_line_with_map(
         hit.matchscore = field_u32(fields, cmap, "matchscore");
         hit.chainscore = field_u32(fields, cmap, "chainscore");
         hit.alnscore = field_i32(fields, cmap, "alnscore");
-        hit.pident = field_dbl(fields, cmap, "pident");
-        hit.nident = field_u32(fields, cmap, "nident");
-        hit.mismatch = field_u32(fields, cmap, "mismatch");
+        hit.ppositive = field_dbl(fields, cmap, "ppositive");
+        hit.npositive = field_u32(fields, cmap, "npositive");
+        hit.nnegative = field_u32(fields, cmap, "nnegative");
 
         hit.cigar = field_str(fields, cmap, "cigar", empty);
         hit.qseq = field_str(fields, cmap, "qseq", empty);
@@ -165,9 +165,9 @@ static bool parse_line_legacy(const std::string& line, OutputHit& hit) {
             hit.coverscore = static_cast<uint32_t>(std::stoul(fields[9]));
             hit.chainscore = static_cast<uint32_t>(std::stoul(fields[10]));
             hit.alnscore = static_cast<int32_t>(std::stol(fields[11]));
-            hit.pident = std::stod(fields[12]);
-            hit.nident = static_cast<uint32_t>(std::stoul(fields[13]));
-            hit.mismatch = static_cast<uint32_t>(std::stoul(fields[14]));
+            hit.ppositive = std::stod(fields[12]);
+            hit.npositive = static_cast<uint32_t>(std::stoul(fields[13]));
+            hit.nnegative = static_cast<uint32_t>(std::stoul(fields[14]));
             hit.cigar = fields[15];
             hit.qseq = fields[16];
             hit.sseq = fields[17];

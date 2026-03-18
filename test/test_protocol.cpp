@@ -570,8 +570,8 @@ static void test_search_request_stage3_fields() {
     req.stage3_traceback = 1;
     req.stage3_gapopen = -10;
     req.stage3_gapext = -1;
-    req.stage3_min_pident_x100 = 9500;  // 95.00%
-    req.stage3_min_nident = 200;
+    req.stage3_min_ppositive_x100 = 9500;  // 95.00%
+    req.stage3_min_npositive = 200;
     req.context_abs = 500;
     req.context_frac_x10000 = 1500;  // 0.15
     req.queries.push_back({"q1", "ACGTACGT"});
@@ -583,8 +583,8 @@ static void test_search_request_stage3_fields() {
     assert(req2.stage3_traceback == 1);
     assert(req2.stage3_gapopen == -10);
     assert(req2.stage3_gapext == -1);
-    assert(req2.stage3_min_pident_x100 == 9500);
-    assert(req2.stage3_min_nident == 200);
+    assert(req2.stage3_min_ppositive_x100 == 9500);
+    assert(req2.stage3_min_npositive == 200);
     assert(req2.context_abs == 500);
     assert(req2.context_frac_x10000 == 1500);
 
@@ -616,9 +616,9 @@ static void test_search_response_stage3_fields() {
     hit.coverscore = 20;
     hit.volume = 0;
     hit.alnscore = 380;
-    hit.nident = 175;
-    hit.mismatch = 15;
-    hit.pident_x100 = 9211;  // 92.11%
+    hit.npositive = 175;
+    hit.nnegative = 15;
+    hit.ppositive_x100 = 9211;  // 92.11%
     hit.cigar = "100M5I85M";
     hit.qseq = "ACGTACGTACGT";
     hit.sseq = "ACGTACGTTCGT";
@@ -637,9 +637,9 @@ static void test_search_response_stage3_fields() {
     assert(h.qlen == 500);
     assert(h.slen == 5000);
     assert(h.alnscore == 380);
-    assert(h.nident == 175);
-    assert(h.mismatch == 15);
-    assert(h.pident_x100 == 9211);
+    assert(h.npositive == 175);
+    assert(h.nnegative == 15);
+    assert(h.ppositive_x100 == 9211);
     assert(h.cigar == "100M5I85M");
     assert(h.qseq == "ACGTACGTACGT");
     assert(h.sseq == "ACGTACGTTCGT");

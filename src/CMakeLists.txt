@@ -40,6 +40,7 @@ add_library(ikafssn_io STATIC
     io/seqidlist_reader.cpp
     io/result_writer.cpp
     io/result_reader.cpp
+    io/primer_query.cpp
 )
 target_link_libraries(ikafssn_io PUBLIC ikafssn_core)
 

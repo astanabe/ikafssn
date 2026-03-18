@@ -28,9 +28,9 @@ struct OutputHit {
     // Stage 3 fields (populated only when mode == 3)
     int32_t alnscore = 0;
     std::string cigar;
-    uint32_t nident = 0;
-    uint32_t mismatch = 0;
-    double pident = 0.0;
+    uint32_t npositive = 0;
+    uint32_t nnegative = 0;
+    double ppositive = 0.0;
     std::string qseq;        // aligned query (with gaps, traceback only)
     std::string sseq;        // aligned subject (with gaps, traceback only)
     uint32_t qlen = 0;       // query full sequence length

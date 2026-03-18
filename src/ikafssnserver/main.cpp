@@ -56,9 +56,10 @@ static void print_usage(const char* prog) {
         "  -stage3_traceback <0|1>  Default traceback mode (default: 0)\n"
         "  -stage3_gapopen <int>    Default gap open penalty (default: 10)\n"
         "  -stage3_gapext <int>     Default gap extension penalty (default: 1)\n"
-        "  -stage3_min_pident <num> Default min percent identity (default: 0)\n"
+        "  -stage3_min_ppositive <num> Default min percent positive (default: 0)\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
-        "  -stage3_min_nident <int> Default min identical bases (default: 0)\n"
+        "  -stage3_min_npositive <int> Default min positive-scoring positions (default: 0)\n"
+        "  -stage3_score_matrix <name> Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
         "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch (default: min(8, threads))\n"
         "  -memory_limit <size>     madvise WILLNEED budget (default: half of RAM)\n"
         "                           Accepts K, M, G suffixes\n"
@@ -188,8 +189,17 @@ int main(int argc, char* argv[]) {
     config.stage3_config.gapopen = cli.get_int("-stage3_gapopen", 10);
     config.stage3_config.gapext = cli.get_int("-stage3_gapext", 1);
     config.stage3_config.traceback = (cli.get_int("-stage3_traceback", 0) != 0);
-    config.stage3_config.min_pident = cli.get_double("-stage3_min_pident", 0.0);
-    config.stage3_config.min_nident = static_cast<uint32_t>(cli.get_int("-stage3_min_nident", 0));
+    config.stage3_config.min_ppositive = cli.get_double("-stage3_min_ppositive", 0.0);
+    config.stage3_config.min_npositive = static_cast<uint32_t>(cli.get_int("-stage3_min_npositive", 0));
+    if (cli.has("-stage3_score_matrix")) {
+        config.stage3_config.score_matrix = cli.get_string("-stage3_score_matrix");
+        if (config.stage3_config.score_matrix != "degmatch" &&
+            config.stage3_config.score_matrix != "dnafull" &&
+            config.stage3_config.score_matrix != "nuc44") {
+            std::fprintf(stderr, "Error: -stage3_score_matrix must be degmatch, dnafull, or nuc44\n");
+            return 1;
+        }
+    }
 
     // Resolve fetch_threads after num_threads is known
     int num_threads_resolved = resolve_threads(cli);

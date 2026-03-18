@@ -175,8 +175,9 @@ Options:
   -stage3_traceback <0|1> Enable traceback in mode 3 (default: 0)
   -stage3_gapopen <int>   Gap open penalty for mode 3 (default: 10)
   -stage3_gapext <int>    Gap extension penalty for mode 3 (default: 1)
-  -stage3_min_pident <num>  Min percent identity filter for mode 3 (default: 0)
-  -stage3_min_nident <int>  Min identical bases filter for mode 3 (default: 0)
+  -stage3_min_ppositive <num>  Min percent positive filter for mode 3 (default: 0)
+  -stage3_min_npositive <int>  Min positive-scoring positions filter for mode 3 (default: 0)
+  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: degmatch)
   -stage3_fetch_threads <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, threads); error if exceeds -threads)
   -num_results <int>      Max results per query, 0=unlimited (default: 0)
   -seqidlist <path>       Include only listed accessions
@@ -192,6 +193,12 @@ Options:
                           coding, optimal, or both
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose           Verbose logging
+
+Primer mode (alternative to -query):
+  -primer <path>           Primer pair FASTA (even number of sequences; mutually exclusive with -query)
+  -insert_length <int>     Expected insert length (required with -primer)
+  -stage1_primer_score <num>  Stage 1 threshold for primer (0<v<=1: fraction, v>=2: absolute; default: 0.5)
+  -stage2_primer_score_add <int>  Stage 2 threshold addon: max(Lf,Lr) + N (default: 1)
 ```
 
 The `-ix` option specifies the index prefix path (without extension), similar to `blastn -db`. For example, if `ikafssnindex -db nt -k 11 -o /data/index` generated the following files for a multi-volume BLAST DB (`nt` with volumes `nt.00`, `nt.01`):
@@ -245,8 +252,8 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -o
 # Mode 3: BAM output
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt bam -o result.bam
 
-# Mode 3: filter by percent identity
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_pident 90
+# Mode 3: filter by percent positive
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_ppositive 90
 
 # Mode 3: with context extension (50 bases each side)
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 50 -num_results 5
@@ -256,6 +263,59 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 0.1 -num_resu
 
 # Pipe to ikafssnretrieve
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
+```
+
+#### In-Silico PCR (Primer Mode)
+
+`ikafssnsearch` and `ikafssnclient` support an in-silico PCR mode via the `-primer` option. In this mode, primer pairs are used to construct virtual PCR amplicon queries that are searched against the index. In `ikafssnclient`, the primer-to-query conversion is performed client-side, so the server requires no changes.
+
+**Options:**
+
+```
+  -primer <path>              Primer FASTA file (mutually exclusive with -query)
+  -insert_length <int>        Expected insert length (required with -primer)
+  -stage1_primer_score <num>  Stage 1 threshold for primer (default: 0.5)
+                              0 < v <= 1: fraction of primer-derived k-mers
+                              v >= 2: absolute threshold
+  -stage2_primer_score_add <int>  Stage 2 threshold addon (default: 1)
+```
+
+`-primer` and `-query` are mutually exclusive and cannot be specified together. When `-primer` is used, `-insert_length` is required. The options `-stage1_min_score` and `-stage2_min_score` cannot be used with `-primer`; use `-stage1_primer_score` and `-stage2_primer_score_add` instead.
+
+**Primer pair processing:**
+
+The primer FASTA file must contain an even number of sequences. Consecutive pairs of sequences form forward/reverse primer pairs (sequences 1+2 are the first pair, 3+4 are the second pair, and so on).
+
+For each primer pair, a query sequence is constructed as:
+
+```
+fwd + N*insert_length + RC(rev)
+```
+
+Where `fwd` is the forward primer sequence, `N*insert_length` is a string of N characters of the specified length (representing the unknown insert region), and `RC(rev)` is the reverse complement of the reverse primer sequence.
+
+**Threshold resolution logic:**
+
+In primer mode, only the primer-derived k-mers in the constructed query contribute to matching (k-mers in the N region are skipped because they contain N). The `-stage1_primer_score` threshold is resolved as follows:
+
+- `0 < v <= 1` (fraction): Stage 1 threshold is resolved as `ceil(Nprimer_kmer * v)` where Nprimer_kmer is the number of primer-derived k-mer positions
+- `v >= 2` (absolute): used directly as an absolute threshold
+
+For Stage 2, the minimum chain score is set to `max(Lf, Lr) + stage2_primer_score_add`, where Lf and Lr are the k-mer position counts of the forward and reverse primers respectively. Additionally, `-stage2_max_gap` is automatically set to the insert length unless explicitly overridden on the command line.
+
+**Examples:**
+
+```bash
+# Basic In-Silico PCR
+ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500
+
+# Set Stage 1 threshold to 80% of primer k-mers
+ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 300 \
+    -stage1_primer_score 0.8
+
+# Mode 3: alignment with traceback
+ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
+    -mode 3 -stage3_traceback 1 -num_results 10
 ```
 
 ### ikafssnretrieve
@@ -353,8 +413,9 @@ Options:
   -stage3_traceback <0|1> Default traceback mode (default: 0)
   -stage3_gapopen <int>   Default gap open penalty (default: 10)
   -stage3_gapext <int>    Default gap extension penalty (default: 1)
-  -stage3_min_pident <num>  Default min percent identity (default: 0)
-  -stage3_min_nident <int>  Default min identical bases (default: 0)
+  -stage3_min_ppositive <num>  Default min percent positive (default: 0)
+  -stage3_min_npositive <int>  Default min positive-scoring positions (default: 0)
+  -stage3_score_matrix <name>  Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)
   -stage3_fetch_threads <int>  Threads for BLAST DB fetch (default: min(8, threads))
   -num_results <int>      Default max results per query (default: 0)
   -accept_qdegen <0|1>    Default accept queries with degenerate bases (default: 1)
@@ -476,6 +537,12 @@ Required:
   -query <path>            Query FASTA file (- for stdin)
   -ix <name>               Target database name on server
 
+Primer mode (alternative to -query):
+  -primer <path>           Primer pair FASTA (mutually exclusive with -query)
+  -insert_length <int>     Expected insert length (required with -primer)
+  -stage1_primer_score <num>  Stage 1 threshold (0<v<=1: fraction, v>=2: absolute; default: 0.5)
+  -stage2_primer_score_add <int>  Stage 2 threshold addon: max(Lf,Lr) + N (default: 1)
+
 Options:
   -o <path>                Output file (default: stdout)
   -k <int>                 K-mer size (default: server default)
@@ -499,8 +566,9 @@ Options:
   -stage3_traceback <0|1>  Enable traceback (default: server default)
   -stage3_gapopen <int>    Gap open penalty (default: server default)
   -stage3_gapext <int>     Gap extension penalty (default: server default)
-  -stage3_min_pident <num> Min percent identity filter (default: server default)
-  -stage3_min_nident <int> Min identical bases filter (default: server default)
+  -stage3_min_ppositive <num> Min percent positive filter (default: server default)
+  -stage3_min_npositive <int> Min positive-scoring positions filter (default: server default)
+  -stage3_score_matrix <name> Score matrix: degmatch, dnafull, nuc44 (default: server default)
   -num_results <int>       Max results per query (default: server default)
   -seqidlist <path>        Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
@@ -556,6 +624,17 @@ ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -s
 
 # Mode 3: SAM output
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+
+# In-Silico PCR (primer mode)
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500
+
+# In-Silico PCR with custom thresholds
+ikafssnclient -tcp 10.0.1.5:9100 -ix nt -primer primers.fasta -insert_length 300 \
+    -stage1_primer_score 0.8
+
+# In-Silico PCR with mode 3 alignment
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500 \
+    -mode 3 -stage3_traceback 1 -num_results 10
 ```
 
 ### ikafssninfo
@@ -643,7 +722,7 @@ The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0
 
 2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= stage2_min_score` are reported. The DP inner loop is limited by `-stage2_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior). When `-stage2_max_nhit_per_subject` is greater than 1 (or 0 for unlimited), multiple non-overlapping chains are extracted per subject using greedy best-chain removal: the best chain is found and its hits are removed, then the DP is re-run on the remaining hits, repeating until the limit is reached or no chain meets `min_score`.
 
-3. **Stage 3 (Pairwise Alignment):** For each Stage 2 hit, retrieves the subject subsequence from the BLAST DB (with optional context extension via `-context`), and performs semi-global pairwise alignment using the Parasail library (nuc44 scoring matrix). The alignment score (**alnscore**) is computed for all hits. When `-stage3_traceback 1` is enabled, CIGAR strings, percent identity, identical base count, mismatch count, and aligned sequences (with gaps) are also computed. Hits can be filtered by `-stage3_min_pident` and `-stage3_min_nident` (traceback mode only). Subject sequences are pre-fetched in parallel across BLAST DB volumes controlled by `-stage3_fetch_threads`.
+3. **Stage 3 (Pairwise Alignment):** For each Stage 2 hit, retrieves the subject subsequence from the BLAST DB (with optional context extension via `-context`), and performs semi-global pairwise alignment using the Parasail library (using the score matrix specified by `-stage3_score_matrix`, default: DEGMATCH). The alignment score (**alnscore**) is computed for all hits. When `-stage3_traceback 1` is enabled, CIGAR strings, percent positive (ppositive), positive-scoring position count (npositive), negative-scoring count (nnegative), and aligned sequences (with gaps) are also computed. Hits can be filtered by `-stage3_min_ppositive` and `-stage3_min_npositive` (traceback mode only). Subject sequences are pre-fetched in parallel across BLAST DB volumes controlled by `-stage3_fetch_threads`.
 
 **Adaptive `-stage2_min_score` (default):** When `-stage2_min_score 0` (the default), the minimum chain score is set adaptively per query to the resolved Stage 1 threshold. With fractional `-stage1_min_score` (e.g. `0.5`), this means each query gets a per-query adaptive threshold based on its k-mer composition. With absolute `-stage1_min_score`, the configured value is used. Set `-stage2_min_score` to a positive integer to override this behavior with a fixed threshold.
 
@@ -695,11 +774,61 @@ ikafssn computes three types of scores:
 | **coverscore** | Number of distinct query k-mers that match the subject sequence. Each query k-mer is counted at most once per subject, regardless of how many positions it matches. | Stage 1 |
 | **matchscore** | Total number of (query k-mer, subject position) matches. A single query k-mer matching multiple positions in the subject counts multiple times. | Stage 1 |
 | **chainscore** | Length (number of k-mer hits) of the best collinear chain found by the chaining DP. Requires position data from `.kpx`. | Stage 2 |
-| **alnscore** | Semi-global pairwise alignment score computed by Parasail (nuc44 matrix). Requires BLAST DB for subject sequence retrieval. | Stage 3 |
+| **alnscore** | Semi-global pairwise alignment score computed by Parasail (using `-stage3_score_matrix`, default: degmatch). Requires BLAST DB for subject sequence retrieval. | Stage 3 |
 
 - `-stage1_score` selects which score type Stage 1 uses (1=coverscore, 2=matchscore). This affects candidate ranking and the stage1 score reported in output.
 - The sort key is auto-determined by mode: mode 1 sorts by stage1 score, mode 2 by chainscore, mode 3 by alnscore.
 - In `-mode 1`, only Stage 1 scores are available; chainscore and alnscore are not computed.
+
+### Stage 3 Scoring Matrix
+
+Stage 3 pairwise alignment uses a configurable scoring matrix specified by `-stage3_score_matrix`. Three matrices are available:
+
+| Matrix | Description |
+|---|---|
+| **degmatch** (default) | Assigns positive scores to degenerate base pairs that share at least one possible nucleotide identity. Suitable for primer matching and searches involving degenerate bases. |
+| **dnafull** | Traditional EMBOSS DNA full matrix (created by Todd Lowe). Uses ambiguous nucleotide codes with probabilities rounded to nearest integer. Degenerate pairs that share partial overlap receive negative or low scores. |
+| **nuc44** | NCBI BLAST nucleotide matrix. Similar to dnafull but with slightly different degenerate base scoring. |
+
+**CIGAR `=`/`X` determination:** The extended CIGAR operators `=` (sequence match) and `X` (sequence mismatch) are determined based on alignment scores, not strict base identity. A position is reported as `=` when its score in the matrix is positive (score > 0), and as `X` when its score is zero or negative. This means that with the DEGMATCH matrix, a degenerate base pair like N-A (score 1) is counted as a match (`=`), while with NUC44/DNAFULL it would be counted as a mismatch (`X`).
+
+**Column name changes:** The output columns previously named `pident` (percent identity), `nident` (number of identical positions), and `mismatch` (number of mismatches) have been renamed to `ppositive` (percent positive-scoring), `npositive` (number of positive-scoring positions), and `nnegative` (number of negative-scoring positions). This reflects the fact that with the DEGMATCH matrix, these counts represent positive-scoring positions rather than strictly identical positions. The corresponding filter options have been renamed from `-stage3_min_pident`/`-stage3_min_nident` to `-stage3_min_ppositive`/`-stage3_min_npositive`.
+
+**DEGMATCH matrix (16x16):**
+
+The full DEGMATCH scoring matrix. Rows and columns correspond to the 16 symbols: A, T, G, C, S (G/C), W (A/T), R (A/G), Y (T/C), K (G/T), M (A/C), B (G/T/C), V (A/G/C), H (A/T/C), D (A/G/T), N (A/T/G/C), and `*` (stop/invalid).
+
+|   | A | T | G | C | S | W | R | Y | K | M | B | V | H | D | N | * |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **A** | 5 | -4 | -4 | -4 | -4 | 3 | 3 | -4 | -4 | 3 | -4 | 2 | 2 | 2 | 1 | -4 |
+| **T** | -4 | 5 | -4 | -4 | -4 | 3 | -4 | 3 | 3 | -4 | 2 | -4 | 2 | 2 | 1 | -4 |
+| **G** | -4 | -4 | 5 | -4 | 3 | -4 | 3 | -4 | 3 | -4 | 2 | 2 | -4 | 2 | 1 | -4 |
+| **C** | -4 | -4 | -4 | 5 | 3 | -4 | -4 | 3 | -4 | 3 | 2 | 2 | 2 | -4 | 1 | -4 |
+| **S** | -4 | -4 | 3 | 3 | 4 | -4 | 1 | 1 | 1 | 1 | 2 | 2 | 1 | 1 | 1 | -4 |
+| **W** | 3 | 3 | -4 | -4 | -4 | 4 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 2 | 1 | -4 |
+| **R** | 3 | -4 | 3 | -4 | 1 | 1 | 4 | -4 | 1 | 1 | 1 | 2 | 1 | 2 | 1 | -4 |
+| **Y** | -4 | 3 | -4 | 3 | 1 | 1 | -4 | 4 | 1 | 1 | 2 | 1 | 2 | 1 | 1 | -4 |
+| **K** | -4 | 3 | 3 | -4 | 1 | 1 | 1 | 1 | 4 | -4 | 2 | 1 | 1 | 2 | 1 | -4 |
+| **M** | 3 | -4 | -4 | 3 | 1 | 1 | 1 | 1 | -4 | 4 | 1 | 2 | 2 | 1 | 1 | -4 |
+| **B** | -4 | 2 | 2 | 2 | 2 | 1 | 1 | 2 | 2 | 1 | 3 | 1 | 1 | 1 | 1 | -4 |
+| **V** | 2 | -4 | 2 | 2 | 2 | 1 | 2 | 1 | 1 | 2 | 1 | 3 | 1 | 1 | 1 | -4 |
+| **H** | 2 | 2 | -4 | 2 | 1 | 2 | 1 | 2 | 1 | 2 | 1 | 1 | 3 | 1 | 1 | -4 |
+| **D** | 2 | 2 | 2 | -4 | 1 | 2 | 2 | 1 | 2 | 1 | 1 | 1 | 1 | 3 | 1 | -4 |
+| **N** | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | -4 |
+| **\*** | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 | -4 |
+
+Score rules:
+- Standard match (A-A, T-T, G-G, C-C) = 5
+- Standard mismatch (e.g. A-T, A-G) = -4
+- 2-fold degenerate self (S-S, W-W, R-R, Y-Y, K-K, M-M) = 4
+- 2-fold degenerate vs contained base (e.g. R-A, R-G) = 3
+- 2-fold degenerate vs partial overlap with another 2-fold (e.g. R-K) = 1
+- 2-fold degenerate vs non-overlapping (e.g. S-W) = -4
+- 3-fold degenerate self (B-B, V-V, H-H, D-D) = 3
+- 3-fold degenerate vs contained base/2-fold (e.g. B-T, B-K) = 2
+- 3-fold degenerate vs partial overlap = 1
+- N vs any (except `*`) = 1, N-N = 1
+- `*` vs any = -4
 
 ## Output Format
 
@@ -730,7 +859,7 @@ Note: `qstart` and `sstart` are omitted because accurate alignment start positio
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
 ```
-# qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  alnscore  pident  nident  mismatch  cigar  qseq  sseq  volume
+# qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  alnscore  ppositive  npositive  nnegative  cigar  qseq  sseq  volume
 ```
 
 ### JSON Format
@@ -830,9 +959,9 @@ Note: `qstart` and `sstart` are omitted because accurate alignment start positio
           "coverscore": 8,
           "chainscore": 12,
           "alnscore": 240,
-          "pident": 95.3,
-          "nident": 143,
-          "mismatch": 7,
+          "ppositive": 95.3,
+          "npositive": 143,
+          "nnegative": 7,
           "cigar": "50=2X48=1I50=",
           "qseq": "ACGT...",
           "sseq": "ACGT...",
@@ -857,7 +986,7 @@ SAM records contain:
 - **CIGAR**: extended CIGAR with =/X/I/D operators
 - **SEQ**: ungapped query sequence
 - **QUAL**: * (not available)
-- **Tags**: `AS:i` (alnscore), `NM:i` (mismatch), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
+- **Tags**: `AS:i` (alnscore), `NM:i` (nnegative), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
 
 ## Deployment Architecture
 

@@ -32,9 +32,9 @@ static std::vector<OutputHit> make_test_hits() {
     h1.volume = 0;
     h1.alnscore = 100;
     h1.cigar = "20=";
-    h1.nident = 20;
-    h1.mismatch = 0;
-    h1.pident = 100.0;
+    h1.npositive = 20;
+    h1.nnegative = 0;
+    h1.ppositive = 100.0;
     h1.qseq = "ACGTACGTACGTACGTACGT";
     h1.sseq = "ACGTACGTACGTACGTACGT";
     h1.slen = 1800;
@@ -53,9 +53,9 @@ static std::vector<OutputHit> make_test_hits() {
     h2.volume = 0;
     h2.alnscore = 60;
     h2.cigar = "10=2D5=";
-    h2.nident = 15;
-    h2.mismatch = 0;
-    h2.pident = 88.2;
+    h2.npositive = 15;
+    h2.nnegative = 0;
+    h2.ppositive = 88.2;
     h2.qseq = "ACGTACGTAC--ACGTC";
     h2.sseq = "ACGTACGTACTTACGTC";
     h2.slen = 1700;

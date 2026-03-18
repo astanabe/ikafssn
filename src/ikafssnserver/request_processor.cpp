@@ -145,10 +145,18 @@ SearchResponse process_search_request(
         stage3_config.gapopen = req.stage3_gapopen;
     if (req.stage3_gapext != INT16_MIN)
         stage3_config.gapext = req.stage3_gapext;
-    if (req.stage3_min_pident_x100 != 0)
-        stage3_config.min_pident = static_cast<double>(req.stage3_min_pident_x100) / 100.0;
-    if (req.stage3_min_nident != 0)
-        stage3_config.min_nident = req.stage3_min_nident;
+    if (req.stage3_min_ppositive_x100 != 0)
+        stage3_config.min_ppositive = static_cast<double>(req.stage3_min_ppositive_x100) / 100.0;
+    if (req.stage3_min_npositive != 0)
+        stage3_config.min_npositive = req.stage3_min_npositive;
+    if (req.score_matrix != 0) {
+        switch (req.score_matrix) {
+            case 1: stage3_config.score_matrix = "degmatch"; break;
+            case 2: stage3_config.score_matrix = "dnafull"; break;
+            case 3: stage3_config.score_matrix = "nuc44"; break;
+            default: break;
+        }
+    }
 
     // Resolve context
     bool ctx_is_ratio = db.context_is_ratio;
@@ -409,9 +417,9 @@ SearchResponse process_search_request(
             rh.qlen = oh.qlen;
             rh.slen = oh.slen;
             rh.alnscore = oh.alnscore;
-            rh.nident = oh.nident;
-            rh.mismatch = oh.mismatch;
-            rh.pident_x100 = static_cast<uint16_t>(oh.pident * 100.0);
+            rh.npositive = oh.npositive;
+            rh.nnegative = oh.nnegative;
+            rh.ppositive_x100 = static_cast<uint16_t>(oh.ppositive * 100.0);
             rh.cigar = oh.cigar;
             rh.qseq = oh.qseq;
             rh.sseq = oh.sseq;
