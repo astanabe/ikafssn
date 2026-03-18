@@ -2,6 +2,8 @@
 
 **ikafssn** (Independent programs of K-mer-based Alignment-Free Similarity Search for Nucleotide sequences) is a suite of command-line tools that builds inverted indexes over NCBI BLAST DB nucleotide sequences and performs alignment-free similarity search using k-mer matching and collinear chaining.
 
+A conference talk on the methods used in ikafssn is available on YouTube: <https://youtu.be/ppoTB6MHsqY> (spoken in Japanese, slides in English).
+
 ## Features
 
 - Builds a k-mer inverted index directly from NCBI BLAST databases
