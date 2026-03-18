@@ -21,7 +21,7 @@ public:
     // Add position posting list for a k-mer.
     // entries must be in the same order as the corresponding ID postings in .kix.
     // Called for k-mers in ascending order.
-    void add_posting_list(uint64_t kmer_value, const std::vector<PostingEntry>& entries);
+    void add_posting_list(uint32_t kmer_value, const std::vector<PostingEntry>& entries);
 
     // Write the .kpx file. Returns true on success.
     bool write(const std::string& path) const;
@@ -30,7 +30,7 @@ public:
 
 private:
     int k_;
-    uint64_t table_size_;
+    uint32_t table_size_;
     std::vector<uint64_t> pos_offsets_;
     std::vector<uint8_t> posting_data_;
     uint64_t total_postings_ = 0;

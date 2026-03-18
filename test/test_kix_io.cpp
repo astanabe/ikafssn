@@ -3,6 +3,7 @@
 #include "index/kix_reader.hpp"
 #include "core/config.hpp"
 #include "core/varint.hpp"
+#include "search/seq_id_decoder.hpp"
 
 #include <cstdio>
 #include <vector>
@@ -13,21 +14,12 @@ using namespace ikafssn;
 
 static const char* TEST_FILE = "/tmp/test_ikafssn.kix";
 
-// Decode a delta-compressed posting list from raw bytes
-static std::vector<uint32_t> decode_id_postings(const uint8_t* data, uint32_t count) {
+// Decode a delta-compressed posting list using byte-limit decoder
+static std::vector<uint32_t> decode_id_postings(const uint8_t* data, uint64_t byte_len) {
     std::vector<uint32_t> result;
-    result.reserve(count);
-    size_t offset = 0;
-    uint32_t prev = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t delta;
-        offset += varint_decode(data + offset, delta);
-        if (i == 0) {
-            prev = delta; // first is raw
-        } else {
-            prev += delta;
-        }
-        result.push_back(prev);
+    SeqIdDecoder decoder(data, data + byte_len);
+    while (decoder.has_more()) {
+        result.push_back(decoder.next());
     }
     return result;
 }
@@ -35,7 +27,7 @@ static std::vector<uint32_t> decode_id_postings(const uint8_t* data, uint32_t co
 static void test_k7_uint16() {
     int k = 7;
     uint8_t kmer_type = 0; // uint16_t
-    uint64_t ts = table_size(k); // 4^7 = 16384
+    uint32_t ts = table_size(k); // 4^7 = 16384
 
     // Create synthetic posting data for a few k-mers
     std::vector<std::vector<uint32_t>> postings(ts);
@@ -51,7 +43,7 @@ static void test_k7_uint16() {
         writer.set_volume_info(0, 1);
         writer.set_flags(KIX_FLAG_HAS_KSX);
 
-        for (uint64_t i = 0; i < ts; i++) {
+        for (uint32_t i = 0; i < ts; i++) {
             writer.add_posting_list(i, postings[i]);
         }
         CHECK(writer.write(TEST_FILE));
@@ -69,17 +61,24 @@ static void test_k7_uint16() {
         CHECK(std::memcmp(reader.header().magic, KIX_MAGIC, 4) == 0);
         CHECK(std::string(reader.header().db, reader.header().db_len) == "testdb");
 
-        // Check counts
-        CHECK_EQ(reader.posting_count(0), 5u);
-        CHECK_EQ(reader.posting_count(1), 2u);
-        CHECK_EQ(reader.posting_count(2), 0u);
-        CHECK_EQ(reader.posting_count(100), 6u);
-        CHECK_EQ(reader.posting_count(ts - 1), 1u);
+        // Check byte-lengths (non-empty k-mers have > 0 byte length)
+        CHECK(reader.posting_byte_length(0) > 0);
+        CHECK(reader.posting_byte_length(1) > 0);
+        CHECK_EQ(reader.posting_byte_length(2), 0u);
+        CHECK(reader.posting_byte_length(100) > 0);
+        CHECK(reader.posting_byte_length(ts - 1) > 0);
 
-        // Decode and verify postings
+        // Check on-demand count
+        CHECK_EQ(reader.count_postings(0), 5u);
+        CHECK_EQ(reader.count_postings(1), 2u);
+        CHECK_EQ(reader.count_postings(2), 0u);
+        CHECK_EQ(reader.count_postings(100), 6u);
+        CHECK_EQ(reader.count_postings(ts - 1), 1u);
+
+        // Decode and verify postings using byte-limit decoder
         auto decoded0 = decode_id_postings(
             reader.posting_data() + reader.posting_offset(0),
-            reader.posting_count(0));
+            reader.posting_byte_length(0));
         CHECK_EQ(decoded0.size(), 5u);
         CHECK_EQ(decoded0[0], 0u);
         CHECK_EQ(decoded0[1], 1u);
@@ -89,14 +88,14 @@ static void test_k7_uint16() {
 
         auto decoded1 = decode_id_postings(
             reader.posting_data() + reader.posting_offset(1),
-            reader.posting_count(1));
+            reader.posting_byte_length(1));
         CHECK_EQ(decoded1.size(), 2u);
         CHECK_EQ(decoded1[0], 3u);
         CHECK_EQ(decoded1[1], 7u);
 
         auto decoded100 = decode_id_postings(
             reader.posting_data() + reader.posting_offset(100),
-            reader.posting_count(100));
+            reader.posting_byte_length(100));
         CHECK_EQ(decoded100.size(), 6u);
         CHECK_EQ(decoded100[0], 0u);
         CHECK_EQ(decoded100[1], 0u);
@@ -107,7 +106,7 @@ static void test_k7_uint16() {
 
         auto decoded_last = decode_id_postings(
             reader.posting_data() + reader.posting_offset(ts - 1),
-            reader.posting_count(ts - 1));
+            reader.posting_byte_length(ts - 1));
         CHECK_EQ(decoded_last.size(), 1u);
         CHECK_EQ(decoded_last[0], 999u);
 
@@ -123,10 +122,10 @@ static void test_k7_uint16() {
 static void test_k9_uint32() {
     int k = 9;
     uint8_t kmer_type = 1; // uint32_t
-    uint64_t ts = table_size(k); // 4^9 = 262144
+    uint32_t ts = table_size(k); // 4^9 = 262144
 
     // Sparse: only a few k-mers have postings
-    std::vector<std::pair<uint64_t, std::vector<uint32_t>>> sparse_postings = {
+    std::vector<std::pair<uint32_t, std::vector<uint32_t>>> sparse_postings = {
         {0, {0}},
         {1000, {5, 10, 15, 20}},
         {ts - 1, {100, 200}},
@@ -136,7 +135,7 @@ static void test_k9_uint32() {
         KixWriter writer(k, kmer_type);
         writer.set_num_sequences(300);
 
-        for (uint64_t i = 0; i < ts; i++) {
+        for (uint32_t i = 0; i < ts; i++) {
             std::vector<uint32_t> ids;
             for (auto& [kmer, posts] : sparse_postings) {
                 if (kmer == i) {
@@ -157,16 +156,16 @@ static void test_k9_uint32() {
         CHECK_EQ(reader.kmer_type(), 1u);
         CHECK_EQ(reader.table_size(), ts);
 
-        // Verify posting counts
-        CHECK_EQ(reader.posting_count(0), 1u);
-        CHECK_EQ(reader.posting_count(1), 0u);
-        CHECK_EQ(reader.posting_count(1000), 4u);
-        CHECK_EQ(reader.posting_count(ts - 1), 2u);
+        // Verify posting counts via on-demand decode
+        CHECK_EQ(reader.count_postings(0), 1u);
+        CHECK_EQ(reader.count_postings(1), 0u);
+        CHECK_EQ(reader.count_postings(1000), 4u);
+        CHECK_EQ(reader.count_postings(ts - 1), 2u);
 
         // Decode k-mer 1000
         auto decoded = decode_id_postings(
             reader.posting_data() + reader.posting_offset(1000),
-            reader.posting_count(1000));
+            reader.posting_byte_length(1000));
         CHECK_EQ(decoded.size(), 4u);
         CHECK_EQ(decoded[0], 5u);
         CHECK_EQ(decoded[1], 10u);
@@ -182,13 +181,13 @@ static void test_k9_uint32() {
 static void test_empty_postings() {
     int k = 5;
     uint8_t kmer_type = 0;
-    uint64_t ts = table_size(k); // 4^5 = 1024
+    uint32_t ts = table_size(k); // 4^5 = 1024
 
     {
         KixWriter writer(k, kmer_type);
         writer.set_num_sequences(0);
         // All posting lists empty
-        for (uint64_t i = 0; i < ts; i++) {
+        for (uint32_t i = 0; i < ts; i++) {
             writer.add_posting_list(i, {});
         }
         CHECK(writer.write(TEST_FILE));
@@ -198,8 +197,8 @@ static void test_empty_postings() {
         KixReader reader;
         CHECK(reader.open(TEST_FILE));
         CHECK_EQ(reader.total_postings(), 0u);
-        for (uint64_t i = 0; i < ts; i++) {
-            CHECK_EQ(reader.posting_count(i), 0u);
+        for (uint32_t i = 0; i < ts; i++) {
+            CHECK_EQ(reader.posting_byte_length(i), 0u);
         }
         reader.close();
     }

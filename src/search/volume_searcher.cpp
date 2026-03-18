@@ -67,7 +67,7 @@ stage1_only_results(const std::vector<Stage1Candidate>& candidates,
 template <typename KmerInt>
 static std::vector<ChainResult>
 search_one_strand_preprocessed(
-    const std::vector<std::pair<uint32_t, KmerInt>>& query_kmers,
+    const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
     int k,
     bool is_reverse,
     const KixReader& kix,
@@ -78,13 +78,13 @@ search_one_strand_preprocessed(
     uint32_t effective_min_score,
     Stage1Buffer* buf) {
 
-    if (resolved_threshold == 0) return {};  // threshold was non-positive
+    if (resolved_threshold == 0 || n_kmers == 0) return {};
 
     // Stage 1: candidate selection with pre-resolved threshold
     Stage1Config stage1_config = config.stage1;
     stage1_config.min_stage1_score = resolved_threshold;
 
-    auto candidates = stage1_filter(query_kmers, kix, filter, stage1_config, buf);
+    auto candidates = stage1_filter(positions, kmers, n_kmers, kix, filter, stage1_config, buf);
     if (candidates.empty()) return {};
 
     // Mode 1: Stage 1 only — return candidates directly
@@ -103,24 +103,22 @@ search_one_strand_preprocessed(
     }
 
     // Stage 2: collect hits for candidates
-    // High-freq k-mers already removed from query_kmers, so skip only cnt==0
     std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
 
-    const uint64_t* offsets = kix.offsets();
-    const uint32_t* counts = kix.counts();
     const uint8_t* id_data = kix.posting_data();
-    const uint64_t* pos_offsets = kpx.pos_offsets();
     const uint8_t* pos_data = kpx.posting_data();
 
-    for (const auto& [q_pos, kmer] : query_kmers) {
-        uint64_t kmer_idx = static_cast<uint64_t>(kmer);
-        uint32_t cnt = counts[kmer_idx];
-        if (cnt == 0) continue;
+    for (size_t qi = 0; qi < n_kmers; qi++) {
+        uint32_t q_pos = positions[qi];
+        auto kmer_idx = kmers[qi];
+        auto off = kix.posting_offset(kmer_idx);
+        auto end_off = kix.posting_offset(kmer_idx + 1);
+        if (off == end_off) continue;
 
-        SeqIdDecoder id_decoder(id_data + offsets[kmer_idx]);
-        PosDecoder pos_decoder(pos_data + pos_offsets[kmer_idx]);
+        SeqIdDecoder id_decoder(id_data + off, id_data + end_off);
+        PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx));
 
-        for (uint32_t i = 0; i < cnt; i++) {
+        while (id_decoder.has_more()) {
             SeqId sid = id_decoder.next();
             uint32_t s_pos = pos_decoder.next(id_decoder.was_new_seq());
 
@@ -189,7 +187,9 @@ SearchResult search_volume(
     // Search forward strand
     if (config.strand == 2 || config.strand == 1) {
         auto fwd_results = search_one_strand_preprocessed(
-            qdata.fwd_kmers, k, false, kix, kpx, filter, config,
+            qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
+            qdata.fwd_positions.size(),
+            k, false, kix, kpx, filter, config,
             qdata.resolved_threshold_fwd, qdata.effective_min_score_fwd, buf);
         result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
     }
@@ -197,7 +197,9 @@ SearchResult search_volume(
     // Search reverse complement
     if (config.strand == 2 || config.strand == -1) {
         auto rc_results = search_one_strand_preprocessed(
-            qdata.rc_kmers, k, true, kix, kpx, filter, config,
+            qdata.rc_positions.data(), qdata.rc_kmer_values.data(),
+            qdata.rc_positions.size(),
+            k, true, kix, kpx, filter, config,
             qdata.resolved_threshold_rc, qdata.effective_min_score_rc, buf);
         result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
     }

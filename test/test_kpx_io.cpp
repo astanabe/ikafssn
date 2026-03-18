@@ -39,7 +39,7 @@ static std::vector<uint32_t> decode_pos_postings(
 
 static void test_single_seq() {
     int k = 7;
-    uint64_t ts = table_size(k);
+    uint32_t ts = table_size(k);
 
     // Single sequence, multiple positions for one k-mer
     // seq_id=5, positions: 10, 20, 30, 100
@@ -49,7 +49,7 @@ static void test_single_seq() {
 
     {
         KpxWriter writer(k);
-        for (uint64_t i = 0; i < ts; i++) {
+        for (uint32_t i = 0; i < ts; i++) {
             if (i == 42) {
                 writer.add_posting_list(i, entries);
             } else {
@@ -88,7 +88,7 @@ static void test_single_seq() {
 
 static void test_seq_boundary_reset() {
     int k = 5;
-    uint64_t ts = table_size(k); // 1024
+    uint32_t ts = table_size(k); // 1024
 
     // Multiple sequences with position delta reset at boundaries
     // seq 0: pos 10, 20
@@ -109,7 +109,7 @@ static void test_seq_boundary_reset() {
 
     {
         KpxWriter writer(k);
-        for (uint64_t i = 0; i < ts; i++) {
+        for (uint32_t i = 0; i < ts; i++) {
             if (i == 7) {
                 writer.add_posting_list(i, entries);
             } else {
@@ -144,7 +144,7 @@ static void test_seq_boundary_reset() {
 
 static void test_multiple_kmers() {
     int k = 5;
-    uint64_t ts = table_size(k);
+    uint32_t ts = table_size(k);
 
     // Two k-mers with different posting patterns
     std::vector<KpxWriter::PostingEntry> entries_a = {
@@ -156,7 +156,7 @@ static void test_multiple_kmers() {
 
     {
         KpxWriter writer(k);
-        for (uint64_t i = 0; i < ts; i++) {
+        for (uint32_t i = 0; i < ts; i++) {
             if (i == 0) {
                 writer.add_posting_list(i, entries_a);
             } else if (i == 10) {

@@ -38,7 +38,7 @@ bool KhxReader::open(const std::string& path) {
     tbl_size_ = table_size(k_);
     t_ = hdr->t;
     template_type_ = hdr->template_type;
-    uint64_t bitset_bytes = (tbl_size_ + 7) / 8;
+    uint32_t bitset_bytes = (tbl_size_ + 7) / 8;
 
     if (mmap_.size() < sizeof(KhxHeader) + bitset_bytes) {
         std::fprintf(stderr, "KhxReader: file too small for bitset data\n");
@@ -73,8 +73,8 @@ void KhxReader::apply_madvise(bool willneed) {
 uint64_t KhxReader::count_excluded() const {
     if (!is_open()) return 0;
     uint64_t count = 0;
-    uint64_t bitset_bytes = (tbl_size_ + 7) / 8;
-    for (uint64_t i = 0; i < bitset_bytes; i++) {
+    uint32_t bitset_bytes = (tbl_size_ + 7) / 8;
+    for (uint32_t i = 0; i < bitset_bytes; i++) {
         count += __builtin_popcount(bitset_[i]);
     }
     return count;

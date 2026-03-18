@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 #include "io/mmap_file.hpp"
 #include "index/kix_format.hpp"
 
@@ -19,11 +20,8 @@ public:
     uint64_t total_postings() const { return header_->total_postings; }
     uint8_t t() const { return header_->t; }
     uint8_t template_type() const { return header_->template_type; }
-    uint64_t table_size() const { return table_size_; }
-
-    // Direct access to tables
-    const uint64_t* offsets() const { return offsets_; }
-    const uint32_t* counts() const { return counts_; }
+    uint32_t table_size() const { return table_size_; }
+    bool is_offset32() const { return offset32_; }
 
     // Raw pointer to the start of ID posting section
     const uint8_t* posting_data() const { return posting_data_; }
@@ -33,18 +31,32 @@ public:
     size_t willneed_size() const;
     void apply_madvise(bool willneed);
 
-    // Convenience: get posting offset and count for a k-mer
-    uint64_t posting_offset(uint64_t kmer) const { return offsets_[kmer]; }
-    uint32_t posting_count(uint64_t kmer) const { return counts_[kmer]; }
+    // Get posting byte offset for a k-mer
+    uint64_t posting_offset(uint32_t kmer) const {
+        if (offset32_) return offsets32_[kmer];
+        return offsets64_[kmer];
+    }
+
+    // Byte length of posting data for a k-mer
+    uint64_t posting_byte_length(uint32_t kmer) const {
+        return posting_offset(kmer + 1) - posting_offset(kmer);
+    }
+
+    // Count postings for a k-mer (on-demand varint decode).
+    uint32_t count_postings(uint32_t kmer) const;
+
+    // Bulk count all postings. Returns counts[table_size].
+    std::vector<uint32_t> bulk_count_postings() const;
 
 private:
     MmapFile mmap_;
     const KixHeader* header_ = nullptr;
-    const uint64_t* offsets_ = nullptr;
-    const uint32_t* counts_ = nullptr;
+    const uint64_t* offsets64_ = nullptr;
+    const uint32_t* offsets32_ = nullptr;
+    bool offset32_ = false;
     const uint8_t* posting_data_ = nullptr;
     size_t posting_data_size_ = 0;
-    uint64_t table_size_ = 0;
+    uint32_t table_size_ = 0;
 };
 
 } // namespace ikafssn

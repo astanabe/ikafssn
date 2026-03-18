@@ -684,9 +684,27 @@ int main(int argc, char* argv[]) {
     for (const auto& vd : vol_data)
         max_num_seqs = std::max(max_num_seqs, vd.kix.num_sequences());
 
+    // Determine optimal tier from actual preprocessed k-mer counts
+    uint32_t max_kmer_positions = 0;
+    if (k < K_TYPE_THRESHOLD) {
+        for (const auto& pp : pp16) {
+            max_kmer_positions = std::max(max_kmer_positions,
+                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
+                                               pp.qdata.rc_positions.size())));
+        }
+    } else {
+        for (const auto& pp : pp32) {
+            max_kmer_positions = std::max(max_kmer_positions,
+                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
+                                               pp.qdata.rc_positions.size())));
+        }
+    }
+    Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
+
     tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(
-        [max_num_seqs]() {
+        [max_num_seqs, tier]() {
             Stage1Buffer buf;
+            buf.tier = tier;
             buf.ensure_capacity(max_num_seqs);
             return buf;
         });

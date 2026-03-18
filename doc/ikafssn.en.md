@@ -1104,7 +1104,12 @@ Examples:
 - Spaced seed with k=12, t=21, coding only: `nt.00.12mer.21mer.cod.kix`
 - Manifest: `nt.11mer.16mer.bot.kvx`
 
-**Index format version:** Spaced seed indexes use format version 2 (`.kix`/`.kpx`/`.ksx`/`.khx` headers contain the template length `t` and template type fields). These v2 index files are not compatible with older versions of ikafssn that only support format version 1. Contiguous indexes (t=0) also use format version 2 but are backward-compatible in structure.
+**Index format version:** The current index format is version 3 for `.kix` and `.kpx` files. Key changes from version 2:
+
+- **`.kix` v3:** The counts table has been removed. The offsets array now has `table_size + 1` entries (sentinel at end), allowing posting byte lengths to be computed as `offsets[kmer+1] - offsets[kmer]`. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, offsets are stored as `uint32_t` instead of `uint64_t` (applicable when posting data < 4 GiB), reducing the dictionary size by up to 50%.
+- **`.kpx` v3:** The header `offset_type` field (byte 0x11) indicates offset width: 0 = `uint32_t`, 1 = `uint64_t`. When position posting data < 4 GiB, `uint32_t` offsets are used, halving the dictionary size.
+
+These v3 index files are not compatible with older versions of ikafssn. Rebuild indexes after upgrading.
 
 ## Installation
 

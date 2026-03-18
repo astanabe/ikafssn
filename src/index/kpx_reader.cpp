@@ -37,15 +37,22 @@ bool KpxReader::open(const std::string& path) {
     table_size_ = ikafssn::table_size(header_->k);
 
     // For spaced seed "both" mode (template_type == 3), the table size doubles
-    // to accommodate the mask tag bit that prevents cross-template matching.
     if (header_->t > 0 && header_->template_type == 3) {
         table_size_ *= 2;
     }
 
+    // offset_type: 0=uint32, 1=uint64
+    offset32_ = (header_->offset_type == 0);
+
     const uint8_t* ptr = mmap_.data() + sizeof(KpxHeader);
 
-    pos_offsets_ = reinterpret_cast<const uint64_t*>(ptr);
-    ptr += sizeof(uint64_t) * table_size_;
+    if (offset32_) {
+        pos_offsets32_ = reinterpret_cast<const uint32_t*>(ptr);
+        ptr += sizeof(uint32_t) * table_size_;
+    } else {
+        pos_offsets64_ = reinterpret_cast<const uint64_t*>(ptr);
+        ptr += sizeof(uint64_t) * table_size_;
+    }
 
     posting_data_ = ptr;
     posting_data_size_ = mmap_.size() - (ptr - mmap_.data());
@@ -56,7 +63,9 @@ bool KpxReader::open(const std::string& path) {
 void KpxReader::close() {
     mmap_.close();
     header_ = nullptr;
-    pos_offsets_ = nullptr;
+    pos_offsets64_ = nullptr;
+    pos_offsets32_ = nullptr;
+    offset32_ = false;
     posting_data_ = nullptr;
     posting_data_size_ = 0;
     table_size_ = 0;
@@ -64,7 +73,10 @@ void KpxReader::close() {
 
 size_t KpxReader::willneed_size() const {
     if (!mmap_.is_open()) return 0;
-    return sizeof(KpxHeader) + sizeof(uint64_t) * table_size_;
+    size_t offset_bytes = offset32_
+        ? sizeof(uint32_t) * table_size_
+        : sizeof(uint64_t) * table_size_;
+    return sizeof(KpxHeader) + offset_bytes;
 }
 
 void KpxReader::apply_madvise(bool willneed) {

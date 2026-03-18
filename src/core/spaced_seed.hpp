@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "core/config.hpp"
 
 namespace ikafssn {
 
@@ -102,9 +103,9 @@ inline std::vector<uint32_t> get_seed_masks(int k, uint8_t t, TemplateType type)
 // Compute the effective table size for spaced seed indexes.
 // When multiple masks are used (both mode), the table doubles to accommodate
 // a 1-bit mask tag in the k-mer value that prevents cross-template matching.
-inline uint64_t spaced_table_size(int k, int num_masks) {
-    uint64_t base = uint64_t(1) << (2 * k);
-    return (num_masks > 1) ? static_cast<uint64_t>(num_masks) * base : base;
+inline uint32_t spaced_table_size(int k, int num_masks) {
+    uint32_t base = table_size(k);
+    return (num_masks > 1) ? static_cast<uint32_t>(num_masks) * base : base;
 }
 
 // Build masks and their corresponding tag values for searching/building.

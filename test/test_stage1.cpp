@@ -50,10 +50,12 @@ static void test_stage1_basic() {
     CHECK(kix.open(kix_path));
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
-    std::vector<std::pair<uint32_t, uint16_t>> query_kmers;
+    std::vector<uint32_t> positions;
+    std::vector<uint16_t> kmer_values;
     KmerScanner<uint16_t> scanner(7);
     scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
-        query_kmers.emplace_back(pos, kmer);
+        positions.push_back(pos);
+        kmer_values.push_back(kmer);
     });
 
     OidFilter filter; // no filter
@@ -62,7 +64,7 @@ static void test_stage1_basic() {
     config.stage1_topn = 100;
     config.min_stage1_score = 1;
 
-    auto candidates = stage1_filter(query_kmers, kix, filter, config);
+    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config);
 
     // Should find FJ876973.1 OID in candidates
     CHECK(!candidates.empty());
@@ -105,8 +107,8 @@ static void test_stage1_max_freq_skip() {
         g_query_seq, 7, all_kix, nullptr, config_restricted);
 
     // Restrictive max_freq should remove k-mers
-    CHECK(qdata_filtered.fwd_kmers.size() <= qdata_all.fwd_kmers.size());
-    CHECK(qdata_filtered.rc_kmers.size() <= qdata_all.rc_kmers.size());
+    CHECK(qdata_filtered.fwd_positions.size() <= qdata_all.fwd_positions.size());
+    CHECK(qdata_filtered.rc_positions.size() <= qdata_all.rc_positions.size());
 
     kix.close();
 }
@@ -117,10 +119,12 @@ static void test_stage1_min_score() {
     KixReader kix;
     CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
 
-    std::vector<std::pair<uint32_t, uint16_t>> query_kmers;
+    std::vector<uint32_t> positions;
+    std::vector<uint16_t> kmer_values;
     KmerScanner<uint16_t> scanner(7);
     scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
-        query_kmers.emplace_back(pos, kmer);
+        positions.push_back(pos);
+        kmer_values.push_back(kmer);
     });
 
     OidFilter filter;
@@ -129,7 +133,7 @@ static void test_stage1_min_score() {
     config.stage1_topn = 100;
     config.min_stage1_score = 999999; // Very high threshold
 
-    auto candidates = stage1_filter(query_kmers, kix, filter, config);
+    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config);
     CHECK(candidates.empty());
 
     kix.close();
@@ -143,10 +147,12 @@ static void test_stage1_with_oid_filter() {
     CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
     CHECK(ksx.open(g_index_dir + "/test.00.07mer.ksx"));
 
-    std::vector<std::pair<uint32_t, uint16_t>> query_kmers;
+    std::vector<uint32_t> positions;
+    std::vector<uint16_t> kmer_values;
     KmerScanner<uint16_t> scanner(7);
     scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
-        query_kmers.emplace_back(pos, kmer);
+        positions.push_back(pos);
+        kmer_values.push_back(kmer);
     });
 
     // Filter: include only ACC_GQ and ACC_DQ (exclude FJ876973.1)
@@ -158,7 +164,7 @@ static void test_stage1_with_oid_filter() {
     config.stage1_topn = 100;
     config.min_stage1_score = 1;
 
-    auto candidates = stage1_filter(query_kmers, kix, filter, config);
+    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config);
 
     // FJ876973.1 OID should NOT be in results
     for (const auto& c : candidates) {
@@ -175,10 +181,12 @@ static void test_stage1_coverscore_vs_matchscore() {
     KixReader kix;
     CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
 
-    std::vector<std::pair<uint32_t, uint16_t>> query_kmers;
+    std::vector<uint32_t> positions;
+    std::vector<uint16_t> kmer_values;
     KmerScanner<uint16_t> scanner(7);
     scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
-        query_kmers.emplace_back(pos, kmer);
+        positions.push_back(pos);
+        kmer_values.push_back(kmer);
     });
 
     OidFilter filter;
@@ -189,7 +197,7 @@ static void test_stage1_coverscore_vs_matchscore() {
     config_cover.stage1_topn = 100;
     config_cover.min_stage1_score = 1;
     config_cover.stage1_score_type = 1;
-    auto cover_candidates = stage1_filter(query_kmers, kix, filter, config_cover);
+    auto cover_candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_cover);
 
     // Matchscore mode (type=2)
     Stage1Config config_match;
@@ -197,7 +205,7 @@ static void test_stage1_coverscore_vs_matchscore() {
     config_match.stage1_topn = 100;
     config_match.min_stage1_score = 1;
     config_match.stage1_score_type = 2;
-    auto match_candidates = stage1_filter(query_kmers, kix, filter, config_match);
+    auto match_candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_match);
 
     // Both should find FJ876973.1
     bool cover_found = false, match_found = false;
@@ -224,10 +232,12 @@ static void test_stage1_topn_zero() {
     KixReader kix;
     CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
 
-    std::vector<std::pair<uint32_t, uint16_t>> query_kmers;
+    std::vector<uint32_t> positions;
+    std::vector<uint16_t> kmer_values;
     KmerScanner<uint16_t> scanner(7);
     scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
-        query_kmers.emplace_back(pos, kmer);
+        positions.push_back(pos);
+        kmer_values.push_back(kmer);
     });
 
     OidFilter filter;
@@ -237,14 +247,14 @@ static void test_stage1_topn_zero() {
     config_unlimited.max_freq = 100000;
     config_unlimited.stage1_topn = 0;
     config_unlimited.min_stage1_score = 1;
-    auto unlimited = stage1_filter(query_kmers, kix, filter, config_unlimited);
+    auto unlimited = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_unlimited);
 
     // topn=2 (limited)
     Stage1Config config_limited;
     config_limited.max_freq = 100000;
     config_limited.stage1_topn = 2;
     config_limited.min_stage1_score = 1;
-    auto limited = stage1_filter(query_kmers, kix, filter, config_limited);
+    auto limited = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_limited);
 
     // Unlimited should return >= limited count
     CHECK(unlimited.size() >= limited.size());
@@ -453,7 +463,7 @@ static void test_global_highfreq_across_volumes() {
 
     // With doubled volumes, global counts are higher, so more k-mers may
     // exceed the auto threshold. Filtered k-mers should be <= single-volume case.
-    CHECK(qdata_double.fwd_kmers.size() <= qdata_single.fwd_kmers.size());
+    CHECK(qdata_double.fwd_positions.size() <= qdata_single.fwd_positions.size());
 
     kix.close();
 }

@@ -13,7 +13,7 @@ KpxWriter::KpxWriter(int k)
     pos_offsets_.resize(table_size_, 0);
 }
 
-void KpxWriter::add_posting_list(uint64_t kmer_value,
+void KpxWriter::add_posting_list(uint32_t kmer_value,
                                   const std::vector<PostingEntry>& entries) {
     pos_offsets_[kmer_value] = posting_data_.size();
     total_postings_ += entries.size();
@@ -42,6 +42,8 @@ void KpxWriter::add_posting_list(uint64_t kmer_value,
 }
 
 bool KpxWriter::write(const std::string& path) const {
+    bool use_offset32 = (posting_data_.size() <= UINT32_MAX);
+
     FILE* fp = std::fopen(path.c_str(), "wb");
     if (!fp) {
         std::fprintf(stderr, "KpxWriter: cannot open '%s' for writing\n", path.c_str());
@@ -54,11 +56,20 @@ bool KpxWriter::write(const std::string& path) const {
     hdr.format_version = KPX_FORMAT_VERSION;
     hdr.k = static_cast<uint8_t>(k_);
     hdr.total_postings = total_postings_;
+    hdr.offset_type = use_offset32 ? 0 : 1;
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
     // Write pos_offsets table
-    std::fwrite(pos_offsets_.data(), sizeof(uint64_t), table_size_, fp);
+    if (use_offset32) {
+        std::vector<uint32_t> offsets32(table_size_);
+        for (uint32_t i = 0; i < table_size_; i++) {
+            offsets32[i] = static_cast<uint32_t>(pos_offsets_[i]);
+        }
+        std::fwrite(offsets32.data(), sizeof(uint32_t), table_size_, fp);
+    } else {
+        std::fwrite(pos_offsets_.data(), sizeof(uint64_t), table_size_, fp);
+    }
 
     // Write position posting data
     if (!posting_data_.empty()) {

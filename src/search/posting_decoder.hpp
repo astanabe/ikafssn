@@ -11,7 +11,10 @@ namespace ikafssn {
 class PosDecoder {
 public:
     PosDecoder() = default;
-    explicit PosDecoder(const uint8_t* data) : ptr_(data) {}
+    explicit PosDecoder(const uint8_t* data) : ptr_(data), end_(nullptr) {}
+    PosDecoder(const uint8_t* data, const uint8_t* end) : ptr_(data), end_(end) {}
+
+    bool has_more() const { return end_ && ptr_ < end_; }
 
     // Decode next position. was_new_seq indicates sequence boundary (delta reset).
     uint32_t next(bool was_new_seq) {
@@ -29,6 +32,7 @@ public:
 
 private:
     const uint8_t* ptr_ = nullptr;
+    const uint8_t* end_ = nullptr;
     uint32_t prev_pos_ = 0;
 };
 

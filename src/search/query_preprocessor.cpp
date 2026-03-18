@@ -128,25 +128,37 @@ QueryKmerData<KmerInt> preprocess_query(
         config.stage1.max_freq, all_kix);
 
     // 4-5. Build high-freq set and filter (skip entirely when disabled)
-    std::unordered_set<uint64_t> highfreq_set;
+    std::unordered_set<uint32_t> highfreq_set;
+
+    // Helper: convert pair vector to SoA
+    auto to_soa = [](const std::vector<std::pair<uint32_t, KmerInt>>& pairs,
+                     std::vector<uint32_t>& positions,
+                     std::vector<KmerInt>& kmer_values) {
+        positions.reserve(pairs.size());
+        kmer_values.reserve(pairs.size());
+        for (const auto& [pos, kmer] : pairs) {
+            positions.push_back(pos);
+            kmer_values.push_back(kmer);
+        }
+    };
 
     if (global_max_freq == Stage1Config::MAX_FREQ_DISABLED) {
         // High-freq filtering disabled: use all k-mers as-is
-        result.fwd_kmers = std::move(fwd_kmers);
-        result.rc_kmers = std::move(rc_kmers);
+        to_soa(fwd_kmers, result.fwd_positions, result.fwd_kmer_values);
+        to_soa(rc_kmers, result.rc_positions, result.rc_kmer_values);
     } else {
         // Collect all distinct k-mer values from both strands
-        std::unordered_set<uint64_t> all_query_kmer_values;
+        std::unordered_set<uint32_t> all_query_kmer_values;
         for (const auto& [pos, kmer] : fwd_kmers) {
-            all_query_kmer_values.insert(static_cast<uint64_t>(kmer));
+            all_query_kmer_values.insert(static_cast<uint32_t>(kmer));
         }
         for (const auto& [pos, kmer] : rc_kmers) {
-            all_query_kmer_values.insert(static_cast<uint64_t>(kmer));
+            all_query_kmer_values.insert(static_cast<uint32_t>(kmer));
         }
 
-        for (uint64_t kmer_idx : all_query_kmer_values) {
+        for (uint32_t kmer_idx : all_query_kmer_values) {
             // Strip mask tag bit for KHX lookup (KHX uses base 4^k table)
-            uint64_t khx_idx = kmer_idx & (ikafssn::table_size(k) - 1);
+            uint32_t khx_idx = kmer_idx & (ikafssn::table_size(k) - 1);
             // Check .khx exclusion
             if (khx != nullptr && khx->is_excluded(khx_idx)) {
                 highfreq_set.insert(kmer_idx);
@@ -155,25 +167,29 @@ QueryKmerData<KmerInt> preprocess_query(
             // Sum counts across all volumes
             uint64_t total_count = 0;
             for (const auto* kix : all_kix) {
-                total_count += kix->counts()[kmer_idx];
+                total_count += kix->count_postings(kmer_idx);
             }
             if (total_count > global_max_freq) {
                 highfreq_set.insert(kmer_idx);
             }
         }
 
-        // Filter out high-freq k-mers from both strand vectors
-        result.fwd_kmers.reserve(fwd_kmers.size());
+        // Filter out high-freq k-mers from both strand vectors (SoA)
+        result.fwd_positions.reserve(fwd_kmers.size());
+        result.fwd_kmer_values.reserve(fwd_kmers.size());
         for (const auto& [pos, kmer] : fwd_kmers) {
-            if (highfreq_set.count(static_cast<uint64_t>(kmer)) == 0) {
-                result.fwd_kmers.emplace_back(pos, kmer);
+            if (highfreq_set.count(static_cast<uint32_t>(kmer)) == 0) {
+                result.fwd_positions.push_back(pos);
+                result.fwd_kmer_values.push_back(kmer);
             }
         }
 
-        result.rc_kmers.reserve(rc_kmers.size());
+        result.rc_positions.reserve(rc_kmers.size());
+        result.rc_kmer_values.reserve(rc_kmers.size());
         for (const auto& [pos, kmer] : rc_kmers) {
-            if (highfreq_set.count(static_cast<uint64_t>(kmer)) == 0) {
-                result.rc_kmers.emplace_back(pos, kmer);
+            if (highfreq_set.count(static_cast<uint32_t>(kmer)) == 0) {
+                result.rc_positions.push_back(pos);
+                result.rc_kmer_values.push_back(kmer);
             }
         }
     }
@@ -207,7 +223,7 @@ QueryKmerData<KmerInt> preprocess_query(
                 uint32_t cur_pos = kmers[i].first;
                 bool all_highfreq = true;
                 while (i < kmers.size() && kmers[i].first == cur_pos) {
-                    if (highfreq_set.count(static_cast<uint64_t>(kmers[i].second)) == 0)
+                    if (highfreq_set.count(static_cast<uint32_t>(kmers[i].second)) == 0)
                         all_highfreq = false;
                     i++;
                 }

@@ -24,14 +24,15 @@ inline constexpr int MAX_K = 16;
 inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t
 
 // Format versions
-inline constexpr uint16_t KIX_FORMAT_VERSION = 2;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 2;
+inline constexpr uint16_t KIX_FORMAT_VERSION = 3;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 3;
 inline constexpr uint16_t KSX_FORMAT_VERSION = 2;
 inline constexpr uint16_t KHX_FORMAT_VERSION = 2;
 
 // Direct-address table size for k-mer value k: 4^k
-inline constexpr uint64_t table_size(int k) {
-    return uint64_t(1) << (2 * k);
+// Max supported: 2 * 4^12 = 33,554,432 (fits uint32_t).
+inline constexpr uint32_t table_size(int k) {
+    return static_cast<uint32_t>(uint64_t(1) << (2 * k));
 }
 
 // Mask for k-mer of given k: (1 << 2k) - 1

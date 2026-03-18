@@ -693,9 +693,10 @@ static void test_ambig_db_index_build() {
     CHECK(kix.total_postings() > 0);
 
     // Verify counts sum matches total_postings
+    auto counts = kix.bulk_count_postings();
     uint64_t sum = 0;
-    for (uint64_t i = 0; i < kix.table_size(); i++) {
-        sum += kix.counts()[i];
+    for (uint32_t i = 0; i < kix.table_size(); i++) {
+        sum += counts[i];
     }
     CHECK_EQ(sum, kix.total_postings());
 
@@ -744,8 +745,8 @@ static void test_ambig_expansion_in_index() {
     ref.scan(kmer_g.data(), 5, [&](uint32_t, uint16_t km) { kval_g = km; });
 
     // Both should have non-zero counts in the index
-    CHECK(kix.counts()[kval_a] > 0);
-    CHECK(kix.counts()[kval_g] > 0);
+    CHECK(kix.count_postings(kval_a) > 0);
+    CHECK(kix.count_postings(kval_g) > 0);
 
     kix.close();
 }
@@ -798,11 +799,11 @@ static void test_ssu_db_kmer_check() {
     KmerScanner<uint16_t> ref(7);
     ref.scan(first7.data(), 7, [&](uint32_t, uint16_t km) { target_kmer = km; });
 
-    CHECK(kix.counts()[target_kmer] > 0);
+    CHECK(kix.count_postings(target_kmer) > 0);
 
     auto ids = decode_id_postings(
-        kix.posting_data(), kix.offsets()[target_kmer],
-        kix.counts()[target_kmer]);
+        kix.posting_data(), kix.posting_offset(target_kmer),
+        kix.count_postings(target_kmer));
     bool has_target = false;
     for (uint32_t id : ids) {
         if (id == target_oid) has_target = true;
@@ -951,9 +952,10 @@ static void test_ambig_db_odd_length() {
     CHECK(kix.open(prefix + ".kix"));
     CHECK(kix.total_postings() > 0);
 
+    auto counts = kix.bulk_count_postings();
     uint64_t sum = 0;
-    for (uint64_t i = 0; i < kix.table_size(); i++) {
-        sum += kix.counts()[i];
+    for (uint32_t i = 0; i < kix.table_size(); i++) {
+        sum += counts[i];
     }
     CHECK_EQ(sum, kix.total_postings());
 

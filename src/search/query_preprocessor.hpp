@@ -14,8 +14,10 @@ struct SearchConfig;
 // Generated once per query before the volume loop.
 template <typename KmerInt>
 struct QueryKmerData {
-    std::vector<std::pair<uint32_t, KmerInt>> fwd_kmers;  // high-freq removed
-    std::vector<std::pair<uint32_t, KmerInt>> rc_kmers;   // high-freq removed
+    std::vector<uint32_t> fwd_positions;  // query positions (high-freq removed)
+    std::vector<KmerInt>  fwd_kmer_values; // k-mer values (high-freq removed)
+    std::vector<uint32_t> rc_positions;
+    std::vector<KmerInt>  rc_kmer_values;
     uint32_t resolved_threshold_fwd = 0;  // resolved Stage 1 absolute threshold (fwd)
     uint32_t resolved_threshold_rc = 0;   // resolved Stage 1 absolute threshold (rc)
     uint32_t effective_min_score_fwd = 0;  // for Stage 2 (fwd)

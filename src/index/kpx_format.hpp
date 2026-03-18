@@ -14,7 +14,8 @@ struct KpxHeader {
     uint8_t  t;               // 0x07: template length (0=contiguous)
     uint64_t total_postings;  // 0x08
     uint8_t  template_type;   // 0x10: TemplateType enum value (0=contiguous)
-    uint8_t  reserved2[15];   // 0x11
+    uint8_t  offset_type;     // 0x11: 0=uint32 offsets, 1=uint64 offsets
+    uint8_t  reserved2[14];   // 0x12
 };
 #pragma pack(pop)
 

@@ -126,21 +126,22 @@ static void test_build_and_verify_kix_kpx() {
     CHECK_EQ(kpx.table_size(), tbl_sz);
 
     // Verify total postings via counts
+    auto counts = kix.bulk_count_postings();
     uint64_t sum_counts = 0;
-    for (uint64_t i = 0; i < tbl_sz; i++) {
-        sum_counts += kix.counts()[i];
+    for (uint32_t i = 0; i < tbl_sz; i++) {
+        sum_counts += counts[i];
     }
     CHECK_EQ(sum_counts, kix.total_postings());
 
     // Verify the posting lists are correctly sorted
     // For each kmer with postings, decode and check seq_ids are non-decreasing
     uint32_t kmers_checked = 0;
-    for (uint64_t kmer = 0; kmer < tbl_sz; kmer++) {
-        uint32_t cnt = kix.counts()[kmer];
+    for (uint32_t kmer = 0; kmer < tbl_sz; kmer++) {
+        uint32_t cnt = counts[kmer];
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids = decode_id_postings(
-            kix.posting_data(), kix.offsets()[kmer], cnt);
+            kix.posting_data(), kix.posting_offset(kmer), cnt);
         CHECK_EQ(ids.size(), static_cast<size_t>(cnt));
 
         // IDs must be non-decreasing
@@ -155,7 +156,7 @@ static void test_build_and_verify_kix_kpx() {
 
         // Decode positions and verify they are valid
         std::vector<uint32_t> positions = decode_pos_postings(
-            kpx.posting_data(), kpx.pos_offsets()[kmer], cnt, ids);
+            kpx.posting_data(), kpx.pos_offset(kmer), cnt, ids);
         CHECK_EQ(positions.size(), static_cast<size_t>(cnt));
 
         kmers_checked++;
@@ -193,11 +194,11 @@ static void test_known_kmer_in_index() {
     KixReader kix;
     CHECK(kix.open(prefix + ".kix"));
 
-    uint32_t cnt = kix.counts()[target_kmer];
+    uint32_t cnt = kix.count_postings(target_kmer);
     CHECK(cnt > 0);
 
     std::vector<uint32_t> ids = decode_id_postings(
-        kix.posting_data(), kix.offsets()[target_kmer], cnt);
+        kix.posting_data(), kix.posting_offset(target_kmer), cnt);
 
     // FJ876973.1 OID should be in the posting list
     bool has_target = false;
@@ -231,9 +232,10 @@ static void test_build_k9_uint32() {
     CHECK_EQ(kix.table_size(), table_size(9)); // 4^9 = 262144
 
     // Verify counts sum
+    auto counts_k9 = kix.bulk_count_postings();
     uint64_t sum = 0;
-    for (uint64_t i = 0; i < kix.table_size(); i++) {
-        sum += kix.counts()[i];
+    for (uint32_t i = 0; i < kix.table_size(); i++) {
+        sum += counts_k9[i];
     }
     CHECK_EQ(sum, kix.total_postings());
 
@@ -275,9 +277,11 @@ static void test_build_with_max_freq_build() {
     CHECK(kix2.total_postings() <= kix1.total_postings());
 
     // Verify that high-frequency kmers in kix2 have been zeroed
-    for (uint64_t kmer = 0; kmer < kix2.table_size(); kmer++) {
-        if (kix1.counts()[kmer] > 3) {
-            CHECK_EQ(kix2.counts()[kmer], 0u);
+    auto counts1 = kix1.bulk_count_postings();
+    auto counts2 = kix2.bulk_count_postings();
+    for (uint32_t kmer = 0; kmer < kix2.table_size(); kmer++) {
+        if (counts1[kmer] > 3) {
+            CHECK_EQ(counts2[kmer], 0u);
         }
     }
 
@@ -306,9 +310,11 @@ static void test_build_with_max_freq_build() {
     CHECK(kix3.open(prefix3 + ".kix"));
     CHECK(kix3.total_postings() <= kix1.total_postings());
 
-    for (uint64_t kmer = 0; kmer < kix3.table_size(); kmer++) {
-        if (kix1.counts()[kmer] > frac_threshold) {
-            CHECK_EQ(kix3.counts()[kmer], 0u);
+    auto counts1b = kix1.bulk_count_postings();
+    auto counts3 = kix3.bulk_count_postings();
+    for (uint32_t kmer = 0; kmer < kix3.table_size(); kmer++) {
+        if (counts1b[kmer] > frac_threshold) {
+            CHECK_EQ(counts3[kmer], 0u);
         }
     }
     kix1.close();
@@ -345,19 +351,21 @@ static void test_build_with_memory_limits() {
 
     CHECK_EQ(kix1.total_postings(), kix4.total_postings());
 
-    for (uint64_t kmer = 0; kmer < kix1.table_size(); kmer++) {
-        CHECK_EQ(kix1.counts()[kmer], kix4.counts()[kmer]);
+    auto counts_m1 = kix1.bulk_count_postings();
+    auto counts_m4 = kix4.bulk_count_postings();
+    for (uint32_t kmer = 0; kmer < kix1.table_size(); kmer++) {
+        CHECK_EQ(counts_m1[kmer], counts_m4[kmer]);
     }
 
     // Verify posting data matches for each kmer
-    for (uint64_t kmer = 0; kmer < kix1.table_size(); kmer++) {
-        uint32_t cnt = kix1.counts()[kmer];
+    for (uint32_t kmer = 0; kmer < kix1.table_size(); kmer++) {
+        uint32_t cnt = counts_m1[kmer];
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids1 = decode_id_postings(
-            kix1.posting_data(), kix1.offsets()[kmer], cnt);
+            kix1.posting_data(), kix1.posting_offset(kmer), cnt);
         std::vector<uint32_t> ids4 = decode_id_postings(
-            kix4.posting_data(), kix4.offsets()[kmer], cnt);
+            kix4.posting_data(), kix4.posting_offset(kmer), cnt);
 
         CHECK_EQ(ids1.size(), ids4.size());
         for (size_t j = 0; j < ids1.size(); j++) {
@@ -413,26 +421,28 @@ static void test_build_parallel_scan() {
     CHECK_EQ(kix_st.total_postings(), kix_mt.total_postings());
 
     // Compare counts
+    auto counts_st = kix_st.bulk_count_postings();
+    auto counts_mt = kix_mt.bulk_count_postings();
     bool counts_match = true;
-    for (uint64_t i = 0; i < kix_st.table_size(); i++) {
-        if (kix_st.counts()[i] != kix_mt.counts()[i]) {
+    for (uint32_t i = 0; i < kix_st.table_size(); i++) {
+        if (counts_st[i] != counts_mt[i]) {
             counts_match = false;
             std::fprintf(stderr, "  counts mismatch at kmer %lu: st=%u mt=%u\n",
-                         (unsigned long)i, kix_st.counts()[i], kix_mt.counts()[i]);
+                         (unsigned long)i, counts_st[i], counts_mt[i]);
             break;
         }
     }
     CHECK(counts_match);
 
     // Compare posting data for each kmer
-    for (uint64_t kmer = 0; kmer < kix_st.table_size(); kmer++) {
-        uint32_t cnt = kix_st.counts()[kmer];
+    for (uint32_t kmer = 0; kmer < kix_st.table_size(); kmer++) {
+        uint32_t cnt = counts_st[kmer];
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids_st = decode_id_postings(
-            kix_st.posting_data(), kix_st.offsets()[kmer], cnt);
+            kix_st.posting_data(), kix_st.posting_offset(kmer), cnt);
         std::vector<uint32_t> ids_mt = decode_id_postings(
-            kix_mt.posting_data(), kix_mt.offsets()[kmer], cnt);
+            kix_mt.posting_data(), kix_mt.posting_offset(kmer), cnt);
 
         CHECK_EQ(ids_st.size(), ids_mt.size());
         for (size_t j = 0; j < ids_st.size(); j++) {
@@ -452,16 +462,16 @@ static void test_build_parallel_scan() {
 
     CHECK_EQ(kpx_st.total_postings(), kpx_mt.total_postings());
 
-    for (uint64_t kmer = 0; kmer < kix_st.table_size(); kmer++) {
-        uint32_t cnt = kix_st.counts()[kmer];
+    for (uint32_t kmer = 0; kmer < kix_st.table_size(); kmer++) {
+        uint32_t cnt = counts_st[kmer];
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids = decode_id_postings(
-            kix_st.posting_data(), kix_st.offsets()[kmer], cnt);
+            kix_st.posting_data(), kix_st.posting_offset(kmer), cnt);
         std::vector<uint32_t> pos_st = decode_pos_postings(
-            kpx_st.posting_data(), kpx_st.pos_offsets()[kmer], cnt, ids);
+            kpx_st.posting_data(), kpx_st.pos_offset(kmer), cnt, ids);
         std::vector<uint32_t> pos_mt = decode_pos_postings(
-            kpx_mt.posting_data(), kpx_mt.pos_offsets()[kmer], cnt, ids);
+            kpx_mt.posting_data(), kpx_mt.pos_offset(kmer), cnt, ids);
 
         CHECK_EQ(pos_st.size(), pos_mt.size());
         for (size_t j = 0; j < pos_st.size(); j++) {

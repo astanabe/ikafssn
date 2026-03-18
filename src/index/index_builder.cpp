@@ -113,7 +113,7 @@ bool build_index(BlastDbReader& db,
 
     // Effective table size: doubles for "both" mode (tag bit per mask)
     const int num_masks = static_cast<int>(seed_masks.size());
-    const uint64_t tbl_size = spaced_table_size(k, num_masks > 0 ? num_masks : 1);
+    const uint32_t tbl_size = spaced_table_size(k, num_masks > 0 ? num_masks : 1);
     // Effective bit width for partitioning (2*k, or 2*k+1 for tagged both mode)
     const int effective_bits = 2 * k + ((num_masks > 1) ? 1 : 0);
 
@@ -124,7 +124,7 @@ bool build_index(BlastDbReader& db,
         // Always use parallel path; TBB respects global_control parallelism
         // (threads==1 degrades gracefully to sequential execution)
         tbb::combinable<std::vector<uint64_t>> local_counts(
-            [tbl_size]() { return std::vector<uint64_t>(tbl_size, 0); });
+            [&tbl_size]() { return std::vector<uint64_t>(tbl_size, 0); });
 
         tbb::parallel_for(
             tbb::blocked_range<uint32_t>(0, num_seqs, 64),
@@ -168,8 +168,8 @@ bool build_index(BlastDbReader& db,
             });
 
         // Reduce thread-local counts
-        local_counts.combine_each([&counts64, tbl_size](const std::vector<uint64_t>& lc) {
-            for (uint64_t i = 0; i < tbl_size; i++) {
+        local_counts.combine_each([&counts64, &tbl_size](const std::vector<uint64_t>& lc) {
+            for (uint32_t i = 0; i < tbl_size; i++) {
                 counts64[i] += lc[i];
             }
         });
@@ -178,9 +178,9 @@ bool build_index(BlastDbReader& db,
     // Convert uint64 -> uint32 with overflow check
     std::vector<uint32_t> counts(tbl_size);
     uint64_t total_postings = 0;
-    for (uint64_t i = 0; i < tbl_size; i++) {
+    for (uint32_t i = 0; i < tbl_size; i++) {
         if (counts64[i] > UINT32_MAX) {
-            logger.error("k-mer %lu has count %lu which exceeds uint32_t. "
+            logger.error("k-mer %u has count %lu which exceeds uint32_t. "
                          "Use a larger k value.", i, counts64[i]);
             std::remove(ksx_tmp.c_str());
             return false;
@@ -244,17 +244,13 @@ bool build_index(BlastDbReader& db,
     KixHeader kix_hdr{};
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
 
-    // Reserve offsets table (uint64 * tbl_size)
+    // Reserve offsets table (always uint64 in builder; filter may compact to uint32)
     const uint64_t kix_offsets_pos = sizeof(KixHeader);
-    std::vector<uint64_t> kix_offsets(tbl_size, 0);
-    std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size, kix_fp);
+    std::vector<uint64_t> kix_offsets(tbl_size + 1, 0);
+    std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, kix_fp);
 
-    // Reserve counts table (uint32 * tbl_size) - we already have counts
-    const uint64_t kix_counts_pos = kix_offsets_pos + sizeof(uint64_t) * tbl_size;
-    std::fwrite(counts.data(), sizeof(uint32_t), tbl_size, kix_fp);
-
-    // kix posting data starts here
-    const uint64_t kix_posting_start = kix_counts_pos + sizeof(uint32_t) * tbl_size;
+    // kix posting data starts here (no counts table in format v3)
+    const uint64_t kix_posting_start = kix_offsets_pos + sizeof(uint64_t) * (tbl_size + 1);
 
     // Write kpx header placeholder (skip if mode 1)
     KpxHeader kpx_hdr{};
@@ -445,53 +441,115 @@ bool build_index(BlastDbReader& db,
                     static_cast<unsigned long>(total_postings - actual_total_postings));
     }
 
+    // Forward-fill kix_offsets: empty k-mers get the same offset as the next
+    // non-empty k-mer (or the sentinel). This ensures offsets[i+1]-offsets[i]==0
+    // for empty k-mers.
+    {
+        uint64_t fill = kix_data_pos; // sentinel value for trailing empties
+        for (int32_t i = static_cast<int32_t>(tbl_size) - 1; i >= 0; i--) {
+            if (actual_counts[i] > 0) {
+                fill = kix_offsets[i];
+            } else {
+                kix_offsets[i] = fill;
+            }
+        }
+    }
+
     // =========== Phase 4: Finalize ===========
     logger.info("Phase 4: finalizing...");
 
-    // Write kix header
-    std::memcpy(kix_hdr.magic, KIX_MAGIC, 4);
-    kix_hdr.format_version = KIX_FORMAT_VERSION;
-    kix_hdr.k = static_cast<uint8_t>(k);
-    kix_hdr.kmer_type = kmer_type_for_k(k);
-    kix_hdr.num_sequences = num_seqs;
-    kix_hdr.total_postings = actual_total_postings;
-    kix_hdr.flags = KIX_FLAG_HAS_KSX;
-    kix_hdr.volume_index = volume_index;
-    kix_hdr.total_volumes = total_volumes;
-    size_t name_len = std::min(db_name.size(), size_t(32));
-    kix_hdr.db_len = static_cast<uint16_t>(name_len);
-    std::memcpy(kix_hdr.db, db_name.c_str(), name_len);
-    kix_hdr.t = config.t;
-    kix_hdr.template_type = config.template_type;
+    // Set sentinel offset
+    kix_offsets[tbl_size] = kix_data_pos;
 
-    std::fseek(kix_fp, 0, SEEK_SET);
-    std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
+    // Determine offset types based on posting data sizes
+    const bool kix_offset32 = (kix_data_pos <= UINT32_MAX);
+    const bool kpx_offset32 = (!config.skip_kpx && kpx_data_pos <= UINT32_MAX);
 
-    // Write kix offsets table
-    std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size, kix_fp);
-
-    // Rewrite counts table with actual counts (may differ from Phase 1
-    // estimates due to spaced seed deduplication)
-    std::fwrite(actual_counts.data(), sizeof(uint32_t), tbl_size, kix_fp);
-
+    // Close the in-progress kix file; we'll rewrite it with the correct layout.
     std::fclose(kix_fp);
 
-    // Write kpx header (skip if mode 1)
+    // Rewrite .kix with correct offset width
+    {
+        // Read the posting data from the temp file (skip header + uint64 offsets)
+        FILE* rd = std::fopen(kix_tmp.c_str(), "rb");
+        std::fseek(rd, static_cast<long>(kix_posting_start), SEEK_SET);
+        std::vector<uint8_t> posting_blob(kix_data_pos);
+        if (kix_data_pos > 0) {
+            std::fread(posting_blob.data(), 1, kix_data_pos, rd);
+        }
+        std::fclose(rd);
+
+        // Write the final kix file
+        FILE* wr = std::fopen(kix_tmp.c_str(), "wb");
+
+        std::memcpy(kix_hdr.magic, KIX_MAGIC, 4);
+        kix_hdr.format_version = KIX_FORMAT_VERSION;
+        kix_hdr.k = static_cast<uint8_t>(k);
+        kix_hdr.kmer_type = kmer_type_for_k(k);
+        kix_hdr.num_sequences = num_seqs;
+        kix_hdr.total_postings = actual_total_postings;
+        kix_hdr.flags = KIX_FLAG_HAS_KSX | (kix_offset32 ? KIX_FLAG_OFFSET32 : 0);
+        kix_hdr.volume_index = volume_index;
+        kix_hdr.total_volumes = total_volumes;
+        size_t name_len = std::min(db_name.size(), size_t(32));
+        kix_hdr.db_len = static_cast<uint16_t>(name_len);
+        std::memcpy(kix_hdr.db, db_name.c_str(), name_len);
+        kix_hdr.t = config.t;
+        kix_hdr.template_type = config.template_type;
+        std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, wr);
+
+        if (kix_offset32) {
+            std::vector<uint32_t> off32(tbl_size + 1);
+            for (uint32_t i = 0; i <= tbl_size; i++)
+                off32[i] = static_cast<uint32_t>(kix_offsets[i]);
+            std::fwrite(off32.data(), sizeof(uint32_t), tbl_size + 1, wr);
+        } else {
+            std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, wr);
+        }
+
+        if (!posting_blob.empty()) {
+            std::fwrite(posting_blob.data(), 1, posting_blob.size(), wr);
+        }
+        std::fclose(wr);
+    }
+
+    // Rewrite .kpx with correct offset width (skip if mode 1)
     if (!config.skip_kpx) {
+        // kpx posting start: header + uint64 offsets
+        const uint64_t kpx_posting_start_pos = sizeof(KpxHeader) + sizeof(uint64_t) * tbl_size;
+
+        FILE* rd = std::fopen(kpx_tmp.c_str(), "rb");
+        std::fseek(rd, static_cast<long>(kpx_posting_start_pos), SEEK_SET);
+        std::vector<uint8_t> posting_blob(kpx_data_pos);
+        if (kpx_data_pos > 0) {
+            std::fread(posting_blob.data(), 1, kpx_data_pos, rd);
+        }
+        std::fclose(rd);
+
+        FILE* wr = std::fopen(kpx_tmp.c_str(), "wb");
+
         std::memcpy(kpx_hdr.magic, KPX_MAGIC, 4);
         kpx_hdr.format_version = KPX_FORMAT_VERSION;
         kpx_hdr.k = static_cast<uint8_t>(k);
         kpx_hdr.t = config.t;
         kpx_hdr.template_type = config.template_type;
         kpx_hdr.total_postings = actual_total_postings;
+        kpx_hdr.offset_type = kpx_offset32 ? 0 : 1;
+        std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, wr);
 
-        std::fseek(kpx_fp, 0, SEEK_SET);
-        std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
+        if (kpx_offset32) {
+            std::vector<uint32_t> off32(tbl_size);
+            for (uint32_t i = 0; i < tbl_size; i++)
+                off32[i] = static_cast<uint32_t>(kpx_offsets[i]);
+            std::fwrite(off32.data(), sizeof(uint32_t), tbl_size, wr);
+        } else {
+            std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, wr);
+        }
 
-        // Write kpx offsets table
-        std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
-
-        std::fclose(kpx_fp);
+        if (!posting_blob.empty()) {
+            std::fwrite(posting_blob.data(), 1, posting_blob.size(), wr);
+        }
+        std::fclose(wr);
     }
 
     // Rename .tmp files to final names (unless keep_tmp is set)

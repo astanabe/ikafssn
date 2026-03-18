@@ -10,6 +10,7 @@ inline constexpr char KIX_MAGIC[4] = {'K', 'M', 'I', 'X'};
 // Flag bits
 inline constexpr uint32_t KIX_FLAG_SEQ_ID_WIDTH = 0x01; // 0=uint32, 1=uint64 (future)
 inline constexpr uint32_t KIX_FLAG_HAS_KSX      = 0x02; // 0=no .ksx, 1=has .ksx
+inline constexpr uint32_t KIX_FLAG_OFFSET32      = 0x04; // 0=uint64 offsets, 1=uint32 offsets
 
 #pragma pack(push, 1)
 struct KixHeader {

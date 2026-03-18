@@ -85,6 +85,6 @@ System packages — macOS (Homebrew):
 
 Source-built libraries:
 
-  NCBI C++ Toolkit 30.0.0  — BLAST DB access (patched: madvise MADV_RANDOM on SeqDB mmaps)
+  NCBI C++ Toolkit 30.1.0  — BLAST DB access (patched: madvise MADV_RANDOM on SeqDB mmaps)
   Parasail 2.6.2           — Stage 3 pairwise alignment
   htslib 1.23              — SAM/BAM output

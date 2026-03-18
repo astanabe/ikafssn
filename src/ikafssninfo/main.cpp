@@ -308,7 +308,7 @@ int main(int argc, char* argv[]) {
     uint8_t vol_template_type = vol_files[0].template_type;
     // Determine effective table size from first volume's reader
     // (accounts for mask tag doubling in spaced seed "both" mode)
-    uint64_t tbl_size = 0;
+    uint32_t tbl_size = 0;
     {
         KixReader kix0;
         if (!kix0.open(vol_files[0].kix_path)) {
@@ -349,11 +349,10 @@ int main(int argc, char* argv[]) {
         vs.has_kpx = vf.has_kpx;
 
         // Read per-kmer counts for frequency analysis
-        const uint32_t* cts = kix.counts();
-        vs.counts.assign(cts, cts + tbl_size);
+        vs.counts = kix.bulk_count_postings();
 
-        for (uint64_t i = 0; i < tbl_size; i++) {
-            aggregated_counts[i] += cts[i];
+        for (uint32_t i = 0; i < tbl_size; i++) {
+            aggregated_counts[i] += vs.counts[i];
         }
 
         total_sequences += vs.num_sequences;
@@ -463,9 +462,9 @@ int main(int argc, char* argv[]) {
     uint64_t uncompressed_posting_size = total_postings * bytes_per_posting;
     if (uncompressed_posting_size > 0) {
         // Approximate compressed posting size: file sizes minus table overhead per volume
-        // Per volume: kix header (64) + offsets (8*4^k) + counts (4*4^k) + posting data
+        // Per volume: kix header (64) + offsets (8*(4^k+1)) + posting data
         //             kpx (if present): header (32) + pos_offsets (8*4^k) + posting data
-        uint64_t table_overhead_per_vol = 64 + tbl_size * 8 + tbl_size * 4; // kix
+        uint64_t table_overhead_per_vol = 64 + (static_cast<uint64_t>(tbl_size) + 1) * 8; // kix
         if (has_any_kpx) {
             table_overhead_per_vol += 32 + tbl_size * 8;                     // kpx
         }
@@ -489,7 +488,7 @@ int main(int argc, char* argv[]) {
         // Convert aggregated_counts (uint64_t) to uint32_t for stats computation
         // (capped at UINT32_MAX for individual counts, which should not happen in practice)
         std::vector<uint32_t> agg_u32(tbl_size);
-        for (uint64_t i = 0; i < tbl_size; i++) {
+        for (uint32_t i = 0; i < tbl_size; i++) {
             agg_u32[i] = (aggregated_counts[i] > UINT32_MAX)
                 ? UINT32_MAX
                 : static_cast<uint32_t>(aggregated_counts[i]);

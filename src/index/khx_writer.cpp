@@ -13,10 +13,10 @@ bool write_khx(const std::string& path, int k,
                uint64_t freq_threshold,
                const Logger& logger) {
 
-    uint64_t tbl_size = table_size(k);
+    uint32_t tbl_size = table_size(k);
     if (counts.size() != tbl_size) {
-        logger.error("write_khx: counts size mismatch (got %zu, expected %lu)",
-                     counts.size(), static_cast<unsigned long>(tbl_size));
+        logger.error("write_khx: counts size mismatch (got %zu, expected %u)",
+                     counts.size(), tbl_size);
         return false;
     }
 
@@ -34,11 +34,11 @@ bool write_khx(const std::string& path, int k,
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
     // Build bitset: ceil(tbl_size / 8) bytes
-    uint64_t bitset_bytes = (tbl_size + 7) / 8;
+    uint32_t bitset_bytes = (tbl_size + 7) / 8;
     std::vector<uint8_t> bitset(bitset_bytes, 0);
 
     uint64_t excluded_count = 0;
-    for (uint64_t i = 0; i < tbl_size; i++) {
+    for (uint32_t i = 0; i < tbl_size; i++) {
         if (counts[i] > freq_threshold) {
             bitset[i / 8] |= (1u << (i % 8));
             excluded_count++;
@@ -57,10 +57,10 @@ bool write_khx_bitset(const std::string& path, int k,
                       const std::vector<bool>& excluded,
                       const Logger& logger) {
 
-    uint64_t tbl_size = table_size(k);
+    uint32_t tbl_size = table_size(k);
     if (excluded.size() != tbl_size) {
-        logger.error("write_khx_bitset: excluded size mismatch (got %zu, expected %lu)",
-                     excluded.size(), static_cast<unsigned long>(tbl_size));
+        logger.error("write_khx_bitset: excluded size mismatch (got %zu, expected %u)",
+                     excluded.size(), tbl_size);
         return false;
     }
 
@@ -78,11 +78,11 @@ bool write_khx_bitset(const std::string& path, int k,
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
     // Build bitset: ceil(tbl_size / 8) bytes
-    uint64_t bitset_bytes = (tbl_size + 7) / 8;
+    uint32_t bitset_bytes = (tbl_size + 7) / 8;
     std::vector<uint8_t> bitset(bitset_bytes, 0);
 
     uint64_t excluded_count = 0;
-    for (uint64_t i = 0; i < tbl_size; i++) {
+    for (uint32_t i = 0; i < tbl_size; i++) {
         if (excluded[i]) {
             bitset[i / 8] |= (1u << (i % 8));
             excluded_count++;

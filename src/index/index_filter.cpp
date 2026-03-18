@@ -21,48 +21,27 @@
 
 namespace ikafssn {
 
-// Compute the byte size of each k-mer's posting data from offsets and counts.
-// For k-mers with count==0, size is 0.
-// For the last non-zero k-mer, its data extends to total_data_size.
+// Compute the byte size of each k-mer's posting data from sentinel-based offsets.
 static std::vector<uint64_t> compute_posting_sizes(
-    const uint64_t* offsets, const uint32_t* counts,
-    uint64_t tbl_size, uint64_t total_data_size) {
+    const KixReader& kix, uint32_t tbl_size) {
 
-    std::vector<uint64_t> sizes(tbl_size, 0);
-
-    // Find all k-mers with postings, in order
-    uint64_t prev_kmer = UINT64_MAX;
-    uint64_t prev_offset = 0;
-
-    for (uint64_t i = 0; i < tbl_size; i++) {
-        if (counts[i] > 0) {
-            if (prev_kmer != UINT64_MAX) {
-                sizes[prev_kmer] = offsets[i] - prev_offset;
-            }
-            prev_kmer = i;
-            prev_offset = offsets[i];
-        }
+    std::vector<uint64_t> sizes(tbl_size);
+    for (uint32_t i = 0; i < tbl_size; i++) {
+        sizes[i] = kix.posting_byte_length(i);
     }
-    if (prev_kmer != UINT64_MAX) {
-        sizes[prev_kmer] = total_data_size - prev_offset;
-    }
-
     return sizes;
 }
 
 // Write filtered .kix from .kix.tmp (excluded k-mers removed).
-// Returns true on success.
 static bool write_filtered_kix(
     const KixReader& kix_in,
     const std::string& kix_final,
     const std::vector<bool>& excluded,
     const std::vector<uint64_t>& kix_sizes,
     int k,
-    uint64_t tbl_size,
+    uint32_t tbl_size,
     uint64_t new_total_postings,
     const Logger& logger) {
-    const uint64_t* kix_offsets_in = kix_in.offsets();
-    const uint32_t* counts_in = kix_in.counts();
     const uint8_t* kix_posting_in = kix_in.posting_data();
 
     FILE* kix_fp = std::fopen(kix_final.c_str(), "wb");
@@ -71,37 +50,34 @@ static bool write_filtered_kix(
         return false;
     }
 
-    // Write header placeholder
-    KixHeader kix_hdr{};
-    std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
+    // Build new offsets (tbl_size + 1 entries)
+    std::vector<uint64_t> new_kix_offsets(tbl_size + 1, 0);
 
-    // Build new offsets and counts, write posting data
-    std::vector<uint64_t> new_kix_offsets(tbl_size, 0);
-    std::vector<uint32_t> new_counts(tbl_size, 0);
-
-    // Reserve space for offsets table
-    std::fwrite(new_kix_offsets.data(), sizeof(uint64_t), tbl_size, kix_fp);
-    // Reserve space for counts table
-    std::fwrite(new_counts.data(), sizeof(uint32_t), tbl_size, kix_fp);
-
+    // Collect posting data into buffer to determine final size
+    std::vector<uint8_t> posting_buf;
     uint64_t kix_data_pos = 0;
-    for (uint64_t i = 0; i < tbl_size; i++) {
-        if (counts_in[i] > 0 && !excluded[i]) {
-            new_kix_offsets[i] = kix_data_pos;
-            new_counts[i] = counts_in[i];
-            std::fwrite(kix_posting_in + kix_offsets_in[i], 1, kix_sizes[i], kix_fp);
+    for (uint32_t i = 0; i < tbl_size; i++) {
+        new_kix_offsets[i] = kix_data_pos;
+        if (kix_sizes[i] > 0 && !excluded[i]) {
+            posting_buf.insert(posting_buf.end(),
+                kix_posting_in + kix_in.posting_offset(i),
+                kix_posting_in + kix_in.posting_offset(i) + kix_sizes[i]);
             kix_data_pos += kix_sizes[i];
         }
     }
+    new_kix_offsets[tbl_size] = kix_data_pos;
+
+    bool use_offset32 = (kix_data_pos <= UINT32_MAX);
 
     // Write header
+    KixHeader kix_hdr{};
     std::memcpy(kix_hdr.magic, KIX_MAGIC, 4);
     kix_hdr.format_version = KIX_FORMAT_VERSION;
     kix_hdr.k = static_cast<uint8_t>(k);
     kix_hdr.kmer_type = kmer_type_for_k(k);
     kix_hdr.num_sequences = kix_in.num_sequences();
     kix_hdr.total_postings = new_total_postings;
-    kix_hdr.flags = kix_in.header().flags;
+    kix_hdr.flags = kix_in.header().flags | (use_offset32 ? KIX_FLAG_OFFSET32 : 0);
     kix_hdr.volume_index = kix_in.header().volume_index;
     kix_hdr.total_volumes = kix_in.header().total_volumes;
     kix_hdr.db_len = kix_in.header().db_len;
@@ -109,28 +85,39 @@ static bool write_filtered_kix(
     kix_hdr.template_type = kix_in.header().template_type;
     std::memcpy(kix_hdr.db, kix_in.header().db, 32);
 
-    std::fseek(kix_fp, 0, SEEK_SET);
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
-    std::fwrite(new_kix_offsets.data(), sizeof(uint64_t), tbl_size, kix_fp);
-    std::fwrite(new_counts.data(), sizeof(uint32_t), tbl_size, kix_fp);
+
+    // Write offsets
+    if (use_offset32) {
+        std::vector<uint32_t> off32(tbl_size + 1);
+        for (uint32_t i = 0; i <= tbl_size; i++) {
+            off32[i] = static_cast<uint32_t>(new_kix_offsets[i]);
+        }
+        std::fwrite(off32.data(), sizeof(uint32_t), tbl_size + 1, kix_fp);
+    } else {
+        std::fwrite(new_kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, kix_fp);
+    }
+
+    // Write posting data
+    if (!posting_buf.empty()) {
+        std::fwrite(posting_buf.data(), 1, posting_buf.size(), kix_fp);
+    }
 
     std::fclose(kix_fp);
     return true;
 }
 
 // Write filtered .kpx from .kpx.tmp (excluded k-mers removed).
-// Returns true on success.
 static bool write_filtered_kpx(
     const KpxReader& kpx_in,
-    const uint32_t* counts_in,
     const std::string& kpx_final,
     const std::vector<bool>& excluded,
     const std::vector<uint64_t>& kpx_sizes,
+    const std::vector<uint64_t>& kix_sizes,
     int k,
-    uint64_t tbl_size,
+    uint32_t tbl_size,
     uint64_t new_total_postings,
     const Logger& logger) {
-    const uint64_t* kpx_offsets_in = kpx_in.pos_offsets();
     const uint8_t* kpx_posting_in = kpx_in.posting_data();
 
     FILE* kpx_fp = std::fopen(kpx_final.c_str(), "wb");
@@ -139,47 +126,60 @@ static bool write_filtered_kpx(
         return false;
     }
 
-    // Write header placeholder
-    KpxHeader kpx_hdr{};
-    std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
-
     std::vector<uint64_t> new_kpx_offsets(tbl_size, 0);
-    std::fwrite(new_kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
-
+    std::vector<uint8_t> posting_buf;
     uint64_t kpx_data_pos = 0;
-    for (uint64_t i = 0; i < tbl_size; i++) {
-        if (counts_in[i] > 0 && !excluded[i]) {
+
+    for (uint32_t i = 0; i < tbl_size; i++) {
+        if (kix_sizes[i] > 0 && !excluded[i]) {
             new_kpx_offsets[i] = kpx_data_pos;
-            std::fwrite(kpx_posting_in + kpx_offsets_in[i], 1, kpx_sizes[i], kpx_fp);
+            posting_buf.insert(posting_buf.end(),
+                kpx_posting_in + kpx_in.pos_offset(i),
+                kpx_posting_in + kpx_in.pos_offset(i) + kpx_sizes[i]);
             kpx_data_pos += kpx_sizes[i];
         }
     }
 
+    bool use_offset32 = (kpx_data_pos <= UINT32_MAX);
+
     // Write header
+    KpxHeader kpx_hdr{};
     std::memcpy(kpx_hdr.magic, KPX_MAGIC, 4);
     kpx_hdr.format_version = KPX_FORMAT_VERSION;
     kpx_hdr.k = static_cast<uint8_t>(k);
     kpx_hdr.t = kpx_in.header().t;
     kpx_hdr.template_type = kpx_in.header().template_type;
     kpx_hdr.total_postings = new_total_postings;
+    kpx_hdr.offset_type = use_offset32 ? 0 : 1;
 
-    std::fseek(kpx_fp, 0, SEEK_SET);
     std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
-    std::fwrite(new_kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
+
+    // Write offsets
+    if (use_offset32) {
+        std::vector<uint32_t> off32(tbl_size);
+        for (uint32_t i = 0; i < tbl_size; i++) {
+            off32[i] = static_cast<uint32_t>(new_kpx_offsets[i]);
+        }
+        std::fwrite(off32.data(), sizeof(uint32_t), tbl_size, kpx_fp);
+    } else {
+        std::fwrite(new_kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
+    }
+
+    // Write posting data
+    if (!posting_buf.empty()) {
+        std::fwrite(posting_buf.data(), 1, posting_buf.size(), kpx_fp);
+    }
 
     std::fclose(kpx_fp);
     return true;
 }
 
 // Filter a single volume's .kix.tmp/.kpx.tmp -> .kix/.kpx (in parallel).
-// Also renames .ksx.tmp -> .ksx and removes .tmp files.
 static bool filter_one_volume(
     const std::string& vol_prefix,
     const std::vector<bool>& excluded,
     int k,
     const Logger& logger) {
-
-    // tbl_size will be determined from the reader's actual table_size below
 
     std::string kix_tmp = vol_prefix + ".kix.tmp";
     std::string kpx_tmp = vol_prefix + ".kpx.tmp";
@@ -190,17 +190,14 @@ static bool filter_one_volume(
 
     bool has_kpx_tmp = std::filesystem::exists(kpx_tmp);
 
-    // Open .kix.tmp via reader (mmap)
     KixReader kix_in;
     if (!kix_in.open(kix_tmp)) {
         logger.error("filter: cannot open %s", kix_tmp.c_str());
         return false;
     }
 
-    // Use reader's actual table_size (accounts for mask tag doubling)
-    const uint64_t tbl_size = kix_in.table_size();
+    const uint32_t tbl_size = kix_in.table_size();
 
-    // Open .kpx.tmp if present
     KpxReader kpx_in;
     if (has_kpx_tmp) {
         if (!kpx_in.open(kpx_tmp)) {
@@ -209,35 +206,47 @@ static bool filter_one_volume(
         }
     }
 
-    const uint32_t* counts_in = kix_in.counts();
-
-    // Compute posting byte sizes
-    auto kix_sizes = compute_posting_sizes(
-        kix_in.offsets(), counts_in, tbl_size, kix_in.posting_data_size());
+    auto kix_sizes = compute_posting_sizes(kix_in, tbl_size);
 
     std::vector<uint64_t> kpx_sizes;
     if (has_kpx_tmp) {
-        kpx_sizes = compute_posting_sizes(
-            kpx_in.pos_offsets(), counts_in, tbl_size, kpx_in.posting_data_size());
-    }
+        const uint8_t* kpx_posting = kpx_in.posting_data();
+        uint64_t kpx_total_data = kpx_in.posting_data_size();
+        kpx_sizes.resize(tbl_size, 0);
 
-    // Compute new totals
-    uint64_t new_total_postings = 0;
-    for (uint64_t i = 0; i < tbl_size; i++) {
-        if (!excluded[i]) {
-            new_total_postings += counts_in[i];
+        uint32_t prev_kmer = UINT32_MAX;
+        uint64_t prev_offset = 0;
+        for (uint32_t i = 0; i < tbl_size; i++) {
+            if (kix_sizes[i] > 0) {
+                if (prev_kmer != UINT32_MAX) {
+                    kpx_sizes[prev_kmer] = kpx_in.pos_offset(i) - prev_offset;
+                }
+                prev_kmer = i;
+                prev_offset = kpx_in.pos_offset(i);
+            }
+        }
+        if (prev_kmer != UINT32_MAX) {
+            kpx_sizes[prev_kmer] = kpx_total_data - prev_offset;
         }
     }
 
-    // Write .kix (and .kpx if present) in parallel
+    // Compute new totals
+    auto counts = kix_in.bulk_count_postings();
+    uint64_t new_total_postings = 0;
+    for (uint32_t i = 0; i < tbl_size; i++) {
+        if (!excluded[i]) {
+            new_total_postings += counts[i];
+        }
+    }
+
     bool kix_ok = false;
-    bool kpx_ok = !has_kpx_tmp; // skip = success
+    bool kpx_ok = !has_kpx_tmp;
 
     std::thread kpx_thread;
     if (has_kpx_tmp) {
         kpx_thread = std::thread([&]() {
             kpx_ok = write_filtered_kpx(
-                kpx_in, counts_in, kpx_final, excluded, kpx_sizes,
+                kpx_in, kpx_final, excluded, kpx_sizes, kix_sizes,
                 k, tbl_size, new_total_postings, logger);
         });
     }
@@ -254,17 +263,14 @@ static bool filter_one_volume(
         return false;
     }
 
-    // Close mmapped readers before removing .tmp files
     kix_in.close();
     if (has_kpx_tmp) kpx_in.close();
 
-    // Rename .ksx.tmp -> .ksx
     if (std::rename(ksx_tmp.c_str(), ksx_final.c_str()) != 0) {
         logger.error("filter: failed to rename %s -> %s", ksx_tmp.c_str(), ksx_final.c_str());
         return false;
     }
 
-    // Remove .tmp files
     std::remove(kix_tmp.c_str());
     if (has_kpx_tmp) std::remove(kpx_tmp.c_str());
 
@@ -281,15 +287,11 @@ bool filter_volumes_cross_volume(
     int filter_threads,
     const Logger& logger) {
 
-    // Step 1: Aggregate counts across all volumes.
-    // Use the actual table size from the reader (which accounts for mask tagging
-    // in spaced seed "both" mode where the table doubles to 2*4^k).
     logger.info("Cross-volume filter: aggregating counts from %zu volume(s)...",
                 vol_prefixes.size());
 
-    uint64_t eff_tbl_size = 0;
+    uint32_t eff_tbl_size = 0;
     {
-        // Determine effective table size from the first volume
         std::string kix_tmp0 = vol_prefixes[0] + ".kix.tmp";
         KixReader kix0;
         if (!kix0.open(kix_tmp0)) {
@@ -309,17 +311,16 @@ bool filter_volumes_cross_volume(
             logger.error("filter: cannot open %s for count aggregation", kix_tmp.c_str());
             return false;
         }
-        const uint32_t* cts = kix.counts();
-        for (uint64_t i = 0; i < eff_tbl_size; i++) {
-            global_counts[i] += cts[i];
+        auto vol_counts = kix.bulk_count_postings();
+        for (uint32_t i = 0; i < eff_tbl_size; i++) {
+            global_counts[i] += vol_counts[i];
         }
         kix.close();
     }
 
-    // Step 2: Determine excluded k-mers
     std::vector<bool> excluded(eff_tbl_size, false);
     uint64_t num_excluded = 0;
-    for (uint64_t i = 0; i < eff_tbl_size; i++) {
+    for (uint32_t i = 0; i < eff_tbl_size; i++) {
         if (global_counts[i] > freq_threshold) {
             excluded[i] = true;
             num_excluded++;
@@ -332,7 +333,6 @@ bool filter_volumes_cross_volume(
                 static_cast<unsigned long>(num_excluded),
                 static_cast<unsigned long>(freq_threshold));
 
-    // Step 3: Filter each volume in parallel
     size_t num_vols = vol_prefixes.size();
     std::vector<bool> vol_ok(num_vols, false);
 
@@ -354,14 +354,11 @@ bool filter_volumes_cross_volume(
         }
     }
 
-    // Step 4: Write shared .khx
-    // KHX uses base 4^k table. When eff_tbl_size > base_tbl_size (tagged "both"
-    // mode), condense: a base k-mer is excluded if any tagged variant is excluded.
-    const uint64_t base_tbl_size = table_size(k);
+    const uint32_t base_tbl_size = table_size(k);
     std::vector<bool> khx_excluded;
     if (eff_tbl_size > base_tbl_size) {
         khx_excluded.resize(base_tbl_size, false);
-        for (uint64_t i = 0; i < eff_tbl_size; i++) {
+        for (uint32_t i = 0; i < eff_tbl_size; i++) {
             if (excluded[i]) {
                 khx_excluded[i & (base_tbl_size - 1)] = true;
             }
