@@ -191,14 +191,7 @@ bool build_index(BlastDbReader& db,
     counts64.clear();
     counts64.shrink_to_fit();
 
-    logger.info("Phase 1: total postings = %lu (estimated)", static_cast<unsigned long>(total_postings));
-
-    // When using spaced seeds with both templates, two different masks may
-    // produce the same (kmer, seq_id, pos) entry. Track actual counts after
-    // deduplication in Phase 2-3 and rewrite the counts table in Phase 4.
-    const bool need_dedup = (config.t > 0);
-    std::vector<uint32_t> actual_counts(tbl_size, 0);
-    uint64_t actual_total_postings = 0;
+    logger.info("Phase 1: total postings = %lu", static_cast<unsigned long>(total_postings));
 
     // =========== Determine partition count from memory_limit ===========
     int num_partitions = 1;
@@ -364,19 +357,6 @@ bool build_index(BlastDbReader& db,
                 return a.pos < b.pos;
             });
 
-        // Deduplicate entries with identical (kmer_value, seq_id, pos).
-        // This occurs when multiple spaced seed masks produce the same k-mer
-        // at the same position for the same sequence.
-        if (need_dedup) {
-            auto new_end = std::unique(buffer.begin(), buffer.end(),
-                [](const TempEntry& a, const TempEntry& b) {
-                    return a.kmer_value == b.kmer_value
-                        && a.seq_id == b.seq_id
-                        && a.pos == b.pos;
-                });
-            buffer.erase(new_end, buffer.end());
-        }
-
         // Write sorted postings grouped by kmer (sequential — I/O bound)
         size_t i = 0;
         while (i < buffer.size()) {
@@ -391,9 +371,6 @@ bool build_index(BlastDbReader& db,
             // Record offsets and actual counts for this kmer
             kix_offsets[cur_kmer] = kix_data_pos;
             if (!config.skip_kpx) kpx_offsets[cur_kmer] = kpx_data_pos;
-            actual_counts[cur_kmer] = static_cast<uint32_t>(j - i);
-            actual_total_postings += (j - i);
-
             // Write delta-compressed ID postings to kix
             {
                 uint32_t prev_id = 0;
@@ -434,20 +411,13 @@ bool build_index(BlastDbReader& db,
                      static_cast<unsigned long>(buffer.size()));
     }
 
-    if (need_dedup && actual_total_postings < total_postings) {
-        logger.info("Deduplicated: %lu -> %lu postings (removed %lu duplicates)",
-                    static_cast<unsigned long>(total_postings),
-                    static_cast<unsigned long>(actual_total_postings),
-                    static_cast<unsigned long>(total_postings - actual_total_postings));
-    }
-
     // Forward-fill kix_offsets: empty k-mers get the same offset as the next
     // non-empty k-mer (or the sentinel). This ensures offsets[i+1]-offsets[i]==0
     // for empty k-mers.
     {
         uint64_t fill = kix_data_pos; // sentinel value for trailing empties
         for (int32_t i = static_cast<int32_t>(tbl_size) - 1; i >= 0; i--) {
-            if (actual_counts[i] > 0) {
+            if (counts[i] > 0) {
                 fill = kix_offsets[i];
             } else {
                 kix_offsets[i] = fill;
@@ -487,7 +457,7 @@ bool build_index(BlastDbReader& db,
         kix_hdr.k = static_cast<uint8_t>(k);
         kix_hdr.kmer_type = kmer_type_for(k, config.t);
         kix_hdr.num_sequences = num_seqs;
-        kix_hdr.total_postings = actual_total_postings;
+        kix_hdr.total_postings = total_postings;
         kix_hdr.flags = KIX_FLAG_HAS_KSX | (kix_offset32 ? KIX_FLAG_OFFSET32 : 0);
         kix_hdr.volume_index = volume_index;
         kix_hdr.total_volumes = total_volumes;
@@ -533,7 +503,7 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.k = static_cast<uint8_t>(k);
         kpx_hdr.t = config.t;
         kpx_hdr.template_type = config.template_type;
-        kpx_hdr.total_postings = actual_total_postings;
+        kpx_hdr.total_postings = total_postings;
         kpx_hdr.offset_type = kpx_offset32 ? 0 : 1;
         std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, wr);
 
