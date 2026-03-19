@@ -40,21 +40,21 @@ inline constexpr int popcount32(uint32_t v) {
     return c;
 }
 
-// Weight 8 templates (PCR-optimized, k=8):
-inline constexpr uint32_t MASK_K8_T13_CODING   = 0x165B;   // 1011001011011
-inline constexpr uint32_t MASK_K8_T13_OPTIMAL  = 0x196D;   // 1100101101101
-inline constexpr uint32_t MASK_K8_T15_CODING   = 0x592D;   // 101100100101101
-inline constexpr uint32_t MASK_K8_T15_OPTIMAL  = 0x6965;   // 110100101100101
-inline constexpr uint32_t MASK_K8_T18_CODING   = 0x25925;  // 100101100100100101
-inline constexpr uint32_t MASK_K8_T18_OPTIMAL  = 0x34A25;  // 110100101000100101
+// Weight 8 templates (PCR-optimized, k=8, derived from discontiguous MegaBLAST design principles):
+inline constexpr uint32_t MASK_K8_T13_CODING   = 0x1B2D;   // 1101100101101
+inline constexpr uint32_t MASK_K8_T13_OPTIMAL  = 0x1CD3;   // 1110011010011
+inline constexpr uint32_t MASK_K8_T15_CODING   = 0x4B2D;   // 100101100101101
+inline constexpr uint32_t MASK_K8_T15_OPTIMAL  = 0x7493;   // 111010010010011
+inline constexpr uint32_t MASK_K8_T18_CODING   = 0x2492D;  // 100100100100101101
+inline constexpr uint32_t MASK_K8_T18_OPTIMAL  = 0x32293;  // 110010001010010011
 
-// Weight 9 templates (PCR-optimized, k=9):
+// Weight 9 templates (PCR-optimized, k=9, derived from discontiguous MegaBLAST design principles):
 inline constexpr uint32_t MASK_K9_T13_CODING   = 0x1B6D;   // 1101101101101
-inline constexpr uint32_t MASK_K9_T13_OPTIMAL  = 0x16DB;   // 1011011011011
-inline constexpr uint32_t MASK_K9_T15_CODING   = 0x5B2D;   // 101101100101101
-inline constexpr uint32_t MASK_K9_T15_OPTIMAL  = 0x6B2D;   // 110101100101101
-inline constexpr uint32_t MASK_K9_T18_CODING   = 0x25965;  // 100101100101100101
-inline constexpr uint32_t MASK_K9_T18_OPTIMAL  = 0x34B25;  // 110100101100100101
+inline constexpr uint32_t MASK_K9_T13_OPTIMAL  = 0x1DD3;   // 1110111010011
+inline constexpr uint32_t MASK_K9_T15_CODING   = 0x4B6D;   // 100101101101101
+inline constexpr uint32_t MASK_K9_T15_OPTIMAL  = 0x74D3;   // 111010011010011
+inline constexpr uint32_t MASK_K9_T18_CODING   = 0x24B2D;  // 100100101100101101
+inline constexpr uint32_t MASK_K9_T18_OPTIMAL  = 0x3A293;  // 111010001010010011
 
 // Weight 11 templates:
 inline constexpr uint32_t MASK_K11_T16_CODING  = 0xDB6D;   // 1101101101101101

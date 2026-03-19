@@ -166,19 +166,19 @@ static void test_mask_weights() {
 static void test_mask_exact_values() {
     // Verify exact hex values of all masks match the specification.
     // k=8 masks:
-    CHECK_EQ(MASK_K8_T13_CODING,   (uint32_t)0x165B);
-    CHECK_EQ(MASK_K8_T13_OPTIMAL,  (uint32_t)0x196D);
-    CHECK_EQ(MASK_K8_T15_CODING,   (uint32_t)0x592D);
-    CHECK_EQ(MASK_K8_T15_OPTIMAL,  (uint32_t)0x6965);
-    CHECK_EQ(MASK_K8_T18_CODING,   (uint32_t)0x25925);
-    CHECK_EQ(MASK_K8_T18_OPTIMAL,  (uint32_t)0x34A25);
+    CHECK_EQ(MASK_K8_T13_CODING,   (uint32_t)0x1B2D);
+    CHECK_EQ(MASK_K8_T13_OPTIMAL,  (uint32_t)0x1CD3);
+    CHECK_EQ(MASK_K8_T15_CODING,   (uint32_t)0x4B2D);
+    CHECK_EQ(MASK_K8_T15_OPTIMAL,  (uint32_t)0x7493);
+    CHECK_EQ(MASK_K8_T18_CODING,   (uint32_t)0x2492D);
+    CHECK_EQ(MASK_K8_T18_OPTIMAL,  (uint32_t)0x32293);
     // k=9 masks:
     CHECK_EQ(MASK_K9_T13_CODING,   (uint32_t)0x1B6D);
-    CHECK_EQ(MASK_K9_T13_OPTIMAL,  (uint32_t)0x16DB);
-    CHECK_EQ(MASK_K9_T15_CODING,   (uint32_t)0x5B2D);
-    CHECK_EQ(MASK_K9_T15_OPTIMAL,  (uint32_t)0x6B2D);
-    CHECK_EQ(MASK_K9_T18_CODING,   (uint32_t)0x25965);
-    CHECK_EQ(MASK_K9_T18_OPTIMAL,  (uint32_t)0x34B25);
+    CHECK_EQ(MASK_K9_T13_OPTIMAL,  (uint32_t)0x1DD3);
+    CHECK_EQ(MASK_K9_T15_CODING,   (uint32_t)0x4B6D);
+    CHECK_EQ(MASK_K9_T15_OPTIMAL,  (uint32_t)0x74D3);
+    CHECK_EQ(MASK_K9_T18_CODING,   (uint32_t)0x24B2D);
+    CHECK_EQ(MASK_K9_T18_OPTIMAL,  (uint32_t)0x3A293);
     // k=11,12 masks:
     // Patterns (1=use, 0=skip, left-to-right = position 0 to t-1):
     //   k=11, t=16, coding:  1101101101101101 = 0xDB6D

@@ -741,22 +741,24 @@ By default, both forward and reverse complement strands of the query are searche
 
 When spaced seeds are enabled (`-t > 0`), k-mers are extracted using discontiguous megablast-style bitmask templates. Each mask selects k positions from a window of t bases. Two template types are available for each (k, t) combination: **coding** (optimized for coding regions) and **optimal** (optimized for non-coding regions). The **both** mode indexes both templates simultaneously, using a tag bit to isolate them in the direct-address table.
 
+All templates are derived from the design principles of discontiguous MegaBLAST templates. **Coding** templates follow a periodic "110" structure that maximizes coverage of the second codon position, with excess gaps placed at the first codon position. **Optimal** templates are designed to minimize overlap with the corresponding coding template and use a non-periodic structure; they employ bookend patterns that vary with template length (t=13: "111" at both ends; t=15: "111" at the start + "11" at the end; t=18: "111" or "11" at the start + "11" at the end). The k=11/12 templates are the native discontiguous MegaBLAST templates, while k=8/9 templates are newly designed following the same principles for shorter seed weights suited to PCR amplicon analysis.
+
 Valid (k, t) combinations and their mask values:
 
 | k | t | Type | Mask (binary, left-to-right = pos 0 to t−1) | Mask (hex) |
 |---|---|---|---|---|
-| 8 | 13 | coding | `1011001011011` | 0x165B |
-| 8 | 13 | optimal | `1100101101101` | 0x196D |
-| 8 | 15 | coding | `101100100101101` | 0x592D |
-| 8 | 15 | optimal | `110100101100101` | 0x6965 |
-| 8 | 18 | coding | `100101100100100101` | 0x25925 |
-| 8 | 18 | optimal | `110100101000100101` | 0x34A25 |
+| 8 | 13 | coding | `1101100101101` | 0x1B2D |
+| 8 | 13 | optimal | `1110011010011` | 0x1CD3 |
+| 8 | 15 | coding | `100101100101101` | 0x4B2D |
+| 8 | 15 | optimal | `111010010010011` | 0x7493 |
+| 8 | 18 | coding | `100100100100101101` | 0x2492D |
+| 8 | 18 | optimal | `110010001010010011` | 0x32293 |
 | 9 | 13 | coding | `1101101101101` | 0x1B6D |
-| 9 | 13 | optimal | `1011011011011` | 0x16DB |
-| 9 | 15 | coding | `101101100101101` | 0x5B2D |
-| 9 | 15 | optimal | `110101100101101` | 0x6B2D |
-| 9 | 18 | coding | `100101100101100101` | 0x25965 |
-| 9 | 18 | optimal | `110100101100100101` | 0x34B25 |
+| 9 | 13 | optimal | `1110111010011` | 0x1DD3 |
+| 9 | 15 | coding | `100101101101101` | 0x4B6D |
+| 9 | 15 | optimal | `111010011010011` | 0x74D3 |
+| 9 | 18 | coding | `100100101100101101` | 0x24B2D |
+| 9 | 18 | optimal | `111010001010010011` | 0x3A293 |
 | 11 | 16 | coding | `1101101101101101` | 0xDB6D |
 | 11 | 16 | optimal | `1110010110110111` | 0xE5B7 |
 | 11 | 18 | coding | `101101100101101101` | 0x2D96D |
