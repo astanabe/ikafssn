@@ -55,7 +55,8 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)\n"
         "  -t <int>               Template length for spaced seeds\n"
         "                         0: contiguous k-mers (default)\n"
-        "                         16, 18, 21: spaced seed template length (requires -k 11 or 12)\n"
+        "                         13, 15, 18: requires -k 8 or 9\n"
+        "                         16, 18, 21: requires -k 11 or 12\n"
         "  -template_type <str>   Template type: coding, optimal, both (default: both)\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
@@ -190,8 +191,8 @@ int main(int argc, char* argv[]) {
     }
 
     int cli_t = cli.get_int("-t", 0);
-    if (cli_t != 0 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
-        std::fprintf(stderr, "Error: -t must be 0, 16, 18, or 21\n");
+    if (cli_t != 0 && cli_t != 13 && cli_t != 15 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
+        std::fprintf(stderr, "Error: -t must be 0, 13, 15, 16, 18, or 21\n");
         return 1;
     }
     uint8_t spaced_t = static_cast<uint8_t>(cli_t);
@@ -207,7 +208,7 @@ int main(int argc, char* argv[]) {
 
     if (spaced_t > 0) {
         if (!validate_spaced_seed(k, spaced_t)) {
-            std::fprintf(stderr, "Error: -t %d requires -k 11 or 12\n", spaced_t);
+            std::fprintf(stderr, "Error: -t %d is not valid for -k %d\n", spaced_t, k);
             return 1;
         }
     }
@@ -343,7 +344,7 @@ int main(int argc, char* argv[]) {
             const std::string& prefix = vol_prefixes[vi];
 
             bool ok;
-            if (k < K_TYPE_THRESHOLD) {
+            if (kmer_type_for(k, spaced_t) == 0) {
                 ok = build_index<uint16_t>(db, config, prefix,
                                             vi, total_volumes, db_base, logger);
             } else {

@@ -23,9 +23,18 @@ struct ChainResult {
     bool   is_reverse;
 };
 
-// Returns 0 for k <= 8 (uint16_t), 1 for k >= 9 (uint32_t)
+// Returns 0 for k <= 8 (uint16_t), 1 for k >= 9 (uint32_t).
+// Only accurate for t=0 (contiguous k-mers). For spaced seeds, use kmer_type_for(k, t).
 inline constexpr uint8_t kmer_type_for_k(int k) {
     return k >= 9 ? 1 : 0;
+}
+
+// Bit-width-based KmerInt dispatch considering spaced seed tag bit.
+// t=0: bits = 2*k; t>0: bits = 2*k+1 (tag bit for "both" mode).
+// Returns 0 for uint16_t, 1 for uint32_t.
+inline constexpr uint8_t kmer_type_for(int k, uint8_t t) {
+    int bits = 2 * k + (t > 0 ? 1 : 0);
+    return bits > 16 ? 1 : 0;
 }
 
 } // namespace ikafssn

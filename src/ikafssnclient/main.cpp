@@ -81,7 +81,7 @@ static void print_usage(const char* prog) {
         "  -stage3_min_npositive <int> Min positive-scoring positions filter (default: server default)\n"
         "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: server default)\n"
         "  -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)\n"
-        "  -t <int>                 Template length for spaced seeds (0/16/18/21, default: 0)\n"
+        "  -t <int>                 Template length for spaced seeds (0/13/15/16/18/21, default: 0)\n"
         "  -template_type <string>  Template type: coding, optimal, both (default: server default)\n"
         "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n"
@@ -441,8 +441,8 @@ int main(int argc, char* argv[]) {
     }
     {
         int cli_t = cli.get_int("-t", 0);
-        if (cli_t != 0 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
-            std::fprintf(stderr, "Error: -t must be 0, 16, 18, or 21\n");
+        if (cli_t != 0 && cli_t != 13 && cli_t != 15 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
+            std::fprintf(stderr, "Error: -t must be 0, 13, 15, 16, 18, or 21\n");
             return 1;
         }
         base_req.t = static_cast<uint8_t>(cli_t);

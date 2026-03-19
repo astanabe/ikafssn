@@ -62,7 +62,7 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
         entry.kmer_groups.push_back({});
         auto& g = entry.kmer_groups.back();
         g.k = k;
-        g.kmer_type = kmer_type_for_k(k);
+        g.kmer_type = kmer_type_for(k, t);
         g.t = t;
         g.template_type = tt;
         return g;

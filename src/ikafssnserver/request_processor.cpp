@@ -96,7 +96,7 @@ SearchResponse process_search_request(
     // A "both" index can serve coding-only or optimal-only searches
     // because the tag bit routes to the correct portion of the table.
     std::vector<uint32_t> seed_masks;
-    std::vector<uint32_t> seed_tags;  // KmerInt = uint32_t for k=11,12
+    std::vector<uint32_t> seed_tags;  // KmerInt = uint32_t for k=8-12 with spaced seeds
     if (t > 0) {
         // index_tt = group's template_type (what the index has)
         // tt = search template_type (what the user wants)

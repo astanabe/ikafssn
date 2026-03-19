@@ -93,7 +93,7 @@ static void print_usage(const char* prog) {
         "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
         "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, threads))\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
-        "  -t <int>                 Template length for spaced seeds (0=contiguous, 16/18/21; default: 0)\n"
+        "  -t <int>                 Template length for spaced seeds (0=contiguous, 13/15/18 for k=8-9, 16/18/21 for k=11-12; default: 0)\n"
         "  -template_type <string>  Template type: coding, optimal, both (default: both)\n"
         "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
         "  -v, --verbose            Verbose logging\n",
@@ -303,8 +303,8 @@ int main(int argc, char* argv[]) {
     }
 
     int cli_t = cli.get_int("-t", 0);
-    if (cli_t != 0 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
-        std::fprintf(stderr, "Error: -t must be 0, 16, 18, or 21\n");
+    if (cli_t != 0 && cli_t != 13 && cli_t != 15 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
+        std::fprintf(stderr, "Error: -t must be 0, 13, 15, 16, 18, or 21\n");
         return 1;
     }
     uint8_t spaced_t = static_cast<uint8_t>(cli_t);
@@ -320,7 +320,7 @@ int main(int argc, char* argv[]) {
 
     if (spaced_t > 0) {
         if (!validate_spaced_seed(filter_k > 0 ? filter_k : 0, spaced_t)) {
-            std::fprintf(stderr, "Error: -t %d requires -k 11 or 12\n", spaced_t);
+            std::fprintf(stderr, "Error: -t %d is not valid for -k %d\n", spaced_t, filter_k);
             return 1;
         }
     }
@@ -392,7 +392,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (spaced_t > 0 && !validate_spaced_seed(k, spaced_t)) {
-        std::fprintf(stderr, "Error: -t %d requires k=11 or k=12 but found k=%d\n", spaced_t, k);
+        std::fprintf(stderr, "Error: -t %d is not valid for k=%d\n", spaced_t, k);
         return 1;
     }
 
@@ -644,7 +644,7 @@ int main(int argc, char* argv[]) {
     // Map from original query index to preprocessed index
     std::vector<size_t> query_pp_idx(queries.size(), SIZE_MAX);
 
-    if (k < K_TYPE_THRESHOLD) {
+    if (kmer_type_for(k, spaced_t) == 0) {
         pp16.reserve(queries.size());
         for (size_t qi = 0; qi < queries.size(); qi++) {
             if (query_skipped[qi]) continue;
@@ -686,7 +686,7 @@ int main(int argc, char* argv[]) {
 
     // Determine optimal tier from actual preprocessed k-mer counts
     uint32_t max_kmer_positions = 0;
-    if (k < K_TYPE_THRESHOLD) {
+    if (kmer_type_for(k, spaced_t) == 0) {
         for (const auto& pp : pp16) {
             max_kmer_positions = std::max(max_kmer_positions,
                 static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
@@ -715,7 +715,7 @@ int main(int argc, char* argv[]) {
     // Adaptive parallel granularity:
     // - Many queries or single volume: parallel_for over queries (coarser tasks)
     // - Few queries, multiple volumes: parallel_for_each over (query, volume) pairs
-    size_t non_skipped_count = (k < K_TYPE_THRESHOLD) ? pp16.size() : pp32.size();
+    size_t non_skipped_count = (kmer_type_for(k, spaced_t) == 0) ? pp16.size() : pp32.size();
     bool use_query_level_parallel =
         (non_skipped_count > static_cast<size_t>(num_threads) * 2) ||
         (vol_data.size() == 1);
@@ -743,7 +743,7 @@ int main(int argc, char* argv[]) {
                             const auto& vd = vol_data[vi];
 
                             SearchResult sr;
-                            if (k < K_TYPE_THRESHOLD) {
+                            if (kmer_type_for(k, spaced_t) == 0) {
                                 sr = search_volume<uint16_t>(
                                     query.id, pp16[pp_idx].qdata, k,
                                     vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
@@ -801,7 +801,7 @@ int main(int argc, char* argv[]) {
                     auto& buf = tls_bufs.local();
 
                     SearchResult sr;
-                    if (k < K_TYPE_THRESHOLD) {
+                    if (kmer_type_for(k, spaced_t) == 0) {
                         sr = search_volume<uint16_t>(
                             query.id, pp16[pp_idx].qdata, k,
                             vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);

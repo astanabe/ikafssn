@@ -1,27 +1,80 @@
 #include "test_util.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/types.hpp"
 #include <string>
 #include <vector>
 
 using namespace ikafssn;
 
 static void test_validate_spaced_seed() {
+    // t=0 is always valid
+    CHECK(validate_spaced_seed(8, 0));
     CHECK(validate_spaced_seed(11, 0));
+    // k=8 valid combinations
+    CHECK(validate_spaced_seed(8, 13));
+    CHECK(validate_spaced_seed(8, 15));
+    CHECK(validate_spaced_seed(8, 18));
+    // k=9 valid combinations
+    CHECK(validate_spaced_seed(9, 13));
+    CHECK(validate_spaced_seed(9, 15));
+    CHECK(validate_spaced_seed(9, 18));
+    // k=11,12 valid combinations
     CHECK(validate_spaced_seed(11, 16));
     CHECK(validate_spaced_seed(11, 18));
     CHECK(validate_spaced_seed(11, 21));
     CHECK(validate_spaced_seed(12, 16));
     CHECK(validate_spaced_seed(12, 18));
     CHECK(validate_spaced_seed(12, 21));
+    // Invalid combinations
     CHECK(!validate_spaced_seed(10, 16));
     CHECK(!validate_spaced_seed(11, 17));
     CHECK(!validate_spaced_seed(13, 16));
-    CHECK(!validate_spaced_seed(8, 18));
+    CHECK(!validate_spaced_seed(8, 16));   // k=8 + t=16 invalid
+    CHECK(!validate_spaced_seed(9, 21));   // k=9 + t=21 invalid
+    CHECK(!validate_spaced_seed(11, 13));  // k=11 + t=13 invalid
+    CHECK(!validate_spaced_seed(12, 15));  // k=12 + t=15 invalid
+    CHECK(!validate_spaced_seed(7, 13));   // k=7 not supported
 }
 
 static void test_get_seed_masks() {
-    auto masks = get_seed_masks(11, 16, TemplateType::kCoding);
+    // k=8 masks
+    auto masks = get_seed_masks(8, 13, TemplateType::kCoding);
+    CHECK_EQ(masks.size(), 1u);
+    CHECK_EQ(masks[0], MASK_K8_T13_CODING);
+
+    masks = get_seed_masks(8, 13, TemplateType::kBoth);
+    CHECK_EQ(masks.size(), 2u);
+    CHECK_EQ(masks[0], MASK_K8_T13_CODING);
+    CHECK_EQ(masks[1], MASK_K8_T13_OPTIMAL);
+
+    masks = get_seed_masks(8, 15, TemplateType::kOptimal);
+    CHECK_EQ(masks.size(), 1u);
+    CHECK_EQ(masks[0], MASK_K8_T15_OPTIMAL);
+
+    masks = get_seed_masks(8, 18, TemplateType::kBoth);
+    CHECK_EQ(masks.size(), 2u);
+
+    // k=9 masks
+    masks = get_seed_masks(9, 13, TemplateType::kCoding);
+    CHECK_EQ(masks.size(), 1u);
+    CHECK_EQ(masks[0], MASK_K9_T13_CODING);
+
+    masks = get_seed_masks(9, 15, TemplateType::kBoth);
+    CHECK_EQ(masks.size(), 2u);
+    CHECK_EQ(masks[0], MASK_K9_T15_CODING);
+    CHECK_EQ(masks[1], MASK_K9_T15_OPTIMAL);
+
+    masks = get_seed_masks(9, 18, TemplateType::kOptimal);
+    CHECK_EQ(masks.size(), 1u);
+    CHECK_EQ(masks[0], MASK_K9_T18_OPTIMAL);
+
+    // k=8 invalid t should return empty
+    masks = get_seed_masks(8, 16, TemplateType::kCoding);
+    CHECK_EQ(masks.size(), 0u);
+
+    // k=11 masks (existing)
+    masks = get_seed_masks(11, 16, TemplateType::kCoding);
     CHECK_EQ(masks.size(), 1u);
     CHECK_EQ(masks[0], MASK_K11_T16_CODING);
 
@@ -80,6 +133,20 @@ static void test_reverse_complement_string() {
 }
 
 static void test_mask_weights() {
+    // Verify all k=8 masks have popcount 8
+    CHECK_EQ(popcount32(MASK_K8_T13_CODING), 8);
+    CHECK_EQ(popcount32(MASK_K8_T13_OPTIMAL), 8);
+    CHECK_EQ(popcount32(MASK_K8_T15_CODING), 8);
+    CHECK_EQ(popcount32(MASK_K8_T15_OPTIMAL), 8);
+    CHECK_EQ(popcount32(MASK_K8_T18_CODING), 8);
+    CHECK_EQ(popcount32(MASK_K8_T18_OPTIMAL), 8);
+    // Verify all k=9 masks have popcount 9
+    CHECK_EQ(popcount32(MASK_K9_T13_CODING), 9);
+    CHECK_EQ(popcount32(MASK_K9_T13_OPTIMAL), 9);
+    CHECK_EQ(popcount32(MASK_K9_T15_CODING), 9);
+    CHECK_EQ(popcount32(MASK_K9_T15_OPTIMAL), 9);
+    CHECK_EQ(popcount32(MASK_K9_T18_CODING), 9);
+    CHECK_EQ(popcount32(MASK_K9_T18_OPTIMAL), 9);
     // Verify all k=11 masks have popcount 11
     CHECK_EQ(popcount32(MASK_K11_T16_CODING), 11);
     CHECK_EQ(popcount32(MASK_K11_T16_OPTIMAL), 11);
@@ -97,7 +164,22 @@ static void test_mask_weights() {
 }
 
 static void test_mask_exact_values() {
-    // Verify exact hex values of all 12 masks match the specification.
+    // Verify exact hex values of all masks match the specification.
+    // k=8 masks:
+    CHECK_EQ(MASK_K8_T13_CODING,   (uint32_t)0x165B);
+    CHECK_EQ(MASK_K8_T13_OPTIMAL,  (uint32_t)0x196D);
+    CHECK_EQ(MASK_K8_T15_CODING,   (uint32_t)0x592D);
+    CHECK_EQ(MASK_K8_T15_OPTIMAL,  (uint32_t)0x6965);
+    CHECK_EQ(MASK_K8_T18_CODING,   (uint32_t)0x25925);
+    CHECK_EQ(MASK_K8_T18_OPTIMAL,  (uint32_t)0x34A25);
+    // k=9 masks:
+    CHECK_EQ(MASK_K9_T13_CODING,   (uint32_t)0x1B6D);
+    CHECK_EQ(MASK_K9_T13_OPTIMAL,  (uint32_t)0x16DB);
+    CHECK_EQ(MASK_K9_T15_CODING,   (uint32_t)0x5B2D);
+    CHECK_EQ(MASK_K9_T15_OPTIMAL,  (uint32_t)0x6B2D);
+    CHECK_EQ(MASK_K9_T18_CODING,   (uint32_t)0x25965);
+    CHECK_EQ(MASK_K9_T18_OPTIMAL,  (uint32_t)0x34B25);
+    // k=11,12 masks:
     // Patterns (1=use, 0=skip, left-to-right = position 0 to t-1):
     //   k=11, t=16, coding:  1101101101101101 = 0xDB6D
     //   k=11, t=16, optimal: 1110010110110111 = 0xE5B7
@@ -262,6 +344,69 @@ static void test_scan_spaced_k12() {
     CHECK_EQ(results.size(), 5u);
 }
 
+static void test_scan_spaced_k8() {
+    // Test k=8, t=13 coding mask scan using uint32_t (required for k=8 + spaced)
+    std::string seq = "ACGTACGTACGTACGT"; // 16 bases, t=13 -> 4 windows
+    KmerScanner<uint32_t> scanner(8);
+    std::vector<uint32_t> masks = {MASK_K8_T13_CODING};
+
+    std::vector<std::pair<uint32_t, uint32_t>> results;
+    scanner.scan_spaced(seq.data(), seq.size(), masks, 13,
+        [&](uint32_t pos, uint32_t kmer) {
+            results.emplace_back(pos, kmer);
+        });
+
+    // 16 - 13 + 1 = 4 windows
+    CHECK_EQ(results.size(), 4u);
+    CHECK_EQ(results[0].first, 0u);
+    CHECK_EQ(results[3].first, 3u);
+    // k-mer value should fit in 16 bits (k=8 -> 2*8=16 bits)
+    for (const auto& [pos, kmer] : results) {
+        CHECK(kmer < (1u << 16));
+    }
+}
+
+static void test_scan_spaced_k9() {
+    // Test k=9, t=13 coding mask scan using uint32_t
+    std::string seq = "ACGTACGTACGTACGT"; // 16 bases, t=13 -> 4 windows
+    KmerScanner<uint32_t> scanner(9);
+    std::vector<uint32_t> masks = {MASK_K9_T13_CODING};
+
+    std::vector<std::pair<uint32_t, uint32_t>> results;
+    scanner.scan_spaced(seq.data(), seq.size(), masks, 13,
+        [&](uint32_t pos, uint32_t kmer) {
+            results.emplace_back(pos, kmer);
+        });
+
+    // 16 - 13 + 1 = 4 windows
+    CHECK_EQ(results.size(), 4u);
+    // k-mer value should fit in 18 bits (k=9 -> 2*9=18 bits)
+    for (const auto& [pos, kmer] : results) {
+        CHECK(kmer < (1u << 18));
+    }
+}
+
+static void test_kmer_type_for() {
+    // t=0 (contiguous): same as kmer_type_for_k
+    CHECK_EQ(kmer_type_for(5, 0), (uint8_t)0);  // 10 bits -> uint16
+    CHECK_EQ(kmer_type_for(8, 0), (uint8_t)0);  // 16 bits -> uint16
+    CHECK_EQ(kmer_type_for(9, 0), (uint8_t)1);  // 18 bits -> uint32
+    CHECK_EQ(kmer_type_for(12, 0), (uint8_t)1); // 24 bits -> uint32
+    CHECK_EQ(kmer_type_for(16, 0), (uint8_t)1); // 32 bits -> uint32
+
+    // t>0 (spaced seed): adds 1 bit for tag
+    CHECK_EQ(kmer_type_for(7, 13), (uint8_t)0);  // 15 bits -> uint16
+    CHECK_EQ(kmer_type_for(8, 13), (uint8_t)1);  // 17 bits -> uint32 (key case!)
+    CHECK_EQ(kmer_type_for(9, 13), (uint8_t)1);  // 19 bits -> uint32
+    CHECK_EQ(kmer_type_for(11, 16), (uint8_t)1); // 23 bits -> uint32
+    CHECK_EQ(kmer_type_for(12, 18), (uint8_t)1); // 25 bits -> uint32
+
+    // Consistency with kmer_type_for_k for t=0
+    for (int k = MIN_K; k <= MAX_K; k++) {
+        CHECK_EQ(kmer_type_for(k, 0), kmer_type_for_k(k));
+    }
+}
+
 int main() {
     test_validate_spaced_seed();
     test_get_seed_masks();
@@ -276,6 +421,9 @@ int main() {
     test_scan_spaced_both_masks();
     test_scan_spaced_short_seq();
     test_scan_spaced_k12();
+    test_scan_spaced_k8();
+    test_scan_spaced_k9();
+    test_kmer_type_for();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

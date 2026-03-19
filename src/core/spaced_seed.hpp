@@ -21,7 +21,7 @@ enum class TemplateType : uint8_t {
 
 // Configuration for spaced seed indexing/searching.
 struct SpacedSeedConfig {
-    uint8_t t = 0;  // template length (0 = contiguous, 16/18/21 = spaced)
+    uint8_t t = 0;  // template length (0 = contiguous, 13/15/18 for k=8-9, 16/18/21 for k=11-12)
     TemplateType type = TemplateType::kBoth;
 };
 
@@ -40,6 +40,22 @@ inline constexpr int popcount32(uint32_t v) {
     return c;
 }
 
+// Weight 8 templates (PCR-optimized, k=8):
+inline constexpr uint32_t MASK_K8_T13_CODING   = 0x165B;   // 1011001011011
+inline constexpr uint32_t MASK_K8_T13_OPTIMAL  = 0x196D;   // 1100101101101
+inline constexpr uint32_t MASK_K8_T15_CODING   = 0x592D;   // 101100100101101
+inline constexpr uint32_t MASK_K8_T15_OPTIMAL  = 0x6965;   // 110100101100101
+inline constexpr uint32_t MASK_K8_T18_CODING   = 0x25925;  // 100101100100100101
+inline constexpr uint32_t MASK_K8_T18_OPTIMAL  = 0x34A25;  // 110100101000100101
+
+// Weight 9 templates (PCR-optimized, k=9):
+inline constexpr uint32_t MASK_K9_T13_CODING   = 0x1B6D;   // 1101101101101
+inline constexpr uint32_t MASK_K9_T13_OPTIMAL  = 0x16DB;   // 1011011011011
+inline constexpr uint32_t MASK_K9_T15_CODING   = 0x5B2D;   // 101101100101101
+inline constexpr uint32_t MASK_K9_T15_OPTIMAL  = 0x6B2D;   // 110101100101101
+inline constexpr uint32_t MASK_K9_T18_CODING   = 0x25965;  // 100101100101100101
+inline constexpr uint32_t MASK_K9_T18_OPTIMAL  = 0x34B25;  // 110100101100100101
+
 // Weight 11 templates:
 inline constexpr uint32_t MASK_K11_T16_CODING  = 0xDB6D;   // 1101101101101101
 inline constexpr uint32_t MASK_K11_T16_OPTIMAL = 0xE5B7;   // 1110010110110111
@@ -57,6 +73,18 @@ inline constexpr uint32_t MASK_K12_T21_CODING  = 0x12DB2D; // 100101101101100101
 inline constexpr uint32_t MASK_K12_T21_OPTIMAL = 0x1D2C97; // 111010010110010010111
 
 // Compile-time validation of mask weights.
+static_assert(popcount32(MASK_K8_T13_CODING)   == 8,  "K8 T13 coding mask weight");
+static_assert(popcount32(MASK_K8_T13_OPTIMAL)  == 8,  "K8 T13 optimal mask weight");
+static_assert(popcount32(MASK_K8_T15_CODING)   == 8,  "K8 T15 coding mask weight");
+static_assert(popcount32(MASK_K8_T15_OPTIMAL)  == 8,  "K8 T15 optimal mask weight");
+static_assert(popcount32(MASK_K8_T18_CODING)   == 8,  "K8 T18 coding mask weight");
+static_assert(popcount32(MASK_K8_T18_OPTIMAL)  == 8,  "K8 T18 optimal mask weight");
+static_assert(popcount32(MASK_K9_T13_CODING)   == 9,  "K9 T13 coding mask weight");
+static_assert(popcount32(MASK_K9_T13_OPTIMAL)  == 9,  "K9 T13 optimal mask weight");
+static_assert(popcount32(MASK_K9_T15_CODING)   == 9,  "K9 T15 coding mask weight");
+static_assert(popcount32(MASK_K9_T15_OPTIMAL)  == 9,  "K9 T15 optimal mask weight");
+static_assert(popcount32(MASK_K9_T18_CODING)   == 9,  "K9 T18 coding mask weight");
+static_assert(popcount32(MASK_K9_T18_OPTIMAL)  == 9,  "K9 T18 optimal mask weight");
 static_assert(popcount32(MASK_K11_T16_CODING)  == 11, "K11 T16 coding mask weight");
 static_assert(popcount32(MASK_K11_T16_OPTIMAL) == 11, "K11 T16 optimal mask weight");
 static_assert(popcount32(MASK_K11_T18_CODING)  == 11, "K11 T18 coding mask weight");
@@ -82,7 +110,21 @@ inline std::vector<uint32_t> get_seed_masks(int k, uint8_t t, TemplateType type)
             masks.push_back(optimal);
     };
 
-    if (k == 11) {
+    if (k == 8) {
+        switch (t) {
+            case 13: push(MASK_K8_T13_CODING, MASK_K8_T13_OPTIMAL); break;
+            case 15: push(MASK_K8_T15_CODING, MASK_K8_T15_OPTIMAL); break;
+            case 18: push(MASK_K8_T18_CODING, MASK_K8_T18_OPTIMAL); break;
+            default: break;
+        }
+    } else if (k == 9) {
+        switch (t) {
+            case 13: push(MASK_K9_T13_CODING, MASK_K9_T13_OPTIMAL); break;
+            case 15: push(MASK_K9_T15_CODING, MASK_K9_T15_OPTIMAL); break;
+            case 18: push(MASK_K9_T18_CODING, MASK_K9_T18_OPTIMAL); break;
+            default: break;
+        }
+    } else if (k == 11) {
         switch (t) {
             case 16: push(MASK_K11_T16_CODING, MASK_K11_T16_OPTIMAL); break;
             case 18: push(MASK_K11_T18_CODING, MASK_K11_T18_OPTIMAL); break;
@@ -155,11 +197,13 @@ get_tagged_masks(int k, uint8_t t, uint8_t index_tt, uint8_t search_tt) {
 }
 
 // Validate spaced seed parameters.
-// Returns true if valid (t=0 is always valid; t>0 requires k in {11,12} and t in {16,18,21}).
+// Returns true if valid (t=0 is always valid; t>0 requires valid (k, t) combination).
+// k=8,9: t in {13,15,18}; k=11,12: t in {16,18,21}.
 inline bool validate_spaced_seed(int k, uint8_t t) {
     if (t == 0) return true;
-    if (k != 11 && k != 12) return false;
-    return (t == 16 || t == 18 || t == 21);
+    if (k == 8 || k == 9) return (t == 13 || t == 15 || t == 18);
+    if (k == 11 || k == 12) return (t == 16 || t == 18 || t == 21);
+    return false;
 }
 
 // Return the effective span of the k-mer window.

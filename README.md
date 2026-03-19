@@ -7,7 +7,7 @@ A conference talk on the methods used in ikafssn is available on YouTube: <https
 ## Features
 
 - Builds a k-mer inverted index directly from NCBI BLAST databases
-- Supports both contiguous k-mers and discontiguous megablast-style spaced seeds (`-t 16/18/21` with k=11 or 12, coding/optimal/both templates)
+- Supports both contiguous k-mers and discontiguous megablast-style spaced seeds (`-t 13/15/18` with k=8 or 9 for PCR-optimized search, `-t 16/18/21` with k=11 or 12, coding/optimal/both templates)
 - Three-stage search pipeline: fast candidate filtering (Stage 1), position-aware collinear chaining (Stage 2), and Parasail pairwise alignment with CIGAR/percent identity output (Stage 3), with configurable mode selection (1/2/3)
 - Client-server architecture with UNIX/TCP socket and HTTP REST API support, with multi-database serving from a single process
 - Handles IUPAC ambiguous bases by expanding degenerate k-mers during indexing and search (configurable expansion limit)
@@ -45,7 +45,7 @@ ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-cha
 | **Query input format** | FASTA | FASTA, FASTQ |
 | **Expected query sequences** | Short to moderate-length sequences such as PCR amplicons and marker genes (hundreds to a few thousand bases) | Genomic reads (Illumina short reads, PacBio/ONT long reads) and assembled sequences (contigs, chromosomes) |
 | **Expected query quality** | High-accuracy sequences with few or no sequencing errors (e.g., Sanger, error-corrected consensus) | Designed to tolerate high error rates (ONT ~5–15%, PacBio CLR ~10–15%; also handles HiFi and Illumina) |
-| **K-mer size** | k = 5–16 (`uint16_t` for k ≤ 8, `uint32_t` for k ≥ 9) | k = 1–28 (default 15) |
+| **K-mer size** | k = 5–16 (`uint16_t` or `uint32_t` selected by bit width; k ≤ 8 contiguous uses `uint16_t`, k ≥ 9 or spaced seeds use `uint32_t`) | k = 1–28 (default 15) |
 | **Seeding** | All k-mers indexed in a direct-address table (4^k entries; 2×4^k for spaced seed "both" mode) | Minimizers (subsampled k-mers) indexed in a hash table |
 | **Candidate filtering** | Explicit Stage 1: scan ID posting lists to score and filter candidates before chaining | No separate filtering stage; seeds go directly to chaining |
 | **Chaining DP score** | Chain length (anchor count) with a diagonal-deviation constraint (`max_gap`) | Estimated matching bases minus a gap penalty with logarithmic distance term |

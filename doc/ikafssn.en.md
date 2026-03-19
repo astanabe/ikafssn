@@ -90,6 +90,7 @@ Options:
                           when the product of per-position variant counts <= this limit.
   -t <int>                Template length for spaced seeds (default: 0)
                           0: contiguous k-mers (traditional mode)
+                          13, 15, 18: spaced seed template length (requires -k 8 or 9)
                           16, 18, 21: spaced seed template length (requires -k 11 or 12)
   -template_type <str>    Template type for spaced seeds (default: both)
                           coding: coding template only
@@ -130,6 +131,9 @@ ikafssnindex -db mydb -k 11 -t 18 -template_type coding -o ./index
 
 # Build spaced seed index with k=12, t=21
 ikafssnindex -db mydb -k 12 -t 21 -o ./index
+
+# Build spaced seed index optimized for PCR (k=8, t=13)
+ikafssnindex -db mydb -k 8 -t 13 -o ./index
 ```
 
 ### ikafssnsearch
@@ -188,6 +192,7 @@ Options:
   -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
   -t <int>                Template length for spaced seeds (default: 0)
                           0: contiguous k-mers (traditional mode)
+                          13, 15, 18: spaced seed template length (requires -k 8 or 9)
                           16, 18, 21: spaced seed template length (requires -k 11 or 12)
   -template_type <str>    Template type for spaced seeds (default: both)
                           coding, optimal, or both
@@ -576,7 +581,7 @@ Options:
   -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)
   -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)
   -t <int>                 Template length for spaced seeds (default: server default)
-                           0: contiguous k-mers; 16, 18, 21: spaced seed template length
+                           0: contiguous k-mers; 13, 15, 18 (k=8-9); 16, 18, 21 (k=11-12)
   -template_type <str>     Template type for spaced seeds (default: server default)
                            coding, optimal, or both
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
@@ -731,6 +736,41 @@ The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0
 **Mode 3 (Full pipeline):** When `-mode 3` is specified, all three stages are executed. A BLAST DB is required (specified via `-db`, defaulting to the index prefix). The sort key is automatically set to alnscore. SAM/BAM output requires `-mode 3` with `-stage3_traceback 1`.
 
 By default, both forward and reverse complement strands of the query are searched. Use `-strand 1` to search only the plus (forward) strand, or `-strand -1` to search only the minus (reverse complement) strand.
+
+### Spaced Seed Template Masks
+
+When spaced seeds are enabled (`-t > 0`), k-mers are extracted using discontiguous megablast-style bitmask templates. Each mask selects k positions from a window of t bases. Two template types are available for each (k, t) combination: **coding** (optimized for coding regions) and **optimal** (optimized for non-coding regions). The **both** mode indexes both templates simultaneously, using a tag bit to isolate them in the direct-address table.
+
+Valid (k, t) combinations and their mask values:
+
+| k | t | Type | Mask (binary, left-to-right = pos 0 to t−1) | Mask (hex) |
+|---|---|---|---|---|
+| 8 | 13 | coding | `1011001011011` | 0x165B |
+| 8 | 13 | optimal | `1100101101101` | 0x196D |
+| 8 | 15 | coding | `101100100101101` | 0x592D |
+| 8 | 15 | optimal | `110100101100101` | 0x6965 |
+| 8 | 18 | coding | `100101100100100101` | 0x25925 |
+| 8 | 18 | optimal | `110100101000100101` | 0x34A25 |
+| 9 | 13 | coding | `1101101101101` | 0x1B6D |
+| 9 | 13 | optimal | `1011011011011` | 0x16DB |
+| 9 | 15 | coding | `101101100101101` | 0x5B2D |
+| 9 | 15 | optimal | `110101100101101` | 0x6B2D |
+| 9 | 18 | coding | `100101100101100101` | 0x25965 |
+| 9 | 18 | optimal | `110100101100100101` | 0x34B25 |
+| 11 | 16 | coding | `1101101101101101` | 0xDB6D |
+| 11 | 16 | optimal | `1110010110110111` | 0xE5B7 |
+| 11 | 18 | coding | `101101100101101101` | 0x2D96D |
+| 11 | 18 | optimal | `111010010110010111` | 0x3A597 |
+| 11 | 21 | coding | `100101100101100101101` | 0x12CB2D |
+| 11 | 21 | optimal | `111010010100010010111` | 0x1D2897 |
+| 12 | 16 | coding | `1111101101101101` | 0xFB6D |
+| 12 | 16 | optimal | `1110110110110111` | 0xEDB7 |
+| 12 | 18 | coding | `101101101101101101` | 0x2DB6D |
+| 12 | 18 | optimal | `111010110010110111` | 0x3ACB7 |
+| 12 | 21 | coding | `100101101101100101101` | 0x12DB2D |
+| 12 | 21 | optimal | `111010010110010010111` | 0x1D2C97 |
+
+**KmerInt type selection:** The integer type used for k-mer values is determined by the required bit width: `2*k` bits for contiguous k-mers (`-t 0`), or `2*k+1` bits for spaced seeds (`-t > 0`, the extra bit is the tag bit for "both" mode). If the bit width exceeds 16, `uint32_t` is used; otherwise `uint16_t`. This means k=8 with contiguous k-mers uses `uint16_t` (16 bits), but k=8 with spaced seeds uses `uint32_t` (17 bits).
 
 ### High-Frequency K-mer Filtering
 
@@ -1100,6 +1140,7 @@ When spaced seeds are enabled (`-t > 0`), the file naming includes the template 
 Where `<tt>` is the zero-padded template length and `<type>` is `cod` (coding), `opt` (optimal), or `bot` (both).
 
 Examples:
+- Spaced seed with k=8, t=13, both templates: `nt.00.08mer.13mer.bot.kix`
 - Spaced seed with k=11, t=16, both templates: `nt.00.11mer.16mer.bot.kix`
 - Spaced seed with k=12, t=21, coding only: `nt.00.12mer.21mer.cod.kix`
 - Manifest: `nt.11mer.16mer.bot.kvx`

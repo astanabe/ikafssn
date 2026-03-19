@@ -369,7 +369,7 @@ int main(int argc, char* argv[]) {
     std::printf("=== ikafssn Index Information ===\n\n");
     std::printf("Index prefix:      %s\n", ix_prefix.c_str());
     std::printf("K-mer length (k):  %d\n", k);
-    std::printf("K-mer integer type: %s\n", k < K_TYPE_THRESHOLD ? "uint16" : "uint32");
+    std::printf("K-mer integer type: %s\n", kmer_type_for(k, vol_t) == 0 ? "uint16" : "uint32");
     if (vol_t > 0) {
         std::printf("Template length:   %u\n", static_cast<unsigned>(vol_t));
         std::printf("Template type:     %s\n",

@@ -74,7 +74,7 @@ static bool write_filtered_kix(
     std::memcpy(kix_hdr.magic, KIX_MAGIC, 4);
     kix_hdr.format_version = KIX_FORMAT_VERSION;
     kix_hdr.k = static_cast<uint8_t>(k);
-    kix_hdr.kmer_type = kmer_type_for_k(k);
+    kix_hdr.kmer_type = kmer_type_for(k, kix_in.header().t);
     kix_hdr.num_sequences = kix_in.num_sequences();
     kix_hdr.total_postings = new_total_postings;
     kix_hdr.flags = kix_in.header().flags | (use_offset32 ? KIX_FLAG_OFFSET32 : 0);
