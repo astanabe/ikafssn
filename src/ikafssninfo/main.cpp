@@ -306,8 +306,7 @@ int main(int argc, char* argv[]) {
     int k = vol_files[0].k;
     uint8_t vol_t = vol_files[0].t;
     uint8_t vol_template_type = vol_files[0].template_type;
-    // Determine effective table size from first volume's reader
-    // (accounts for mask tag doubling in spaced seed "both" mode)
+    // Determine table size from first volume's reader
     uint32_t tbl_size = 0;
     {
         KixReader kix0;
@@ -375,12 +374,7 @@ int main(int argc, char* argv[]) {
         std::printf("Template type:     %s\n",
                      template_type_to_string(static_cast<TemplateType>(vol_template_type)).c_str());
     }
-    if (tbl_size > table_size(k)) {
-        std::printf("Table size:        %lu (effective, 2*4^k for both mode)\n",
-                     static_cast<unsigned long>(tbl_size));
-    } else {
-        std::printf("Table size (4^k):  %lu\n", static_cast<unsigned long>(tbl_size));
-    }
+    std::printf("Table size (4^k):  %lu\n", static_cast<unsigned long>(tbl_size));
     std::printf("Number of volumes: %zu\n\n", vol_stats.size());
 
     // Per-volume info

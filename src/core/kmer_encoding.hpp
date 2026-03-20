@@ -335,18 +335,12 @@ public:
     // For each window position p (0 to len-t) and each mask,
     // extract k-mer from the set-bit positions within the window.
     // mask bit j (from LSB) corresponds to sequence position p + (t-1-j).
-    //
-    // mask_tags: if non-empty, mask_tags[mi] is OR'd into each k-mer produced
-    //   by masks[mi]. Caller pre-shifts the tag (e.g. tag = idx << 2k).
-    //   This embeds a template identity bit that prevents cross-template matching.
     template <typename Callback>
     void scan_spaced(const char* seq, size_t len, const std::vector<uint32_t>& masks,
-                     int t, Callback&& callback,
-                     const std::vector<KmerInt>& mask_tags = {}) const {
+                     int t, Callback&& callback) const {
         if (static_cast<int>(len) < t) return;
         const uint8_t* enc_tbl = base_encode_table();
         const size_t last_start = len - static_cast<size_t>(t);
-        const bool has_tags = !mask_tags.empty();
 
         for (size_t p = 0; p <= last_start; p++) {
             for (size_t mi = 0; mi < masks.size(); mi++) {
@@ -367,7 +361,6 @@ public:
                     }
                 }
                 if (valid) {
-                    if (has_tags) kmer |= mask_tags[mi];
                     callback(static_cast<uint32_t>(p), kmer);
                 }
             }
@@ -375,19 +368,16 @@ public:
     }
 
     // Scan with spaced seed templates, handling degenerate bases.
-    // mask_tags: same semantics as scan_spaced (pre-shifted tag per mask).
     template <typename Callback, typename AmbigCallback>
     void scan_spaced_ambig(const char* seq, size_t len,
                             const std::vector<uint32_t>& masks, int t,
                             Callback&& callback, AmbigCallback&& ambig_callback,
                             bool* has_multi_degen = nullptr,
-                            int max_expansion = 16,
-                            const std::vector<KmerInt>& mask_tags = {}) const {
+                            int max_expansion = 16) const {
         if (static_cast<int>(len) < t) return;
         const uint8_t* enc_tbl = base_encode_table();
         const uint8_t* ncbi4na_tbl = degenerate_ncbi4na_table();
         const size_t last_start = len - static_cast<size_t>(t);
-        const bool has_tags = !mask_tags.empty();
 
         for (size_t p = 0; p <= last_start; p++) {
             for (size_t mi = 0; mi < masks.size(); mi++) {
@@ -429,7 +419,6 @@ public:
 
                 uint32_t pos = static_cast<uint32_t>(p);
                 if (degen_count == 0) {
-                    if (has_tags) kmer |= mask_tags[mi];
                     callback(pos, kmer);
                 } else if (max_expansion <= 1) {
                     if (has_multi_degen) *has_multi_degen = true;
@@ -445,7 +434,6 @@ public:
                         }
                     }
                     if (!exceeded) {
-                        if (has_tags) kmer |= mask_tags[mi];
                         ambig_callback(pos, kmer, infos, degen_count);
                     } else if (has_multi_degen) {
                         *has_multi_degen = true;

@@ -553,21 +553,16 @@ int main(int argc, char* argv[]) {
         // Resolve seed masks from server info
         std::vector<uint32_t> seed_masks;
         if (base_req.t > 0) {
-            uint8_t index_tt = 0;
-            for (const auto& db : server_info.databases) {
-                if (db.name == base_req.db) {
-                    for (const auto& kg : db.groups) {
-                        if (kg.k == resolved_k && kg.t == base_req.t) {
-                            index_tt = kg.template_type;
-                            break;
-                        }
-                    }
-                    break;
-                }
+            if (base_req.template_type == 3) {
+                // "both" mode: use both coding and optimal masks for position counting
+                auto cod = get_seed_masks(resolved_k, base_req.t, TemplateType::kCoding);
+                auto opt = get_seed_masks(resolved_k, base_req.t, TemplateType::kOptimal);
+                seed_masks.insert(seed_masks.end(), cod.begin(), cod.end());
+                seed_masks.insert(seed_masks.end(), opt.begin(), opt.end());
+            } else {
+                seed_masks = get_seed_masks(resolved_k, base_req.t,
+                                 static_cast<TemplateType>(base_req.template_type));
             }
-            auto [m, tg] = get_tagged_masks<uint32_t>(
-                resolved_k, base_req.t, index_tt, base_req.template_type);
-            seed_masks = std::move(m);
         }
 
         PrimerConfig pcfg;

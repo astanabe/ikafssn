@@ -36,7 +36,6 @@ std::string index_file_stem(const std::string& parent_dir,
         switch (template_type) {
             case 1:  type_str = "cod"; break;
             case 2:  type_str = "opt"; break;
-            case 3:  type_str = "bot"; break;
             default: type_str = "con"; break;
         }
         stem += "." + std::string(tt) + "mer." + type_str;
@@ -106,7 +105,7 @@ static std::set<KvxScanResult> scan_k_values_ext(const std::string& parent_dir,
                                                    const std::string& db) {
     std::set<KvxScanResult> results;
     std::regex contiguous_pattern("(\\d+)mer\\.kvx");
-    std::regex spaced_pattern("(\\d+)mer\\.(\\d+)mer\\.(cod|opt|bot)\\.kvx");
+    std::regex spaced_pattern("(\\d+)mer\\.(\\d+)mer\\.(cod|opt)\\.kvx");
     std::string prefix_dot = db + ".";
 
     for (const auto& entry : std::filesystem::directory_iterator(parent_dir)) {
@@ -123,8 +122,7 @@ static std::set<KvxScanResult> scan_k_values_ext(const std::string& parent_dir,
             r.t = static_cast<uint8_t>(std::stoi(m[2].str()));
             std::string type_str = m[3].str();
             if (type_str == "cod") r.template_type = 1;
-            else if (type_str == "opt") r.template_type = 2;
-            else r.template_type = 3; // bot(h)
+            else r.template_type = 2; // opt
             results.insert(r);
         } else if (std::regex_match(suffix, m, contiguous_pattern)) {
             results.insert({std::stoi(m[1].str()), 0, 0});

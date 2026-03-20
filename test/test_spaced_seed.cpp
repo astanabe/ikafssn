@@ -345,14 +345,14 @@ static void test_scan_spaced_k12() {
 }
 
 static void test_scan_spaced_k8() {
-    // Test k=8, t=13 coding mask scan using uint32_t (required for k=8 + spaced)
+    // Test k=8, t=13 coding mask scan using uint16_t (k=8 spaced seeds now use uint16_t)
     std::string seq = "ACGTACGTACGTACGT"; // 16 bases, t=13 -> 4 windows
-    KmerScanner<uint32_t> scanner(8);
+    KmerScanner<uint16_t> scanner(8);
     std::vector<uint32_t> masks = {MASK_K8_T13_CODING};
 
-    std::vector<std::pair<uint32_t, uint32_t>> results;
+    std::vector<std::pair<uint32_t, uint16_t>> results;
     scanner.scan_spaced(seq.data(), seq.size(), masks, 13,
-        [&](uint32_t pos, uint32_t kmer) {
+        [&](uint32_t pos, uint16_t kmer) {
             results.emplace_back(pos, kmer);
         });
 
@@ -394,16 +394,17 @@ static void test_kmer_type_for() {
     CHECK_EQ(kmer_type_for(12, 0), (uint8_t)1); // 24 bits -> uint32
     CHECK_EQ(kmer_type_for(16, 0), (uint8_t)1); // 32 bits -> uint32
 
-    // t>0 (spaced seed): adds 1 bit for tag
-    CHECK_EQ(kmer_type_for(7, 13), (uint8_t)0);  // 15 bits -> uint16
-    CHECK_EQ(kmer_type_for(8, 13), (uint8_t)1);  // 17 bits -> uint32 (key case!)
-    CHECK_EQ(kmer_type_for(9, 13), (uint8_t)1);  // 19 bits -> uint32
-    CHECK_EQ(kmer_type_for(11, 16), (uint8_t)1); // 23 bits -> uint32
-    CHECK_EQ(kmer_type_for(12, 18), (uint8_t)1); // 25 bits -> uint32
+    // t>0 (spaced seed): bits = 2*k (no tag bit)
+    CHECK_EQ(kmer_type_for(7, 13), (uint8_t)0);  // 14 bits -> uint16
+    CHECK_EQ(kmer_type_for(8, 13), (uint8_t)0);  // 16 bits -> uint16 (was uint32 with tag bit)
+    CHECK_EQ(kmer_type_for(9, 13), (uint8_t)1);  // 18 bits -> uint32
+    CHECK_EQ(kmer_type_for(11, 16), (uint8_t)1); // 22 bits -> uint32
+    CHECK_EQ(kmer_type_for(12, 18), (uint8_t)1); // 24 bits -> uint32
 
-    // Consistency with kmer_type_for_k for t=0
+    // Consistency with kmer_type_for_k for all t values
     for (int k = MIN_K; k <= MAX_K; k++) {
         CHECK_EQ(kmer_type_for(k, 0), kmer_type_for_k(k));
+        CHECK_EQ(kmer_type_for(k, 13), kmer_type_for_k(k)); // t doesn't affect type
     }
 }
 

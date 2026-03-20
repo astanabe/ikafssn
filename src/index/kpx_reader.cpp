@@ -36,11 +36,6 @@ bool KpxReader::open(const std::string& path) {
 
     table_size_ = ikafssn::table_size(header_->k);
 
-    // For spaced seed "both" mode (template_type == 3), the table size doubles
-    if (header_->t > 0 && header_->template_type == 3) {
-        table_size_ *= 2;
-    }
-
     // offset_type: 0=uint32, 1=uint64
     offset32_ = (header_->offset_type == 0);
 

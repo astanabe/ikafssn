@@ -41,7 +41,7 @@ struct TempEntry {
 static_assert(sizeof(TempEntry) == 12, "TempEntry must be 12 bytes");
 
 // Determine partition for a kmer based on upper bits.
-// effective_bits is the total number of significant bits (2*k, or 2*k+1 for tagged).
+// effective_bits is the total number of significant bits (2*k).
 static inline uint32_t partition_of(uint32_t kmer, int partition_bits, int effective_bits) {
     if (partition_bits == 0) return 0;
     return (kmer >> (effective_bits - partition_bits)) & ((1u << partition_bits) - 1);
@@ -100,22 +100,15 @@ bool build_index(BlastDbReader& db,
         logger.info("Phase 0: wrote %s (%u sequences)", ksx_tmp.c_str(), num_seqs);
     }
 
-    // Pre-compute spaced seed masks and tags (shared across all phases).
-    // For "both" mode, tags embed a 1-bit template identity into k-mer values.
+    // Pre-compute spaced seed masks (shared across all phases).
     std::vector<uint32_t> seed_masks;
-    std::vector<KmerInt> seed_tags; // pre-shifted tag values; empty = no tagging
     if (config.t > 0) {
-        auto [m, t] = get_tagged_masks<KmerInt>(k, config.t,
-                           config.template_type, config.template_type);
-        seed_masks = std::move(m);
-        seed_tags = std::move(t);
+        seed_masks = get_seed_masks(k, config.t,
+                         static_cast<TemplateType>(config.template_type));
     }
 
-    // Effective table size: doubles for "both" mode (tag bit per mask)
-    const int num_masks = static_cast<int>(seed_masks.size());
-    const uint32_t tbl_size = spaced_table_size(k, num_masks > 0 ? num_masks : 1);
-    // Effective bit width for partitioning (2*k, or 2*k+1 for tagged both mode)
-    const int effective_bits = 2 * k + ((num_masks > 1) ? 1 : 0);
+    const uint32_t tbl_size = table_size(k);
+    const int effective_bits = 2 * k;
 
     // =========== Phase 1: Counting pass (TBB parallel) ===========
     logger.info("Phase 1: counting k-mers (threads=%d)...", config.threads);
@@ -147,8 +140,7 @@ bool build_index(BlastDbReader& db,
                                         my_counts[expanded]++;
                                     });
                             },
-                            config.max_degen_expand,
-                            seed_tags);
+                            config.max_degen_expand);
                     } else {
                         scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
                             [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
@@ -303,8 +295,7 @@ bool build_index(BlastDbReader& db,
                         scanner.scan_spaced(raw.ncbi2na_data, raw.seq_length, ambig,
                             seed_masks, static_cast<int>(config.t),
                             normal_cb, ambig_cb,
-                            config.max_degen_expand,
-                            seed_tags);
+                            config.max_degen_expand);
                     } else {
                         scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
                             normal_cb, ambig_cb,

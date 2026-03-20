@@ -77,11 +77,21 @@ std::string validate_info(const InfoResponse& info,
     // 3b. Check t/template_type (t==0 means contiguous, always valid)
     if (t != 0) {
         bool t_found = false;
-        for (const auto& g : target_db->groups) {
-            if (g.k == k && g.t == t &&
-                (template_type == 0 || g.template_type == template_type)) {
-                t_found = true;
-                break;
+        if (template_type == 3) {
+            // "both" = virtual capability: coding AND optimal must both exist
+            bool has_cod = false, has_opt = false;
+            for (const auto& g : target_db->groups) {
+                if (g.k == k && g.t == t && g.template_type == 1) has_cod = true;
+                if (g.k == k && g.t == t && g.template_type == 2) has_opt = true;
+            }
+            t_found = has_cod && has_opt;
+        } else {
+            for (const auto& g : target_db->groups) {
+                if (g.k == k && g.t == t &&
+                    (template_type == 0 || g.template_type == template_type)) {
+                    t_found = true;
+                    break;
+                }
             }
         }
         if (!t_found) {

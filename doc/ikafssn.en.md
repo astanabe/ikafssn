@@ -92,10 +92,10 @@ Options:
                           0: contiguous k-mers (traditional mode)
                           13, 15, 18: spaced seed template length (requires -k 8 or 9)
                           16, 18, 21: spaced seed template length (requires -k 11 or 12)
-  -template_type <str>    Template type for spaced seeds (default: both)
+  -template_type <str>    Template type for spaced seeds (required when -t is specified)
                           coding: coding template only
                           optimal: optimal template only
-                          both: both coding and optimal templates
+                          both: build coding and optimal indexes sequentially
   -threads <int>          Number of threads (default: all cores)
                           Parallelizes counting, partition scan, sort,
                           and volume processing
@@ -123,11 +123,14 @@ ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 0.01
 # Build mode 1 index (Stage 1 only, no .kpx files)
 ikafssnindex -db mydb -k 11 -o ./index -mode 1
 
-# Build spaced seed index (k=11, t=16, both coding and optimal templates)
-ikafssnindex -db mydb -k 11 -t 16 -o ./index
+# Build spaced seed index (k=11, t=16, coding template)
+ikafssnindex -db mydb -k 11 -t 16 -template_type coding -o ./index
 
 # Build spaced seed index with coding template only
 ikafssnindex -db mydb -k 11 -t 18 -template_type coding -o ./index
+
+# Build both coding and optimal indexes sequentially
+ikafssnindex -db mydb -k 11 -t 18 -template_type both -o ./index
 
 # Build spaced seed index with k=12, t=21
 ikafssnindex -db mydb -k 12 -t 21 -o ./index
@@ -195,7 +198,9 @@ Options:
                           13, 15, 18: spaced seed template length (requires -k 8 or 9)
                           16, 18, 21: spaced seed template length (requires -k 11 or 12)
   -template_type <str>    Template type for spaced seeds (default: both)
-                          coding, optimal, or both
+                          coding: use coding index only
+                          optimal: use optimal index only
+                          both: merge coding and optimal indexes at search time
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose           Verbose logging
 
@@ -583,7 +588,9 @@ Options:
   -t <int>                 Template length for spaced seeds (default: server default)
                            0: contiguous k-mers; 13, 15, 18 (k=8-9); 16, 18, 21 (k=11-12)
   -template_type <str>     Template type for spaced seeds (default: server default)
-                           coding, optimal, or both
+                           coding: use coding index only
+                           optimal: use optimal index only
+                           both: merge coding and optimal indexes at search time
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
   -v, --verbose            Verbose logging
 
@@ -739,7 +746,7 @@ By default, both forward and reverse complement strands of the query are searche
 
 ### Spaced Seed Template Masks
 
-When spaced seeds are enabled (`-t > 0`), k-mers are extracted using discontiguous megablast-style bitmask templates. Each mask selects k positions from a window of t bases. Two template types are available for each (k, t) combination: **coding** (optimized for coding regions) and **optimal** (optimized for non-coding regions). The **both** mode indexes both templates simultaneously, using a tag bit to isolate them in the direct-address table.
+When spaced seeds are enabled (`-t > 0`), k-mers are extracted using discontiguous megablast-style bitmask templates. Each mask selects k positions from a window of t bases. Two template types are available for each (k, t) combination: **coding** (optimized for coding regions) and **optimal** (optimized for non-coding regions). At index time, `coding` or `optimal` is specified to build a single-template index. At search time, the **both** option merges separate coding and optimal indexes to combine their results.
 
 All templates are derived from the design principles of discontiguous MegaBLAST templates. **Coding** templates follow a periodic "110" structure that maximizes coverage of the second codon position, with excess gaps placed at the first codon position. **Optimal** templates are designed to minimize overlap with the corresponding coding template and use a non-periodic structure; they employ bookend patterns that vary with template length (t=13: "111" at both ends; t=15: "111" at the start + "11" at the end; t=18: "111" or "11" at the start + "11" at the end). The k=11/12 templates are the native discontiguous MegaBLAST templates, while k=8/9 templates are newly designed following the same principles for shorter seed weights suited to PCR amplicon analysis.
 
@@ -772,7 +779,7 @@ Valid (k, t) combinations and their mask values:
 | 12 | 21 | coding | `100101101101100101101` | 0x12DB2D |
 | 12 | 21 | optimal | `111010010110010010111` | 0x1D2C97 |
 
-**KmerInt type selection:** The integer type used for k-mer values is determined by the required bit width: `2*k` bits for contiguous k-mers (`-t 0`), or `2*k+1` bits for spaced seeds (`-t > 0`, the extra bit is the tag bit for "both" mode). If the bit width exceeds 16, `uint32_t` is used; otherwise `uint16_t`. This means k=8 with contiguous k-mers uses `uint16_t` (16 bits), but k=8 with spaced seeds uses `uint32_t` (17 bits).
+**KmerInt type selection:** The integer type used for k-mer values is determined by the required bit width: `2*k` bits. If the bit width exceeds 16, `uint32_t` is used; otherwise `uint16_t`. This means k <= 8 uses `uint16_t` (16 bits or fewer), while k >= 9 uses `uint32_t`.
 
 ### High-Frequency K-mer Filtering
 
@@ -1139,13 +1146,13 @@ When spaced seeds are enabled (`-t > 0`), the file naming includes the template 
 <db_base>.<kk>mer.<tt>mer.<type>.khx
 ```
 
-Where `<tt>` is the zero-padded template length and `<type>` is `cod` (coding), `opt` (optimal), or `bot` (both).
+Where `<tt>` is the zero-padded template length and `<type>` is `cod` (coding) or `opt` (optimal).
 
 Examples:
-- Spaced seed with k=8, t=13, both templates: `nt.00.08mer.13mer.bot.kix`
-- Spaced seed with k=11, t=16, both templates: `nt.00.11mer.16mer.bot.kix`
-- Spaced seed with k=12, t=21, coding only: `nt.00.12mer.21mer.cod.kix`
-- Manifest: `nt.11mer.16mer.bot.kvx`
+- Spaced seed with k=11, t=16, coding: `nt.00.11mer.16mer.cod.kix`
+- Spaced seed with k=11, t=16, optimal: `nt.00.11mer.16mer.opt.kix`
+- Spaced seed with k=12, t=21, coding: `nt.00.12mer.21mer.cod.kix`
+- Manifest: `nt.11mer.16mer.cod.kvx`
 
 **Index format version:** The current index format is version 3 for `.kix` and `.kpx` files. Key changes from version 2:
 

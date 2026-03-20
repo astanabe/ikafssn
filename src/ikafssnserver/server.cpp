@@ -124,7 +124,13 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
             [](const KmerGroup& a, const KmerGroup& b) { return a.k < b.k; });
         entry.default_k = max_k_it->k;
         entry.default_t = max_k_it->t;
-        entry.default_template_type = max_k_it->template_type;
+        // If both coding and optimal exist for this (k, t), default to "both" search
+        if (entry.find_group(max_k_it->k, max_k_it->t, 1) &&
+            entry.find_group(max_k_it->k, max_k_it->t, 2)) {
+            entry.default_template_type = 3; // kBoth
+        } else {
+            entry.default_template_type = max_k_it->template_type;
+        }
     }
 
     // Resolve search config from server config template

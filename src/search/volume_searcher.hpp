@@ -59,4 +59,36 @@ extern template SearchResult search_volume<uint32_t>(
     const KixReader&, const KpxReader&, const KsxReader&,
     const OidFilter&, const SearchConfig&, Stage1Buffer*);
 
+// Search a single volume using merged coding+optimal indexes ("both" mode).
+// Two separate QueryKmerData are provided: one for coding, one for optimal.
+// Stage 1 scores are summed across both templates; Stage 2 hits are merged.
+template <typename KmerInt>
+SearchResult search_volume_both(
+    const std::string& query_id,
+    const QueryKmerData<KmerInt>& qdata_cod,
+    const QueryKmerData<KmerInt>& qdata_opt,
+    int k,
+    const KixReader& kix_cod, const KpxReader& kpx_cod,
+    const KixReader& kix_opt, const KpxReader& kpx_opt,
+    const KsxReader& ksx,
+    const OidFilter& filter,
+    const SearchConfig& config,
+    Stage1Buffer* buf_cod = nullptr,
+    Stage1Buffer* buf_opt = nullptr);
+
+extern template SearchResult search_volume_both<uint16_t>(
+    const std::string&,
+    const QueryKmerData<uint16_t>&, const QueryKmerData<uint16_t>&, int,
+    const KixReader&, const KpxReader&,
+    const KixReader&, const KpxReader&,
+    const KsxReader&, const OidFilter&, const SearchConfig&,
+    Stage1Buffer*, Stage1Buffer*);
+extern template SearchResult search_volume_both<uint32_t>(
+    const std::string&,
+    const QueryKmerData<uint32_t>&, const QueryKmerData<uint32_t>&, int,
+    const KixReader&, const KpxReader&,
+    const KixReader&, const KpxReader&,
+    const KsxReader&, const OidFilter&, const SearchConfig&,
+    Stage1Buffer*, Stage1Buffer*);
+
 } // namespace ikafssn

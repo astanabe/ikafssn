@@ -142,60 +142,6 @@ inline std::vector<uint32_t> get_seed_masks(int k, uint8_t t, TemplateType type)
     return masks;
 }
 
-// Compute the effective table size for spaced seed indexes.
-// When multiple masks are used (both mode), the table doubles to accommodate
-// a 1-bit mask tag in the k-mer value that prevents cross-template matching.
-inline uint32_t spaced_table_size(int k, int num_masks) {
-    uint32_t base = table_size(k);
-    return (num_masks > 1) ? static_cast<uint32_t>(num_masks) * base : base;
-}
-
-// Build masks and their corresponding tag values for searching/building.
-// index_tt: template_type of the INDEX being used (0-3)
-// search_tt: template_type requested for the SEARCH (0-3)
-//
-// For a "both" (3) index, each mask is tagged so coding and optimal k-mers
-// occupy disjoint ranges. This allows a bot index to serve coding-only
-// or optimal-only searches: the query k-mers only match the correct portion.
-//
-// Returns: (masks, tags) pair where tags[i] is the pre-shifted value to OR
-// into k-mers from masks[i].  tags is empty when no tagging is needed.
-template <typename KmerInt>
-inline std::pair<std::vector<uint32_t>, std::vector<KmerInt>>
-get_tagged_masks(int k, uint8_t t, uint8_t index_tt, uint8_t search_tt) {
-    if (t == 0) return {{}, {}};
-
-    auto coding_masks = get_seed_masks(k, t, TemplateType::kCoding);
-    auto optimal_masks = get_seed_masks(k, t, TemplateType::kOptimal);
-    uint32_t coding_mask = coding_masks.empty() ? 0 : coding_masks[0];
-    uint32_t optimal_mask = optimal_masks.empty() ? 0 : optimal_masks[0];
-
-    const KmerInt tag_optimal = static_cast<KmerInt>(1) << (2 * k);
-
-    std::vector<uint32_t> masks;
-    std::vector<KmerInt> tags;
-
-    if (index_tt == 3) {
-        // Index is "both" — tagged k-mers, table = 2*4^k
-        TemplateType st = (search_tt != 0)
-            ? static_cast<TemplateType>(search_tt)
-            : TemplateType::kBoth;
-        if (st == TemplateType::kCoding || st == TemplateType::kBoth) {
-            masks.push_back(coding_mask);
-            tags.push_back(KmerInt(0));  // coding tag = 0
-        }
-        if (st == TemplateType::kOptimal || st == TemplateType::kBoth) {
-            masks.push_back(optimal_mask);
-            tags.push_back(tag_optimal); // optimal tag = 1 << 2k
-        }
-    } else {
-        // Index is single-template (coding or optimal) — no tagging
-        masks = get_seed_masks(k, t, static_cast<TemplateType>(index_tt));
-        // tags stays empty → no tagging
-    }
-    return {masks, tags};
-}
-
 // Validate spaced seed parameters.
 // Returns true if valid (t=0 is always valid; t>0 requires valid (k, t) combination).
 // k=8,9: t in {13,15,18}; k=11,12: t in {16,18,21}.

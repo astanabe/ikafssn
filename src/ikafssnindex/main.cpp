@@ -57,7 +57,8 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         0: contiguous k-mers (default)\n"
         "                         13, 15, 18: requires -k 8 or 9\n"
         "                         16, 18, 21: requires -k 11 or 12\n"
-        "  -template_type <str>   Template type: coding, optimal, both (default: both)\n"
+        "  -template_type <str>   Template type: coding, optimal, or both (required with -t)\n"
+        "                         both: builds coding and optimal indexes sequentially\n"
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
         "  -threads <int>         Number of threads (default: all cores)\n"
@@ -197,7 +198,7 @@ int main(int argc, char* argv[]) {
     }
     uint8_t spaced_t = static_cast<uint8_t>(cli_t);
 
-    TemplateType spaced_type = TemplateType::kBoth;
+    TemplateType spaced_type = TemplateType::kContiguous;
     if (cli.has("-template_type")) {
         spaced_type = template_type_from_string(cli.get_string("-template_type"));
         if (spaced_type == TemplateType::kContiguous) {
@@ -207,16 +208,32 @@ int main(int argc, char* argv[]) {
     }
 
     if (spaced_t > 0) {
+        if (!cli.has("-template_type")) {
+            std::fprintf(stderr,
+                "Error: -template_type (coding, optimal, or both) is required when -t is specified\n");
+            return 1;
+        }
         if (!validate_spaced_seed(k, spaced_t)) {
             std::fprintf(stderr, "Error: -t %d is not valid for -k %d\n", spaced_t, k);
             return 1;
         }
     }
 
+    // Determine which template types to build.
+    // "both" builds coding and optimal indexes sequentially.
+    std::vector<TemplateType> build_types;
+    if (spaced_type == TemplateType::kBoth) {
+        build_types = {TemplateType::kCoding, TemplateType::kOptimal};
+    } else {
+        build_types = {spaced_type};
+    }
+
     logger.info("Database: %s (%zu volume(s))", db_path.c_str(), vol_paths.size());
     if (spaced_t > 0) {
+        std::string type_display = (spaced_type == TemplateType::kBoth)
+            ? "both (coding+optimal)" : template_type_to_string(spaced_type);
         logger.info("Parameters: k=%d, t=%d, template_type=%s, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
-                    k, spaced_t, template_type_to_string(spaced_type).c_str(),
+                    k, spaced_t, type_display.c_str(),
                     index_mode, mem_limit_str.c_str(), openvol, threads);
     } else {
         logger.info("Parameters: k=%d, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
@@ -287,124 +304,139 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Pre-compute per-volume output prefixes
-    std::vector<std::string> vol_prefixes(total_volumes);
-    for (uint16_t vi = 0; vi < total_volumes; vi++) {
-        vol_prefixes[vi] = index_file_stem(out_dir, vol_basenames[vi], k, spaced_t, static_cast<uint8_t>(spaced_type));
-    }
+    // Build each template type (for "both", builds coding then optimal sequentially)
+    for (TemplateType cur_type : build_types) {
+        uint8_t cur_tt = static_cast<uint8_t>(cur_type);
 
-    // Process volumes via TBB task_group with concurrency limited by -openvol.
-    // The main thread gates submission: it waits until a slot is available
-    // before submitting the next volume task, so at most openvol volumes
-    // are active simultaneously.
-    std::atomic<bool> any_error{false};
-    std::vector<std::string> error_messages(total_volumes);
-    std::mutex log_mutex;
-
-    int max_active = std::min(openvol, static_cast<int>(total_volumes));
-    std::mutex vol_mutex;
-    std::condition_variable vol_cv;
-    int active_volumes = 0;
-
-    tbb::task_group tg;
-    for (uint16_t vi = 0; vi < total_volumes; vi++) {
-        // Wait until a slot is available
-        {
-            std::unique_lock<std::mutex> lock(vol_mutex);
-            vol_cv.wait(lock, [&] { return active_volumes < max_active; });
-            active_volumes++;
+        if (build_types.size() > 1) {
+            logger.info("========== Building %s template ==========",
+                        template_type_to_string(cur_type).c_str());
         }
 
-        if (any_error.load(std::memory_order_relaxed)) break;
+        // Update config for this template type
+        config.template_type = cur_tt;
 
-        tg.run([&, vi]() {
-            if (any_error.load(std::memory_order_relaxed)) {
-                std::lock_guard<std::mutex> lock(vol_mutex);
-                active_volumes--;
-                vol_cv.notify_one();
-                return;
-            }
-
-            {
-                std::lock_guard<std::mutex> lock(log_mutex);
-                logger.info("=== Volume %d/%d: %s ===", vi + 1, total_volumes,
-                            vol_paths[vi].c_str());
-            }
-
-            BlastDbReader db;
-            if (!db.open(vol_paths[vi])) {
-                error_messages[vi] = "cannot open volume '" + vol_paths[vi] + "'";
-                any_error.store(true, std::memory_order_relaxed);
-                std::lock_guard<std::mutex> lock(vol_mutex);
-                active_volumes--;
-                vol_cv.notify_one();
-                return;
-            }
-
-            const std::string& prefix = vol_prefixes[vi];
-
-            bool ok;
-            if (kmer_type_for(k, spaced_t) == 0) {
-                ok = build_index<uint16_t>(db, config, prefix,
-                                            vi, total_volumes, db_base, logger);
-            } else {
-                ok = build_index<uint32_t>(db, config, prefix,
-                                            vi, total_volumes, db_base, logger);
-            }
-
-            if (!ok) {
-                error_messages[vi] = "index build failed for volume " + std::to_string(vi);
-                any_error.store(true, std::memory_order_relaxed);
-            }
-
-            {
-                std::lock_guard<std::mutex> lock(vol_mutex);
-                active_volumes--;
-            }
-            vol_cv.notify_one();
-        });
-    }
-    tg.wait();
-
-    if (any_error.load()) {
+        // Pre-compute per-volume output prefixes for this template type
+        std::vector<std::string> vol_prefixes(total_volumes);
         for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            if (!error_messages[vi].empty()) {
-                std::fprintf(stderr, "Error: %s\n", error_messages[vi].c_str());
+            vol_prefixes[vi] = index_file_stem(out_dir, vol_basenames[vi], k, spaced_t, cur_tt);
+        }
+
+        // Process volumes via TBB task_group with concurrency limited by -openvol.
+        std::atomic<bool> any_error{false};
+        std::vector<std::string> error_messages(total_volumes);
+        std::mutex log_mutex;
+
+        int max_active = std::min(openvol, static_cast<int>(total_volumes));
+        std::mutex vol_mutex;
+        std::condition_variable vol_cv;
+        int active_volumes = 0;
+
+        tbb::task_group tg;
+        for (uint16_t vi = 0; vi < total_volumes; vi++) {
+            // Wait until a slot is available
+            {
+                std::unique_lock<std::mutex> lock(vol_mutex);
+                vol_cv.wait(lock, [&] { return active_volumes < max_active; });
+                active_volumes++;
+            }
+
+            if (any_error.load(std::memory_order_relaxed)) break;
+
+            tg.run([&, vi]() {
+                if (any_error.load(std::memory_order_relaxed)) {
+                    std::lock_guard<std::mutex> lock(vol_mutex);
+                    active_volumes--;
+                    vol_cv.notify_one();
+                    return;
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(log_mutex);
+                    logger.info("=== Volume %d/%d: %s ===", vi + 1, total_volumes,
+                                vol_paths[vi].c_str());
+                }
+
+                BlastDbReader db;
+                if (!db.open(vol_paths[vi])) {
+                    error_messages[vi] = "cannot open volume '" + vol_paths[vi] + "'";
+                    any_error.store(true, std::memory_order_relaxed);
+                    std::lock_guard<std::mutex> lock(vol_mutex);
+                    active_volumes--;
+                    vol_cv.notify_one();
+                    return;
+                }
+
+                const std::string& prefix = vol_prefixes[vi];
+
+                bool ok;
+                if (kmer_type_for(k, spaced_t) == 0) {
+                    ok = build_index<uint16_t>(db, config, prefix,
+                                                vi, total_volumes, db_base, logger);
+                } else {
+                    ok = build_index<uint32_t>(db, config, prefix,
+                                                vi, total_volumes, db_base, logger);
+                }
+
+                if (!ok) {
+                    error_messages[vi] = "index build failed for volume " + std::to_string(vi);
+                    any_error.store(true, std::memory_order_relaxed);
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(vol_mutex);
+                    active_volumes--;
+                }
+                vol_cv.notify_one();
+            });
+        }
+        tg.wait();
+
+        if (any_error.load()) {
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                if (!error_messages[vi].empty()) {
+                    std::fprintf(stderr, "Error: %s\n", error_messages[vi].c_str());
+                }
+            }
+            return 1;
+        }
+
+        // Write .kvx manifest for this template type
+        {
+            std::string kvx_path = index_file_stem(out_dir, db_base, k, spaced_t, cur_tt) + ".kvx";
+            FILE* fp = std::fopen(kvx_path.c_str(), "w");
+            if (!fp) {
+                std::fprintf(stderr, "Error: cannot write %s\n", kvx_path.c_str());
+                return 1;
+            }
+            std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
+            std::fprintf(fp, "TITLE %s\n", db_base.c_str());
+            std::fprintf(fp, "DBLIST");
+            for (const auto& bn : vol_basenames) {
+                std::fprintf(fp, " \"%s\"", bn.c_str());
+            }
+            std::fprintf(fp, "\n");
+            std::fclose(fp);
+            logger.info("Wrote volume manifest: %s", kvx_path.c_str());
+        }
+
+        // Post-build cross-volume frequency filtering for this template type
+        if (freq_filter_active) {
+            std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, cur_tt);
+
+            if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,
+                                             freq_threshold, highfreq_filter_threads,
+                                             logger)) {
+                std::fprintf(stderr, "Error: cross-volume filtering failed\n");
+                return 1;
             }
         }
-        return 1;
-    }
 
-    // Write .kvx manifest
-    {
-        std::string kvx_path = index_file_stem(out_dir, db_base, k, spaced_t, static_cast<uint8_t>(spaced_type)) + ".kvx";
-        FILE* fp = std::fopen(kvx_path.c_str(), "w");
-        if (!fp) {
-            std::fprintf(stderr, "Error: cannot write %s\n", kvx_path.c_str());
-            return 1;
+        if (build_types.size() > 1) {
+            logger.info("========== %s template completed ==========",
+                        template_type_to_string(cur_type).c_str());
         }
-        std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
-        std::fprintf(fp, "TITLE %s\n", db_base.c_str());
-        std::fprintf(fp, "DBLIST");
-        for (const auto& bn : vol_basenames) {
-            std::fprintf(fp, " \"%s\"", bn.c_str());
-        }
-        std::fprintf(fp, "\n");
-        std::fclose(fp);
-        logger.info("Wrote volume manifest: %s", kvx_path.c_str());
-    }
-
-    // Post-build cross-volume frequency filtering
-    if (freq_filter_active) {
-        std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, static_cast<uint8_t>(spaced_type));
-
-        if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,
-                                         freq_threshold, highfreq_filter_threads,
-                                         logger)) {
-            std::fprintf(stderr, "Error: cross-volume filtering failed\n");
-            return 1;
-        }
-    }
+    } // end for each build_type
 
     logger.info("All volumes completed successfully.");
     return 0;

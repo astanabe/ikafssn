@@ -43,10 +43,31 @@ SearchResponse process_search_request(
     resp.k = static_cast<uint8_t>(k);
     resp.t = t;
 
-    const KmerGroup* group_ptr = db.find_group(k, t, tt);
-    if (!group_ptr) {
-        resp.status = 1;
-        return resp;
+    // Determine group(s) based on template type
+    const KmerGroup* group_ptr = nullptr;
+    const KmerGroup* group_cod = nullptr;
+    const KmerGroup* group_opt = nullptr;
+    bool is_both_mode = (tt == 3);
+
+    if (is_both_mode) {
+        auto [cod, opt] = db.find_both_groups(k, t);
+        if (!cod || !opt) {
+            resp.status = 1;
+            return resp;
+        }
+        if (cod->volumes.size() != opt->volumes.size()) {
+            resp.status = 1;
+            return resp;
+        }
+        group_cod = cod;
+        group_opt = opt;
+        group_ptr = cod; // use coding group for metadata
+    } else {
+        group_ptr = db.find_group(k, t, tt);
+        if (!group_ptr) {
+            resp.status = 1;
+            return resp;
+        }
     }
     const KmerGroup& group = *group_ptr;
 
@@ -91,19 +112,17 @@ SearchResponse process_search_request(
         config.max_degen_expand = req.max_degen_expand;
     config.t = t;
 
-    // Get seed masks and tags for spaced seed preprocessing.
-    // For a "both" index, tags ensure cross-template isolation.
-    // A "both" index can serve coding-only or optimal-only searches
-    // because the tag bit routes to the correct portion of the table.
+    // Resolve seed masks for spaced seed preprocessing.
     std::vector<uint32_t> seed_masks;
-    std::vector<uint32_t> seed_tags;  // KmerInt = uint32_t for k=8-12 with spaced seeds
+    std::vector<uint32_t> seed_masks_cod;
+    std::vector<uint32_t> seed_masks_opt;
     if (t > 0) {
-        // index_tt = group's template_type (what the index has)
-        // tt = search template_type (what the user wants)
-        auto [m, tg] = get_tagged_masks<uint32_t>(
-            k, t, group.template_type, tt);
-        seed_masks = std::move(m);
-        seed_tags = std::move(tg);
+        if (is_both_mode) {
+            seed_masks_cod = get_seed_masks(k, t, TemplateType::kCoding);
+            seed_masks_opt = get_seed_masks(k, t, TemplateType::kOptimal);
+        } else {
+            seed_masks = get_seed_masks(k, t, static_cast<TemplateType>(tt));
+        }
     }
 
     // Validate mode against max_mode
@@ -214,17 +233,34 @@ SearchResponse process_search_request(
 
     // Build vector of KixReader pointers for global preprocessing
     std::vector<const KixReader*> all_kix;
-    all_kix.reserve(group.volumes.size());
-    for (const auto& vol : group.volumes) {
-        all_kix.push_back(&vol.kix);
+    std::vector<const KixReader*> all_kix_cod;
+    std::vector<const KixReader*> all_kix_opt;
+    const KhxReader* khx_ptr = nullptr;
+    const KhxReader* khx_ptr_cod = nullptr;
+    const KhxReader* khx_ptr_opt = nullptr;
+
+    if (is_both_mode) {
+        all_kix_cod.reserve(group_cod->volumes.size());
+        for (const auto& vol : group_cod->volumes) all_kix_cod.push_back(&vol.kix);
+        all_kix_opt.reserve(group_opt->volumes.size());
+        for (const auto& vol : group_opt->volumes) all_kix_opt.push_back(&vol.kix);
+        khx_ptr_cod = group_cod->khx.is_open() ? &group_cod->khx : nullptr;
+        khx_ptr_opt = group_opt->khx.is_open() ? &group_opt->khx : nullptr;
+    } else {
+        all_kix.reserve(group.volumes.size());
+        for (const auto& vol : group.volumes) all_kix.push_back(&vol.kix);
+        khx_ptr = group.khx.is_open() ? &group.khx : nullptr;
     }
-    const KhxReader* khx_ptr = group.khx.is_open() ? &group.khx : nullptr;
 
     // Preprocess accepted queries and build jobs
     struct PreprocessedQuery16 { QueryKmerData<uint16_t> qdata; };
     struct PreprocessedQuery32 { QueryKmerData<uint32_t> qdata; };
     std::vector<PreprocessedQuery16> pp16;
     std::vector<PreprocessedQuery32> pp32;
+    std::vector<PreprocessedQuery16> pp16_cod;  // both mode: coding
+    std::vector<PreprocessedQuery16> pp16_opt;  // both mode: optimal
+    std::vector<PreprocessedQuery32> pp32_cod;  // both mode: coding
+    std::vector<PreprocessedQuery32> pp32_opt;  // both mode: optimal
     std::vector<size_t> query_pp_idx(req.queries.size(), SIZE_MAX);
 
     std::vector<AcceptedQuery> accepted_queries;
@@ -246,17 +282,42 @@ SearchResponse process_search_request(
 
         // Preprocess this accepted query
         bool multi_degen = false;
-        if (group.kmer_type == 0) {
-            query_pp_idx[qi] = pp16.size();
-            pp16.push_back({preprocess_query<uint16_t>(
-                req.queries[qi].sequence, k, all_kix, khx_ptr, config, t, seed_masks,
-                std::vector<uint16_t>(seed_tags.begin(), seed_tags.end()))});
-            multi_degen = pp16.back().qdata.has_multi_degen;
+        if (is_both_mode) {
+            if (group.kmer_type == 0) {
+                query_pp_idx[qi] = pp16_cod.size();
+                pp16_cod.push_back({preprocess_query<uint16_t>(
+                    req.queries[qi].sequence, k, all_kix_cod, khx_ptr_cod, config,
+                    t, seed_masks_cod)});
+                pp16_opt.push_back({preprocess_query<uint16_t>(
+                    req.queries[qi].sequence, k, all_kix_opt, khx_ptr_opt, config,
+                    t, seed_masks_opt)});
+                multi_degen = pp16_cod.back().qdata.has_multi_degen ||
+                              pp16_opt.back().qdata.has_multi_degen;
+            } else {
+                query_pp_idx[qi] = pp32_cod.size();
+                pp32_cod.push_back({preprocess_query<uint32_t>(
+                    req.queries[qi].sequence, k, all_kix_cod, khx_ptr_cod, config,
+                    t, seed_masks_cod)});
+                pp32_opt.push_back({preprocess_query<uint32_t>(
+                    req.queries[qi].sequence, k, all_kix_opt, khx_ptr_opt, config,
+                    t, seed_masks_opt)});
+                multi_degen = pp32_cod.back().qdata.has_multi_degen ||
+                              pp32_opt.back().qdata.has_multi_degen;
+            }
         } else {
-            query_pp_idx[qi] = pp32.size();
-            pp32.push_back({preprocess_query<uint32_t>(
-                req.queries[qi].sequence, k, all_kix, khx_ptr, config, t, seed_masks, seed_tags)});
-            multi_degen = pp32.back().qdata.has_multi_degen;
+            if (group.kmer_type == 0) {
+                query_pp_idx[qi] = pp16.size();
+                pp16.push_back({preprocess_query<uint16_t>(
+                    req.queries[qi].sequence, k, all_kix, khx_ptr, config,
+                    t, seed_masks)});
+                multi_degen = pp16.back().qdata.has_multi_degen;
+            } else {
+                query_pp_idx[qi] = pp32.size();
+                pp32.push_back({preprocess_query<uint32_t>(
+                    req.queries[qi].sequence, k, all_kix, khx_ptr, config,
+                    t, seed_masks)});
+                multi_degen = pp32.back().qdata.has_multi_degen;
+            }
         }
 
         size_t result_idx = resp.results.size();
@@ -272,20 +333,48 @@ SearchResponse process_search_request(
 
     // Thread-local Stage1Buffer to avoid per-job allocation
     uint32_t max_num_seqs = 0;
-    for (const auto& vol : group.volumes)
-        max_num_seqs = std::max(max_num_seqs, vol.kix.num_sequences());
+    if (is_both_mode) {
+        for (const auto& vol : group_cod->volumes)
+            max_num_seqs = std::max(max_num_seqs, vol.kix.num_sequences());
+    } else {
+        for (const auto& vol : group.volumes)
+            max_num_seqs = std::max(max_num_seqs, vol.kix.num_sequences());
+    }
 
     // Determine optimal tier from actual preprocessed k-mer counts
     uint32_t max_kmer_positions = 0;
-    for (const auto& pp : pp16) {
-        max_kmer_positions = std::max(max_kmer_positions,
-            static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                           pp.qdata.rc_positions.size())));
-    }
-    for (const auto& pp : pp32) {
-        max_kmer_positions = std::max(max_kmer_positions,
-            static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                           pp.qdata.rc_positions.size())));
+    if (is_both_mode) {
+        for (const auto& pp : pp16_cod) {
+            max_kmer_positions = std::max(max_kmer_positions,
+                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
+                                               pp.qdata.rc_positions.size())));
+        }
+        for (const auto& pp : pp16_opt) {
+            max_kmer_positions = std::max(max_kmer_positions,
+                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
+                                               pp.qdata.rc_positions.size())));
+        }
+        for (const auto& pp : pp32_cod) {
+            max_kmer_positions = std::max(max_kmer_positions,
+                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
+                                               pp.qdata.rc_positions.size())));
+        }
+        for (const auto& pp : pp32_opt) {
+            max_kmer_positions = std::max(max_kmer_positions,
+                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
+                                               pp.qdata.rc_positions.size())));
+        }
+    } else {
+        for (const auto& pp : pp16) {
+            max_kmer_positions = std::max(max_kmer_positions,
+                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
+                                               pp.qdata.rc_positions.size())));
+        }
+        for (const auto& pp : pp32) {
+            max_kmer_positions = std::max(max_kmer_positions,
+                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
+                                               pp.qdata.rc_positions.size())));
+        }
     }
     Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
 
@@ -297,8 +386,20 @@ SearchResponse process_search_request(
             return buf;
         });
 
+    // For both mode: second thread-local buffer for optimal template
+    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs_opt(
+        [max_num_seqs, tier]() {
+            Stage1Buffer buf;
+            buf.tier = tier;
+            buf.ensure_capacity(max_num_seqs);
+            return buf;
+        });
+
     // Thread-local hit collection: (result_idx, ResponseHit) pairs
     tbb::combinable<std::vector<std::pair<size_t, ResponseHit>>> tls_hits;
+
+    // Number of volumes for the search loop
+    size_t num_volumes = is_both_mode ? group_cod->volumes.size() : group.volumes.size();
 
     // Parallel execution using preprocessed data (query-level granularity)
     arena.execute([&] {
@@ -313,8 +414,9 @@ SearchResponse process_search_request(
                     const auto& query = req.queries[aq.query_idx];
                     size_t pp_idx = query_pp_idx[aq.query_idx];
 
-                    for (size_t vol_i = 0; vol_i < group.volumes.size(); vol_i++) {
-                        const auto& vol = group.volumes[vol_i];
+                    for (size_t vol_i = 0; vol_i < num_volumes; vol_i++) {
+                        // Use coding group's ksx for accession lookup (both modes share the same DB)
+                        const auto& vol = is_both_mode ? group_cod->volumes[vol_i] : group.volumes[vol_i];
 
                         // Build per-volume OID filter
                         OidFilter oid_filter;
@@ -323,14 +425,37 @@ SearchResponse process_search_request(
                         }
 
                         SearchResult sr;
-                        if (group.kmer_type == 0) {
-                            sr = search_volume<uint16_t>(
-                                query.qseqid, pp16[pp_idx].qdata, k,
-                                vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
+                        if (is_both_mode) {
+                            auto& buf_opt = tls_bufs_opt.local();
+                            const auto& vd_cod = group_cod->volumes[vol_i];
+                            const auto& vd_opt = group_opt->volumes[vol_i];
+                            if (group.kmer_type == 0) {
+                                sr = search_volume_both<uint16_t>(
+                                    query.qseqid,
+                                    pp16_cod[pp_idx].qdata, pp16_opt[pp_idx].qdata,
+                                    k, vd_cod.kix, vd_cod.kpx,
+                                    vd_opt.kix, vd_opt.kpx,
+                                    vd_cod.ksx, oid_filter, config,
+                                    &buf, &buf_opt);
+                            } else {
+                                sr = search_volume_both<uint32_t>(
+                                    query.qseqid,
+                                    pp32_cod[pp_idx].qdata, pp32_opt[pp_idx].qdata,
+                                    k, vd_cod.kix, vd_cod.kpx,
+                                    vd_opt.kix, vd_opt.kpx,
+                                    vd_cod.ksx, oid_filter, config,
+                                    &buf, &buf_opt);
+                            }
                         } else {
-                            sr = search_volume<uint32_t>(
-                                query.qseqid, pp32[pp_idx].qdata, k,
-                                vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
+                            if (group.kmer_type == 0) {
+                                sr = search_volume<uint16_t>(
+                                    query.qseqid, pp16[pp_idx].qdata, k,
+                                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
+                            } else {
+                                sr = search_volume<uint32_t>(
+                                    query.qseqid, pp32[pp_idx].qdata, k,
+                                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
+                            }
                         }
 
                         if (!sr.hits.empty()) {

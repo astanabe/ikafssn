@@ -5,6 +5,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "ikafssnserver/request_processor.hpp"
@@ -35,6 +36,11 @@ struct DatabaseEntry {
             if (g.k == k && g.t == t && g.template_type == template_type) return &g;
         }
         return nullptr;
+    }
+
+    std::pair<const KmerGroup*, const KmerGroup*>
+    find_both_groups(int k, uint8_t t) const {
+        return {find_group(k, t, 1), find_group(k, t, 2)};
     }
 };
 

@@ -39,7 +39,6 @@ template <typename KmerInt>
 static std::vector<std::pair<uint32_t, KmerInt>>
 extract_kmers_spaced(const std::string& seq, int k,
                      const std::vector<uint32_t>& masks, int t,
-                     const std::vector<KmerInt>& mask_tags = {},
                      bool* has_multi_degen = nullptr,
                      int max_expansion = 16) {
     std::vector<std::pair<uint32_t, KmerInt>> kmers;
@@ -55,8 +54,7 @@ extract_kmers_spaced(const std::string& seq, int k,
                 });
         },
         has_multi_degen,
-        max_expansion,
-        mask_tags);
+        max_expansion);
     return kmers;
 }
 
@@ -83,8 +81,7 @@ QueryKmerData<KmerInt> preprocess_query(
     const KhxReader* khx,
     const SearchConfig& config,
     uint8_t t,
-    const std::vector<uint32_t>& masks,
-    const std::vector<KmerInt>& mask_tags) {
+    const std::vector<uint32_t>& masks) {
 
     QueryKmerData<KmerInt> result;
 
@@ -92,7 +89,7 @@ QueryKmerData<KmerInt> preprocess_query(
     std::vector<std::pair<uint32_t, KmerInt>> fwd_kmers;
     if (t > 0 && !masks.empty()) {
         fwd_kmers = extract_kmers_spaced<KmerInt>(query_seq, k, masks,
-                        static_cast<int>(t), mask_tags, &result.has_multi_degen,
+                        static_cast<int>(t), &result.has_multi_degen,
                         static_cast<int>(config.max_degen_expand));
     } else {
         fwd_kmers = extract_kmers<KmerInt>(query_seq, k, &result.has_multi_degen,
@@ -106,7 +103,7 @@ QueryKmerData<KmerInt> preprocess_query(
         // Spaced seed: scan RC string with same templates, remap positions
         std::string rc_seq = reverse_complement_string(query_seq);
         auto rc_raw = extract_kmers_spaced<KmerInt>(rc_seq, k, masks,
-                          static_cast<int>(t), mask_tags, &result.has_multi_degen,
+                          static_cast<int>(t), &result.has_multi_degen,
                           static_cast<int>(config.max_degen_expand));
         int span = static_cast<int>(t);
         rc_kmers.reserve(rc_raw.size());
@@ -157,8 +154,7 @@ QueryKmerData<KmerInt> preprocess_query(
         }
 
         for (uint32_t kmer_idx : all_query_kmer_values) {
-            // Strip mask tag bit for KHX lookup (KHX uses base 4^k table)
-            uint32_t khx_idx = kmer_idx & (ikafssn::table_size(k) - 1);
+            uint32_t khx_idx = static_cast<uint32_t>(kmer_idx);
             // Check .khx exclusion
             if (khx != nullptr && khx->is_excluded(khx_idx)) {
                 highfreq_set.insert(kmer_idx);
@@ -285,15 +281,13 @@ template QueryKmerData<uint16_t> preprocess_query<uint16_t>(
     const KhxReader*,
     const SearchConfig&,
     uint8_t,
-    const std::vector<uint32_t>&,
-    const std::vector<uint16_t>&);
+    const std::vector<uint32_t>&);
 template QueryKmerData<uint32_t> preprocess_query<uint32_t>(
     const std::string&, int,
     const std::vector<const KixReader*>&,
     const KhxReader*,
     const SearchConfig&,
     uint8_t,
-    const std::vector<uint32_t>&,
     const std::vector<uint32_t>&);
 
 } // namespace ikafssn
