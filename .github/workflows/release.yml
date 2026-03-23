@@ -44,10 +44,29 @@ jobs:
             build_httpd: ON
             pkg_type: bottle
             bottle_tag: arm64_tahoe
+          - target: x86_64-linux-el9
+            os: ubuntu-24.04
+            container: almalinux:9
+            ubuntu_ver: ""
+            build_httpd: OFF
+            pkg_type: rpm
+            el_ver: "9"
+          - target: x86_64-linux-el10
+            os: ubuntu-24.04
+            container: almalinux:10
+            ubuntu_ver: ""
+            build_httpd: OFF
+            pkg_type: rpm
+            el_ver: "10"
 
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container || '' }}
 
     steps:
+      - name: Install git (container)
+        if: matrix.container
+        run: dnf install -y git
+
       - uses: actions/checkout@v6
 
       # ---- System dependencies ----
@@ -79,6 +98,23 @@ jobs:
         run: |
           brew install tbb lmdb sqlite3 curl jsoncpp \
             xz libdeflate autoconf automake libtool openssl@3 drogon
+
+      - name: Install system dependencies (EL)
+        if: matrix.pkg_type == 'rpm'
+        run: |
+          dnf install -y epel-release
+          dnf install -y 'dnf-command(config-manager)' || true
+          dnf config-manager --set-enabled crb || true
+          dnf install -y \
+            gcc-c++ cmake rpm-build make \
+            tbb-devel lmdb-devel sqlite-devel \
+            libcurl-devel jsoncpp-devel \
+            zlib-devel bzip2-devel xz-devel libdeflate-devel \
+            openssl-devel libuuid-devel \
+            autoconf automake libtool \
+            tar gzip bzip2 zstd patch diffutils findutils
+          dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+          dnf install -y gh
 
       # ---- Environment ----
 
@@ -228,6 +264,20 @@ jobs:
           sha256=$(shasum -a 256 "${bottle_file}" | awk '{print $1}')
           echo "::notice::Bottle SHA256: ${sha256}"
 
+      # ---- Package RPM (EL only) ----
+
+      - name: Package RPM
+        if: matrix.pkg_type == 'rpm'
+        run: |
+          cd build
+          cpack -G RPM
+          version=$(grep 'set(IKAFSSN_VERSION' ../CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
+          arch=$(uname -m)
+          for f in *.rpm; do
+            newname="ikafssn-${version}.el${{ matrix.el_ver }}.${arch}.rpm"
+            mv "$f" "$newname"
+          done
+
       # ---- Upload ----
 
       - name: Upload artifact
@@ -236,6 +286,7 @@ jobs:
           name: package-${{ matrix.target }}
           path: |
             build/*.deb
+            build/*.rpm
             *.bottle.tar.gz
 
       - name: Upload release asset
@@ -247,7 +298,7 @@ jobs:
             exit 0
           fi
           shopt -s nullglob
-          files=(build/*.deb *.bottle.tar.gz)
+          files=(build/*.deb build/*.rpm *.bottle.tar.gz)
           if [ ${#files[@]} -eq 0 ]; then
             echo "::notice::No package files to upload"
             exit 0

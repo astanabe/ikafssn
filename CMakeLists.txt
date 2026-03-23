@@ -157,7 +157,7 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/ikafssn/systemd
 )
 
-# --- CPack DEB packaging ---
+# --- CPack packaging ---
 set(CPACK_PACKAGE_NAME "ikafssn")
 set(CPACK_PACKAGE_VERSION "${IKAFSSN_VERSION}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
@@ -167,6 +167,16 @@ set(CPACK_DEBIAN_PACKAGE_SECTION "science")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+
+# RPM-specific
+set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0")
+set(CPACK_RPM_PACKAGE_GROUP "Applications/Engineering")
+set(CPACK_RPM_PACKAGE_URL "https://github.com/astanabe/ikafssn")
+set(CPACK_RPM_PACKAGE_DESCRIPTION
+    "ikafssn builds a complete inverted index over NCBI BLAST DB nucleotide sequences and performs alignment-free similarity search using k-mer matching and collinear chaining.")
+set(CPACK_RPM_PACKAGE_AUTOREQPROV ON)
+set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+
 include(CPack)
 
 enable_testing()
