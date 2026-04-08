@@ -142,7 +142,7 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.1.0-parasail2.6.2+degmatch-htslib1.23-v3
+          key: deps-${{ matrix.target }}-ncbi30.1.0-parasail2.6.2+degmatch-htslib1.23-v4
 
       # ---- Build Parasail ----
 
