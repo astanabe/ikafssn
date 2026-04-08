@@ -58,6 +58,20 @@ jobs:
             build_httpd: OFF
             pkg_type: rpm
             el_ver: "10"
+          - target: aarch64-linux-el9
+            os: ubuntu-24.04-arm
+            container: almalinux:9
+            ubuntu_ver: ""
+            build_httpd: OFF
+            pkg_type: rpm
+            el_ver: "9"
+          - target: aarch64-linux-el10
+            os: ubuntu-24.04-arm
+            container: almalinux:10
+            ubuntu_ver: ""
+            build_httpd: OFF
+            pkg_type: rpm
+            el_ver: "10"
 
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container || '' }}

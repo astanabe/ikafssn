@@ -37,22 +37,22 @@ A2. EL 9 / EL 10 (.rpm package)
 ---------------------------------
 
 Pre-built .rpm packages are available for EL 9 (AlmaLinux/Rocky/RHEL 9)
-and EL 10 (AlmaLinux/Rocky/RHEL 10) on x86_64.
+and EL 10 (AlmaLinux/Rocky/RHEL 10) on x86_64 and aarch64.
 Download the appropriate .rpm file from the GitHub Releases page:
 
   https://github.com/astanabe/ikafssn/releases
 
 Package naming convention:
 
-  ikafssn-<version>-nohttpd.el<ver>.x86_64.rpm
+  ikafssn-<version>-nohttpd.el<ver>.<arch>.rpm
 
 Examples:
   ikafssn-0.1.2026.04.08-nohttpd.el9.x86_64.rpm
-  ikafssn-0.1.2026.04.08-nohttpd.el10.x86_64.rpm
+  ikafssn-0.1.2026.04.08-nohttpd.el10.aarch64.rpm
 
 Install the package:
 
-  sudo dnf install ./ikafssn-<version>-nohttpd.el<ver>.x86_64.rpm
+  sudo dnf install ./ikafssn-<version>-nohttpd.el<ver>.<arch>.rpm
 
 Note: EL packages do not include ikafssnhttpd (Drogon is not available
 on these distributions).
@@ -111,7 +111,7 @@ Ubuntu 22.04 (x86_64 / aarch64):
   Note: ikafssnhttpd cannot be built on Ubuntu 22.04 (Drogon is not
   packaged for this release). Build with -DBUILD_HTTPD=OFF.
 
-EL 9 / EL 10 (x86_64):
+EL 9 / EL 10 (x86_64 / aarch64):
 
   sudo dnf install -y epel-release
   sudo dnf install -y 'dnf-command(config-manager)' || true

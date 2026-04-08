@@ -34,7 +34,7 @@ Ubuntu 22.04 (x86_64 / aarch64):
   Note: ikafssnhttpd is not available on Ubuntu 22.04
   (Drogon is not packaged for this release).
 
-EL 9 / EL 10 (x86_64):
+EL 9 / EL 10 (x86_64 / aarch64):
 
   tbb
   lmdb-libs
@@ -90,7 +90,7 @@ System packages — Ubuntu 22.04 (x86_64 / aarch64):
   Note: ikafssnhttpd cannot be built on Ubuntu 22.04
   (Drogon is not packaged for this release). Build with -DBUILD_HTTPD=OFF.
 
-System packages — EL 9 / EL 10 (x86_64):
+System packages — EL 9 / EL 10 (x86_64 / aarch64):
 
   gcc-c++ cmake make
   tbb-devel lmdb-devel sqlite-devel
