@@ -160,7 +160,9 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           make -j"${NPROC}" parasail
-          cmake --install .
+          mkdir -p "${GITHUB_WORKSPACE}/parasail"/{lib,include}
+          cp libparasail.a "${GITHUB_WORKSPACE}/parasail/lib/"
+          cp -r ../parasail.h ../parasail "${GITHUB_WORKSPACE}/parasail/include/"
 
       # ---- Build htslib ----
 
