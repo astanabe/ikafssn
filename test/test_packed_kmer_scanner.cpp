@@ -18,6 +18,7 @@
 #include <set>
 #include <algorithm>
 #include <filesystem>
+#include "core/spaced_seed.hpp"
 
 using namespace ikafssn;
 using namespace ssu_fixture;
@@ -926,6 +927,201 @@ static void test_get_subsequence_with_ambig() {
     }
 }
 
+// ==================== Spaced seed accumulator vs reference tests ====================
+
+// Reference implementation of scan_spaced (old O(t) per-position method).
+template <typename KmerInt, typename Callback, typename AmbigCallback>
+static void scan_spaced_reference(int k, const char* ncbi2na_data, uint32_t seq_length,
+                                   const std::vector<AmbiguityEntry>& ambig_entries,
+                                   const std::vector<uint32_t>& masks, int t,
+                                   Callback&& callback, AmbigCallback&& ambig_callback,
+                                   int max_expansion = 4) {
+    if (static_cast<int>(seq_length) < t) return;
+    const uint32_t last_start = seq_length - static_cast<uint32_t>(t);
+    for (uint32_t p = 0; p <= last_start; p++) {
+        for (size_t mi = 0; mi < masks.size(); mi++) {
+            uint32_t mask = masks[mi];
+            KmerInt kmer = 0;
+            int bit_pos = 0;
+            int degen_count = 0;
+            AmbigInfo infos[MAX_K];
+            for (int j = t - 1; j >= 0; j--) {
+                if (!(mask & (1u << j))) continue;
+                uint32_t seq_pos = p + (static_cast<uint32_t>(t) - 1 - static_cast<uint32_t>(j));
+                uint8_t code = ncbi2na_base_at(ncbi2na_data, seq_pos);
+                int kmer_bit_offset = (k - 1 - bit_pos) * 2;
+                uint8_t amb_ncbi4na = 0;
+                for (const auto& ae : ambig_entries) {
+                    if (seq_pos >= ae.position && seq_pos < ae.position + ae.run_length) {
+                        amb_ncbi4na = ae.ncbi4na;
+                        break;
+                    }
+                    if (ae.position > seq_pos) break;
+                }
+                if (amb_ncbi4na != 0) {
+                    infos[degen_count].ncbi4na = amb_ncbi4na;
+                    infos[degen_count].bit_offset = kmer_bit_offset;
+                    degen_count++;
+                } else {
+                    kmer |= static_cast<KmerInt>(code) << kmer_bit_offset;
+                }
+                bit_pos++;
+            }
+            if (degen_count == 0) {
+                callback(p, kmer);
+            } else if (max_expansion <= 1) {
+            } else {
+                int product = 1;
+                bool exceeded = false;
+                for (int d = 0; d < degen_count; d++) {
+                    product *= ncbi4na_expansion_count(infos[d].ncbi4na);
+                    if (product > max_expansion) { exceeded = true; break; }
+                }
+                if (!exceeded) ambig_callback(p, kmer, infos, degen_count);
+            }
+        }
+    }
+}
+
+static void test_packed_scan_spaced_vs_reference() {
+    std::fprintf(stderr, "-- test_packed_scan_spaced_vs_reference\n");
+
+    // Test data: 100 bases, no ambiguity
+    const char* raw100 = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+                         "AACCGGTTAACCGGTTAACCGGTTAACCGGTTAACCGG";
+    uint32_t len100 = 100;
+    auto packed100 = encode_ncbi2na(raw100, len100);
+    std::vector<AmbiguityEntry> no_ambig;
+
+    // Test representative masks (one from each k/t combination)
+    struct TestCase { uint32_t mask; int t; int k; };
+    TestCase cases[] = {
+        {MASK_K8_T13_CODING, 13, 8},
+        {MASK_K8_T13_OPTIMAL, 13, 8},
+        {MASK_K9_T15_CODING, 15, 9},
+        {MASK_K11_T18_CODING, 18, 11},
+        {MASK_K11_T18_OPTIMAL, 18, 11},
+        {MASK_K12_T21_CODING, 21, 12},
+        {MASK_K12_T21_OPTIMAL, 21, 12},
+    };
+
+    for (const auto& tc : cases) {
+        std::vector<uint32_t> masks = {tc.mask};
+
+        // Reference
+        std::vector<std::pair<uint32_t, uint32_t>> ref_results;
+        scan_spaced_reference<uint32_t>(tc.k, packed100.data(), len100, no_ambig, masks, tc.t,
+            [&](uint32_t pos, uint32_t kmer) { ref_results.emplace_back(pos, kmer); },
+            [](uint32_t, uint32_t, const AmbigInfo*, int) {});
+
+        // New implementation
+        std::vector<std::pair<uint32_t, uint32_t>> new_results;
+        PackedKmerScanner<uint32_t> scanner(tc.k);
+        scanner.scan_spaced(packed100.data(), len100, no_ambig, masks, tc.t,
+            [&](uint32_t pos, uint32_t kmer) { new_results.emplace_back(pos, kmer); },
+            [](uint32_t, uint32_t, const AmbigInfo*, int) {});
+
+        CHECK_EQ(new_results.size(), ref_results.size());
+        for (size_t i = 0; i < ref_results.size() && i < new_results.size(); i++) {
+            CHECK_EQ(new_results[i].first, ref_results[i].first);
+            CHECK_EQ(new_results[i].second, ref_results[i].second);
+        }
+    }
+
+    // Test with ambiguity: R at positions 10 and 50
+    std::vector<AmbiguityEntry> ambig = {{10, 1, 5}, {50, 1, 5}}; // R=A|G
+    for (const auto& tc : cases) {
+        std::vector<uint32_t> masks = {tc.mask};
+
+        // Collect expanded k-mers from both implementations
+        std::map<uint32_t, std::set<uint32_t>> ref_expanded, new_expanded;
+
+        scan_spaced_reference<uint32_t>(tc.k, packed100.data(), len100, ambig, masks, tc.t,
+            [&](uint32_t pos, uint32_t kmer) { ref_expanded[pos].insert(kmer); },
+            [&](uint32_t pos, uint32_t base_kmer, const AmbigInfo* infos, int count) {
+                expand_ambig_kmer_multi<uint32_t>(base_kmer, infos, count,
+                    [&](uint32_t exp) { ref_expanded[pos].insert(exp); });
+            }, 4);
+
+        PackedKmerScanner<uint32_t> scanner(tc.k);
+        scanner.scan_spaced(packed100.data(), len100, ambig, masks, tc.t,
+            [&](uint32_t pos, uint32_t kmer) { new_expanded[pos].insert(kmer); },
+            [&](uint32_t pos, uint32_t base_kmer, const AmbigInfo* infos, int count) {
+                expand_ambig_kmer_multi<uint32_t>(base_kmer, infos, count,
+                    [&](uint32_t exp) { new_expanded[pos].insert(exp); });
+            }, 4);
+
+        CHECK_EQ(new_expanded.size(), ref_expanded.size());
+        for (const auto& [pos, kmers] : ref_expanded) {
+            auto it = new_expanded.find(pos);
+            CHECK(it != new_expanded.end());
+            if (it != new_expanded.end()) {
+                CHECK_EQ(it->second.size(), kmers.size());
+                CHECK(it->second == kmers);
+            }
+        }
+    }
+
+    // Test kBoth (2 masks)
+    {
+        std::vector<uint32_t> both_masks = {MASK_K11_T18_CODING, MASK_K11_T18_OPTIMAL};
+        std::vector<std::pair<uint32_t, uint32_t>> ref_results, new_results;
+
+        scan_spaced_reference<uint32_t>(11, packed100.data(), len100, no_ambig, both_masks, 18,
+            [&](uint32_t pos, uint32_t kmer) { ref_results.emplace_back(pos, kmer); },
+            [](uint32_t, uint32_t, const AmbigInfo*, int) {});
+
+        PackedKmerScanner<uint32_t> scanner(11);
+        scanner.scan_spaced(packed100.data(), len100, no_ambig, both_masks, 18,
+            [&](uint32_t pos, uint32_t kmer) { new_results.emplace_back(pos, kmer); },
+            [](uint32_t, uint32_t, const AmbigInfo*, int) {});
+
+        CHECK_EQ(new_results.size(), ref_results.size());
+        for (size_t i = 0; i < ref_results.size() && i < new_results.size(); i++) {
+            CHECK_EQ(new_results[i].first, ref_results[i].first);
+            CHECK_EQ(new_results[i].second, ref_results[i].second);
+        }
+    }
+}
+
+static void test_packed_scan_spaced_vs_reference_on_blastdb() {
+    std::fprintf(stderr, "-- test_packed_scan_spaced_vs_reference_on_blastdb\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+
+    // Test on first 10 sequences
+    uint32_t limit = std::min(db.num_sequences(), uint32_t(10));
+    std::vector<uint32_t> masks = {MASK_K11_T18_CODING};
+    int k = 11, t = 18;
+
+    for (uint32_t oid = 0; oid < limit; oid++) {
+        auto raw = db.get_raw_sequence(oid);
+        auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+
+        std::vector<std::pair<uint32_t, uint32_t>> ref_results, new_results;
+        int ref_ambig = 0, new_ambig = 0;
+
+        scan_spaced_reference<uint32_t>(k, raw.ncbi2na_data, raw.seq_length, ambig, masks, t,
+            [&](uint32_t pos, uint32_t kmer) { ref_results.emplace_back(pos, kmer); },
+            [&](uint32_t, uint32_t, const AmbigInfo*, int) { ref_ambig++; }, 4);
+
+        PackedKmerScanner<uint32_t> scanner(k);
+        scanner.scan_spaced(raw.ncbi2na_data, raw.seq_length, ambig, masks, t,
+            [&](uint32_t pos, uint32_t kmer) { new_results.emplace_back(pos, kmer); },
+            [&](uint32_t, uint32_t, const AmbigInfo*, int) { new_ambig++; }, 4);
+
+        CHECK_EQ(new_results.size(), ref_results.size());
+        CHECK_EQ(new_ambig, ref_ambig);
+        for (size_t i = 0; i < ref_results.size() && i < new_results.size(); i++) {
+            CHECK_EQ(new_results[i].first, ref_results[i].first);
+            CHECK_EQ(new_results[i].second, ref_results[i].second);
+        }
+
+        db.ret_raw_sequence(raw);
+    }
+}
+
 // Test index build with odd-length sequence (DQ235612.1 = 1809bp, odd)
 static void test_ambig_db_odd_length() {
     std::fprintf(stderr, "-- test_ambig_db_odd_length\n");
@@ -998,6 +1194,8 @@ int main(int argc, char* argv[]) {
     test_get_subsequence();
     test_get_subsequence_with_ambig();
     test_ssu_db_kmer_check();
+    test_packed_scan_spaced_vs_reference();
+    test_packed_scan_spaced_vs_reference_on_blastdb();
     test_ambig_db_odd_length();
 
     // Clean up

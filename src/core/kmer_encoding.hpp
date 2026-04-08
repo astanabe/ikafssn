@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include "core/config.hpp"
+#include "core/spaced_seed.hpp"
 
 namespace ikafssn {
 
@@ -332,42 +333,50 @@ public:
     }
 
     // Scan with spaced seed templates.
-    // For each window position p (0 to len-t) and each mask,
-    // extract k-mer from the set-bit positions within the window.
+    // Uses sliding accumulator + bitmask extraction for O(1) per-position advance.
     // mask bit j (from LSB) corresponds to sequence position p + (t-1-j).
     template <typename Callback>
     void scan_spaced(const char* seq, size_t len, const std::vector<uint32_t>& masks,
                      int t, Callback&& callback) const {
         if (static_cast<int>(len) < t) return;
         const uint8_t* enc_tbl = base_encode_table();
-        const size_t last_start = len - static_cast<size_t>(t);
+        const int num_masks = static_cast<int>(masks.size());
+        const uint64_t accum_mask = (1ULL << (2 * t)) - 1;
+        const uint32_t n_window_mask = (1u << t) - 1;
 
-        for (size_t p = 0; p <= last_start; p++) {
-            for (size_t mi = 0; mi < masks.size(); mi++) {
+        uint64_t accum = 0;
+        uint32_t n_bits = 0;  // bit j set = window position j has invalid base
+        int warmup = t - 1;
+
+        for (size_t i = 0; i < len; i++) {
+            uint8_t enc = enc_tbl[static_cast<uint8_t>(seq[i])];
+
+            n_bits = (n_bits << 1) & n_window_mask;
+            if (enc == BASE_ENCODE_INVALID) {
+                n_bits |= 1u;
+                enc = 0;  // placeholder
+            }
+
+            accum = ((accum << 2) | static_cast<uint64_t>(enc)) & accum_mask;
+
+            if (warmup > 0) {
+                warmup--;
+                continue;
+            }
+
+            uint32_t p = static_cast<uint32_t>(i) - static_cast<uint32_t>(t) + 1;
+
+            for (int mi = 0; mi < num_masks; mi++) {
                 uint32_t mask = masks[mi];
-                KmerInt kmer = 0;
-                bool valid = true;
-                int bit_pos = 0;
-                for (int j = t - 1; j >= 0; j--) {
-                    if (mask & (1u << j)) {
-                        size_t seq_pos = p + (static_cast<size_t>(t) - 1 - static_cast<size_t>(j));
-                        uint8_t enc = enc_tbl[static_cast<uint8_t>(seq[seq_pos])];
-                        if (enc == BASE_ENCODE_INVALID) {
-                            valid = false;
-                            break;
-                        }
-                        kmer |= static_cast<KmerInt>(enc) << (2 * (k_ - 1 - bit_pos));
-                        bit_pos++;
-                    }
-                }
-                if (valid) {
-                    callback(static_cast<uint32_t>(p), kmer);
-                }
+                if ((n_bits & mask) != 0) continue;  // N on a set-bit position
+                KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
+                callback(p, kmer);
             }
         }
     }
 
     // Scan with spaced seed templates, handling degenerate bases.
+    // Uses sliding accumulator + dual bitsets (n_bits / degen_bits) for efficient tracking.
     template <typename Callback, typename AmbigCallback>
     void scan_spaced_ambig(const char* seq, size_t len,
                             const std::vector<uint32_t>& masks, int t,
@@ -377,65 +386,90 @@ public:
         if (static_cast<int>(len) < t) return;
         const uint8_t* enc_tbl = base_encode_table();
         const uint8_t* ncbi4na_tbl = degenerate_ncbi4na_table();
-        const size_t last_start = len - static_cast<size_t>(t);
+        const int num_masks = static_cast<int>(masks.size());
+        const uint64_t accum_mask = (1ULL << (2 * t)) - 1;
+        const uint32_t window_mask = (1u << t) - 1;
 
-        for (size_t p = 0; p <= last_start; p++) {
-            for (size_t mi = 0; mi < masks.size(); mi++) {
+        uint64_t accum = 0;
+        uint32_t n_bits = 0;      // truly invalid (N, not degenerate)
+        uint32_t degen_bits = 0;   // degenerate IUPAC bases
+        uint8_t window_ncbi4na[MAX_SPACED_T] = {};
+        int warmup = t - 1;
+
+        for (size_t i = 0; i < len; i++) {
+            char ch = seq[i];
+            uint8_t enc = enc_tbl[static_cast<uint8_t>(ch)];
+            uint8_t ncbi4na = ncbi4na_tbl[static_cast<uint8_t>(ch)];
+
+            n_bits = (n_bits << 1) & window_mask;
+            degen_bits = (degen_bits << 1) & window_mask;
+
+            if (enc == BASE_ENCODE_INVALID && ncbi4na == 0) {
+                // Truly invalid (N)
+                n_bits |= 1u;
+                enc = 0;
+            } else if (ncbi4na != 0) {
+                // Degenerate IUPAC base
+                degen_bits |= 1u;
+                enc = 0;  // placeholder
+            }
+
+            window_ncbi4na[i % t] = ncbi4na;
+            accum = ((accum << 2) | static_cast<uint64_t>(enc)) & accum_mask;
+
+            if (warmup > 0) {
+                warmup--;
+                continue;
+            }
+
+            uint32_t p = static_cast<uint32_t>(i) - static_cast<uint32_t>(t) + 1;
+
+            for (int mi = 0; mi < num_masks; mi++) {
                 uint32_t mask = masks[mi];
-                KmerInt kmer = 0;
-                bool valid = true;
-                int bit_pos = 0;
-                int degen_count = 0;
-                AmbigInfo infos[MAX_K];
 
-                for (int j = t - 1; j >= 0; j--) {
-                    if (!(mask & (1u << j))) continue;
+                if ((n_bits & mask) != 0) continue;  // N on a set-bit position
 
-                    size_t seq_pos = p + (static_cast<size_t>(t) - 1 - static_cast<size_t>(j));
-                    char ch = seq[seq_pos];
-                    uint8_t enc = enc_tbl[static_cast<uint8_t>(ch)];
-                    uint8_t ncbi4na = ncbi4na_tbl[static_cast<uint8_t>(ch)];
-
-                    if (enc == BASE_ENCODE_INVALID && ncbi4na == 0) {
-                        valid = false;
-                        break;
-                    }
-
-                    int kmer_bit_offset = (k_ - 1 - bit_pos) * 2;
-
-                    if (ncbi4na != 0) {
-                        // Degenerate base: use placeholder 0
-                        kmer |= static_cast<KmerInt>(0) << kmer_bit_offset;
-                        infos[degen_count].ncbi4na = ncbi4na;
-                        infos[degen_count].bit_offset = kmer_bit_offset;
-                        degen_count++;
-                    } else {
-                        kmer |= static_cast<KmerInt>(enc) << kmer_bit_offset;
-                    }
-                    bit_pos++;
-                }
-
-                if (!valid) continue;
-
-                uint32_t pos = static_cast<uint32_t>(p);
-                if (degen_count == 0) {
-                    callback(pos, kmer);
+                if ((degen_bits & mask) == 0) {
+                    // Fast path: no degenerate bases on set-bit positions
+                    KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
+                    callback(p, kmer);
                 } else if (max_expansion <= 1) {
                     if (has_multi_degen) *has_multi_degen = true;
                 } else {
-                    // Check expansion product
+                    // Slow path: degenerate bases on some set-bit positions
+                    KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
+                    const auto& ext = extractor_for_mask(mask);
+                    AmbigInfo infos[MAX_K];
+                    int degen_count = 0;
                     int product = 1;
                     bool exceeded = false;
-                    for (int d = 0; d < degen_count; d++) {
-                        product *= ncbi4na_expansion_count(infos[d].ncbi4na);
+
+                    uint32_t affected = degen_bits & mask;
+                    while (affected != 0) {
+                        int j = std::countr_zero(affected);
+                        affected &= affected - 1;
+
+                        size_t seq_pos = static_cast<size_t>(p) + static_cast<size_t>(t - 1 - j);
+                        uint8_t a4na = window_ncbi4na[seq_pos % t];
+
+                        int kbit_off = ext.kmer_bit_offset[j];
+                        kmer &= ~(static_cast<KmerInt>(0x03) << kbit_off);
+
+                        int ec = ncbi4na_expansion_count(a4na);
+                        product *= ec;
                         if (product > max_expansion) {
                             exceeded = true;
                             break;
                         }
+
+                        infos[degen_count].ncbi4na = a4na;
+                        infos[degen_count].bit_offset = kbit_off;
+                        degen_count++;
                     }
-                    if (!exceeded) {
-                        ambig_callback(pos, kmer, infos, degen_count);
-                    } else if (has_multi_degen) {
+
+                    if (!exceeded && degen_count > 0) {
+                        ambig_callback(p, kmer, infos, degen_count);
+                    } else if (exceeded && has_multi_degen) {
                         *has_multi_degen = true;
                     }
                 }

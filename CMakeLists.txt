@@ -17,6 +17,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Release build: -O2 with loop unrolling (safer than default -O3,
+# and ensures NTTP extraction loops are fully unrolled with immediates).
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG -funroll-loops" CACHE STRING
+    "C++ flags for Release builds" FORCE)
+
 # --- NCBI C++ Toolkit ---
 set(NCBI_TOOLKIT_DIR "${CMAKE_SOURCE_DIR}/ncbi-cxx-toolkit" CACHE PATH
     "Path to NCBI C++ Toolkit install root (contains include/ and CMake-*/)")

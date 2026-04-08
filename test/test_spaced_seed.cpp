@@ -4,6 +4,8 @@
 #include "core/types.hpp"
 #include <string>
 #include <vector>
+#include <map>
+#include <set>
 
 using namespace ikafssn;
 
@@ -386,6 +388,315 @@ static void test_scan_spaced_k9() {
     }
 }
 
+// ==================== Extraction utility tests ====================
+
+static void test_compute_extraction_runs() {
+    std::fprintf(stderr, "-- test_compute_extraction_runs\n");
+
+    // All 24 masks: verify num_runs and that extraction produces correct k-mer values
+    struct MaskInfo {
+        uint32_t mask;
+        int t, k;
+        int expected_runs;
+    };
+    MaskInfo masks[] = {
+        {MASK_K8_T13_CODING, 13, 8, 5},   {MASK_K8_T13_OPTIMAL, 13, 8, 4},
+        {MASK_K8_T15_CODING, 15, 8, 6},   {MASK_K8_T15_OPTIMAL, 15, 8, 5},
+        {MASK_K8_T18_CODING, 18, 8, 7},   {MASK_K8_T18_OPTIMAL, 18, 8, 6},
+        {MASK_K9_T13_CODING, 13, 9, 5},   {MASK_K9_T13_OPTIMAL, 13, 9, 4},
+        {MASK_K9_T15_CODING, 15, 9, 6},   {MASK_K9_T15_OPTIMAL, 15, 9, 5},
+        {MASK_K9_T18_CODING, 18, 9, 7},   {MASK_K9_T18_OPTIMAL, 18, 9, 6},
+        {MASK_K11_T16_CODING, 16, 11, 6}, {MASK_K11_T16_OPTIMAL, 16, 11, 5},
+        {MASK_K11_T18_CODING, 18, 11, 7}, {MASK_K11_T18_OPTIMAL, 18, 11, 6},
+        {MASK_K11_T21_CODING, 21, 11, 8}, {MASK_K11_T21_OPTIMAL, 21, 11, 7},
+        {MASK_K12_T16_CODING, 16, 12, 5}, {MASK_K12_T16_OPTIMAL, 16, 12, 5},
+        {MASK_K12_T18_CODING, 18, 12, 7}, {MASK_K12_T18_OPTIMAL, 18, 12, 6},
+        {MASK_K12_T21_CODING, 21, 12, 8}, {MASK_K12_T21_OPTIMAL, 21, 12, 7},
+    };
+
+    for (const auto& mi : masks) {
+        auto ext = compute_spaced_seed_extractor(mi.mask, mi.t, mi.k);
+        CHECK_EQ(static_cast<int>(ext.num_runs), mi.expected_runs);
+
+        // Verify kmer_bit_offset: count of non-negative entries should equal k (= popcount)
+        int set_count = 0;
+        for (int j = 0; j < mi.t; j++) {
+            if (ext.kmer_bit_offset[j] >= 0) set_count++;
+        }
+        CHECK_EQ(set_count, mi.k);
+    }
+}
+
+static void test_extract_for_mask_all_templates() {
+    std::fprintf(stderr, "-- test_extract_for_mask_all_templates\n");
+
+    // For each mask, build an accumulator manually and compare extraction results
+    // between extract_for_mask (NTTP dispatch) and bit-by-bit reference assembly.
+    struct MaskInfo { uint32_t mask; int t, k; };
+    MaskInfo masks[] = {
+        {MASK_K8_T13_CODING, 13, 8},  {MASK_K8_T13_OPTIMAL, 13, 8},
+        {MASK_K8_T15_CODING, 15, 8},  {MASK_K8_T15_OPTIMAL, 15, 8},
+        {MASK_K8_T18_CODING, 18, 8},  {MASK_K8_T18_OPTIMAL, 18, 8},
+        {MASK_K9_T13_CODING, 13, 9},  {MASK_K9_T13_OPTIMAL, 13, 9},
+        {MASK_K9_T15_CODING, 15, 9},  {MASK_K9_T15_OPTIMAL, 15, 9},
+        {MASK_K9_T18_CODING, 18, 9},  {MASK_K9_T18_OPTIMAL, 18, 9},
+        {MASK_K11_T16_CODING, 16, 11},{MASK_K11_T16_OPTIMAL, 16, 11},
+        {MASK_K11_T18_CODING, 18, 11},{MASK_K11_T18_OPTIMAL, 18, 11},
+        {MASK_K11_T21_CODING, 21, 11},{MASK_K11_T21_OPTIMAL, 21, 11},
+        {MASK_K12_T16_CODING, 16, 12},{MASK_K12_T16_OPTIMAL, 16, 12},
+        {MASK_K12_T18_CODING, 18, 12},{MASK_K12_T18_OPTIMAL, 18, 12},
+        {MASK_K12_T21_CODING, 21, 12},{MASK_K12_T21_OPTIMAL, 21, 12},
+    };
+
+    // Test with multiple accumulator patterns
+    uint64_t test_accums[] = {
+        0x0000000000000000ULL,
+        0xFFFFFFFFFFFFFFFFULL,
+        0x123456789ABCDEF0ULL,
+        0xAAAAAAAAAAAAAAAAULL,
+        0x5555555555555555ULL,
+        0x0F0F0F0F0F0F0F0FULL,
+    };
+
+    for (const auto& mi : masks) {
+        uint64_t accum_mask = (mi.t < 32) ? ((1ULL << (2 * mi.t)) - 1) : ~0ULL;
+
+        for (uint64_t raw_accum : test_accums) {
+            uint64_t accum = raw_accum & accum_mask;
+
+            // Reference: bit-by-bit extraction (original method)
+            uint32_t ref_kmer = 0;
+            int bit_pos = 0;
+            for (int j = mi.t - 1; j >= 0; j--) {
+                if (mi.mask & (1u << j)) {
+                    uint8_t code = static_cast<uint8_t>((accum >> (2 * j)) & 0x03);
+                    int kmer_bit_offset = (mi.k - 1 - bit_pos) * 2;
+                    ref_kmer |= static_cast<uint32_t>(code) << kmer_bit_offset;
+                    bit_pos++;
+                }
+            }
+
+            // Test: NTTP dispatch extraction
+            uint32_t test_kmer;
+            if (mi.k <= 8) {
+                test_kmer = extract_for_mask<uint16_t>(accum, mi.mask);
+            } else {
+                test_kmer = extract_for_mask<uint32_t>(accum, mi.mask);
+            }
+
+            CHECK_EQ(test_kmer, ref_kmer);
+        }
+    }
+}
+
+// Reference implementation of KmerScanner::scan_spaced (old O(t) per-position method).
+template <typename KmerInt, typename Callback>
+static void scan_spaced_reference(int k, const char* seq, size_t len,
+                                   const std::vector<uint32_t>& masks, int t,
+                                   Callback&& callback) {
+    if (static_cast<int>(len) < t) return;
+    const uint8_t* enc_tbl = base_encode_table();
+    const size_t last_start = len - static_cast<size_t>(t);
+    for (size_t p = 0; p <= last_start; p++) {
+        for (size_t mi = 0; mi < masks.size(); mi++) {
+            uint32_t mask = masks[mi];
+            KmerInt kmer = 0;
+            bool valid = true;
+            int bit_pos = 0;
+            for (int j = t - 1; j >= 0; j--) {
+                if (mask & (1u << j)) {
+                    size_t seq_pos = p + (static_cast<size_t>(t) - 1 - static_cast<size_t>(j));
+                    uint8_t enc = enc_tbl[static_cast<uint8_t>(seq[seq_pos])];
+                    if (enc == BASE_ENCODE_INVALID) { valid = false; break; }
+                    kmer |= static_cast<KmerInt>(enc) << (2 * (k - 1 - bit_pos));
+                    bit_pos++;
+                }
+            }
+            if (valid) callback(static_cast<uint32_t>(p), kmer);
+        }
+    }
+}
+
+static void test_scan_spaced_accumulator_vs_reference() {
+    std::fprintf(stderr, "-- test_scan_spaced_accumulator_vs_reference\n");
+
+    struct TestCase { uint32_t mask; int t, k; };
+    TestCase cases[] = {
+        {MASK_K8_T13_CODING, 13, 8},   {MASK_K8_T15_OPTIMAL, 15, 8},
+        {MASK_K9_T13_OPTIMAL, 13, 9},  {MASK_K9_T18_CODING, 18, 9},
+        {MASK_K11_T16_CODING, 16, 11}, {MASK_K11_T21_OPTIMAL, 21, 11},
+        {MASK_K12_T18_CODING, 18, 12}, {MASK_K12_T21_OPTIMAL, 21, 12},
+    };
+
+    // Test sequences
+    std::string seqs[] = {
+        "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT",  // 48bp, clean
+        "ACGTNACGTACGTACGTNACGTACGTACGTACGTACGTACGTACGTAC",  // with N
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",  // homopolymer
+        "ACGT",                                               // too short for all
+        "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+        "AACCGGTTAACCGGTTAACCGGTTAACCGGTTAACCGGTTAACCGGTT"
+        "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT",  // 144bp
+    };
+
+    for (const auto& tc : cases) {
+        std::vector<uint32_t> masks = {tc.mask};
+
+        for (const auto& seq : seqs) {
+            std::vector<std::pair<uint32_t, uint32_t>> ref_results, new_results;
+
+            scan_spaced_reference<uint32_t>(tc.k, seq.data(), seq.size(), masks, tc.t,
+                [&](uint32_t pos, uint32_t kmer) { ref_results.emplace_back(pos, kmer); });
+
+            KmerScanner<uint32_t> scanner(tc.k);
+            scanner.scan_spaced(seq.data(), seq.size(), masks, tc.t,
+                [&](uint32_t pos, uint32_t kmer) { new_results.emplace_back(pos, kmer); });
+
+            CHECK_EQ(new_results.size(), ref_results.size());
+            for (size_t i = 0; i < ref_results.size() && i < new_results.size(); i++) {
+                CHECK_EQ(new_results[i].first, ref_results[i].first);
+                CHECK_EQ(new_results[i].second, ref_results[i].second);
+            }
+        }
+    }
+
+    // kBoth test
+    {
+        std::vector<uint32_t> both = {MASK_K11_T18_CODING, MASK_K11_T18_OPTIMAL};
+        std::string seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+        std::vector<std::pair<uint32_t, uint32_t>> ref_results, new_results;
+
+        scan_spaced_reference<uint32_t>(11, seq.data(), seq.size(), both, 18,
+            [&](uint32_t pos, uint32_t kmer) { ref_results.emplace_back(pos, kmer); });
+
+        KmerScanner<uint32_t> scanner(11);
+        scanner.scan_spaced(seq.data(), seq.size(), both, 18,
+            [&](uint32_t pos, uint32_t kmer) { new_results.emplace_back(pos, kmer); });
+
+        CHECK_EQ(new_results.size(), ref_results.size());
+        for (size_t i = 0; i < ref_results.size() && i < new_results.size(); i++) {
+            CHECK_EQ(new_results[i].first, ref_results[i].first);
+            CHECK_EQ(new_results[i].second, ref_results[i].second);
+        }
+    }
+}
+
+// Reference implementation of KmerScanner::scan_spaced_ambig (old O(t) method).
+template <typename KmerInt, typename Callback, typename AmbigCallback>
+static void scan_spaced_ambig_reference(int k, const char* seq, size_t len,
+                                         const std::vector<uint32_t>& masks, int t,
+                                         Callback&& callback, AmbigCallback&& ambig_callback,
+                                         bool* has_multi_degen = nullptr,
+                                         int max_expansion = 16) {
+    if (static_cast<int>(len) < t) return;
+    const uint8_t* enc_tbl = base_encode_table();
+    const uint8_t* ncbi4na_tbl = degenerate_ncbi4na_table();
+    const size_t last_start = len - static_cast<size_t>(t);
+    for (size_t p = 0; p <= last_start; p++) {
+        for (size_t mi = 0; mi < masks.size(); mi++) {
+            uint32_t mask = masks[mi];
+            KmerInt kmer = 0;
+            bool valid = true;
+            int bit_pos = 0;
+            int degen_count = 0;
+            AmbigInfo infos[MAX_K];
+            for (int j = t - 1; j >= 0; j--) {
+                if (!(mask & (1u << j))) continue;
+                size_t seq_pos = p + (static_cast<size_t>(t) - 1 - static_cast<size_t>(j));
+                char ch = seq[seq_pos];
+                uint8_t enc = enc_tbl[static_cast<uint8_t>(ch)];
+                uint8_t ncbi4na = ncbi4na_tbl[static_cast<uint8_t>(ch)];
+                if (enc == BASE_ENCODE_INVALID && ncbi4na == 0) { valid = false; break; }
+                int kmer_bit_offset = (k - 1 - bit_pos) * 2;
+                if (ncbi4na != 0) {
+                    infos[degen_count].ncbi4na = ncbi4na;
+                    infos[degen_count].bit_offset = kmer_bit_offset;
+                    degen_count++;
+                } else {
+                    kmer |= static_cast<KmerInt>(enc) << kmer_bit_offset;
+                }
+                bit_pos++;
+            }
+            if (!valid) continue;
+            uint32_t pos = static_cast<uint32_t>(p);
+            if (degen_count == 0) {
+                callback(pos, kmer);
+            } else if (max_expansion <= 1) {
+                if (has_multi_degen) *has_multi_degen = true;
+            } else {
+                int product = 1;
+                bool exceeded = false;
+                for (int d = 0; d < degen_count; d++) {
+                    product *= ncbi4na_expansion_count(infos[d].ncbi4na);
+                    if (product > max_expansion) { exceeded = true; break; }
+                }
+                if (!exceeded) ambig_callback(pos, kmer, infos, degen_count);
+                else if (has_multi_degen) *has_multi_degen = true;
+            }
+        }
+    }
+}
+
+static void test_scan_spaced_ambig_vs_reference() {
+    std::fprintf(stderr, "-- test_scan_spaced_ambig_vs_reference\n");
+
+    struct TestCase { uint32_t mask; int t, k; };
+    TestCase cases[] = {
+        {MASK_K8_T13_CODING, 13, 8},
+        {MASK_K9_T15_OPTIMAL, 15, 9},
+        {MASK_K11_T18_CODING, 18, 11},
+        {MASK_K12_T21_OPTIMAL, 21, 12},
+    };
+
+    // Test sequences with various degenerate patterns
+    std::string seqs[] = {
+        "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT",   // clean
+        "ACGTRACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACG",   // R at pos 4
+        "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",   // all R
+        "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",   // all N
+        "ACGTACGTACGNACGTYACGTACGTWACGTACGTACGTACGTACGTAC",   // N, Y, W scattered
+        "ACGTACGTACGTACGTACGTACR",                            // short, R at end
+        "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+        "MACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACG",   // M at pos 48
+    };
+
+    for (const auto& tc : cases) {
+        std::vector<uint32_t> masks = {tc.mask};
+
+        for (const auto& seq : seqs) {
+            // Collect expanded k-mers from both implementations
+            std::map<uint32_t, std::set<uint32_t>> ref_expanded, new_expanded;
+            bool ref_multi = false, new_multi = false;
+
+            scan_spaced_ambig_reference<uint32_t>(tc.k, seq.data(), seq.size(), masks, tc.t,
+                [&](uint32_t pos, uint32_t kmer) { ref_expanded[pos].insert(kmer); },
+                [&](uint32_t pos, uint32_t base_kmer, const AmbigInfo* infos, int count) {
+                    expand_ambig_kmer_multi<uint32_t>(base_kmer, infos, count,
+                        [&](uint32_t exp) { ref_expanded[pos].insert(exp); });
+                }, &ref_multi, 16);
+
+            KmerScanner<uint32_t> scanner(tc.k);
+            scanner.scan_spaced_ambig(seq.data(), seq.size(), masks, tc.t,
+                [&](uint32_t pos, uint32_t kmer) { new_expanded[pos].insert(kmer); },
+                [&](uint32_t pos, uint32_t base_kmer, const AmbigInfo* infos, int count) {
+                    expand_ambig_kmer_multi<uint32_t>(base_kmer, infos, count,
+                        [&](uint32_t exp) { new_expanded[pos].insert(exp); });
+                }, &new_multi, 16);
+
+            CHECK_EQ(new_expanded.size(), ref_expanded.size());
+            for (const auto& [pos, kmers] : ref_expanded) {
+                auto it = new_expanded.find(pos);
+                CHECK(it != new_expanded.end());
+                if (it != new_expanded.end()) {
+                    CHECK_EQ(it->second.size(), kmers.size());
+                    CHECK(it->second == kmers);
+                }
+            }
+            CHECK_EQ(new_multi, ref_multi);
+        }
+    }
+}
+
 static void test_kmer_type_for() {
     // t=0 (contiguous): same as kmer_type_for_k
     CHECK_EQ(kmer_type_for(5, 0), (uint8_t)0);  // 10 bits -> uint16
@@ -425,6 +736,10 @@ int main() {
     test_scan_spaced_k8();
     test_scan_spaced_k9();
     test_kmer_type_for();
+    test_compute_extraction_runs();
+    test_extract_for_mask_all_templates();
+    test_scan_spaced_accumulator_vs_reference();
+    test_scan_spaced_ambig_vs_reference();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }
