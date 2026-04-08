@@ -1320,10 +1320,10 @@ ikafssn は SAM/BAM 出力に htslib を使用します。デフォルトでは�
 htslib のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o htslib-1.23.tar.bz2 \
-    https://github.com/samtools/htslib/releases/download/1.23/htslib-1.23.tar.bz2
-tar xf htslib-1.23.tar.bz2
-cd htslib-1.23
+curl -L -o htslib-1.23.1.tar.bz2 \
+    https://github.com/samtools/htslib/releases/download/1.23.1/htslib-1.23.1.tar.bz2
+tar xf htslib-1.23.1.tar.bz2
+cd htslib-1.23.1
 autoreconf -i
 ./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3
 make -j$(nproc)
@@ -1347,10 +1347,10 @@ Toolkit 内のビルドサブディレクトリ名 (例: `CMake-GCC1330-Release`
 Toolkit のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-public-release-30.1.0.tar.gz \
-    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.1.0.tar.gz
-tar xf ncbi-cxx-toolkit-public-release-30.1.0.tar.gz
-cd ncbi-cxx-toolkit-public-release-30.1.0
+curl -L -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.2.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.2.0
 patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch  # BLAST DB mmap のページキャッシュ汚染を防止
 ./cmake-configure \
     --without-debug \

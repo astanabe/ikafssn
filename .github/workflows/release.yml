@@ -142,7 +142,7 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.1.0-parasail2.6.2+degmatch-htslib1.23-v4
+          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-v1
 
       # ---- Build Parasail ----
 
@@ -169,10 +169,10 @@ jobs:
       - name: Build htslib
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          curl -L -o htslib-1.23.tar.bz2 \
-            https://github.com/samtools/htslib/releases/download/1.23/htslib-1.23.tar.bz2
-          tar xf htslib-1.23.tar.bz2
-          cd htslib-1.23
+          curl -L -o htslib-1.23.1.tar.bz2 \
+            https://github.com/samtools/htslib/releases/download/1.23.1/htslib-1.23.1.tar.bz2
+          tar xf htslib-1.23.1.tar.bz2
+          cd htslib-1.23.1
           autoreconf -i
           configure_args=(--prefix="${GITHUB_WORKSPACE}/htslib"
             --disable-libcurl --disable-gcs --disable-s3)
@@ -190,10 +190,10 @@ jobs:
       - name: Build NCBI C++ Toolkit
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          curl -L -o ncbi-cxx-toolkit-public-release-30.1.0.tar.gz \
-            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.1.0.tar.gz
-          tar xf ncbi-cxx-toolkit-public-release-30.1.0.tar.gz
-          cd ncbi-cxx-toolkit-public-release-30.1.0
+          curl -L -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
+            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.2.0.tar.gz
+          tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
+          cd ncbi-cxx-toolkit-public-release-30.2.0
           patch -p1 < "${GITHUB_WORKSPACE}/patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch"
           if [ "$(uname)" = "Darwin" ]; then
             export CFLAGS="-I${HOMEBREW_PREFIX}/include"

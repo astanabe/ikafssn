@@ -1324,10 +1324,10 @@ ikafssn uses htslib for SAM/BAM output. By default, CMake looks for htslib at `.
 To download, build, and install htslib into `./htslib`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o htslib-1.23.tar.bz2 \
-    https://github.com/samtools/htslib/releases/download/1.23/htslib-1.23.tar.bz2
-tar xf htslib-1.23.tar.bz2
-cd htslib-1.23
+curl -L -o htslib-1.23.1.tar.bz2 \
+    https://github.com/samtools/htslib/releases/download/1.23.1/htslib-1.23.1.tar.bz2
+tar xf htslib-1.23.1.tar.bz2
+cd htslib-1.23.1
 autoreconf -i
 ./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3
 make -j$(nproc)
@@ -1351,10 +1351,10 @@ The build subdirectory name within the toolkit (e.g. `CMake-GCC1330-Release`) is
 To download, build, and install the toolkit into `./ncbi-cxx-toolkit`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-public-release-30.1.0.tar.gz \
-    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.1.0.tar.gz
-tar xf ncbi-cxx-toolkit-public-release-30.1.0.tar.gz
-cd ncbi-cxx-toolkit-public-release-30.1.0
+curl -L -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.2.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.2.0
 patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
 ./cmake-configure \
     --without-debug \
