@@ -102,6 +102,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake dpkg-dev \
+            gcc-12 g++-12 \
             libtbb-dev liblmdb-dev libsqlite3-dev \
             libcurl4-openssl-dev libjsoncpp-dev \
             zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
@@ -130,11 +131,28 @@ jobs:
           dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
           dnf install -y gh
 
+      - name: Install GCC 13 toolset (EL 9)
+        if: matrix.el_ver == '9'
+        run: dnf install -y gcc-toolset-13-gcc-c++
+
       # ---- Environment ----
 
       - name: Set environment
         run: |
           echo "NPROC=$(nproc 2>/dev/null || sysctl -n hw.ncpu)" >> "$GITHUB_ENV"
+
+      - name: Use GCC 12 (Ubuntu 22.04)
+        if: matrix.ubuntu_ver == '22.04'
+        run: |
+          echo "CC=gcc-12" >> "$GITHUB_ENV"
+          echo "CXX=g++-12" >> "$GITHUB_ENV"
+
+      - name: Use GCC 13 (EL 9)
+        if: matrix.el_ver == '9'
+        run: |
+          echo "CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc" >> "$GITHUB_ENV"
+          echo "CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++" >> "$GITHUB_ENV"
+          echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "$GITHUB_PATH"
 
       - name: Set Homebrew paths (macOS)
         if: runner.os == 'macOS'
@@ -156,7 +174,7 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-v2
+          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-v3
 
       # ---- Build Parasail ----
 
