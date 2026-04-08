@@ -1202,7 +1202,7 @@ ikafssnindex -version
 
 ### Dependencies
 
-- C++17 compiler (GCC >= 10, Clang >= 12)
+- C++20 compiler (GCC >= 11, Clang >= 13)
 - CMake >= 3.16
 - NCBI C++ Toolkit (for BLAST DB access)
 - Intel TBB (for parallelization)
@@ -1356,6 +1356,7 @@ curl -L -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
 tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
 cd ncbi-cxx-toolkit-public-release-30.2.0
 patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
+export CXXFLAGS="-std=c++20"
 ./cmake-configure \
     --without-debug \
     --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
@@ -1372,7 +1373,7 @@ On macOS, the Homebrew include path must be visible to the compiler (for `lmdb.h
 
 ```bash
 export CFLAGS="-I$(brew --prefix)/include"
-export CXXFLAGS="-I$(brew --prefix)/include"
+export CXXFLAGS="-I$(brew --prefix)/include -std=c++20"
 patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
 ./cmake-configure \
     --without-debug \

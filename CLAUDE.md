@@ -89,7 +89,7 @@ ID and position postings are in separate files so Stage 1 never touches `.kpx`, 
 
 ### Key design conventions
 
-- **C++17**, CMake >= 3.16, little-endian only (Linux x86_64/aarch64)
+- **C++20**, CMake >= 3.16, little-endian only (Linux x86_64/aarch64)
 - k-mer values use direct-address tables (array index = k-mer integer value), no hash maps
 - Template dispatch on `KmerInt` type; CLI-side dispatch uses `kmer_type_for(k, t)` (bit-width-based: `2*k`; >16 bits → `uint32_t`); reader-side dispatch reads `kmer_type` from index header. No virtual calls in hot loops
 - Delta encoding uses LEB128 varint; position deltas reset at sequence boundaries (detected by checking if the corresponding ID delta is non-zero)

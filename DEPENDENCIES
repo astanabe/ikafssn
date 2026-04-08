@@ -34,6 +34,21 @@ Ubuntu 22.04 (x86_64 / aarch64):
   Note: ikafssnhttpd is not available on Ubuntu 22.04
   (Drogon is not packaged for this release).
 
+EL 9 / EL 10 (x86_64):
+
+  tbb
+  lmdb-libs
+  sqlite-libs
+  libcurl
+  jsoncpp
+  zlib
+  bzip2-libs
+  xz-libs
+  libdeflate
+
+  Note: ikafssnhttpd is not available on EL 9/10
+  (Drogon is not packaged for these releases).
+
 macOS 26 (aarch64, Homebrew):
 
   tbb
@@ -50,7 +65,7 @@ Build dependencies (from source)
 
 Compiler and tools:
 
-  C++17 compiler (GCC >= 10 or Clang >= 12)
+  C++20 compiler (GCC >= 11 or Clang >= 13)
   CMake >= 3.16
 
 System packages — Ubuntu 24.04 (x86_64 / aarch64):
@@ -74,6 +89,20 @@ System packages — Ubuntu 22.04 (x86_64 / aarch64):
 
   Note: ikafssnhttpd cannot be built on Ubuntu 22.04
   (Drogon is not packaged for this release). Build with -DBUILD_HTTPD=OFF.
+
+System packages — EL 9 / EL 10 (x86_64):
+
+  gcc-c++ cmake make
+  tbb-devel lmdb-devel sqlite-devel
+  libcurl-devel jsoncpp-devel
+  zlib-devel bzip2-devel xz-devel libdeflate-devel
+  openssl-devel libuuid-devel
+  autoconf automake libtool
+
+  Requires: epel-release and CRB (CodeReady Builder) repository enabled.
+
+  Note: ikafssnhttpd cannot be built on EL 9/10
+  (Drogon is not packaged for these releases). Build with -DBUILD_HTTPD=OFF.
 
 System packages — macOS (Homebrew):
 

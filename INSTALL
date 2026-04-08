@@ -33,7 +33,36 @@ Verify:
   ikafssnindex --version
 
 
-A2. macOS 26 Tahoe (Homebrew)
+A2. EL 9 / EL 10 (.rpm package)
+---------------------------------
+
+Pre-built .rpm packages are available for EL 9 (AlmaLinux/Rocky/RHEL 9)
+and EL 10 (AlmaLinux/Rocky/RHEL 10) on x86_64.
+Download the appropriate .rpm file from the GitHub Releases page:
+
+  https://github.com/astanabe/ikafssn/releases
+
+Package naming convention:
+
+  ikafssn-<version>-nohttpd.el<ver>.x86_64.rpm
+
+Examples:
+  ikafssn-0.1.2026.04.08-nohttpd.el9.x86_64.rpm
+  ikafssn-0.1.2026.04.08-nohttpd.el10.x86_64.rpm
+
+Install the package:
+
+  sudo dnf install ./ikafssn-<version>-nohttpd.el<ver>.x86_64.rpm
+
+Note: EL packages do not include ikafssnhttpd (Drogon is not available
+on these distributions).
+
+Verify:
+
+  ikafssnindex --version
+
+
+A3. macOS 26 Tahoe (Homebrew)
 -------------------------------
 
 On macOS 26 (Tahoe) with Apple Silicon (aarch64), install via the
@@ -46,45 +75,6 @@ This installs pre-built bottles when available, or builds from source
 as a fallback.
 
 Verify:
-
-  ikafssnindex --version
-
-
-A3. Pre-built tarball (manual installation)
----------------------------------------------
-
-1. Install runtime dependencies
-
-Ubuntu 24.04 (x86_64 / aarch64):
-
-  sudo apt-get install -y \
-    libtbb12 liblmdb0 libsqlite3-0 \
-    libcurl4 libjsoncpp25 \
-    zlib1g libbz2-1.0 liblzma5 libdeflate0
-
-  For ikafssnhttpd (Linux only):
-
-    sudo apt-get install -y libdrogon-dev
-
-Ubuntu 22.04 (x86_64 / aarch64):
-
-  sudo apt-get install -y \
-    libtbb12 liblmdb0 libsqlite3-0 \
-    libcurl4 libjsoncpp24 \
-    zlib1g libbz2-1.0 liblzma5 libdeflate0
-
-  Note: ikafssnhttpd is not available on Ubuntu 22.04.
-
-macOS 26 (aarch64):
-
-  brew install tbb lmdb sqlite3 curl jsoncpp xz libdeflate openssl@3
-
-2. Extract and install binaries
-
-  tar xf ikafssn-<version>-<platform>.tar.xz
-  cp ikafssn-<version>-<platform>/ikafssn* /usr/local/bin/
-
-3. Verify installation
 
   ikafssnindex --version
 
@@ -120,6 +110,22 @@ Ubuntu 22.04 (x86_64 / aarch64):
 
   Note: ikafssnhttpd cannot be built on Ubuntu 22.04 (Drogon is not
   packaged for this release). Build with -DBUILD_HTTPD=OFF.
+
+EL 9 / EL 10 (x86_64):
+
+  sudo dnf install -y epel-release
+  sudo dnf install -y 'dnf-command(config-manager)' || true
+  sudo dnf config-manager --set-enabled crb || true
+  sudo dnf install -y \
+    gcc-c++ cmake make \
+    tbb-devel lmdb-devel sqlite-devel \
+    libcurl-devel jsoncpp-devel \
+    zlib-devel bzip2-devel xz-devel libdeflate-devel \
+    openssl-devel libuuid-devel \
+    autoconf automake libtool
+
+  Note: ikafssnhttpd cannot be built on EL 9/10 (Drogon is not
+  packaged for these releases). Build with -DBUILD_HTTPD=OFF.
 
 macOS (Homebrew):
 
@@ -178,6 +184,7 @@ NCBI C++ Toolkit:
   tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
   cd ncbi-cxx-toolkit-public-release-30.2.0
   patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
+  export CXXFLAGS="-std=c++20"
   ./cmake-configure \
     --without-debug \
     --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
@@ -189,7 +196,7 @@ NCBI C++ Toolkit:
 
   On macOS:
     export CFLAGS="-I$(brew --prefix)/include"
-    export CXXFLAGS="-I$(brew --prefix)/include"
+    export CXXFLAGS="-I$(brew --prefix)/include -std=c++20"
     (apply the same patch as above, then run cmake-configure:)
     cd CMake-Clang*/build
     make -j$(sysctl -n hw.ncpu)

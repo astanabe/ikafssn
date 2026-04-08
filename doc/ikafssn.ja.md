@@ -1198,7 +1198,7 @@ ikafssnindex -version
 
 ### 依存関係
 
-- C++17 コンパイラ (GCC >= 10, Clang >= 12)
+- C++20 コンパイラ (GCC >= 11, Clang >= 13)
 - CMake >= 3.16
 - NCBI C++ Toolkit (BLAST DB アクセス用)
 - Intel TBB (並列化用)
@@ -1352,6 +1352,7 @@ curl -L -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
 tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
 cd ncbi-cxx-toolkit-public-release-30.2.0
 patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch  # BLAST DB mmap のページキャッシュ汚染を防止
+export CXXFLAGS="-std=c++20"
 ./cmake-configure \
     --without-debug \
     --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
@@ -1368,7 +1369,7 @@ macOS では、Homebrew の include パスをコンパイラに認識させる�
 
 ```bash
 export CFLAGS="-I$(brew --prefix)/include"
-export CXXFLAGS="-I$(brew --prefix)/include"
+export CXXFLAGS="-I$(brew --prefix)/include -std=c++20"
 patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch  # BLAST DB mmap のページキャッシュ汚染を防止
 ./cmake-configure \
     --without-debug \

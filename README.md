@@ -88,7 +88,7 @@ ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db mydb > matche
 
 ## Dependencies
 
-- C++17 compiler (GCC >= 10, Clang >= 12)
+- C++20 compiler (GCC >= 11, Clang >= 13)
 - CMake >= 3.16
 - NCBI C++ Toolkit (for BLAST DB access)
 - Intel TBB (for parallelization)

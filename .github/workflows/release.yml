@@ -142,7 +142,7 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-v1
+          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-v2
 
       # ---- Build Parasail ----
 
@@ -197,7 +197,9 @@ jobs:
           patch -p1 < "${GITHUB_WORKSPACE}/patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch"
           if [ "$(uname)" = "Darwin" ]; then
             export CFLAGS="-I${HOMEBREW_PREFIX}/include"
-            export CXXFLAGS="-I${HOMEBREW_PREFIX}/include"
+            export CXXFLAGS="-I${HOMEBREW_PREFIX}/include -std=c++20"
+          else
+            export CXXFLAGS="-std=c++20"
           fi
           ./cmake-configure \
             --without-debug \
