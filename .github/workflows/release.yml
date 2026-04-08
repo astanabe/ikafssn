@@ -131,9 +131,9 @@ jobs:
           dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
           dnf install -y gh
 
-      - name: Install GCC 13 toolset (EL 9)
+      - name: Install GCC 12 toolset (EL 9)
         if: matrix.el_ver == '9'
-        run: dnf install -y gcc-toolset-13-gcc-c++
+        run: dnf install -y gcc-toolset-12-gcc-c++
 
       # ---- Environment ----
 
@@ -147,12 +147,12 @@ jobs:
           echo "CC=gcc-12" >> "$GITHUB_ENV"
           echo "CXX=g++-12" >> "$GITHUB_ENV"
 
-      - name: Use GCC 13 (EL 9)
+      - name: Use GCC 12 (EL 9)
         if: matrix.el_ver == '9'
         run: |
-          echo "CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc" >> "$GITHUB_ENV"
-          echo "CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++" >> "$GITHUB_ENV"
-          echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "$GITHUB_PATH"
+          echo "CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc" >> "$GITHUB_ENV"
+          echo "CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++" >> "$GITHUB_ENV"
+          echo "/opt/rh/gcc-toolset-12/root/usr/bin" >> "$GITHUB_PATH"
 
       - name: Set Homebrew paths (macOS)
         if: runner.os == 'macOS'
@@ -174,7 +174,7 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-v3
+          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-v4
 
       # ---- Build Parasail ----
 
