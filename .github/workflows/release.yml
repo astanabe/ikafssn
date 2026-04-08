@@ -158,9 +158,8 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/parasail" \
             -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTING=OFF \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-          make -j"${NPROC}"
+          make -j"${NPROC}" parasail
           make install
 
       # ---- Build htslib ----
