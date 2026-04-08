@@ -2,6 +2,8 @@
 #include "io/volume_discovery.hpp"
 #include "index/index_builder.hpp"
 #include "index/index_filter.hpp"
+#include "index/kix_format.hpp"
+#include "index/ksx_format.hpp"
 #include "core/config.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/types.hpp"
@@ -14,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <set>
 #include <string>
 #include <unistd.h>
@@ -29,6 +32,143 @@
 
 using namespace ikafssn;
 
+// Result of validating existing index files against a BLAST DB volume.
+enum class IndexStatus {
+    kNotFound,   // No complete index files exist (needs building)
+    kValid,      // Index exists and matches BLAST DB
+    kMismatch    // Index exists but metadata doesn't match BLAST DB
+};
+
+struct IndexValidation {
+    IndexStatus status = IndexStatus::kNotFound;
+    std::string detail;  // mismatch description (for error messages)
+};
+
+// Validate existing index files for a volume against the BLAST DB.
+// Checks: file existence, header validity, num_sequences, total_bases.
+// suffix: "" for final files (.kix), ".tmp" for temp files (.kix.tmp).
+static IndexValidation validate_existing_index(
+    const std::string& output_prefix,
+    const std::string& vol_path,
+    int k, uint8_t t, uint8_t template_type,
+    bool skip_kpx,
+    const char* suffix = "") {
+
+    IndexValidation result;
+    std::string kix_path = output_prefix + ".kix" + suffix;
+    std::string ksx_path = output_prefix + ".ksx" + suffix;
+
+    // Check .kix exists and read header
+    FILE* fp = std::fopen(kix_path.c_str(), "rb");
+    if (!fp) return result; // kNotFound
+    KixHeader kix_hdr{};
+    bool ok = (std::fread(&kix_hdr, sizeof(kix_hdr), 1, fp) == 1);
+    std::fclose(fp);
+    if (!ok) return result; // kNotFound (truncated file)
+
+    if (std::memcmp(kix_hdr.magic, KIX_MAGIC, 4) != 0) return result;
+    if (kix_hdr.format_version != KIX_FORMAT_VERSION) return result;
+
+    // Check .ksx exists, read header + seq_lengths to compute total_bases
+    fp = std::fopen(ksx_path.c_str(), "rb");
+    if (!fp) return result; // kNotFound
+    KsxHeader ksx_hdr{};
+    ok = (std::fread(&ksx_hdr, sizeof(ksx_hdr), 1, fp) == 1);
+    if (!ok) { std::fclose(fp); return result; }
+
+    if (std::memcmp(ksx_hdr.magic, KSX_MAGIC, 4) != 0) { std::fclose(fp); return result; }
+    if (ksx_hdr.format_version != KSX_FORMAT_VERSION) { std::fclose(fp); return result; }
+
+    uint32_t ksx_nseq = ksx_hdr.num_sequences;
+    std::vector<uint32_t> seq_lengths(ksx_nseq);
+    if (ksx_nseq > 0) {
+        size_t read_count = std::fread(seq_lengths.data(), sizeof(uint32_t), ksx_nseq, fp);
+        if (read_count != ksx_nseq) { std::fclose(fp); return result; }
+    }
+    std::fclose(fp);
+
+    uint64_t ksx_total_bases = 0;
+    for (uint32_t i = 0; i < ksx_nseq; i++) {
+        ksx_total_bases += seq_lengths[i];
+    }
+
+    // Check .kpx exists (if required)
+    if (!skip_kpx) {
+        std::string kpx_path = output_prefix + ".kpx" + suffix;
+        if (!std::filesystem::exists(kpx_path)) return result; // kNotFound
+    }
+
+    // At this point, all index files exist with valid headers.
+    // Now compare against BLAST DB.
+    BlastDbReader db;
+    if (!db.open(vol_path)) {
+        result.status = IndexStatus::kMismatch;
+        result.detail = "cannot open BLAST DB '" + vol_path + "' for validation";
+        return result;
+    }
+    uint32_t db_nseq = db.num_sequences();
+    uint64_t db_total_bases = db.total_length();
+
+    // Check k, t, template_type
+    if (kix_hdr.k != static_cast<uint8_t>(k) ||
+        kix_hdr.t != t ||
+        kix_hdr.template_type != template_type) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "%s: index parameters (k=%d, t=%d, template_type=%d) do not match "
+            "requested (k=%d, t=%d, template_type=%d)",
+            kix_path.c_str(),
+            kix_hdr.k, kix_hdr.t, kix_hdr.template_type,
+            k, t, template_type);
+        result.status = IndexStatus::kMismatch;
+        result.detail = buf;
+        return result;
+    }
+
+    // Check num_sequences
+    if (kix_hdr.num_sequences != db_nseq || ksx_nseq != db_nseq) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "%s: num_sequences=%u but BLAST DB '%s' has %u",
+            kix_path.c_str(), kix_hdr.num_sequences,
+            vol_path.c_str(), db_nseq);
+        result.status = IndexStatus::kMismatch;
+        result.detail = buf;
+        return result;
+    }
+
+    // Check total_bases
+    if (ksx_total_bases != db_total_bases) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "%s: total_bases=%lu but BLAST DB '%s' has %lu",
+            ksx_path.c_str(), static_cast<unsigned long>(ksx_total_bases),
+            vol_path.c_str(), static_cast<unsigned long>(db_total_bases));
+        result.status = IndexStatus::kMismatch;
+        result.detail = buf;
+        return result;
+    }
+
+    result.status = IndexStatus::kValid;
+    return result;
+}
+
+// Remove .tmp files for a volume prefix.
+static void cleanup_tmp_files(const std::string& output_prefix, bool skip_kpx,
+                              const Logger& logger) {
+    auto remove_tmp = [&logger](const std::string& path) {
+        if (std::filesystem::exists(path)) {
+            std::remove(path.c_str());
+            logger.info("Removed incomplete temp file: %s", path.c_str());
+        }
+    };
+    remove_tmp(output_prefix + ".kix.tmp");
+    remove_tmp(output_prefix + ".ksx.tmp");
+    if (!skip_kpx) {
+        remove_tmp(output_prefix + ".kpx.tmp");
+    }
+}
+
 static void print_usage(const char* prog, const std::string& default_mem) {
     print_version_header("ikafssnindex");
     std::fprintf(stderr,
@@ -42,6 +182,9 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         1 = Stage 1 only (skip .kpx generation)\n"
         "                         2 = Stage 1+2 (default)\n"
         "                         3 = Stage 1+2+3 (same as 2 for index)\n"
+        "  -rebuild <0|1>         Rebuild mode (default: 0)\n"
+        "                         0 = skip volumes with valid existing indexes\n"
+        "                         1 = always rebuild all volumes from scratch\n"
         "  -memory_limit <size>   Memory limit (default: %s = half of RAM)\n"
         "                         Accepts K, M, G suffixes\n"
         "  -max_freq_build <num>  Exclude k-mers with cross-volume count > threshold\n"
@@ -185,6 +328,12 @@ int main(int argc, char* argv[]) {
     int openvol = cli.get_int("-openvol", 1);
     if (openvol < 1) openvol = 1;
 
+    int rebuild_mode = cli.get_int("-rebuild", 0);
+    if (rebuild_mode != 0 && rebuild_mode != 1) {
+        std::fprintf(stderr, "Error: -rebuild must be 0 or 1\n");
+        return 1;
+    }
+
     int max_degen_expand = cli.get_int("-max_degen_expand", 4);
     if (max_degen_expand < 0 || max_degen_expand > 16) {
         std::fprintf(stderr, "Error: -max_degen_expand must be between 0 and 16\n");
@@ -322,7 +471,96 @@ int main(int argc, char* argv[]) {
             vol_prefixes[vi] = index_file_stem(out_dir, vol_basenames[vi], k, spaced_t, cur_tt);
         }
 
+        // --- Resume check: determine which volumes to skip ---
+        std::vector<bool> skip_volume(total_volumes, false);
+        bool build_skipped = false;  // set when all volumes are skipped
+
+        if (rebuild_mode == 0) {
+            // Validate each volume's existing index
+            std::vector<IndexValidation> validations(total_volumes);
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                validations[vi] = validate_existing_index(vol_prefixes[vi], vol_paths[vi],
+                    k, spaced_t, cur_tt, config.skip_kpx);
+            }
+
+            // Check for mismatches — error out immediately
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                if (validations[vi].status == IndexStatus::kMismatch) {
+                    std::fprintf(stderr,
+                        "Error: existing index does not match BLAST DB:\n  %s\n"
+                        "Delete the mismatched index file(s) or re-run with -rebuild 1\n",
+                        validations[vi].detail.c_str());
+                    return 1;
+                }
+            }
+
+            if (freq_filter_active) {
+                // With cross-volume filtering: skip only if ALL volumes have
+                // valid final files AND .khx exists (entire pipeline completed).
+                bool all_final_valid = true;
+                for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                    if (validations[vi].status != IndexStatus::kValid) {
+                        all_final_valid = false;
+                        break;
+                    }
+                }
+                std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, cur_tt);
+                if (all_final_valid && std::filesystem::exists(khx_path)) {
+                    logger.info("All %d volumes have valid indexes and .khx exists; "
+                                "skipping build and filter (-rebuild 0)",
+                                total_volumes);
+                    build_skipped = true;
+                } else {
+                    // Not all final+.khx: check .tmp files for per-volume resume.
+                    // Filter needs .tmp from ALL volumes, but we can reuse valid .tmp
+                    // and only rebuild the missing/invalid ones.
+                    for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                        auto tmp_val = validate_existing_index(vol_prefixes[vi], vol_paths[vi],
+                            k, spaced_t, cur_tt, config.skip_kpx, ".tmp");
+                        if (tmp_val.status == IndexStatus::kValid) {
+                            skip_volume[vi] = true;
+                            logger.info("Volume %d/%d (%s): valid .tmp index exists, "
+                                        "skipping build (-rebuild 0)",
+                                        vi + 1, total_volumes, vol_basenames[vi].c_str());
+                        } else {
+                            // Invalid or missing .tmp — clean up and rebuild
+                            cleanup_tmp_files(vol_prefixes[vi], config.skip_kpx, logger);
+                        }
+                    }
+                }
+            } else {
+                // Without cross-volume filtering: per-volume resume.
+                for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                    if (validations[vi].status == IndexStatus::kValid) {
+                        skip_volume[vi] = true;
+                        logger.info("Volume %d/%d (%s): valid index exists, skipping (-rebuild 0)",
+                                    vi + 1, total_volumes, vol_basenames[vi].c_str());
+                    } else {
+                        cleanup_tmp_files(vol_prefixes[vi], config.skip_kpx, logger);
+                    }
+                }
+
+                // Check if all volumes are already done
+                bool all_skipped = true;
+                for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                    if (!skip_volume[vi]) { all_skipped = false; break; }
+                }
+                if (all_skipped) {
+                    logger.info("All %d volumes have valid indexes; skipping build (-rebuild 0)",
+                                total_volumes);
+                    build_skipped = true;
+                }
+            }
+        } else {
+            // rebuild_mode == 1: clean up any .tmp files
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                cleanup_tmp_files(vol_prefixes[vi], config.skip_kpx, logger);
+            }
+        }
+
+        if (!build_skipped) {
         // Process volumes via TBB task_group with concurrency limited by -openvol.
+        {
         std::atomic<bool> any_error{false};
         std::vector<std::string> error_messages(total_volumes);
         std::mutex log_mutex;
@@ -334,6 +572,8 @@ int main(int argc, char* argv[]) {
 
         tbb::task_group tg;
         for (uint16_t vi = 0; vi < total_volumes; vi++) {
+            if (skip_volume[vi]) continue;
+
             // Wait until a slot is available
             {
                 std::unique_lock<std::mutex> lock(vol_mutex);
@@ -400,6 +640,8 @@ int main(int argc, char* argv[]) {
             }
             return 1;
         }
+        } // end volume processing block
+        } // end if (!build_skipped)
 
         // Write .kvx manifest for this template type
         {
@@ -421,7 +663,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Post-build cross-volume frequency filtering for this template type
-        if (freq_filter_active) {
+        if (freq_filter_active && !build_skipped) {
             std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, cur_tt);
 
             if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,

@@ -34,6 +34,9 @@ public:
     // Number of sequences in this volume.
     uint32_t num_sequences() const;
 
+    // Total length (sum of all sequence lengths) in bases.
+    uint64_t total_length() const;
+
     // Sequence length in bases for given OID.
     uint32_t seq_length(uint32_t oid) const;
 
