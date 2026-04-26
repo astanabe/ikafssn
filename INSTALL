@@ -72,31 +72,32 @@ Verify:
   ikafssnindex --version
 
 
-A4. Conda (.conda package)
-----------------------------
+A4. Conda (channel)
+---------------------
 
-Pre-built .conda packages are available for linux-64, linux-aarch64,
-and osx-arm64 from the GitHub Releases page:
+ikafssn is distributed through a dedicated Conda channel hosted at
+https://conda.ikafssn.org. Pre-built .conda packages are available for
+linux-64, linux-aarch64, and osx-arm64. The Linux variants target glibc
+2.34 or newer (RHEL 9, Ubuntu 22.04, Debian 12 and later); the
+osx-arm64 variant targets macOS 11 or newer.
 
-  https://github.com/astanabe/ikafssn/releases
+Install into an existing miniforge / miniconda environment with mamba
+(or conda); runtime dependencies are pulled from conda-forge:
 
-The Linux variants target glibc 2.34 or newer (RHEL 9, Ubuntu 22.04,
-Debian 12 and later); the osx-arm64 variant targets macOS 11 or newer.
+  mamba install -c https://conda.ikafssn.org -c conda-forge ikafssn
 
-Package naming convention:
+Or to create a dedicated environment:
 
-  ikafssn_<version>_<subdir>.conda
+  mamba create -n ikafssn -c https://conda.ikafssn.org -c conda-forge ikafssn
 
-where <subdir> is linux-64, linux-aarch64, or osx-arm64.
+The channel hosts repodata.json index files only (via GitHub Pages on
+astanabe/conda-ikafssn); the .conda binaries themselves are streamed
+directly from this project's GitHub Releases via the CEP-15 base_url
+mechanism.
 
-Examples:
-  ikafssn_0.1.2026.04.08_linux-64.conda
-  ikafssn_0.1.2026.04.08_osx-arm64.conda
-
-Install into an existing conda environment with mamba (or conda);
-runtime dependencies are pulled from conda-forge:
-
-  mamba install -c conda-forge ./ikafssn_<version>_<subdir>.conda
+Requirements:
+  - conda 23.7+ or micromamba 2.0+
+    (older clients silently ignore base_url and fail with HTTP 404)
 
 Verify:
 

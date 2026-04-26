@@ -1204,23 +1204,26 @@ brew install ikafssn
 
 ビルド済み Bottle が利用可能な場合はそれがインストールされ、利用できない場合はソースからビルドされます。
 
-### Conda (`.conda` パッケージ)
+### Conda (チャンネル)
 
-`linux-64`、`linux-aarch64`、`osx-arm64` 向けのビルド済み `.conda` パッケージが [GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから提供されています。Linux 版は glibc 2.34 以上 (RHEL 9 / Ubuntu 22.04 / Debian 12 以降) を、`osx-arm64` 版は macOS 11 以上を対象としています。
+ikafssn は専用の Conda チャンネル `https://conda.ikafssn.org` 経由で配布されます。`linux-64`、`linux-aarch64`、`osx-arm64` 向けのビルド済み `.conda` パッケージが提供されており、Linux 版は glibc 2.34 以上 (RHEL 9 / Ubuntu 22.04 / Debian 12 以降) を、`osx-arm64` 版は macOS 11 以上を対象としています。
 
-パッケージ命名規則:
-
-```
-ikafssn_<version>_<subdir>.conda
-```
-
-`<subdir>` は `linux-64`、`linux-aarch64`、`osx-arm64` のいずれかです。
-
-既存の conda 環境に `mamba` (または `conda`) でインストールします。実行時の依存パッケージは `conda-forge` から取得されます:
+既存の miniforge / miniconda 環境に `mamba` (または `conda`) でインストールします。実行時の依存パッケージは `conda-forge` から取得されます:
 
 ```bash
-mamba install -c conda-forge ./ikafssn_<version>_<subdir>.conda
+mamba install -c https://conda.ikafssn.org -c conda-forge ikafssn
 ```
+
+専用環境を作成する場合:
+
+```bash
+mamba create -n ikafssn -c https://conda.ikafssn.org -c conda-forge ikafssn
+```
+
+このチャンネル自体は `repodata.json` インデックスのみを配信しています ([astanabe/conda-ikafssn](https://github.com/astanabe/conda-ikafssn) リポジトリを GitHub Pages で公開)。実際の `.conda` バイナリは [CEP-15 `base_url`](https://github.com/conda/ceps/blob/main/cep-0015.md) 機構により本プロジェクトの [GitHub Releases](https://github.com/astanabe/ikafssn/releases) から直接ダウンロードされます。
+
+要件:
+- `conda` 23.7 以上 または `micromamba` 2.0 以上 (これより古いクライアントは `base_url` を無視するため、パッケージダウンロード時に HTTP 404 で失敗します)。
 
 ### インストールの確認
 

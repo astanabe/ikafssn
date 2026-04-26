@@ -59,22 +59,31 @@ macOS 26 (aarch64, Homebrew):
 
   Note: libuuid is provided by libSystem on macOS.
 
-Conda (linux-64, linux-aarch64, osx-arm64; conda-forge channel):
+Conda channel (https://conda.ikafssn.org; runtime deps from conda-forge):
 
-  tbb
-  lmdb
-  libsqlite
-  libcurl
-  jsoncpp
-  openssl
-  libuuid  (linux only; osx-arm64 uses libSystem)
-  zlib
-  bzip2
-  xz
-  libdeflate
+  Subdirs available: linux-64, linux-aarch64, osx-arm64
+
+  Runtime packages (pulled from conda-forge during install):
+    tbb
+    lmdb
+    libsqlite
+    libcurl
+    jsoncpp
+    openssl
+    libuuid  (linux only; osx-arm64 uses libSystem)
+    zlib
+    bzip2
+    xz
+    libdeflate
 
   Linux baseline: glibc 2.34 (RHEL 9 / Ubuntu 22.04 / Debian 12 and newer).
   osx-arm64 baseline: macOS 11.
+
+  The channel itself only hosts repodata.json index files (CEP-15
+  base_url); the .conda binaries are served from ikafssn's
+  GitHub Releases.
+
+  Client requirements: conda 23.7+ or micromamba 2.0+ (for base_url).
 
 Build dependencies (from source)
 ----------------------------------

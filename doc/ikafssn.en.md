@@ -1208,23 +1208,26 @@ brew install ikafssn
 
 This installs pre-built bottles when available, or builds from source as a fallback.
 
-### Conda (`.conda` package)
+### Conda (channel)
 
-Pre-built `.conda` packages are available for `linux-64`, `linux-aarch64`, and `osx-arm64` from the [GitHub Releases](https://github.com/astanabe/ikafssn/releases) page. The Linux variants target glibc 2.34 or newer (RHEL 9, Ubuntu 22.04, Debian 12 and later); the `osx-arm64` variant targets macOS 11 or newer.
+ikafssn is distributed through a dedicated Conda channel hosted at `https://conda.ikafssn.org`. Pre-built `.conda` packages are available for `linux-64`, `linux-aarch64`, and `osx-arm64`. The Linux variants target glibc 2.34 or newer (RHEL 9, Ubuntu 22.04, Debian 12 and later); the `osx-arm64` variant targets macOS 11 or newer.
 
-Package naming convention:
-
-```
-ikafssn_<version>_<subdir>.conda
-```
-
-where `<subdir>` is `linux-64`, `linux-aarch64`, or `osx-arm64`.
-
-Install the package into an existing conda environment with `mamba` (or `conda`); runtime dependencies are pulled from `conda-forge`:
+Install into an existing miniforge / miniconda environment with `mamba` (or `conda`); runtime dependencies are pulled from `conda-forge`:
 
 ```bash
-mamba install -c conda-forge ./ikafssn_<version>_<subdir>.conda
+mamba install -c https://conda.ikafssn.org -c conda-forge ikafssn
 ```
+
+Or to create a dedicated environment:
+
+```bash
+mamba create -n ikafssn -c https://conda.ikafssn.org -c conda-forge ikafssn
+```
+
+The channel itself only hosts `repodata.json` index files (via GitHub Pages on [astanabe/conda-ikafssn](https://github.com/astanabe/conda-ikafssn)); the `.conda` binaries are streamed directly from this project's [GitHub Releases](https://github.com/astanabe/ikafssn/releases) page using the [CEP-15 `base_url`](https://github.com/conda/ceps/blob/main/cep-0015.md) mechanism.
+
+Requirements:
+- `conda` 23.7+ or `micromamba` 2.0+ (older clients silently ignore `base_url` and fail with HTTP 404 on package download).
 
 ### Verify installation
 
