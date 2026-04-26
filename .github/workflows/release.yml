@@ -161,21 +161,89 @@ jobs:
           version=$(grep 'set(IKAFSSN_VERSION' CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
           echo "IKAFSSN_VERSION=${version}" >> "$GITHUB_ENV"
 
+      # ---- Skip if the asset for this target already exists in the release ----
+
+      - name: Compute expected release asset filename
+        id: expected
+        shell: bash
+        run: |
+          suffix=""
+          if [ "${{ matrix.build_httpd }}" = "OFF" ]; then
+            case "${{ matrix.pkg_type }}" in
+              deb)            suffix="_nohttpd" ;;
+              bottle|rpm|conda) suffix="-nohttpd" ;;
+            esac
+          fi
+          case "${{ matrix.pkg_type }}" in
+            deb)
+              case "${{ runner.arch }}" in
+                X64)   arch="amd64" ;;
+                ARM64) arch="arm64" ;;
+                *)     arch="${{ runner.arch }}" ;;
+              esac
+              filename="ikafssn_${IKAFSSN_VERSION}_ubuntu-${{ matrix.ubuntu_ver }}_${arch}${suffix}.deb"
+              ;;
+            rpm)
+              case "${{ runner.arch }}" in
+                X64)   arch="x86_64" ;;
+                ARM64) arch="aarch64" ;;
+                *)     arch="${{ runner.arch }}" ;;
+              esac
+              filename="ikafssn-${IKAFSSN_VERSION}${suffix}.el${{ matrix.el_ver }}.${arch}.rpm"
+              ;;
+            bottle)
+              filename="ikafssn-${IKAFSSN_VERSION}${suffix}.${{ matrix.bottle_tag }}.bottle.tar.gz"
+              ;;
+            conda)
+              # Conda uses an underscore between version and subdir, no suffix dash.
+              filename="ikafssn-nohttpd_${IKAFSSN_VERSION}_${{ matrix.conda_subdir }}.conda"
+              ;;
+            *)
+              echo "::error::unknown pkg_type ${{ matrix.pkg_type }}"
+              exit 1
+              ;;
+          esac
+          echo "filename=${filename}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Expected release asset: ${filename}"
+
+      - name: Check if release asset already exists
+        id: check_asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${IKAFSSN_VERSION}"
+          expected="${{ steps.expected.outputs.filename }}"
+          if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release ${tag} does not exist yet; will build."
+            exit 0
+          fi
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
+                --json assets --jq '.assets[].name' \
+              | grep -Fxq "${expected}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Asset ${expected} already attached to ${tag}; skipping build. Delete it from the release to force a rebuild."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Asset ${expected} not yet attached to ${tag}; will build."
+          fi
+
       - name: Use GCC 12 (Ubuntu 22.04)
-        if: matrix.ubuntu_ver == '22.04'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.ubuntu_ver == '22.04'
         run: |
           echo "CC=gcc-12" >> "$GITHUB_ENV"
           echo "CXX=g++-12" >> "$GITHUB_ENV"
 
       - name: Use GCC 12 (EL 9)
-        if: matrix.el_ver == '9'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.el_ver == '9'
         run: |
           echo "CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc" >> "$GITHUB_ENV"
           echo "CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++" >> "$GITHUB_ENV"
           echo "/opt/rh/gcc-toolset-12/root/usr/bin" >> "$GITHUB_PATH"
 
       - name: Set Homebrew paths (macOS)
-        if: runner.os == 'macOS' && matrix.pkg_type != 'conda'
+        if: steps.check_asset.outputs.exists != 'true' && runner.os == 'macOS' && matrix.pkg_type != 'conda'
         run: |
           HB=$(brew --prefix)
           echo "HOMEBREW_PREFIX=${HB}" >> "$GITHUB_ENV"
@@ -187,7 +255,7 @@ jobs:
       # ---- Cache source-built dependencies ----
 
       - name: Cache source-built dependencies
-        if: matrix.pkg_type != 'conda'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda'
         uses: actions/cache@v5
         id: deps-cache
         with:
@@ -200,7 +268,7 @@ jobs:
       # ---- Build Parasail ----
 
       - name: Build Parasail
-        if: matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
         run: |
           curl -L -o parasail-2.6.2.tar.gz \
             https://github.com/jeffdaily/parasail/archive/refs/tags/v2.6.2.tar.gz
@@ -220,7 +288,7 @@ jobs:
       # ---- Build htslib ----
 
       - name: Build htslib
-        if: matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
         run: |
           curl -L -o htslib-1.23.1.tar.bz2 \
             https://github.com/samtools/htslib/releases/download/1.23.1/htslib-1.23.1.tar.bz2
@@ -241,7 +309,7 @@ jobs:
       # ---- Build NCBI C++ Toolkit ----
 
       - name: Build NCBI C++ Toolkit
-        if: matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
         run: |
           curl -L -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
             https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.2.0.tar.gz
@@ -265,7 +333,7 @@ jobs:
       # ---- Detect NCBI build tag ----
 
       - name: Detect NCBI build tag
-        if: matrix.pkg_type != 'conda'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda'
         id: ncbi
         run: |
           build_tag=$(basename ncbi-cxx-toolkit/CMake-*/)
@@ -274,7 +342,7 @@ jobs:
       # ---- Build ikafssn ----
 
       - name: Build ikafssn
-        if: matrix.pkg_type != 'conda'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda'
         run: |
           cmake_args=(
             -DCMAKE_BUILD_TYPE=Release
@@ -287,7 +355,7 @@ jobs:
       # ---- Package DEB (Linux only) ----
 
       - name: Package DEB
-        if: matrix.pkg_type == 'deb'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'deb'
         run: |
           cd build
           cpack -G DEB
@@ -303,7 +371,7 @@ jobs:
       # ---- Package Bottle (macOS only) ----
 
       - name: Package Bottle
-        if: matrix.pkg_type == 'bottle'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'bottle'
         run: |
           version=$(grep 'set(IKAFSSN_VERSION' CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
           bottle_dir="ikafssn/${version}"
@@ -330,7 +398,7 @@ jobs:
       # ---- Package RPM (EL only) ----
 
       - name: Package RPM
-        if: matrix.pkg_type == 'rpm'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'rpm'
         run: |
           cd build
           cpack -G RPM
@@ -346,7 +414,7 @@ jobs:
       # ---- Package Conda (linux-64 / linux-aarch64 / osx-arm64) ----
 
       - name: Setup Miniforge (Conda)
-        if: matrix.pkg_type == 'conda'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'conda'
         uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-version: latest
@@ -354,13 +422,13 @@ jobs:
           channel-priority: strict
 
       - name: Install conda-build (Conda)
-        if: matrix.pkg_type == 'conda'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'conda'
         shell: bash -el {0}
         run: |
           mamba install -y conda-build
 
       - name: Build .conda package
-        if: matrix.pkg_type == 'conda'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'conda'
         shell: bash -el {0}
         run: |
           mkdir -p conda-out
@@ -371,7 +439,7 @@ jobs:
             recipe/
 
       - name: Rename .conda package
-        if: matrix.pkg_type == 'conda'
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'conda'
         run: |
           mkdir -p conda-dist
           src=$(find conda-out/${{ matrix.conda_subdir }} -maxdepth 1 -name '*.conda' | head -n 1)
@@ -386,6 +454,7 @@ jobs:
       # ---- Upload ----
 
       - name: Upload artifact
+        if: steps.check_asset.outputs.exists != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: package-${{ matrix.target }}
@@ -396,6 +465,7 @@ jobs:
             conda-dist/*.conda
 
       - name: Upload release asset
+        if: steps.check_asset.outputs.exists != 'true'
         run: |
           version="${IKAFSSN_VERSION}"
           tag="v${version}"
