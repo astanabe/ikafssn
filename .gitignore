@@ -22,5 +22,8 @@ drogon/
 # Homebrew tap (separate repository)
 homebrew-ikafssn/
 
+# Conda channel (separate repository)
+conda-ikafssn/
+
 # Claude Code conversation logs
 claude*.txt

@@ -499,3 +499,135 @@ jobs:
           gh release upload "${tag}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-conda-channel:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Read version
+        id: version
+        run: |
+          # Use the workflow_dispatch input rather than reading CMakeLists.txt
+          # so the channel always reflects the version that was just released.
+          echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release has all three .conda assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          missing=()
+          for subdir in linux-64 linux-aarch64 osx-arm64; do
+            asset="ikafssn_${{ steps.version.outputs.version }}_${subdir}.conda"
+            if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
+                  --json assets --jq '.assets[].name' | grep -Fxq "${asset}"; then
+              missing+=("${asset}")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::Missing release assets: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Checkout conda-ikafssn
+        uses: actions/checkout@v6
+        with:
+          repository: astanabe/conda-ikafssn
+          token: ${{ secrets.CONDA_IKAFSSN_TOKEN }}
+          path: conda-ikafssn
+
+      - name: Download .conda artifacts and regenerate repodata.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IKAFSSN_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v${IKAFSSN_VERSION}"
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/"
+          mkdir -p downloads
+          for subdir in linux-64 linux-aarch64 osx-arm64; do
+            asset="ikafssn_${IKAFSSN_VERSION}_${subdir}.conda"
+            gh release download "${tag}" --repo "${GITHUB_REPOSITORY}" \
+              --pattern "${asset}" --dir downloads
+          done
+
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import tarfile
+          import tempfile
+          import zipfile
+          from pathlib import Path
+
+          version = os.environ["IKAFSSN_VERSION"]
+          base_url = (
+              f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/"
+              f"download/v{version}/"
+          )
+
+          for subdir in ("linux-64", "linux-aarch64", "osx-arm64"):
+              fn = f"ikafssn_{version}_{subdir}.conda"
+              path = Path("downloads") / fn
+
+              data = path.read_bytes()
+              sha256 = hashlib.sha256(data).hexdigest()
+              md5 = hashlib.md5(data).hexdigest()
+              size = len(data)
+
+              # .conda is a zip containing info-*.tar.zst
+              with zipfile.ZipFile(path) as z:
+                  info_member = next(
+                      n for n in z.namelist() if n.startswith("info-")
+                          and n.endswith(".tar.zst")
+                  )
+                  z.extract(info_member, "extract")
+
+              with tempfile.TemporaryDirectory() as td:
+                  # zstandard is shipped with conda-build images; use cli.
+                  os.system(
+                      f"tar x --zstd -C {td} -f extract/{info_member}"
+                  )
+                  with open(Path(td) / "info" / "index.json") as f:
+                      idx = json.load(f)
+
+              repodata = {
+                  "info": {
+                      "subdir": subdir,
+                      "base_url": base_url,
+                  },
+                  "repodata_version": 2,
+                  "packages": {},
+                  "packages.conda": {
+                      fn: {
+                          "name": idx["name"],
+                          "version": idx["version"],
+                          "build": idx["build"],
+                          "build_number": idx["build_number"],
+                          "subdir": subdir,
+                          "depends": idx.get("depends", []),
+                          "md5": md5,
+                          "sha256": sha256,
+                          "size": size,
+                          "timestamp": idx.get("timestamp", 0),
+                      },
+                  },
+                  "removed": [],
+              }
+
+              out = Path("conda-ikafssn") / subdir / "repodata.json"
+              out.write_text(json.dumps(repodata, indent=2) + "\n")
+              print(f"wrote {out}")
+          PY
+
+      - name: Commit and push channel index
+        run: |
+          cd conda-ikafssn
+          git config user.name "ikafssn-release-bot"
+          git config user.email "noreply@ikafssn.org"
+          if git diff --quiet -- '*/repodata.json'; then
+            echo "::notice::repodata.json unchanged; nothing to commit."
+            exit 0
+          fi
+          git add */repodata.json
+          git commit -m "Update channel index for ikafssn v${{ steps.version.outputs.version }}"
+          git push origin HEAD:main
