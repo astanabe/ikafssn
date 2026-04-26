@@ -79,36 +79,55 @@ tar xf ncbi.tar.gz -C ncbi-src --strip-components=1
 cd ncbi-src
 patch -p1 < "${SRC_DIR}/patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch"
 
-# conda-build's cross toolchain provides a sysroot at
-# ${BUILD_PREFIX}/${HOST}/sysroot (e.g. .../x86_64-conda-linux-gnu/sysroot on
-# linux-64). The sysroot ships glibc 2.34 headers and stub libraries; the
-# host system glibc (e.g. Ubuntu 24.04's 2.39 with C23 strtol overload) must
-# never be consulted. Compute the sysroot path up front and pass it to all
-# downstream builds.
+# Compute the sysroot path used by the conda-build toolchain.
+#   - Linux: ${BUILD_PREFIX}/${HOST}/sysroot ships glibc 2.34 stub libraries.
+#     The host system glibc (e.g. Ubuntu 24.04's 2.39 with C23 strtol overload)
+#     must never be consulted.
+#   - macOS: there is no separate sysroot directory; conda-build instead
+#     exports CONDA_BUILD_SYSROOT pointing at the appropriate macOS SDK.
 SYSROOT=""
-if [ -n "${BUILD_PREFIX:-}" ] && [ -n "${HOST:-}" ] && \
-   [ -d "${BUILD_PREFIX}/${HOST}/sysroot" ]; then
-  SYSROOT="${BUILD_PREFIX}/${HOST}/sysroot"
+if [ "$(uname)" = "Darwin" ]; then
+  if [ -n "${CONDA_BUILD_SYSROOT:-}" ] && [ -d "${CONDA_BUILD_SYSROOT}" ]; then
+    SYSROOT="${CONDA_BUILD_SYSROOT}"
+  fi
+else
+  if [ -n "${BUILD_PREFIX:-}" ] && [ -n "${HOST:-}" ] && \
+     [ -d "${BUILD_PREFIX}/${HOST}/sysroot" ]; then
+    SYSROOT="${BUILD_PREFIX}/${HOST}/sysroot"
+  fi
 fi
 
-# NCBI's cmake-cfg-unix.sh derives CC_NAME from `$CC --version` (uppercased
-# first token). conda-build supplies CC=x86_64-conda-linux-gnu-cc which would
-# yield CC_NAME=X86_64-CONDA-LINUX-GNU-CC and cause cmkTool.sh to skip its
-# GCC-specific configuration (cmGCC.sh), producing a broken CMAKE_ARGS.
-#
-# Expose plain `gcc`/`g++` symlinks pointing at the conda-forge cross
-# compilers so NCBI sees CC_NAME=GCC and applies cmGCC.sh. Symlinks (rather
-# than wrapper scripts) are important: argv[0]="gcc" is set automatically,
-# and GCC walks argv[0]'s realpath to locate its libexec/cc1, so a
-# `exec -a gcc x86_64-conda-linux-gnu-cc` wrapper would break that lookup.
+# NCBI's cmake-cfg-unix.sh derives CC_NAME from `$CC --version`:
+#   - On Linux it uppercases the first token. conda-build supplies
+#     CC=x86_64-conda-linux-gnu-cc which would yield
+#     CC_NAME=X86_64-CONDA-LINUX-GNU-CC and cause cmkTool.sh to skip its
+#     GCC-specific configuration (cmGCC.sh), producing a broken CMAKE_ARGS.
+#   - On macOS it takes the second token of conda-forge's clang banner
+#     ("arm64-apple-darwin*-clang version X") which yields "version" and
+#     fails the same way.
+# Both cases are avoided by exposing plain `gcc`/`g++` (Linux) or
+# `clang`/`clang++` (macOS) symlinks: cmake-cfg-unix.sh's case statement
+# matches `clang*` on basename, and `gcc --version` prints "gcc (...) X"
+# whose first token is "gcc". Symlinks (rather than wrapper scripts) are
+# important on Linux: argv[0]="gcc" is set automatically, and GCC walks
+# argv[0]'s realpath to locate its libexec/cc1, so a wrapper that uses
+# `exec -a gcc x86_64-conda-linux-gnu-cc` would break that lookup.
+if [ "$(uname)" = "Darwin" ]; then
+  NCBI_C_BASENAME="clang"
+  NCBI_CXX_BASENAME="clang++"
+else
+  NCBI_C_BASENAME="gcc"
+  NCBI_CXX_BASENAME="g++"
+fi
+
 NCBI_SHIM_BIN="${SRC_DIR}/_ncbi_compiler_shim"
 mkdir -p "${NCBI_SHIM_BIN}"
 # Resolve to absolute paths so the symlinks are valid regardless of CWD.
 NCBI_SHIM_CC=$(command -v "${CC}")
 NCBI_SHIM_CXX=$(command -v "${CXX}")
-ln -sf "${NCBI_SHIM_CC}"  "${NCBI_SHIM_BIN}/gcc"
+ln -sf "${NCBI_SHIM_CC}"  "${NCBI_SHIM_BIN}/${NCBI_C_BASENAME}"
 ln -sf "${NCBI_SHIM_CC}"  "${NCBI_SHIM_BIN}/cc"
-ln -sf "${NCBI_SHIM_CXX}" "${NCBI_SHIM_BIN}/g++"
+ln -sf "${NCBI_SHIM_CXX}" "${NCBI_SHIM_BIN}/${NCBI_CXX_BASENAME}"
 ln -sf "${NCBI_SHIM_CXX}" "${NCBI_SHIM_BIN}/c++"
 
 NCBI_SAVED_CMAKE_ARGS="${CMAKE_ARGS:-}"
@@ -119,8 +138,8 @@ NCBI_SAVED_CFLAGS="${CFLAGS:-}"
 NCBI_SAVED_CXXFLAGS="${CXXFLAGS:-}"
 
 export PATH="${NCBI_SHIM_BIN}:${PATH}"
-export CC="gcc"
-export CXX="g++"
+export CC="${NCBI_C_BASENAME}"
+export CXX="${NCBI_CXX_BASENAME}"
 
 # conda-build exports CMAKE_ARGS pre-populated with -DCMAKE_AR, -DCMAKE_RANLIB,
 # --sysroot, -B build, etc. NCBI's cmake-cfg-unix.sh appends to $CMAKE_ARGS
@@ -132,19 +151,29 @@ unset CMAKE_ARGS
 # (matching ikafssn).
 export CXXFLAGS="${CXXFLAGS:-} -std=c++20"
 
-# Pass the sysroot through compiler/linker flags. The bare `gcc` symlink
-# doesn't auto-apply --sysroot the way conda-forge's `gcc_linux-64` activation
-# scripts do for the prefixed CC, so without this the host's /usr/include
-# would leak in (e.g. glibc-2.39 __isoc23_strtol → GLIBC_2.38 dependency).
+# Pass the sysroot through compiler/linker flags so the host system headers
+# never leak in (on Linux this prevents glibc-2.39 __isoc23_strtol from being
+# pulled in; on macOS this points clang at the conda-forge SDK).
 ncbi_extra_cmake_args=()
 if [ -n "${SYSROOT}" ]; then
-  ncbi_extra_cmake_args+=(
-    "-DCMAKE_SYSROOT=${SYSROOT}"
-    "-DCMAKE_C_FLAGS=--sysroot=${SYSROOT}"
-    "-DCMAKE_CXX_FLAGS=--sysroot=${SYSROOT}"
-    "-DCMAKE_EXE_LINKER_FLAGS=--sysroot=${SYSROOT}"
-    "-DCMAKE_SHARED_LINKER_FLAGS=--sysroot=${SYSROOT}"
-  )
+  if [ "$(uname)" = "Darwin" ]; then
+    ncbi_extra_cmake_args+=(
+      "-DCMAKE_OSX_SYSROOT=${SYSROOT}"
+    )
+    if [ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
+      ncbi_extra_cmake_args+=(
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
+      )
+    fi
+  else
+    ncbi_extra_cmake_args+=(
+      "-DCMAKE_SYSROOT=${SYSROOT}"
+      "-DCMAKE_C_FLAGS=--sysroot=${SYSROOT}"
+      "-DCMAKE_CXX_FLAGS=--sysroot=${SYSROOT}"
+      "-DCMAKE_EXE_LINKER_FLAGS=--sysroot=${SYSROOT}"
+      "-DCMAKE_SHARED_LINKER_FLAGS=--sysroot=${SYSROOT}"
+    )
+  fi
 fi
 
 ./cmake-configure \
@@ -181,7 +210,16 @@ fi
 cd "${SRC_DIR}"
 ikafssn_extra_cmake_args=()
 if [ -n "${SYSROOT}" ]; then
-  ikafssn_extra_cmake_args+=("-DCMAKE_SYSROOT=${SYSROOT}")
+  if [ "$(uname)" = "Darwin" ]; then
+    ikafssn_extra_cmake_args+=("-DCMAKE_OSX_SYSROOT=${SYSROOT}")
+    if [ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
+      ikafssn_extra_cmake_args+=(
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
+      )
+    fi
+  else
+    ikafssn_extra_cmake_args+=("-DCMAKE_SYSROOT=${SYSROOT}")
+  fi
 fi
 cmake -S . -B build-ikafssn \
   -DCMAKE_BUILD_TYPE=Release \
