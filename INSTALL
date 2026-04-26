@@ -79,6 +79,42 @@ Verify:
   ikafssnindex --version
 
 
+A4. Conda (.conda package)
+----------------------------
+
+Pre-built .conda packages are available for linux-64, linux-aarch64,
+and osx-arm64 from the GitHub Releases page:
+
+  https://github.com/astanabe/ikafssn/releases
+
+The Linux variants target glibc 2.34 or newer (RHEL 9, Ubuntu 22.04,
+Debian 12 and later); the osx-arm64 variant targets macOS 11 or newer.
+ikafssnhttpd is not included because Drogon is not packaged in
+conda-forge.
+
+Package naming convention:
+
+  ikafssn-nohttpd_<version>_<subdir>.conda
+
+where <subdir> is linux-64, linux-aarch64, or osx-arm64.
+
+Examples:
+  ikafssn-nohttpd_0.1.2026.04.08_linux-64.conda
+  ikafssn-nohttpd_0.1.2026.04.08_osx-arm64.conda
+
+Install into an existing conda environment with mamba (or conda);
+runtime dependencies are pulled from conda-forge:
+
+  mamba install -c conda-forge ./ikafssn-nohttpd_<version>_<subdir>.conda
+
+Note: Conda packages do not include ikafssnhttpd. Use the Ubuntu 24.04
+.deb or the Homebrew bottle when the HTTP daemon is required.
+
+Verify:
+
+  ikafssnindex --version
+
+
 B. Building from source
 ========================
 

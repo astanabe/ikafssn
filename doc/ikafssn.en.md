@@ -1181,6 +1181,26 @@ sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
 
 **Note:** Ubuntu 22.04 packages do not include `ikafssnhttpd` (Drogon is not available on 22.04). Ubuntu 24.04 packages include all commands including `ikafssnhttpd`.
 
+### Enterprise Linux (.rpm package)
+
+Pre-built `.rpm` packages are available for AlmaLinux / RHEL / Rocky Linux 9 and 10 (x86_64 and aarch64) from the [GitHub Releases](https://github.com/astanabe/ikafssn/releases) page.
+
+Package naming convention:
+
+```
+ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
+```
+
+where `<el_ver>` is `9` or `10` and `<arch>` is `x86_64` or `aarch64`.
+
+Install the package:
+
+```bash
+sudo dnf install ./ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
+```
+
+**Note:** EL 9/10 packages do not include `ikafssnhttpd` (Drogon is not packaged for these releases).
+
 ### macOS 26 Tahoe (Homebrew)
 
 On macOS 26 (Tahoe) with Apple Silicon (aarch64), install via the Homebrew Tap:
@@ -1191,6 +1211,26 @@ brew install ikafssn
 ```
 
 This installs pre-built bottles when available, or builds from source as a fallback.
+
+### Conda (`.conda` package)
+
+Pre-built `.conda` packages are available for `linux-64`, `linux-aarch64`, and `osx-arm64` from the [GitHub Releases](https://github.com/astanabe/ikafssn/releases) page. The Linux variants target glibc 2.34 or newer (RHEL 9, Ubuntu 22.04, Debian 12 and later); the `osx-arm64` variant targets macOS 11 or newer. `ikafssnhttpd` is not included because Drogon is not packaged in conda-forge.
+
+Package naming convention:
+
+```
+ikafssn-nohttpd_<version>_<subdir>.conda
+```
+
+where `<subdir>` is `linux-64`, `linux-aarch64`, or `osx-arm64`.
+
+Install the package into an existing conda environment with `mamba` (or `conda`); runtime dependencies are pulled from `conda-forge`:
+
+```bash
+mamba install -c conda-forge ./ikafssn-nohttpd_<version>_<subdir>.conda
+```
+
+**Note:** Conda packages do not include `ikafssnhttpd`. Use the Ubuntu 24.04 `.deb` or the Homebrew bottle when the HTTP daemon is required.
 
 ### Verify installation
 

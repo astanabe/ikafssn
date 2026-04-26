@@ -1,0 +1,79 @@
+{% set version = environ.get('IKAFSSN_VERSION', '0.0.0') %}
+
+package:
+  name: ikafssn-nohttpd
+  version: {{ version }}
+
+source:
+  path: ..
+
+build:
+  number: 0
+  script_env:
+    - IKAFSSN_VERSION
+    - NPROC
+
+requirements:
+  build:
+    - {{ compiler('c') }}
+    - {{ compiler('cxx') }}
+    - {{ stdlib('c') }}
+    - cmake >=3.20
+    - make
+    - autoconf
+    - automake
+    - libtool
+    - patch
+    - curl
+    - pkg-config
+  host:
+    - tbb-devel
+    - lmdb
+    - libsqlite
+    - libcurl
+    - jsoncpp
+    - openssl
+    - zlib
+    - bzip2
+    - xz
+    - libdeflate
+  run:
+    - tbb
+    - lmdb
+    - libsqlite
+    - libcurl
+    - jsoncpp
+    - openssl
+    - zlib
+    - bzip2
+    - xz
+    - libdeflate
+
+test:
+  commands:
+    - ikafssnindex -version
+    - ikafssnsearch -version
+    - ikafssnserver -version
+    - ikafssnclient -version
+    - ikafssnretrieve -version
+    - ikafssninfo -version
+
+about:
+  home: https://github.com/astanabe/ikafssn
+  license: Apache-2.0
+  license_family: APACHE
+  license_file: LICENSE
+  summary: K-mer-based alignment-free similarity search for nucleotide sequences (no httpd build)
+  description: |
+    ikafssn (Independent programs of K-mer-based Alignment-Free Similarity
+    Search for Nucleotide sequences) builds a complete inverted index over
+    NCBI BLAST DB nucleotide sequences and performs alignment-free similarity
+    search using k-mer matching and collinear chaining.
+
+    This package excludes ikafssnhttpd (which depends on Drogon, currently
+    not available in conda-forge).
+  dev_url: https://github.com/astanabe/ikafssn
+
+extra:
+  recipe-maintainers:
+    - astanabe

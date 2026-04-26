@@ -1,0 +1,13 @@
+# {{ stdlib('c') }} resolves to:
+#   - sysroot_linux-{64,aarch64} 2.34.* on Linux  (glibc 2.34 baseline:
+#     RHEL 9 / Ubuntu 22.04 / Debian 12 and newer; RHEL 7/8 not supported)
+#   - __osx >=11.0 virtual package on macOS       (osx-arm64 minimum: macOS 11)
+c_stdlib:                    # [unix]
+  - sysroot                  # [linux]
+  - macosx_deployment_target # [osx]
+c_stdlib_version:            # [unix]
+  - "2.34"                   # [linux]
+  - "11.0"                   # [osx]
+
+MACOSX_DEPLOYMENT_TARGET:    # [osx]
+  - "11.0"                   # [osx]

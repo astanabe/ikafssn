@@ -60,6 +60,25 @@ macOS 26 (aarch64, Homebrew):
   libdeflate
   openssl@3
 
+Conda (linux-64, linux-aarch64, osx-arm64; conda-forge channel):
+
+  tbb
+  lmdb
+  libsqlite
+  libcurl
+  jsoncpp
+  openssl
+  zlib
+  bzip2
+  xz
+  libdeflate
+
+  Linux baseline: glibc 2.34 (RHEL 9 / Ubuntu 22.04 / Debian 12 and newer).
+  osx-arm64 baseline: macOS 11.
+
+  Note: ikafssnhttpd is not included in the conda package
+  (Drogon is not available in conda-forge).
+
 Build dependencies (from source)
 ----------------------------------
 
@@ -111,6 +130,22 @@ System packages — macOS (Homebrew):
 
   Additional for ikafssnhttpd:
     drogon
+
+Conda packaging (recipe/, conda-forge channel):
+
+  Build environment:
+    {{ compiler('c') }} {{ compiler('cxx') }} {{ stdlib('c') }}
+    cmake make autoconf automake libtool patch curl pkg-config
+
+  Host environment:
+    tbb-devel lmdb libsqlite libcurl jsoncpp openssl
+    zlib bzip2 xz libdeflate
+
+  Linux baseline: c_stdlib_version 2.34 (sysroot_linux-{64,aarch64}).
+  osx-arm64 baseline: MACOSX_DEPLOYMENT_TARGET 11.0.
+
+  Note: ikafssnhttpd is intentionally not built (BUILD_HTTPD=OFF) because
+  Drogon is not packaged in conda-forge.
 
 Source-built libraries:
 

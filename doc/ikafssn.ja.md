@@ -1177,6 +1177,26 @@ sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
 
 **注意:** Ubuntu 22.04 パッケージには `ikafssnhttpd` が含まれません (22.04 では Drogon が利用できないため)。Ubuntu 24.04 パッケージには `ikafssnhttpd` を含むすべてのコマンドが含まれます。
 
+### Enterprise Linux (.rpm パッケージ)
+
+AlmaLinux / RHEL / Rocky Linux 9 および 10 (x86_64/aarch64) 向けのビルド済み `.rpm` パッケージが [GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから提供されています。
+
+パッケージ命名規則:
+
+```
+ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
+```
+
+`<el_ver>` は `9` または `10`、`<arch>` は `x86_64` または `aarch64` です。
+
+パッケージのインストール:
+
+```bash
+sudo dnf install ./ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
+```
+
+**注意:** EL 9/10 パッケージには `ikafssnhttpd` は含まれません (これらのリリース向けに Drogon が提供されていないため)。
+
 ### macOS 26 Tahoe (Homebrew)
 
 macOS 26 (Tahoe) の Apple Silicon (aarch64) 環境では、Homebrew Tap 経由でインストールできます:
@@ -1187,6 +1207,26 @@ brew install ikafssn
 ```
 
 ビルド済み Bottle が利用可能な場合はそれがインストールされ、利用できない場合はソースからビルドされます。
+
+### Conda (`.conda` パッケージ)
+
+`linux-64`、`linux-aarch64`、`osx-arm64` 向けのビルド済み `.conda` パッケージが [GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから提供されています。Linux 版は glibc 2.34 以上 (RHEL 9 / Ubuntu 22.04 / Debian 12 以降) を、`osx-arm64` 版は macOS 11 以上を対象としています。`ikafssnhttpd` は含まれません (Drogon が conda-forge に存在しないため)。
+
+パッケージ命名規則:
+
+```
+ikafssn-nohttpd_<version>_<subdir>.conda
+```
+
+`<subdir>` は `linux-64`、`linux-aarch64`、`osx-arm64` のいずれかです。
+
+既存の conda 環境に `mamba` (または `conda`) でインストールします。実行時の依存パッケージは `conda-forge` から取得されます:
+
+```bash
+mamba install -c conda-forge ./ikafssn-nohttpd_<version>_<subdir>.conda
+```
+
+**注意:** conda パッケージには `ikafssnhttpd` は含まれません。HTTP デーモンが必要な場合は、Ubuntu 24.04 の `.deb` または Homebrew 版を利用してください。
 
 ### インストールの確認
 
