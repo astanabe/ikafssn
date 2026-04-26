@@ -15,6 +15,10 @@ parasail/
 htslib-*
 htslib/
 
+# Drogon (source, tarball, and install)
+drogon-*
+drogon/
+
 # Homebrew tap (separate repository)
 homebrew-ikafssn/
 

@@ -24,10 +24,6 @@ Install the package:
 
   sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
 
-Note: Ubuntu 22.04 packages do not include ikafssnhttpd (Drogon is not
-available on 22.04). Ubuntu 24.04 packages include all commands including
-ikafssnhttpd.
-
 Verify:
 
   ikafssnindex --version
@@ -44,18 +40,15 @@ Download the appropriate .rpm file from the GitHub Releases page:
 
 Package naming convention:
 
-  ikafssn-<version>-nohttpd.el<ver>.<arch>.rpm
+  ikafssn-<version>.el<ver>.<arch>.rpm
 
 Examples:
-  ikafssn-0.1.2026.04.08-nohttpd.el9.x86_64.rpm
-  ikafssn-0.1.2026.04.08-nohttpd.el10.aarch64.rpm
+  ikafssn-0.1.2026.04.08.el9.x86_64.rpm
+  ikafssn-0.1.2026.04.08.el10.aarch64.rpm
 
 Install the package:
 
-  sudo dnf install ./ikafssn-<version>-nohttpd.el<ver>.<arch>.rpm
-
-Note: EL packages do not include ikafssnhttpd (Drogon is not available
-on these distributions).
+  sudo dnf install ./ikafssn-<version>.el<ver>.<arch>.rpm
 
 Verify:
 
@@ -89,26 +82,21 @@ and osx-arm64 from the GitHub Releases page:
 
 The Linux variants target glibc 2.34 or newer (RHEL 9, Ubuntu 22.04,
 Debian 12 and later); the osx-arm64 variant targets macOS 11 or newer.
-ikafssnhttpd is not included because Drogon is not packaged in
-conda-forge.
 
 Package naming convention:
 
-  ikafssn-nohttpd_<version>_<subdir>.conda
+  ikafssn_<version>_<subdir>.conda
 
 where <subdir> is linux-64, linux-aarch64, or osx-arm64.
 
 Examples:
-  ikafssn-nohttpd_0.1.2026.04.08_linux-64.conda
-  ikafssn-nohttpd_0.1.2026.04.08_osx-arm64.conda
+  ikafssn_0.1.2026.04.08_linux-64.conda
+  ikafssn_0.1.2026.04.08_osx-arm64.conda
 
 Install into an existing conda environment with mamba (or conda);
 runtime dependencies are pulled from conda-forge:
 
-  mamba install -c conda-forge ./ikafssn-nohttpd_<version>_<subdir>.conda
-
-Note: Conda packages do not include ikafssnhttpd. Use the Ubuntu 24.04
-.deb or the Homebrew bottle when the HTTP daemon is required.
+  mamba install -c conda-forge ./ikafssn_<version>_<subdir>.conda
 
 Verify:
 
@@ -121,21 +109,7 @@ B. Building from source
 1. Install build dependencies
 -------------------------------
 
-Ubuntu 24.04 (x86_64 / aarch64):
-
-  sudo apt-get install -y \
-    build-essential cmake \
-    libtbb-dev liblmdb-dev libsqlite3-dev \
-    libcurl4-openssl-dev libjsoncpp-dev \
-    zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
-
-  For ikafssnhttpd (optional):
-
-    sudo apt-get install -y \
-      libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev \
-      libbrotli-dev libhiredis-dev libpq-dev
-
-Ubuntu 22.04 (x86_64 / aarch64):
+Ubuntu 22.04 / 24.04 (x86_64 / aarch64):
 
   sudo apt-get install -y \
     build-essential cmake \
@@ -144,8 +118,9 @@ Ubuntu 22.04 (x86_64 / aarch64):
     zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
     libssl-dev uuid-dev
 
-  Note: ikafssnhttpd cannot be built on Ubuntu 22.04 (Drogon is not
-  packaged for this release). Build with -DBUILD_HTTPD=OFF.
+  libssl-dev and uuid-dev are required for building the NCBI C++ Toolkit
+  and Drogon from source. To skip ikafssnhttpd, build with
+  -DBUILD_HTTPD=OFF; uuid-dev becomes optional in that case.
 
 EL 9 / EL 10 (x86_64 / aarch64):
 
@@ -160,17 +135,17 @@ EL 9 / EL 10 (x86_64 / aarch64):
     openssl-devel libuuid-devel \
     autoconf automake libtool
 
-  Note: ikafssnhttpd cannot be built on EL 9/10 (Drogon is not
-  packaged for these releases). Build with -DBUILD_HTTPD=OFF.
+  openssl-devel and libuuid-devel are required for building the NCBI C++
+  Toolkit and Drogon from source. To skip ikafssnhttpd, build with
+  -DBUILD_HTTPD=OFF; libuuid-devel becomes optional in that case.
 
 macOS (Homebrew):
 
   brew install cmake tbb lmdb sqlite3 curl jsoncpp \
     xz libdeflate autoconf automake libtool openssl@3
 
-  For ikafssnhttpd (optional):
-
-    brew install drogon
+  openssl@3 is required for building the NCBI C++ Toolkit and Drogon
+  from source. uuid is provided by libSystem on macOS.
 
 2. Build source-built libraries
 ---------------------------------
@@ -238,6 +213,39 @@ NCBI C++ Toolkit:
     make -j$(sysctl -n hw.ncpu)
     make install
     cd ../../..
+
+Drogon (only when ikafssnhttpd is to be built):
+
+  Drogon's release tarball does not contain the trantor submodule
+  contents, so the matching trantor release tag must be downloaded
+  separately (Drogon 1.9.12 references trantor v1.5.26).
+
+  curl -L -o drogon-1.9.12.tar.gz \
+    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.tar.gz
+  tar xf drogon-1.9.12.tar.gz
+  curl -L -o trantor-1.5.26.tar.gz \
+    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.tar.gz
+  tar xf trantor-1.5.26.tar.gz
+  rmdir drogon-1.9.12/trantor
+  mv trantor-1.5.26 drogon-1.9.12/trantor
+  cd drogon-1.9.12
+  mkdir build && cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_CTL=OFF -DBUILD_EXAMPLES=OFF -DBUILD_ORM=OFF \
+    -DBUILD_BROTLI=OFF -DBUILD_YAML_CONFIG=OFF -DBUILD_DOC=OFF
+  make -j$(nproc)
+  make install
+  cd ../..
+
+  Disabling ORM, brotli, yaml-cpp, drogon_ctl, examples, and docs
+  reduces the link-time dependency surface to jsoncpp, libuuid, zlib,
+  and OpenSSL.
+
+  On macOS, Homebrew's openssl@3 is keg-only, so add:
+    -DOPENSSL_ROOT_DIR="$(brew --prefix)/opt/openssl@3"
 
 3. Build ikafssn
 ------------------

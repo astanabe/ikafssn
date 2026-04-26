@@ -1,20 +1,23 @@
 #!/bin/bash
 #
-# conda-build script for ikafssn-nohttpd.
+# conda-build script for ikafssn.
 #
-# Builds three vendored static libraries inside the conda-build sandbox so the
+# Builds four vendored static libraries inside the conda-build sandbox so the
 # resulting binaries only request glibc symbols up to c_stdlib_version (2.34
 # on Linux) and macOS 11.0 on osx-arm64:
 #   - Parasail 2.6.2  (Stage 3 alignment, with degmatch CIGAR/score patch)
 #   - htslib   1.23.1 (SAM/BAM output, libcurl/gcs/s3 disabled)
 #   - NCBI C++ Toolkit 30.2.0 (BLAST DB seqdb_reader + blastdb_format)
+#   - Drogon   1.9.12 (HTTP framework for ikafssnhttpd, with trantor 1.5.26
+#                      fetched separately because the release tarball does
+#                      not include the trantor submodule contents)
 #
-# Then builds ikafssn itself with -DBUILD_HTTPD=OFF and installs into ${PREFIX}.
+# Then builds ikafssn itself (with ikafssnhttpd) and installs into ${PREFIX}.
 #
 # All other dependencies (TBB, LMDB, libsqlite, libcurl, jsoncpp, OpenSSL,
-# zlib, bzip2, xz, libdeflate) are taken from ${PREFIX} (conda-forge host
-# packages). The conda-forge cross compiler chain is used so that the host
-# system glibc never leaks into the binaries.
+# libuuid, zlib, bzip2, xz, libdeflate) are taken from ${PREFIX} (conda-forge
+# host packages). The conda-forge cross compiler chain is used so that the
+# host system glibc never leaks into the binaries.
 
 set -euo pipefail
 
@@ -23,10 +26,13 @@ NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 PARASAIL_VER="2.6.2"
 HTSLIB_VER="1.23.1"
 NCBI_VER="30.2.0"
+DROGON_VER="1.9.12"
+TRANTOR_VER="1.5.26"
 
 PARASAIL_PREFIX="${SRC_DIR}/_parasail"
 HTSLIB_PREFIX="${SRC_DIR}/_htslib"
 NCBI_PREFIX="${SRC_DIR}/_ncbi-cxx-toolkit"
+DROGON_PREFIX="${SRC_DIR}/_drogon"
 
 # ---- Parasail (static) ----
 
@@ -205,6 +211,53 @@ if [ -n "${NCBI_SAVED_CMAKE_ARGS}" ]; then
   export CMAKE_ARGS="${NCBI_SAVED_CMAKE_ARGS}"
 fi
 
+# ---- Drogon (static) ----
+
+cd "${SRC_DIR}"
+curl --retry 5 --retry-delay 2 -fsSL -o drogon.tar.gz \
+  "https://github.com/drogonframework/drogon/archive/refs/tags/v${DROGON_VER}.tar.gz"
+mkdir -p drogon-src
+tar xf drogon.tar.gz -C drogon-src --strip-components=1
+
+# Drogon's release tarball does not contain the trantor submodule contents;
+# fetch the matching trantor release and place it at drogon-src/trantor.
+curl --retry 5 --retry-delay 2 -fsSL -o trantor.tar.gz \
+  "https://github.com/an-tao/trantor/archive/refs/tags/v${TRANTOR_VER}.tar.gz"
+rmdir drogon-src/trantor
+mkdir -p drogon-src/trantor
+tar xf trantor.tar.gz -C drogon-src/trantor --strip-components=1
+
+cd drogon-src
+mkdir build && cd build
+drogon_cmake_args=(
+  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_INSTALL_PREFIX="${DROGON_PREFIX}"
+  -DCMAKE_PREFIX_PATH="${PREFIX}"
+  -DBUILD_SHARED_LIBS=OFF
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  -DBUILD_CTL=OFF
+  -DBUILD_EXAMPLES=OFF
+  -DBUILD_ORM=OFF
+  -DBUILD_BROTLI=OFF
+  -DBUILD_YAML_CONFIG=OFF
+  -DBUILD_DOC=OFF
+)
+if [ -n "${SYSROOT}" ]; then
+  if [ "$(uname)" = "Darwin" ]; then
+    drogon_cmake_args+=("-DCMAKE_OSX_SYSROOT=${SYSROOT}")
+    if [ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
+      drogon_cmake_args+=(
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
+      )
+    fi
+  else
+    drogon_cmake_args+=("-DCMAKE_SYSROOT=${SYSROOT}")
+  fi
+fi
+cmake .. "${drogon_cmake_args[@]}"
+make -j"${NPROC}"
+make install
+
 # ---- ikafssn ----
 
 cd "${SRC_DIR}"
@@ -229,7 +282,7 @@ cmake -S . -B build-ikafssn \
   -DNCBI_TOOLKIT_BUILD_TAG="${ncbi_build_tag}" \
   -DPARASAIL_DIR="${PARASAIL_PREFIX}" \
   -DHTSLIB_DIR="${HTSLIB_PREFIX}" \
-  -DBUILD_HTTPD=OFF \
+  -DDROGON_DIR="${DROGON_PREFIX}" \
   "${ikafssn_extra_cmake_args[@]}"
 cmake --build build-ikafssn -j"${NPROC}"
 cmake --install build-ikafssn

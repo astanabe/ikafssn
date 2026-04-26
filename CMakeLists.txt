@@ -97,6 +97,11 @@ find_package(TBB REQUIRED)
 # --- Drogon (optional, for ikafssnhttpd) ---
 option(BUILD_HTTPD "Build ikafssnhttpd (requires Drogon)" ON)
 if(BUILD_HTTPD)
+    set(DROGON_DIR "${CMAKE_SOURCE_DIR}/drogon" CACHE PATH
+        "Path to Drogon install root (contains lib/cmake/Drogon/)")
+    # Prepend DROGON_DIR to CMAKE_PREFIX_PATH so that DrogonConfig.cmake's
+    # transitive find_dependency(Trantor) also resolves under the same prefix.
+    list(PREPEND CMAKE_PREFIX_PATH "${DROGON_DIR}")
     find_package(Drogon REQUIRED)
 endif()
 

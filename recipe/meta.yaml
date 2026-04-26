@@ -1,7 +1,7 @@
 {% set version = environ.get('IKAFSSN_VERSION', '0.0.0') %}
 
 package:
-  name: ikafssn-nohttpd
+  name: ikafssn
   version: {{ version }}
 
 source:
@@ -33,6 +33,7 @@ requirements:
     - libcurl
     - jsoncpp
     - openssl
+    - libuuid  # [linux]
     - zlib
     - bzip2
     - xz
@@ -44,6 +45,7 @@ requirements:
     - libcurl
     - jsoncpp
     - openssl
+    - libuuid  # [linux]
     - zlib
     - bzip2
     - xz
@@ -57,21 +59,22 @@ test:
     - ikafssnclient -version
     - ikafssnretrieve -version
     - ikafssninfo -version
+    - ikafssnhttpd -version
 
 about:
   home: https://github.com/astanabe/ikafssn
   license: Apache-2.0
   license_family: APACHE
   license_file: LICENSE
-  summary: K-mer-based alignment-free similarity search for nucleotide sequences (no httpd build)
+  summary: K-mer-based alignment-free similarity search for nucleotide sequences
   description: |
     ikafssn (Independent programs of K-mer-based Alignment-Free Similarity
     Search for Nucleotide sequences) builds a complete inverted index over
     NCBI BLAST DB nucleotide sequences and performs alignment-free similarity
     search using k-mer matching and collinear chaining.
 
-    This package excludes ikafssnhttpd (which depends on Drogon, currently
-    not available in conda-forge).
+    This package includes ikafssnhttpd, which is statically linked against
+    a vendored Drogon 1.9.12 build to avoid an external Drogon dependency.
   dev_url: https://github.com/astanabe/ikafssn
 
 extra:

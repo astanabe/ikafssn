@@ -1179,8 +1179,6 @@ Install the package:
 sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
 ```
 
-**Note:** Ubuntu 22.04 packages do not include `ikafssnhttpd` (Drogon is not available on 22.04). Ubuntu 24.04 packages include all commands including `ikafssnhttpd`.
-
 ### Enterprise Linux (.rpm package)
 
 Pre-built `.rpm` packages are available for AlmaLinux / RHEL / Rocky Linux 9 and 10 (x86_64 and aarch64) from the [GitHub Releases](https://github.com/astanabe/ikafssn/releases) page.
@@ -1188,7 +1186,7 @@ Pre-built `.rpm` packages are available for AlmaLinux / RHEL / Rocky Linux 9 and
 Package naming convention:
 
 ```
-ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
+ikafssn-<version>.el<el_ver>.<arch>.rpm
 ```
 
 where `<el_ver>` is `9` or `10` and `<arch>` is `x86_64` or `aarch64`.
@@ -1196,10 +1194,8 @@ where `<el_ver>` is `9` or `10` and `<arch>` is `x86_64` or `aarch64`.
 Install the package:
 
 ```bash
-sudo dnf install ./ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
+sudo dnf install ./ikafssn-<version>.el<el_ver>.<arch>.rpm
 ```
-
-**Note:** EL 9/10 packages do not include `ikafssnhttpd` (Drogon is not packaged for these releases).
 
 ### macOS 26 Tahoe (Homebrew)
 
@@ -1214,12 +1210,12 @@ This installs pre-built bottles when available, or builds from source as a fallb
 
 ### Conda (`.conda` package)
 
-Pre-built `.conda` packages are available for `linux-64`, `linux-aarch64`, and `osx-arm64` from the [GitHub Releases](https://github.com/astanabe/ikafssn/releases) page. The Linux variants target glibc 2.34 or newer (RHEL 9, Ubuntu 22.04, Debian 12 and later); the `osx-arm64` variant targets macOS 11 or newer. `ikafssnhttpd` is not included because Drogon is not packaged in conda-forge.
+Pre-built `.conda` packages are available for `linux-64`, `linux-aarch64`, and `osx-arm64` from the [GitHub Releases](https://github.com/astanabe/ikafssn/releases) page. The Linux variants target glibc 2.34 or newer (RHEL 9, Ubuntu 22.04, Debian 12 and later); the `osx-arm64` variant targets macOS 11 or newer.
 
 Package naming convention:
 
 ```
-ikafssn-nohttpd_<version>_<subdir>.conda
+ikafssn_<version>_<subdir>.conda
 ```
 
 where `<subdir>` is `linux-64`, `linux-aarch64`, or `osx-arm64`.
@@ -1227,10 +1223,8 @@ where `<subdir>` is `linux-64`, `linux-aarch64`, or `osx-arm64`.
 Install the package into an existing conda environment with `mamba` (or `conda`); runtime dependencies are pulled from `conda-forge`:
 
 ```bash
-mamba install -c conda-forge ./ikafssn-nohttpd_<version>_<subdir>.conda
+mamba install -c conda-forge ./ikafssn_<version>_<subdir>.conda
 ```
-
-**Note:** Conda packages do not include `ikafssnhttpd`. Use the Ubuntu 24.04 `.deb` or the Homebrew bottle when the HTTP daemon is required.
 
 ### Verify installation
 
@@ -1255,18 +1249,7 @@ ikafssnindex -version
 
 Install the required packages (excluding NCBI C++ Toolkit) with the following commands.
 
-**Ubuntu Server 24.04:**
-
-```bash
-sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
-    libcurl4-openssl-dev libjsoncpp-dev
-sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
-sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev libpq-dev
-```
-
-The second line installs dependencies required for building Parasail and htslib from source. The third line installs Drogon and its additional dependencies that are not automatically pulled in by `libdrogon-dev` on Ubuntu. If ikafssnhttpd is not needed, omit the third line and build with `-DBUILD_HTTPD=OFF`.
-
-**Ubuntu Server 22.04:**
+**Ubuntu Server 22.04 / 24.04:**
 
 ```bash
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
@@ -1275,7 +1258,7 @@ sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
     libssl-dev uuid-dev
 ```
 
-The second line installs dependencies for building Parasail and htslib from source, plus `libssl-dev` and `uuid-dev` which are needed for the NCBI C++ Toolkit. Drogon is not packaged for Ubuntu 22.04, so `ikafssnhttpd` cannot be built. Always build with `-DBUILD_HTTPD=OFF`.
+The second line installs dependencies required for building Parasail and htslib from source, plus `libssl-dev` and `uuid-dev` which are needed for building the NCBI C++ Toolkit and Drogon from source. If ikafssnhttpd is not needed, build with `-DBUILD_HTTPD=OFF` and `uuid-dev` may be omitted (`libssl-dev` is still required by the NCBI C++ Toolkit).
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
@@ -1323,17 +1306,16 @@ sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
-On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. The second-to-last line of each block installs dependencies required for building Parasail and htslib from source. The last line installs dependencies needed to build Drogon from source. If ikafssnhttpd is not needed, omit the last line and build with `-DBUILD_HTTPD=OFF`.
+On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. The second-to-last line of each block installs dependencies required for building Parasail and htslib from source. The last line installs dependencies needed to build the NCBI C++ Toolkit and Drogon from source. If ikafssnhttpd is not needed, build with `-DBUILD_HTTPD=OFF` and `libuuid-devel` may be omitted (`openssl-devel` is still required by the NCBI C++ Toolkit).
 
 **macOS (Homebrew):**
 
 ```bash
 brew install cmake tbb lmdb sqlite3 curl jsoncpp \
     xz libdeflate autoconf automake libtool openssl@3
-brew install drogon
 ```
 
-The second line installs Drogon for building ikafssnhttpd. If ikafssnhttpd is not needed, omit the second line and build with `-DBUILD_HTTPD=OFF`. On macOS, use `make -j$(sysctl -n hw.ncpu)` instead of `make -j$(nproc)` in the build steps below.
+`openssl@3` is required for building the NCBI C++ Toolkit and Drogon from source (Drogon is built separately, see below). On macOS, use `make -j$(sysctl -n hw.ncpu)` instead of `make -j$(nproc)` in the build steps below.
 
 ### Parasail
 
@@ -1425,6 +1407,58 @@ make install
 cd ../../..
 ```
 
+### Drogon
+
+ikafssnhttpd uses the Drogon HTTP framework. By default, CMake looks for Drogon at `./drogon` relative to the source root. If Drogon is installed elsewhere, specify the path with `-DDROGON_DIR`. If `-DBUILD_HTTPD=OFF` is used, Drogon is not required.
+
+The Drogon release tarball does not include the trantor submodule contents, so the corresponding trantor release must be downloaded separately (Drogon 1.9.12 references trantor v1.5.26). To download, build, and install Drogon and trantor into `./drogon`, run the following from the ikafssn source root:
+
+```bash
+curl -L -o drogon-1.9.12.tar.gz \
+    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.tar.gz
+tar xf drogon-1.9.12.tar.gz
+curl -L -o trantor-1.5.26.tar.gz \
+    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.tar.gz
+tar xf trantor-1.5.26.tar.gz
+rmdir drogon-1.9.12/trantor
+mv trantor-1.5.26 drogon-1.9.12/trantor
+cd drogon-1.9.12
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_CTL=OFF \
+    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_ORM=OFF \
+    -DBUILD_BROTLI=OFF \
+    -DBUILD_YAML_CONFIG=OFF \
+    -DBUILD_DOC=OFF
+make -j$(nproc)
+make install
+cd ../..
+```
+
+Disabling ORM (PostgreSQL/MySQL/SQLite/Redis), brotli, yaml-cpp, `drogon_ctl`, examples, and documentation generation reduces the link-time dependency surface to just jsoncpp, libuuid, zlib, and OpenSSL.
+
+On macOS, Homebrew's `openssl@3` is keg-only, so `OPENSSL_ROOT_DIR` must be specified explicitly:
+
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \
+    -DOPENSSL_ROOT_DIR="$(brew --prefix)/opt/openssl@3" \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_CTL=OFF \
+    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_ORM=OFF \
+    -DBUILD_BROTLI=OFF \
+    -DBUILD_YAML_CONFIG=OFF \
+    -DBUILD_DOC=OFF
+make -j$(sysctl -n hw.ncpu)
+make install
+```
+
 ### Build
 
 ```bash
@@ -1465,6 +1499,7 @@ In this example, executables are installed to `/opt/ikafssn/bin`.
 | `NCBI_TOOLKIT_BUILD_TAG` | `CMake-GCC1330-Release` | Toolkit build subdirectory name |
 | `PARASAIL_DIR` | `${CMAKE_SOURCE_DIR}/parasail` | Path to Parasail install root |
 | `HTSLIB_DIR` | `${CMAKE_SOURCE_DIR}/htslib` | Path to htslib install root |
+| `DROGON_DIR` | `${CMAKE_SOURCE_DIR}/drogon` | Path to Drogon install root (used when `BUILD_HTTPD=ON`) |
 | `BUILD_HTTPD` | ON | Build ikafssnhttpd (requires Drogon) |
 | `BUILD_CLIENT` | ON | Build ikafssnclient (requires libcurl for HTTP mode) |
 | `ENABLE_REMOTE_RETRIEVE` | ON | Enable NCBI efetch in ikafssnretrieve |

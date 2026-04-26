@@ -36,7 +36,7 @@ This project's external dependencies and their status on this dev machine (Ubunt
 | CMake | 3.28.3 | system | apt (pre-installed) |
 | NCBI C++ Toolkit 30.2.0 | 30.2.0 | `./ncbi-toolkit/` | source build |
 | Intel TBB (oneTBB) | 2021.11.0 | system | `sudo apt install libtbb-dev` |
-| Drogon | 1.8.7 | system | `sudo apt install libdrogon-dev` |
+| Drogon | 1.9.12 | `./drogon/` | source build (static; trantor 1.5.26 placed at `drogon-1.9.12/trantor`) |
 | libcurl | 8.5.0 | system | apt (pre-installed) |
 | Parasail | 2.6.2 | `./parasail/` | source build |
 | htslib | 1.23.1 | `./htslib/` | source build |

@@ -11,13 +11,12 @@ Ubuntu 24.04 (x86_64 / aarch64):
   libsqlite3-0
   libcurl4
   libjsoncpp25
+  libssl3t64
+  libuuid1
   zlib1g
   libbz2-1.0
   liblzma5
   libdeflate0
-
-  Additional for ikafssnhttpd:
-    libdrogon (and its transitive dependencies)
 
 Ubuntu 22.04 (x86_64 / aarch64):
 
@@ -25,14 +24,13 @@ Ubuntu 22.04 (x86_64 / aarch64):
   liblmdb0
   libsqlite3-0
   libcurl4
-  libjsoncpp24
+  libjsoncpp25
+  libssl3
+  libuuid1
   zlib1g
   libbz2-1.0
   liblzma5
   libdeflate0
-
-  Note: ikafssnhttpd is not available on Ubuntu 22.04
-  (Drogon is not packaged for this release).
 
 EL 9 / EL 10 (x86_64 / aarch64):
 
@@ -41,13 +39,12 @@ EL 9 / EL 10 (x86_64 / aarch64):
   sqlite-libs
   libcurl
   jsoncpp
+  openssl-libs
+  libuuid
   zlib
   bzip2-libs
   xz-libs
   libdeflate
-
-  Note: ikafssnhttpd is not available on EL 9/10
-  (Drogon is not packaged for these releases).
 
 macOS 26 (aarch64, Homebrew):
 
@@ -60,6 +57,8 @@ macOS 26 (aarch64, Homebrew):
   libdeflate
   openssl@3
 
+  Note: libuuid is provided by libSystem on macOS.
+
 Conda (linux-64, linux-aarch64, osx-arm64; conda-forge channel):
 
   tbb
@@ -68,6 +67,7 @@ Conda (linux-64, linux-aarch64, osx-arm64; conda-forge channel):
   libcurl
   jsoncpp
   openssl
+  libuuid  (linux only; osx-arm64 uses libSystem)
   zlib
   bzip2
   xz
@@ -75,9 +75,6 @@ Conda (linux-64, linux-aarch64, osx-arm64; conda-forge channel):
 
   Linux baseline: glibc 2.34 (RHEL 9 / Ubuntu 22.04 / Debian 12 and newer).
   osx-arm64 baseline: macOS 11.
-
-  Note: ikafssnhttpd is not included in the conda package
-  (Drogon is not available in conda-forge).
 
 Build dependencies (from source)
 ----------------------------------
@@ -87,18 +84,7 @@ Compiler and tools:
   C++20 compiler (GCC >= 11 or Clang >= 13)
   CMake >= 3.16
 
-System packages — Ubuntu 24.04 (x86_64 / aarch64):
-
-  build-essential cmake
-  libtbb-dev liblmdb-dev libsqlite3-dev
-  libcurl4-openssl-dev libjsoncpp-dev
-  zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
-
-  Additional for ikafssnhttpd:
-    libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev
-    libbrotli-dev libhiredis-dev libpq-dev
-
-System packages — Ubuntu 22.04 (x86_64 / aarch64):
+System packages — Ubuntu 22.04 / 24.04 (x86_64 / aarch64):
 
   build-essential cmake
   libtbb-dev liblmdb-dev libsqlite3-dev
@@ -106,8 +92,9 @@ System packages — Ubuntu 22.04 (x86_64 / aarch64):
   zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
   libssl-dev uuid-dev
 
-  Note: ikafssnhttpd cannot be built on Ubuntu 22.04
-  (Drogon is not packaged for this release). Build with -DBUILD_HTTPD=OFF.
+  libssl-dev and uuid-dev are required for building the NCBI C++ Toolkit
+  and Drogon from source. With -DBUILD_HTTPD=OFF, uuid-dev becomes
+  optional.
 
 System packages — EL 9 / EL 10 (x86_64 / aarch64):
 
@@ -119,17 +106,15 @@ System packages — EL 9 / EL 10 (x86_64 / aarch64):
   autoconf automake libtool
 
   Requires: epel-release and CRB (CodeReady Builder) repository enabled.
-
-  Note: ikafssnhttpd cannot be built on EL 9/10
-  (Drogon is not packaged for these releases). Build with -DBUILD_HTTPD=OFF.
+  With -DBUILD_HTTPD=OFF, libuuid-devel becomes optional.
 
 System packages — macOS (Homebrew):
 
   cmake tbb lmdb sqlite3 curl jsoncpp
   xz libdeflate autoconf automake libtool openssl@3
 
-  Additional for ikafssnhttpd:
-    drogon
+  openssl@3 is required for both the NCBI C++ Toolkit and Drogon source
+  builds. uuid is provided by libSystem.
 
 Conda packaging (recipe/, conda-forge channel):
 
@@ -139,16 +124,17 @@ Conda packaging (recipe/, conda-forge channel):
 
   Host environment:
     tbb-devel lmdb libsqlite libcurl jsoncpp openssl
-    zlib bzip2 xz libdeflate
+    libuuid (linux only) zlib bzip2 xz libdeflate
 
   Linux baseline: c_stdlib_version 2.34 (sysroot_linux-{64,aarch64}).
   osx-arm64 baseline: MACOSX_DEPLOYMENT_TARGET 11.0.
-
-  Note: ikafssnhttpd is intentionally not built (BUILD_HTTPD=OFF) because
-  Drogon is not packaged in conda-forge.
 
 Source-built libraries:
 
   NCBI C++ Toolkit 30.2.0  — BLAST DB access (patched: madvise MADV_RANDOM on SeqDB mmaps)
   Parasail 2.6.2           — Stage 3 pairwise alignment
   htslib 1.23.1            — SAM/BAM output
+  Drogon 1.9.12            — HTTP framework for ikafssnhttpd
+                             (static, with trantor 1.5.26 placed at
+                             drogon-1.9.12/trantor; ORM/brotli/yaml-cpp/
+                             drogon_ctl/examples/docs disabled)

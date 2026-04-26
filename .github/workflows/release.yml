@@ -21,73 +21,61 @@ jobs:
           - target: x86_64-linux-gnu-22.04
             os: ubuntu-22.04
             ubuntu_ver: "22.04"
-            build_httpd: OFF
             pkg_type: deb
           - target: aarch64-linux-gnu-22.04
             os: ubuntu-22.04-arm
             ubuntu_ver: "22.04"
-            build_httpd: OFF
             pkg_type: deb
           - target: x86_64-linux-gnu-24.04
             os: ubuntu-24.04
             ubuntu_ver: "24.04"
-            build_httpd: ON
             pkg_type: deb
           - target: aarch64-linux-gnu-24.04
             os: ubuntu-24.04-arm
             ubuntu_ver: "24.04"
-            build_httpd: ON
             pkg_type: deb
           - target: aarch64-apple-darwin-tahoe
             os: macos-26
             ubuntu_ver: ""
-            build_httpd: ON
             pkg_type: bottle
             bottle_tag: arm64_tahoe
           - target: x86_64-linux-el9
             os: ubuntu-24.04
             container: almalinux:9
             ubuntu_ver: ""
-            build_httpd: OFF
             pkg_type: rpm
             el_ver: "9"
           - target: x86_64-linux-el10
             os: ubuntu-24.04
             container: almalinux:10
             ubuntu_ver: ""
-            build_httpd: OFF
             pkg_type: rpm
             el_ver: "10"
           - target: aarch64-linux-el9
             os: ubuntu-24.04-arm
             container: almalinux:9
             ubuntu_ver: ""
-            build_httpd: OFF
             pkg_type: rpm
             el_ver: "9"
           - target: aarch64-linux-el10
             os: ubuntu-24.04-arm
             container: almalinux:10
             ubuntu_ver: ""
-            build_httpd: OFF
             pkg_type: rpm
             el_ver: "10"
           - target: x86_64-linux-conda
             os: ubuntu-24.04
             ubuntu_ver: ""
-            build_httpd: OFF
             pkg_type: conda
             conda_subdir: linux-64
           - target: aarch64-linux-conda
             os: ubuntu-24.04-arm
             ubuntu_ver: ""
-            build_httpd: OFF
             pkg_type: conda
             conda_subdir: linux-aarch64
           - target: aarch64-apple-darwin-conda
             os: macos-26
             ubuntu_ver: ""
-            build_httpd: OFF
             pkg_type: conda
             conda_subdir: osx-arm64
 
@@ -112,7 +100,7 @@ jobs:
             libtbb-dev liblmdb-dev libsqlite3-dev \
             libcurl4-openssl-dev libjsoncpp-dev \
             zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
-            libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev libpq-dev
+            libssl-dev uuid-dev
 
       - name: Install system dependencies (Linux 22.04)
         if: runner.os == 'Linux' && matrix.ubuntu_ver == '22.04'
@@ -129,8 +117,16 @@ jobs:
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS' && matrix.pkg_type != 'conda'
         run: |
-          brew install tbb lmdb sqlite3 curl jsoncpp \
-            xz libdeflate autoconf automake libtool openssl@3 drogon
+          pkgs=(tbb lmdb sqlite3 curl jsoncpp xz libdeflate autoconf automake libtool openssl@3)
+          to_install=()
+          for p in "${pkgs[@]}"; do
+            brew list --formula "$p" >/dev/null 2>&1 || to_install+=("$p")
+          done
+          if [ ${#to_install[@]} -gt 0 ]; then
+            brew install "${to_install[@]}"
+          else
+            echo "All required formulae already installed."
+          fi
 
       - name: Install system dependencies (EL)
         if: matrix.pkg_type == 'rpm'
@@ -167,13 +163,6 @@ jobs:
         id: expected
         shell: bash
         run: |
-          suffix=""
-          if [ "${{ matrix.build_httpd }}" = "OFF" ]; then
-            case "${{ matrix.pkg_type }}" in
-              deb)            suffix="_nohttpd" ;;
-              bottle|rpm|conda) suffix="-nohttpd" ;;
-            esac
-          fi
           case "${{ matrix.pkg_type }}" in
             deb)
               case "${{ runner.arch }}" in
@@ -181,7 +170,7 @@ jobs:
                 ARM64) arch="arm64" ;;
                 *)     arch="${{ runner.arch }}" ;;
               esac
-              filename="ikafssn_${IKAFSSN_VERSION}_ubuntu-${{ matrix.ubuntu_ver }}_${arch}${suffix}.deb"
+              filename="ikafssn_${IKAFSSN_VERSION}_ubuntu-${{ matrix.ubuntu_ver }}_${arch}.deb"
               ;;
             rpm)
               case "${{ runner.arch }}" in
@@ -189,14 +178,13 @@ jobs:
                 ARM64) arch="aarch64" ;;
                 *)     arch="${{ runner.arch }}" ;;
               esac
-              filename="ikafssn-${IKAFSSN_VERSION}${suffix}.el${{ matrix.el_ver }}.${arch}.rpm"
+              filename="ikafssn-${IKAFSSN_VERSION}.el${{ matrix.el_ver }}.${arch}.rpm"
               ;;
             bottle)
-              filename="ikafssn-${IKAFSSN_VERSION}${suffix}.${{ matrix.bottle_tag }}.bottle.tar.gz"
+              filename="ikafssn-${IKAFSSN_VERSION}.${{ matrix.bottle_tag }}.bottle.tar.gz"
               ;;
             conda)
-              # Conda uses an underscore between version and subdir, no suffix dash.
-              filename="ikafssn-nohttpd_${IKAFSSN_VERSION}_${{ matrix.conda_subdir }}.conda"
+              filename="ikafssn_${IKAFSSN_VERSION}_${{ matrix.conda_subdir }}.conda"
               ;;
             *)
               echo "::error::unknown pkg_type ${{ matrix.pkg_type }}"
@@ -263,7 +251,8 @@ jobs:
             parasail
             htslib
             ncbi-cxx-toolkit
-          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-v4
+            drogon
+          key: deps-${{ matrix.target }}-ncbi30.2.0-parasail2.6.2+degmatch-htslib1.23.1-drogon1.9.12+trantor1.5.26-v1
 
       # ---- Build Parasail ----
 
@@ -339,6 +328,40 @@ jobs:
           build_tag=$(basename ncbi-cxx-toolkit/CMake-*/)
           echo "build_tag=${build_tag}" >> "$GITHUB_OUTPUT"
 
+      # ---- Build Drogon (static, with trantor submodule fetched separately) ----
+
+      - name: Build Drogon
+        if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -L -o drogon-1.9.12.tar.gz \
+            https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.tar.gz
+          tar xf drogon-1.9.12.tar.gz
+          curl -L -o trantor-1.5.26.tar.gz \
+            https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.tar.gz
+          tar xf trantor-1.5.26.tar.gz
+          rmdir drogon-1.9.12/trantor
+          mv trantor-1.5.26 drogon-1.9.12/trantor
+          cd drogon-1.9.12
+          mkdir build && cd build
+          cmake_args=(
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/drogon"
+            -DBUILD_SHARED_LIBS=OFF
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+            -DBUILD_CTL=OFF
+            -DBUILD_EXAMPLES=OFF
+            -DBUILD_ORM=OFF
+            -DBUILD_BROTLI=OFF
+            -DBUILD_YAML_CONFIG=OFF
+            -DBUILD_DOC=OFF
+          )
+          if [ "$(uname)" = "Darwin" ]; then
+            cmake_args+=("-DOPENSSL_ROOT_DIR=${HOMEBREW_PREFIX}/opt/openssl@3")
+          fi
+          cmake .. "${cmake_args[@]}"
+          make -j"${NPROC}"
+          make install
+
       # ---- Build ikafssn ----
 
       - name: Build ikafssn
@@ -347,7 +370,6 @@ jobs:
           cmake_args=(
             -DCMAKE_BUILD_TYPE=Release
             -DNCBI_TOOLKIT_BUILD_TAG="${{ steps.ncbi.outputs.build_tag }}"
-            -DBUILD_HTTPD=${{ matrix.build_httpd }}
           )
           cmake -S . -B build "${cmake_args[@]}"
           cmake --build build -j"${NPROC}"
@@ -361,10 +383,8 @@ jobs:
           cpack -G DEB
           version=$(grep 'set(IKAFSSN_VERSION' ../CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
           arch=$(dpkg --print-architecture)
-          suffix=""
-          if [ "${{ matrix.build_httpd }}" = "OFF" ]; then suffix="_nohttpd"; fi
           for f in *.deb; do
-            newname="ikafssn_${version}_ubuntu-${{ matrix.ubuntu_ver }}_${arch}${suffix}.deb"
+            newname="ikafssn_${version}_ubuntu-${{ matrix.ubuntu_ver }}_${arch}.deb"
             mv "$f" "$newname"
           done
 
@@ -387,9 +407,7 @@ jobs:
           cp doc/systemd/ikafssnserver@.service doc/systemd/ikafssnhttpd@.service \
              doc/systemd/README.md "${bottle_dir}/share/ikafssn/systemd/"
 
-          suffix=""
-          if [ "${{ matrix.build_httpd }}" = "OFF" ]; then suffix="-nohttpd"; fi
-          bottle_file="ikafssn-${version}${suffix}.${{ matrix.bottle_tag }}.bottle.tar.gz"
+          bottle_file="ikafssn-${version}.${{ matrix.bottle_tag }}.bottle.tar.gz"
           tar czf "${bottle_file}" ikafssn/
 
           sha256=$(shasum -a 256 "${bottle_file}" | awk '{print $1}')
@@ -404,10 +422,8 @@ jobs:
           cpack -G RPM
           version=$(grep 'set(IKAFSSN_VERSION' ../CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
           arch=$(uname -m)
-          suffix=""
-          if [ "${{ matrix.build_httpd }}" = "OFF" ]; then suffix="-nohttpd"; fi
           for f in *.rpm; do
-            newname="ikafssn-${version}${suffix}.el${{ matrix.el_ver }}.${arch}.rpm"
+            newname="ikafssn-${version}.el${{ matrix.el_ver }}.${arch}.rpm"
             mv "$f" "$newname"
           done
 
@@ -415,11 +431,12 @@ jobs:
 
       - name: Setup Miniforge (Conda)
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'conda'
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@v4
         with:
           miniforge-version: latest
           channels: conda-forge
           channel-priority: strict
+          conda-remove-defaults: "true"
 
       - name: Install conda-build (Conda)
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'conda'
@@ -447,7 +464,7 @@ jobs:
             echo "::error::No .conda artifact found in conda-out/${{ matrix.conda_subdir }}"
             exit 1
           fi
-          newname="ikafssn-nohttpd_${IKAFSSN_VERSION}_${{ matrix.conda_subdir }}.conda"
+          newname="ikafssn_${IKAFSSN_VERSION}_${{ matrix.conda_subdir }}.conda"
           cp "${src}" "conda-dist/${newname}"
           echo "::notice::Built ${newname}"
 

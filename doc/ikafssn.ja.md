@@ -1175,8 +1175,6 @@ ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
 sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
 ```
 
-**注意:** Ubuntu 22.04 パッケージには `ikafssnhttpd` が含まれません (22.04 では Drogon が利用できないため)。Ubuntu 24.04 パッケージには `ikafssnhttpd` を含むすべてのコマンドが含まれます。
-
 ### Enterprise Linux (.rpm パッケージ)
 
 AlmaLinux / RHEL / Rocky Linux 9 および 10 (x86_64/aarch64) 向けのビルド済み `.rpm` パッケージが [GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから提供されています。
@@ -1184,7 +1182,7 @@ AlmaLinux / RHEL / Rocky Linux 9 および 10 (x86_64/aarch64) 向けのビル�
 パッケージ命名規則:
 
 ```
-ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
+ikafssn-<version>.el<el_ver>.<arch>.rpm
 ```
 
 `<el_ver>` は `9` または `10`、`<arch>` は `x86_64` または `aarch64` です。
@@ -1192,10 +1190,8 @@ ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
 パッケージのインストール:
 
 ```bash
-sudo dnf install ./ikafssn-<version>-nohttpd.el<el_ver>.<arch>.rpm
+sudo dnf install ./ikafssn-<version>.el<el_ver>.<arch>.rpm
 ```
-
-**注意:** EL 9/10 パッケージには `ikafssnhttpd` は含まれません (これらのリリース向けに Drogon が提供されていないため)。
 
 ### macOS 26 Tahoe (Homebrew)
 
@@ -1210,12 +1206,12 @@ brew install ikafssn
 
 ### Conda (`.conda` パッケージ)
 
-`linux-64`、`linux-aarch64`、`osx-arm64` 向けのビルド済み `.conda` パッケージが [GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから提供されています。Linux 版は glibc 2.34 以上 (RHEL 9 / Ubuntu 22.04 / Debian 12 以降) を、`osx-arm64` 版は macOS 11 以上を対象としています。`ikafssnhttpd` は含まれません (Drogon が conda-forge に存在しないため)。
+`linux-64`、`linux-aarch64`、`osx-arm64` 向けのビルド済み `.conda` パッケージが [GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから提供されています。Linux 版は glibc 2.34 以上 (RHEL 9 / Ubuntu 22.04 / Debian 12 以降) を、`osx-arm64` 版は macOS 11 以上を対象としています。
 
 パッケージ命名規則:
 
 ```
-ikafssn-nohttpd_<version>_<subdir>.conda
+ikafssn_<version>_<subdir>.conda
 ```
 
 `<subdir>` は `linux-64`、`linux-aarch64`、`osx-arm64` のいずれかです。
@@ -1223,10 +1219,8 @@ ikafssn-nohttpd_<version>_<subdir>.conda
 既存の conda 環境に `mamba` (または `conda`) でインストールします。実行時の依存パッケージは `conda-forge` から取得されます:
 
 ```bash
-mamba install -c conda-forge ./ikafssn-nohttpd_<version>_<subdir>.conda
+mamba install -c conda-forge ./ikafssn_<version>_<subdir>.conda
 ```
-
-**注意:** conda パッケージには `ikafssnhttpd` は含まれません。HTTP デーモンが必要な場合は、Ubuntu 24.04 の `.deb` または Homebrew 版を利用してください。
 
 ### インストールの確認
 
@@ -1251,18 +1245,7 @@ ikafssnindex -version
 
 NCBI C++ Toolkit 以外の依存パッケージを以下のコマンドでインストールできます。
 
-**Ubuntu Server 24.04:**
-
-```bash
-sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
-    libcurl4-openssl-dev libjsoncpp-dev
-sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
-sudo apt install libdrogon-dev uuid-dev libmariadb-dev libyaml-cpp-dev libbrotli-dev libhiredis-dev libpq-dev
-```
-
-2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。3 行目は Drogon および Ubuntu で `libdrogon-dev` が自動的に導入しない追加依存パッケージです。ikafssnhttpd が不要な場合は 3 行目を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。
-
-**Ubuntu Server 22.04:**
+**Ubuntu Server 22.04 / 24.04:**
 
 ```bash
 sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
@@ -1271,7 +1254,7 @@ sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
     libssl-dev uuid-dev
 ```
 
-2 行目は Parasail および htslib のソースビルドに必要な依存パッケージに加え、NCBI C++ Toolkit に必要な `libssl-dev` と `uuid-dev` です。Ubuntu 22.04 では Drogon がパッケージ提供されていないため、`ikafssnhttpd` のビルドはできません。常に `-DBUILD_HTTPD=OFF` を指定してビルドしてください。
+2 行目は Parasail および htslib のソースビルドに必要な依存パッケージに加え、NCBI C++ Toolkit と Drogon のソースビルドに必要な `libssl-dev` と `uuid-dev` です。ikafssnhttpd が不要な場合は `-DBUILD_HTTPD=OFF` を指定してビルドし、`uuid-dev` は省略可能です (`libssl-dev` は NCBI C++ Toolkit が必要とします)。
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
@@ -1319,17 +1302,16 @@ sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
-EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。各ブロックの最後から 2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。最終行は Drogon のソースビルドに必要な依存パッケージです。ikafssnhttpd が不要な場合は最終行を省略し、`-DBUILD_HTTPD=OFF` でビルドしてください。
+EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。各ブロックの最後から 2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。最終行は NCBI C++ Toolkit と Drogon のソースビルドに必要な依存パッケージです。ikafssnhttpd が不要な場合は `-DBUILD_HTTPD=OFF` を指定してビルドし、`libuuid-devel` は省略可能です (`openssl-devel` は NCBI C++ Toolkit が必要とします)。
 
 **macOS (Homebrew):**
 
 ```bash
 brew install cmake tbb lmdb sqlite3 curl jsoncpp \
     xz libdeflate autoconf automake libtool openssl@3
-brew install drogon
 ```
 
-2 行目は ikafssnhttpd のビルドに必要な Drogon です。ikafssnhttpd が不要な場合は 2 行目を省略し、ビルド時に `-DBUILD_HTTPD=OFF` を指定してください。macOS では以下のビルド手順中の `make -j$(nproc)` を `make -j$(sysctl -n hw.ncpu)` に読み替えてください。
+`openssl@3` は NCBI C++ Toolkit と Drogon のソースビルドに必要です (Drogon は別途ソースからビルドします、後述)。macOS では以下のビルド手順中の `make -j$(nproc)` を `make -j$(sysctl -n hw.ncpu)` に読み替えてください。
 
 ### Parasail
 
@@ -1421,6 +1403,58 @@ make install
 cd ../../..
 ```
 
+### Drogon
+
+ikafssnhttpd は Drogon HTTP フレームワークを使用します。デフォルトではソースルート直下の `./drogon` を参照します。別の場所にインストール済みの場合は `-DDROGON_DIR` で指定してください。`-DBUILD_HTTPD=OFF` を指定する場合、Drogon のビルドは不要です。
+
+Drogon のリリース tarball には trantor サブモジュールの中身が含まれないため、対応する trantor のリリースを別途取得する必要があります (Drogon 1.9.12 が参照するコミットは trantor v1.5.26 です)。Drogon と trantor のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
+
+```bash
+curl -L -o drogon-1.9.12.tar.gz \
+    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.tar.gz
+tar xf drogon-1.9.12.tar.gz
+curl -L -o trantor-1.5.26.tar.gz \
+    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.tar.gz
+tar xf trantor-1.5.26.tar.gz
+rmdir drogon-1.9.12/trantor
+mv trantor-1.5.26 drogon-1.9.12/trantor
+cd drogon-1.9.12
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_CTL=OFF \
+    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_ORM=OFF \
+    -DBUILD_BROTLI=OFF \
+    -DBUILD_YAML_CONFIG=OFF \
+    -DBUILD_DOC=OFF
+make -j$(nproc)
+make install
+cd ../..
+```
+
+ORM (PostgreSQL/MySQL/SQLite/Redis)、brotli、yaml-cpp、`drogon_ctl`、examples、ドキュメント生成を無効化することで、リンク時の依存ライブラリを jsoncpp、libuuid、zlib、OpenSSL の 4 つに最小化しています。
+
+macOS では Homebrew の `openssl@3` が keg-only のため、`OPENSSL_ROOT_DIR` を明示する必要があります:
+
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \
+    -DOPENSSL_ROOT_DIR="$(brew --prefix)/opt/openssl@3" \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_CTL=OFF \
+    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_ORM=OFF \
+    -DBUILD_BROTLI=OFF \
+    -DBUILD_YAML_CONFIG=OFF \
+    -DBUILD_DOC=OFF
+make -j$(sysctl -n hw.ncpu)
+make install
+```
+
 ### ビルド
 
 ```bash
@@ -1461,6 +1495,7 @@ sudo make install
 | `NCBI_TOOLKIT_BUILD_TAG` | `CMake-GCC1330-Release` | Toolkit ビルドサブディレクトリ名 |
 | `PARASAIL_DIR` | `${CMAKE_SOURCE_DIR}/parasail` | Parasail のインストールルートパス |
 | `HTSLIB_DIR` | `${CMAKE_SOURCE_DIR}/htslib` | htslib のインストールルートパス |
+| `DROGON_DIR` | `${CMAKE_SOURCE_DIR}/drogon` | Drogon のインストールルートパス (`BUILD_HTTPD=ON` のとき使用) |
 | `BUILD_HTTPD` | ON | ikafssnhttpd をビルド (Drogon が必要) |
 | `BUILD_CLIENT` | ON | ikafssnclient をビルド (HTTP モードで libcurl が必要) |
 | `ENABLE_REMOTE_RETRIEVE` | ON | ikafssnretrieve で NCBI efetch を有効化 |
