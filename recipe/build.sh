@@ -254,9 +254,20 @@ if [ -n "${SYSROOT}" ]; then
     drogon_cmake_args+=("-DCMAKE_SYSROOT=${SYSROOT}")
   fi
 fi
+
+# trantor v1.5.26 discards the std::future::get() return value in
+# TaskQueue::syncTaskInQueue (TaskQueue.h:52). conda-forge's libcxx on
+# osx-arm64 marks future::get() as [[nodiscard]], and conda-forge's clang
+# enables -Werror=unused-result by default, so the build fails. Demote
+# that one promotion back to a warning for the Drogon build only.
+DROGON_SAVED_CXXFLAGS="${CXXFLAGS:-}"
+export CXXFLAGS="${CXXFLAGS:-} -Wno-error=unused-result"
+
 cmake .. "${drogon_cmake_args[@]}"
 make -j"${NPROC}"
 make install
+
+export CXXFLAGS="${DROGON_SAVED_CXXFLAGS}"
 
 # ---- ikafssn ----
 
