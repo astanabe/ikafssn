@@ -9,6 +9,12 @@ option(IKAFSSN_BUILD_BENCH
        "Build benchmark binaries under bench/ (off by default)"
        OFF)
 
+# --- Optional analysis tools (Phase 5a) ---
+# OFF by default; ON adds tools/ subdir (throwaway dump utilities).
+option(IKAFSSN_BUILD_TOOLS
+       "Build analysis tools under tools/ (Phase 5a feasibility study)"
+       OFF)
+
 # Get timezone offset in +HH:MM format for build timestamp
 string(TIMESTAMP _tz "%z")
 string(REGEX REPLACE "^([+-][0-9][0-9])([0-9][0-9])$" "\\1:\\2" IKAFSSN_BUILD_TZ_OFFSET "${_tz}")
@@ -295,5 +301,20 @@ if(IKAFSSN_BUILD_BENCH)
         URL_HASH SHA256=b334658edd35efcf06a99d9be21e4e93e092bd5f95074c1673d5c8705d95c104
     )
     FetchContent_MakeAvailable(benchmark)
+
+    # FastPFor v0.4.0 — needed by bench_pfd_proto (Phase 5a feasibility study).
+    # Phase 5b will move this to an unconditional dependency.
+    FetchContent_Declare(
+        fastpfor
+        URL      https://github.com/lemire/FastPFor/archive/refs/tags/v0.4.0.tar.gz
+        URL_HASH SHA256=94c15a3e182c4f4ac0551cdd4c1afdb8465d337293a637c12483d0da026d75af
+    )
+    FetchContent_MakeAvailable(fastpfor)
+
     add_subdirectory(bench)
+endif()
+
+# --- Analysis tools (optional, Phase 5a) ---
+if(IKAFSSN_BUILD_TOOLS)
+    add_subdirectory(tools)
 endif()

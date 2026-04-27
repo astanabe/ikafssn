@@ -51,3 +51,16 @@ target_link_libraries(bench_kmer_revcomp PRIVATE
 target_include_directories(bench_kmer_revcomp PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
+
+# Phase 5a — SIMD-FastPFOR* + Simple-8b prototype bench (throwaway).
+# Compares FastPFor's simdfastpfor256 / simple8b decoders against the
+# Phase 3a varint baseline on synthetic delta streams.
+if(TARGET FastPFOR)
+    add_executable(bench_pfd_proto bench_pfd_proto.cpp)
+    target_link_libraries(bench_pfd_proto PRIVATE
+        ikafssn_index ikafssn_io ikafssn_util
+        FastPFOR benchmark::benchmark)
+    target_include_directories(bench_pfd_proto PRIVATE
+        "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}")
+endif()
