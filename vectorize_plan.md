@@ -12,7 +12,9 @@
 | **Phase 1 §0 訂正** (Google Benchmark 取り込み) | **完了 (2026-04-27)** | `vectorize` 165a19a | `/home/shimotsuki/.claude/plans/vectorize-plan-md-phase-0-home-shimotsu-imperative-alpaca.md §0` |
 | **Phase 1a** — H-4 (FASTA toupper) | **完了 (2026-04-27)** | `vectorize` 56b8afb | 同上 §1 |
 | **Phase 1b** — H-1 (ncbi2na unpack) | **完了 (2026-04-27)** | `vectorize` 909fbff | 同上 §2 |
-| **Phase 2** — H-3 (Stage 1 SoA) + M-4 (parallel_sort) | 未着手 | — | `/home/shimotsuki/.claude/plans/vectorize-phase-2-stage1-soa-parallel-sort.md` |
+| **Phase 2a** — H-3 (Stage1Buffer SoA refactor) | **完了 (2026-04-27)** | `vectorize` 5fe391e | `/home/shimotsuki/.claude/plans/vectorize-phase-2-stage1-soa-parallel-sort.md §1` |
+| **Phase 2b** — H-3 (Stage 1 batch SIMD: AVX-512 gather/scatter) | **完了 (2026-04-27)** | `vectorize` a5fc1bb | 同上 §2 |
+| **Phase 2c** — M-4 (x86-simd-sort 統合) | **完了 (2026-04-27)** | `vectorize` 95f20a9 | 同上 §3 |
 | Phase 3 — H-2 (varint バッチ) + M-1 (k-mer revcomp) | 未着手 | — | 未作成 |
 | Phase 4 — M-2 (degenerate scan) + M-3 (spaced seed 並列) | 未着手 | — | 未作成 |
 
