@@ -3,6 +3,12 @@ project(ikafssn LANGUAGES C CXX)
 
 set(IKAFSSN_VERSION "0.1.2026.04.27")
 
+# --- Optional benchmark suite (Google Benchmark via FetchContent) ---
+# OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
+option(IKAFSSN_BUILD_BENCH
+       "Build benchmark binaries under bench/ (off by default)"
+       OFF)
+
 # Get timezone offset in +HH:MM format for build timestamp
 string(TIMESTAMP _tz "%z")
 string(REGEX REPLACE "^([+-][0-9][0-9])([0-9][0-9])$" "\\1:\\2" IKAFSSN_BUILD_TZ_OFFSET "${_tz}")
@@ -203,3 +209,18 @@ include(CPack)
 
 enable_testing()
 add_subdirectory(test)
+
+# --- Benchmark binaries (optional) ---
+if(IKAFSSN_BUILD_BENCH)
+    include(FetchContent)
+    set(BENCHMARK_ENABLE_TESTING     OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL     OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        benchmark
+        URL      https://github.com/google/benchmark/archive/refs/tags/v1.9.4.tar.gz
+        URL_HASH SHA256=b334658edd35efcf06a99d9be21e4e93e092bd5f95074c1673d5c8705d95c104
+    )
+    FetchContent_MakeAvailable(benchmark)
+    add_subdirectory(bench)
+endif()
