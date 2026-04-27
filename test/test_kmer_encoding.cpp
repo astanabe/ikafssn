@@ -1,5 +1,6 @@
 #include "test_util.hpp"
 #include "core/kmer_encoding.hpp"
+#include "util/simd_dispatch.hpp"
 #include <set>
 #include <vector>
 #include <string>
@@ -540,6 +541,8 @@ static void test_scan_ambig_sliding_window() {
 }
 
 int main() {
+    ikafssn::init_simd_dispatch(nullptr);
+    ikafssn::check_required_tier_or_skip();
     test_base_encoding();
     test_known_kmer();
     test_revcomp_involution_u16();

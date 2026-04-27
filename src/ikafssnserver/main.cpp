@@ -3,6 +3,7 @@
 #include "util/cli_parser.hpp"
 #include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
+#include "util/simd_dispatch.hpp"
 #include "util/context_parser.hpp"
 #include "util/size_parser.hpp"
 #include "io/volume_discovery.hpp"
@@ -149,7 +150,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    config.log_level = make_logger(cli).level();
+    Logger logger = make_logger(cli);
+    init_simd_dispatch(&logger);
+    config.log_level = logger.level();
 
     // Search config (renamed options)
     config.max_freq_raw = cli.get_double("-stage1_max_freq", 0.5);

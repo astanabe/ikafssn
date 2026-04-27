@@ -21,6 +21,7 @@
 #include "util/cli_parser.hpp"
 #include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
+#include "util/simd_dispatch.hpp"
 #include "util/context_parser.hpp"
 #include "util/logger.hpp"
 #include "util/size_parser.hpp"
@@ -181,6 +182,7 @@ int main(int argc, char* argv[]) {
     std::string output_path = cli.get_string("-o");
     int num_threads = resolve_threads(cli);
     Logger logger = make_logger(cli);
+    init_simd_dispatch(&logger);
 
     // Memory limit for madvise budget
     uint64_t memory_limit;

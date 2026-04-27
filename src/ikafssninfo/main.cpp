@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "core/version.hpp"
 #include "util/common_init.hpp"
+#include "util/simd_dispatch.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
@@ -231,6 +232,9 @@ int main(int argc, char* argv[]) {
         print_usage(argv[0]);
         return 0;
     }
+
+    Logger logger = make_logger(cli);
+    init_simd_dispatch(&logger);
 
     bool has_ix = cli.has("-ix");
     bool has_socket = cli.has("-socket");

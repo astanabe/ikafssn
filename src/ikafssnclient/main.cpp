@@ -8,6 +8,7 @@
 #include "protocol/info_format.hpp"
 #include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
+#include "util/simd_dispatch.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/primer_query.hpp"
 #include "io/seqidlist_reader.hpp"
@@ -316,6 +317,7 @@ int main(int argc, char* argv[]) {
     }
 
     Logger logger = make_logger(cli);
+    init_simd_dispatch(&logger);
 
 #ifdef IKAFSSN_ENABLE_HTTP
     // HTTP authentication resolution

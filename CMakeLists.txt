@@ -22,6 +22,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG -funroll-loops" CACHE STRING
     "C++ flags for Release builds" FORCE)
 
+# --- Runtime SIMD dispatch ---
+# Enables CPU-feature detection and ISA-specific kernel selection at runtime.
+# Disabling forces the Scalar tier even on capable hardware.
+option(IKAFSSN_ENABLE_SIMD
+       "Enable runtime SIMD dispatch (CPU detection + ISA-specific kernels)"
+       ON)
+if(IKAFSSN_ENABLE_SIMD)
+    add_compile_definitions(IKAFSSN_ENABLE_SIMD=1)
+else()
+    add_compile_definitions(IKAFSSN_ENABLE_SIMD=0)
+endif()
+
 # --- NCBI C++ Toolkit ---
 set(NCBI_TOOLKIT_DIR "${CMAKE_SOURCE_DIR}/ncbi-cxx-toolkit" CACHE PATH
     "Path to NCBI C++ Toolkit install root (contains include/ and CMake-*/)")

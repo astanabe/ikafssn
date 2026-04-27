@@ -5,8 +5,39 @@ function(add_ikafssn_test TEST_NAME TEST_SOURCE)
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 endfunction()
 
+# Register SIMD-aware variants of a test. For each tier (x86_64 + aarch64),
+# a separate test invocation is created with IKAFSSN_FORCE_SIMD pinning the
+# kernel selection and IKAFSSN_TEST_REQUIRE_TIER ensuring CPUs that do not
+# actually support that tier exit(77) (CTest skip).
+function(add_ikafssn_simd_test TEST_NAME)
+    set(_simd_tiers
+        scalar
+        sse42 avx2 avx512bw avx512vbmi avx512vbmi2
+        neon sve sve2
+    )
+    foreach(tier IN LISTS _simd_tiers)
+        add_test(NAME ${TEST_NAME}_force_${tier} COMMAND ${TEST_NAME})
+        set_tests_properties(${TEST_NAME}_force_${tier} PROPERTIES
+            ENVIRONMENT "IKAFSSN_FORCE_SIMD=${tier};IKAFSSN_TEST_REQUIRE_TIER=${tier}"
+            SKIP_RETURN_CODE 77
+            LABELS "simd_variant"
+        )
+    endforeach()
+endfunction()
+
 add_ikafssn_test(test_varint test_varint.cpp)
 add_ikafssn_test(test_kmer_encoding test_kmer_encoding.cpp)
+target_link_libraries(test_kmer_encoding PRIVATE ikafssn_util)
+target_compile_definitions(test_kmer_encoding PRIVATE IKAFSSN_TESTING)
+add_ikafssn_simd_test(test_kmer_encoding)
+
+# Phase 0 SIMD dispatch unit test (no external dependencies).
+add_executable(test_simd_dispatch test_simd_dispatch.cpp)
+target_link_libraries(test_simd_dispatch PRIVATE ikafssn_util ikafssn_core)
+target_include_directories(test_simd_dispatch PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(test_simd_dispatch PRIVATE IKAFSSN_TESTING)
+add_test(NAME test_simd_dispatch COMMAND test_simd_dispatch)
+add_ikafssn_simd_test(test_simd_dispatch)
 add_ikafssn_test(test_spaced_seed test_spaced_seed.cpp)
 add_ikafssn_test(test_ksx_io test_ksx_io.cpp)
 add_ikafssn_test(test_kix_io test_kix_io.cpp)

@@ -10,6 +10,7 @@
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
 #include "util/common_init.hpp"
+#include "util/simd_dispatch.hpp"
 #include "util/size_parser.hpp"
 #include "util/logger.hpp"
 
@@ -288,6 +289,7 @@ int main(int argc, char* argv[]) {
     }
 
     Logger logger = make_logger(cli);
+    init_simd_dispatch(&logger);
     bool verbose = logger.verbose();
 
     // Create output directory
