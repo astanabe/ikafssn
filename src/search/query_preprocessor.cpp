@@ -4,6 +4,7 @@
 #include "index/kix_reader.hpp"
 #include "index/khx_reader.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/kmer_revcomp_simd.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/config.hpp"
 
@@ -113,10 +114,17 @@ QueryKmerData<KmerInt> preprocess_query(
             rc_kmers.emplace_back(fwd_pos, kmer);
         }
     } else {
-        // Contiguous: existing kmer_revcomp() approach
-        rc_kmers.reserve(fwd_kmers.size());
-        for (const auto& [pos, kmer] : fwd_kmers) {
-            rc_kmers.emplace_back(pos, kmer_revcomp(kmer, k));
+        // Contiguous: SIMD batch revcomp via SoA staging buffers.
+        // The destination is a vector<pair> (AoS), but extracting kmer values
+        // into a contiguous buffer lets the SIMD kernel run on aligned dense
+        // data; the AoS reassembly is a cheap two-vector zip.
+        const std::size_t nfwd = fwd_kmers.size();
+        std::vector<KmerInt> tmp_in(nfwd), tmp_out(nfwd);
+        for (std::size_t i = 0; i < nfwd; i++) tmp_in[i] = fwd_kmers[i].second;
+        kmer_revcomp_batch<KmerInt>(tmp_in.data(), tmp_out.data(), nfwd, k);
+        rc_kmers.resize(nfwd);
+        for (std::size_t i = 0; i < nfwd; i++) {
+            rc_kmers[i] = {fwd_kmers[i].first, tmp_out[i]};
         }
     }
 

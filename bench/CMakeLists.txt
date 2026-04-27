@@ -43,3 +43,11 @@ target_link_libraries(bench_varint PRIVATE
 target_include_directories(bench_varint PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
+
+# Phase 3b — k-mer revcomp batch SIMD
+add_executable(bench_kmer_revcomp bench_kmer_revcomp.cpp)
+target_link_libraries(bench_kmer_revcomp PRIVATE
+    ikafssn_util benchmark::benchmark)
+target_include_directories(bench_kmer_revcomp PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}")

@@ -1,6 +1,8 @@
 #include "test_util.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/kmer_revcomp_simd.hpp"
 #include "util/simd_dispatch.hpp"
+#include <random>
 #include <set>
 #include <vector>
 #include <string>
@@ -515,6 +517,69 @@ static void test_expand_ambig_kmer_shared() {
     CHECK_EQ(results[1], uint16_t(0x6B));
 }
 
+// Phase 3b: kmer_revcomp_batch must be bit-exact with the scalar
+// kmer_revcomp() reference for every supported (k, n) pair.
+template <typename KmerInt>
+static void check_revcomp_batch_for_k(int k, std::mt19937& rng) {
+    KmerInt mask = kmer_mask<KmerInt>(k);
+    // Cover the per-tier alignment edges (4/8/16/32 boundaries) plus a
+    // larger-than-vector size to exercise the tail path.
+    for (std::size_t n : {std::size_t{0}, std::size_t{1}, std::size_t{3},
+                          std::size_t{4}, std::size_t{7}, std::size_t{8},
+                          std::size_t{15}, std::size_t{16}, std::size_t{17},
+                          std::size_t{31}, std::size_t{32}, std::size_t{33},
+                          std::size_t{100}, std::size_t{1023}}) {
+        std::vector<KmerInt> in(n), got(n), gold(n);
+        for (std::size_t i = 0; i < n; i++) {
+            in[i] = static_cast<KmerInt>(rng()) & mask;
+            gold[i] = kmer_revcomp<KmerInt>(in[i], k);
+        }
+        kmer_revcomp_batch<KmerInt>(in.data(), got.data(), n, k);
+        for (std::size_t i = 0; i < n; i++) {
+            CHECK_EQ(got[i], gold[i]);
+        }
+    }
+}
+
+static void test_revcomp_batch_bit_exact() {
+    std::mt19937 rng(123);
+    // uint16_t covers k = 4..8.
+    for (int k : {4, 5, 6, 7, 8}) {
+        check_revcomp_batch_for_k<uint16_t>(k, rng);
+    }
+    // uint32_t covers k = 9..16.
+    for (int k : {9, 10, 11, 12, 13, 14, 15, 16}) {
+        check_revcomp_batch_for_k<uint32_t>(k, rng);
+    }
+}
+
+// Verify that batch revcomp on the same buffer (in == out) matches a
+// freshly-allocated buffer. The scalar fallback must read each element
+// before writing; the SIMD kernels load the full vector first.
+static void test_revcomp_batch_aliased() {
+    std::mt19937 rng(456);
+    for (int k : {7, 11, 14}) {
+        const bool is16 = (k <= 8);
+        if (is16) {
+            std::vector<uint16_t> a(64), b(64);
+            for (auto& v : a) v = static_cast<uint16_t>(rng()) & kmer_mask<uint16_t>(k);
+            b = a;
+            kmer_revcomp_batch<uint16_t>(a.data(), a.data(), a.size(), k);
+            std::vector<uint16_t> ref(b.size());
+            kmer_revcomp_batch<uint16_t>(b.data(), ref.data(), b.size(), k);
+            for (size_t i = 0; i < a.size(); i++) CHECK_EQ(a[i], ref[i]);
+        } else {
+            std::vector<uint32_t> a(64), b(64);
+            for (auto& v : a) v = rng() & kmer_mask<uint32_t>(k);
+            b = a;
+            kmer_revcomp_batch<uint32_t>(a.data(), a.data(), a.size(), k);
+            std::vector<uint32_t> ref(b.size());
+            kmer_revcomp_batch<uint32_t>(b.data(), ref.data(), b.size(), k);
+            for (size_t i = 0; i < a.size(); i++) CHECK_EQ(a[i], ref[i]);
+        }
+    }
+}
+
 static void test_scan_ambig_sliding_window() {
     // Test that degenerate base correctly exits the window as it slides
     // "RACGTACGT" k=5:
@@ -568,6 +633,8 @@ int main() {
     test_scan_ambig_degen_at_start();
     test_expand_ambig_kmer_shared();
     test_scan_ambig_sliding_window();
+    test_revcomp_batch_bit_exact();
+    test_revcomp_batch_aliased();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }
