@@ -2,10 +2,12 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <algorithm>
 #include <vector>
 #include "core/config.hpp"
 #include "core/ambiguity_parser.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/ncbi2na_unpack.hpp"
 #include "core/spaced_seed.hpp"
 
 namespace ikafssn {
@@ -91,88 +93,101 @@ public:
             }
         }
 
-        // Main loop: i is the rightmost position of the k-mer window
-        for (uint32_t i = static_cast<uint32_t>(k_ - 1); i < seq_length; i++) {
-            uint8_t code = ncbi2na_base_at(ncbi2na_data, i);
-            kmer = ((kmer << 2) | static_cast<KmerInt>(code)) & mask_;
+        // Main loop: i is the rightmost position of the k-mer window.
+        // Chunk-prefetch: bulk-decode CHUNK bases via SIMD (ncbi2na_unpack)
+        // then iterate scalar over the buffer. State (kmer, ambig_count,
+        // single_*) carries cleanly across chunk boundaries.
+        constexpr uint32_t CHUNK = kNcbi2naUnpackChunkSize;
+        uint8_t base_buf[CHUNK];
+        uint32_t pos = static_cast<uint32_t>(k_ - 1);
+        while (pos < seq_length) {
+            uint32_t chunk_count = std::min<uint32_t>(CHUNK, seq_length - pos);
+            unpack_ncbi2na_chunk(ncbi2na_data, pos, chunk_count, base_buf);
 
-            // Check if position i (entering right edge) is ambiguous
-            if (enter_cur.pos(ambig_entries) == i) {
-                ambig_count++;
-                if (ambig_count == 1) {
-                    single_pos = i;
-                    single_ncbi4na = enter_cur.ncbi4na(ambig_entries);
-                }
-                enter_cur.advance(ambig_entries);
-            }
+            for (uint32_t j = 0; j < chunk_count; ++j) {
+                uint32_t i = pos + j;
+                uint8_t code = base_buf[j];
+                kmer = ((kmer << 2) | static_cast<KmerInt>(code)) & mask_;
 
-            uint32_t kmer_start = i - static_cast<uint32_t>(k_) + 1;
-
-            if (ambig_count == 0) {
-                callback(kmer_start, kmer);
-            } else if (max_expansion <= 1) {
-                // Expansion disabled: skip all degenerate k-mers
-            } else if (ambig_count == 1) {
-                // Fast path: single degenerate base
-                int ec = ncbi4na_expansion_count(single_ncbi4na);
-                if (ec <= max_expansion) {
-                    int bases_from_right = static_cast<int>(i - single_pos);
-                    AmbigInfo info;
-                    info.ncbi4na = single_ncbi4na;
-                    info.bit_offset = bases_from_right * 2;
-                    ambig_callback(kmer_start, kmer, &info, 1);
-                }
-            } else {
-                // Multi-degen path: collect positions and check expansion product
-                Cursor tmp = leave_cur;
-                uint32_t win_start = kmer_start;
-                // Advance tmp to first ambig position in window
-                while (tmp.pos(ambig_entries) < win_start) {
-                    tmp.advance(ambig_entries);
-                }
-                int product = 1;
-                int info_count = 0;
-                AmbigInfo infos[MAX_K];
-                bool exceeded = false;
-                uint32_t win_end = i;
-                while (tmp.pos(ambig_entries) <= win_end) {
-                    uint32_t apos = tmp.pos(ambig_entries);
-                    uint8_t a4na = tmp.ncbi4na(ambig_entries);
-                    int ec = ncbi4na_expansion_count(a4na);
-                    product *= ec;
-                    if (product > max_expansion) {
-                        exceeded = true;
-                        break;
+                // Check if position i (entering right edge) is ambiguous
+                if (enter_cur.pos(ambig_entries) == i) {
+                    ambig_count++;
+                    if (ambig_count == 1) {
+                        single_pos = i;
+                        single_ncbi4na = enter_cur.ncbi4na(ambig_entries);
                     }
-                    int bases_from_right = static_cast<int>(i - apos);
-                    infos[info_count].ncbi4na = a4na;
-                    infos[info_count].bit_offset = bases_from_right * 2;
-                    info_count++;
-                    tmp.advance(ambig_entries);
+                    enter_cur.advance(ambig_entries);
                 }
-                if (!exceeded) {
-                    ambig_callback(kmer_start, kmer, infos, info_count);
-                }
-            }
 
-            // Check if the base leaving the window (kmer_start) was ambiguous
-            if (leave_cur.pos(ambig_entries) == kmer_start) {
-                ambig_count--;
-                leave_cur.advance(ambig_entries);
+                uint32_t kmer_start = i - static_cast<uint32_t>(k_) + 1;
 
-                // If count dropped to 1, find which ambig base remains
-                if (ambig_count == 1) {
-                    // Scan from leave_cur to find the first ambig base
-                    // in window [kmer_start+1, i+1). Bounded by k iterations.
+                if (ambig_count == 0) {
+                    callback(kmer_start, kmer);
+                } else if (max_expansion <= 1) {
+                    // Expansion disabled: skip all degenerate k-mers
+                } else if (ambig_count == 1) {
+                    // Fast path: single degenerate base
+                    int ec = ncbi4na_expansion_count(single_ncbi4na);
+                    if (ec <= max_expansion) {
+                        int bases_from_right = static_cast<int>(i - single_pos);
+                        AmbigInfo info;
+                        info.ncbi4na = single_ncbi4na;
+                        info.bit_offset = bases_from_right * 2;
+                        ambig_callback(kmer_start, kmer, &info, 1);
+                    }
+                } else {
+                    // Multi-degen path: collect positions and check expansion product
                     Cursor tmp = leave_cur;
-                    uint32_t win_start = kmer_start + 1;
+                    uint32_t win_start = kmer_start;
+                    // Advance tmp to first ambig position in window
                     while (tmp.pos(ambig_entries) < win_start) {
                         tmp.advance(ambig_entries);
                     }
-                    single_pos = tmp.pos(ambig_entries);
-                    single_ncbi4na = tmp.ncbi4na(ambig_entries);
+                    int product = 1;
+                    int info_count = 0;
+                    AmbigInfo infos[MAX_K];
+                    bool exceeded = false;
+                    uint32_t win_end = i;
+                    while (tmp.pos(ambig_entries) <= win_end) {
+                        uint32_t apos = tmp.pos(ambig_entries);
+                        uint8_t a4na = tmp.ncbi4na(ambig_entries);
+                        int ec = ncbi4na_expansion_count(a4na);
+                        product *= ec;
+                        if (product > max_expansion) {
+                            exceeded = true;
+                            break;
+                        }
+                        int bases_from_right = static_cast<int>(i - apos);
+                        infos[info_count].ncbi4na = a4na;
+                        infos[info_count].bit_offset = bases_from_right * 2;
+                        info_count++;
+                        tmp.advance(ambig_entries);
+                    }
+                    if (!exceeded) {
+                        ambig_callback(kmer_start, kmer, infos, info_count);
+                    }
+                }
+
+                // Check if the base leaving the window (kmer_start) was ambiguous
+                if (leave_cur.pos(ambig_entries) == kmer_start) {
+                    ambig_count--;
+                    leave_cur.advance(ambig_entries);
+
+                    // If count dropped to 1, find which ambig base remains
+                    if (ambig_count == 1) {
+                        // Scan from leave_cur to find the first ambig base
+                        // in window [kmer_start+1, i+1). Bounded by k iterations.
+                        Cursor tmp = leave_cur;
+                        uint32_t win_start = kmer_start + 1;
+                        while (tmp.pos(ambig_entries) < win_start) {
+                            tmp.advance(ambig_entries);
+                        }
+                        single_pos = tmp.pos(ambig_entries);
+                        single_ncbi4na = tmp.ncbi4na(ambig_entries);
+                    }
                 }
             }
+            pos += chunk_count;
         }
     }
 
@@ -218,79 +233,92 @@ public:
         uint8_t window_ncbi4na[MAX_SPACED_T] = {};
         int warmup = t - 1;
 
-        for (uint32_t i = 0; i < seq_length; i++) {
-            // 1. Advance accumulator
-            uint8_t code = ncbi2na_base_at(ncbi2na_data, i);
-            accum = ((accum << 2) | static_cast<uint64_t>(code)) & accum_mask;
+        // Chunk-prefetch: bulk-decode CHUNK bases via SIMD (ncbi2na_unpack)
+        // then iterate scalar. accum/ambig_bits/window_ncbi4na/warmup carry
+        // cleanly across chunk boundaries.
+        constexpr uint32_t CHUNK = kNcbi2naUnpackChunkSize;
+        uint8_t base_buf[CHUNK];
+        uint32_t pos_chunk = 0;
+        while (pos_chunk < seq_length) {
+            uint32_t chunk_count = std::min<uint32_t>(CHUNK, seq_length - pos_chunk);
+            unpack_ncbi2na_chunk(ncbi2na_data, pos_chunk, chunk_count, base_buf);
 
-            // 2. Shift ambig bitset (oldest falls off)
-            ambig_bits = (ambig_bits << 1) & ambig_window_mask;
+            for (uint32_t j = 0; j < chunk_count; ++j) {
+                uint32_t i = pos_chunk + j;
+                // 1. Advance accumulator
+                uint8_t code = base_buf[j];
+                accum = ((accum << 2) | static_cast<uint64_t>(code)) & accum_mask;
 
-            // 3. Check entering position for ambiguity
-            if (enter_cur.pos(ambig_entries) == i) {
-                ambig_bits |= 1u;
-                window_ncbi4na[i % t] = enter_cur.ncbi4na(ambig_entries);
-                enter_cur.advance(ambig_entries);
-            } else {
-                window_ncbi4na[i % t] = 0;
-            }
+                // 2. Shift ambig bitset (oldest falls off)
+                ambig_bits = (ambig_bits << 1) & ambig_window_mask;
 
-            // 4. Warmup
-            if (warmup > 0) {
-                warmup--;
-                continue;
-            }
-
-            // 5. Emit k-mers
-            uint32_t p = i - static_cast<uint32_t>(t) + 1;
-
-            for (int mi = 0; mi < num_masks; mi++) {
-                uint32_t mask = masks[mi];
-                uint32_t affected = ambig_bits & mask;
-
-                if (affected == 0) {
-                    // Fast path: no ambiguity on set-bit positions
-                    KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
-                    callback(p, kmer);
-                } else if (max_expansion <= 1) {
-                    // skip degenerate k-mers
+                // 3. Check entering position for ambiguity
+                if (enter_cur.pos(ambig_entries) == i) {
+                    ambig_bits |= 1u;
+                    window_ncbi4na[i % t] = enter_cur.ncbi4na(ambig_entries);
+                    enter_cur.advance(ambig_entries);
                 } else {
-                    // Slow path: some set-bit positions are ambiguous
-                    KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
-                    const auto& ext = extractor_for_mask(mask);
-                    AmbigInfo infos[MAX_K];
-                    int degen_count = 0;
-                    int product = 1;
-                    bool exceeded = false;
+                    window_ncbi4na[i % t] = 0;
+                }
 
-                    uint32_t bits = affected;
-                    while (bits != 0) {
-                        int j = std::countr_zero(bits);
-                        bits &= bits - 1;
+                // 4. Warmup
+                if (warmup > 0) {
+                    warmup--;
+                    continue;
+                }
 
-                        uint32_t seq_pos = p + static_cast<uint32_t>(t - 1 - j);
-                        uint8_t a4na = window_ncbi4na[seq_pos % t];
+                // 5. Emit k-mers
+                uint32_t p = i - static_cast<uint32_t>(t) + 1;
 
-                        int kbit_off = ext.kmer_bit_offset[j];
-                        kmer &= ~(static_cast<KmerInt>(0x03) << kbit_off);
+                for (int mi = 0; mi < num_masks; mi++) {
+                    uint32_t mask = masks[mi];
+                    uint32_t affected = ambig_bits & mask;
 
-                        int ec = ncbi4na_expansion_count(a4na);
-                        product *= ec;
-                        if (product > max_expansion) {
-                            exceeded = true;
-                            break;
+                    if (affected == 0) {
+                        // Fast path: no ambiguity on set-bit positions
+                        KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
+                        callback(p, kmer);
+                    } else if (max_expansion <= 1) {
+                        // skip degenerate k-mers
+                    } else {
+                        // Slow path: some set-bit positions are ambiguous
+                        KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
+                        const auto& ext = extractor_for_mask(mask);
+                        AmbigInfo infos[MAX_K];
+                        int degen_count = 0;
+                        int product = 1;
+                        bool exceeded = false;
+
+                        uint32_t bits = affected;
+                        while (bits != 0) {
+                            int jb = std::countr_zero(bits);
+                            bits &= bits - 1;
+
+                            uint32_t seq_pos = p + static_cast<uint32_t>(t - 1 - jb);
+                            uint8_t a4na = window_ncbi4na[seq_pos % t];
+
+                            int kbit_off = ext.kmer_bit_offset[jb];
+                            kmer &= ~(static_cast<KmerInt>(0x03) << kbit_off);
+
+                            int ec = ncbi4na_expansion_count(a4na);
+                            product *= ec;
+                            if (product > max_expansion) {
+                                exceeded = true;
+                                break;
+                            }
+
+                            infos[degen_count].ncbi4na = a4na;
+                            infos[degen_count].bit_offset = kbit_off;
+                            degen_count++;
                         }
 
-                        infos[degen_count].ncbi4na = a4na;
-                        infos[degen_count].bit_offset = kbit_off;
-                        degen_count++;
-                    }
-
-                    if (!exceeded && degen_count > 0) {
-                        ambig_callback(p, kmer, infos, degen_count);
+                        if (!exceeded && degen_count > 0) {
+                            ambig_callback(p, kmer, infos, degen_count);
+                        }
                     }
                 }
             }
+            pos_chunk += chunk_count;
         }
     }
 

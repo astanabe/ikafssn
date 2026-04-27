@@ -94,6 +94,7 @@ add_library(ikafssn_util STATIC
     util/common_init.cpp
     util/cli_validators.cpp
     util/simd_dispatch.cpp
+    core/ncbi2na_unpack.cpp
 )
 target_link_libraries(ikafssn_util PUBLIC ikafssn_core)
 

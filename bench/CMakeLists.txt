@@ -11,3 +11,11 @@ target_link_libraries(bench_fasta_toupper PRIVATE
 target_include_directories(bench_fasta_toupper PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
+
+# Phase 1b — ncbi2na unpack SIMD
+add_executable(bench_ncbi2na_unpack bench_ncbi2na_unpack.cpp)
+target_link_libraries(bench_ncbi2na_unpack PRIVATE
+    ikafssn_util benchmark::benchmark)
+target_include_directories(bench_ncbi2na_unpack PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}")

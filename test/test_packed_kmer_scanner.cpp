@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <filesystem>
 #include "core/spaced_seed.hpp"
+#include "util/simd_dispatch.hpp"
 
 using namespace ikafssn;
 using namespace ssu_fixture;
@@ -1159,6 +1160,9 @@ static void test_ambig_db_odd_length() {
 }
 
 int main(int argc, char* argv[]) {
+    ikafssn::init_simd_dispatch(nullptr);
+    ikafssn::check_required_tier_or_skip();
+
     check_ssu_available();
     check_derived_data_ready();
 

@@ -37,6 +37,12 @@ target_link_libraries(test_fasta_toupper PRIVATE ikafssn_util)
 target_compile_definitions(test_fasta_toupper PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_fasta_toupper)
 
+# ncbi2na unpack SIMD test (Phase 1b)
+add_ikafssn_test(test_ncbi2na_unpack test_ncbi2na_unpack.cpp)
+target_link_libraries(test_ncbi2na_unpack PRIVATE ikafssn_util)
+target_compile_definitions(test_ncbi2na_unpack PRIVATE IKAFSSN_TESTING)
+add_ikafssn_simd_test(test_ncbi2na_unpack)
+
 # Phase 0 SIMD dispatch unit test (no external dependencies).
 add_executable(test_simd_dispatch test_simd_dispatch.cpp)
 target_link_libraries(test_simd_dispatch PRIVATE ikafssn_util ikafssn_core)
@@ -76,8 +82,10 @@ target_include_directories(test_packed_kmer_scanner PRIVATE
 )
 target_compile_definitions(test_packed_kmer_scanner PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    IKAFSSN_TESTING
 )
 add_test(NAME test_packed_kmer_scanner COMMAND test_packed_kmer_scanner)
+add_ikafssn_simd_test(test_packed_kmer_scanner)
 
 # --- Phase 3 tests ---
 
