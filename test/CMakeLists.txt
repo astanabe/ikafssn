@@ -68,8 +68,22 @@ target_include_directories(test_builder PRIVATE
 )
 target_compile_definitions(test_builder PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    IKAFSSN_TESTING
 )
 add_test(NAME test_builder COMMAND test_builder)
+add_ikafssn_simd_test(test_builder)
+
+# parallel_sort_dispatch unit test (Phase 2c, no BLAST DB dependency)
+add_executable(test_parallel_sort test_parallel_sort.cpp)
+target_link_libraries(test_parallel_sort PRIVATE
+    ikafssn_index ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_parallel_sort PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_compile_definitions(test_parallel_sort PRIVATE IKAFSSN_TESTING)
+add_test(NAME test_parallel_sort COMMAND test_parallel_sort)
+add_ikafssn_simd_test(test_parallel_sort)
 
 # PackedKmerScanner + AmbiguityParser test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_packed_kmer_scanner test_packed_kmer_scanner.cpp)

@@ -10,6 +10,7 @@
 #include "index/ksx_writer.hpp"
 #include "index/kix_format.hpp"
 #include "index/kpx_format.hpp"
+#include "index/parallel_sort_dispatch.hpp"
 #include "util/logger.hpp"
 #include "util/progress.hpp"
 
@@ -23,7 +24,6 @@
 #include <filesystem>
 
 #include <tbb/parallel_for.h>
-#include <tbb/parallel_sort.h>
 #include <tbb/blocked_range.h>
 #include <tbb/combinable.h>
 
@@ -31,14 +31,7 @@
 
 namespace ikafssn {
 
-// Temporary entry for posting buffer.
-struct TempEntry {
-    uint32_t kmer_value;
-    uint32_t seq_id;
-    uint32_t pos;
-};
-
-static_assert(sizeof(TempEntry) == 12, "TempEntry must be 12 bytes");
+// TempEntry is defined in index/parallel_sort_dispatch.hpp.
 
 // Determine partition for a kmer based on upper bits.
 // effective_bits is the total number of significant bits (2*k).
@@ -186,9 +179,12 @@ bool build_index(BlastDbReader& db,
     logger.info("Phase 1: total postings = %lu", static_cast<unsigned long>(total_postings));
 
     // =========== Determine partition count from memory_limit ===========
+    // Per-entry overhead depends on the active sort path: the SIMD path needs
+    // a parallel uint64_t key + uint32_t val array on top of the TempEntry
+    // buffer (Strategy E in parallel_sort_dispatch.cpp).
     int num_partitions = 1;
     if (total_postings > 0) {
-        uint64_t entries_limit = config.memory_limit / sizeof(TempEntry);
+        uint64_t entries_limit = config.memory_limit / parallel_sort_entry_overhead();
         while (static_cast<uint64_t>((total_postings + num_partitions - 1) / num_partitions)
                > entries_limit) {
             num_partitions *= 2;
@@ -253,7 +249,7 @@ bool build_index(BlastDbReader& db,
     uint64_t kpx_data_pos = 0;
 
     uint64_t est_partition_postings = (total_postings + num_partitions - 1) / num_partitions;
-    uint64_t reserve_entries = config.memory_limit / sizeof(TempEntry);
+    uint64_t reserve_entries = config.memory_limit / parallel_sort_entry_overhead();
 
     // Process each partition (sequentially to respect memory constraints)
     uint8_t varint_buf[5];
@@ -340,13 +336,9 @@ bool build_index(BlastDbReader& db,
 
         if (buffer.empty()) continue;
 
-        // Parallel sort by kmer, then seq_id, then pos
-        tbb::parallel_sort(buffer.begin(), buffer.end(),
-            [](const TempEntry& a, const TempEntry& b) {
-                if (a.kmer_value != b.kmer_value) return a.kmer_value < b.kmer_value;
-                if (a.seq_id != b.seq_id) return a.seq_id < b.seq_id;
-                return a.pos < b.pos;
-            });
+        // Sort by (kmer_value, seq_id, pos). Dispatched to SIMD path
+        // (x86-simd-sort) on AVX2+ x86_64 / TBB parallel_sort otherwise.
+        parallel_sort_temp_entries(buffer);
 
         // Write sorted postings grouped by kmer (sequential — I/O bound)
         size_t i = 0;

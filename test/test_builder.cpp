@@ -11,6 +11,7 @@
 #include "core/kmer_encoding.hpp"
 #include "core/varint.hpp"
 #include "util/logger.hpp"
+#include "util/simd_dispatch.hpp"
 
 #include <cstdio>
 #include <string>
@@ -489,6 +490,9 @@ static void test_build_parallel_scan() {
 }
 
 int main(int argc, char* argv[]) {
+    init_simd_dispatch(nullptr);
+    check_required_tier_or_skip();
+
     check_ssu_available();
 
     g_testdb_path = ssu_db_prefix();

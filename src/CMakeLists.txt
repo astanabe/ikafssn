@@ -16,8 +16,12 @@ add_library(ikafssn_index STATIC
     index/khx_writer.cpp
     index/khx_reader.cpp
     index/index_filter.cpp
+    index/parallel_sort_dispatch.cpp
 )
 target_link_libraries(ikafssn_index PUBLIC ikafssn_core ikafssn_io TBB::tbb)
+if(IKAFSSN_HAS_X86_SIMD_SORT)
+    target_link_libraries(ikafssn_index PRIVATE ikafssn_xss)
+endif()
 
 # Index builder library (requires NCBI via blastdb)
 add_library(ikafssn_builder STATIC

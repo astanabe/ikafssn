@@ -27,3 +27,11 @@ target_link_libraries(bench_stage1 PRIVATE
 target_include_directories(bench_stage1 PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
+
+# Phase 2c — index_builder posting-buffer SIMD sort
+add_executable(bench_parallel_sort bench_parallel_sort.cpp)
+target_link_libraries(bench_parallel_sort PRIVATE
+    ikafssn_index ikafssn_io ikafssn_util benchmark::benchmark)
+target_include_directories(bench_parallel_sort PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}")

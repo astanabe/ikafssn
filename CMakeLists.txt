@@ -159,6 +159,79 @@ if(ENABLE_REMOTE_RETRIEVE)
     find_package(CURL REQUIRED)
 endif()
 
+# --- x86-simd-sort (Phase 2c, M-4) ---
+# Header + per-arch dispatch library used by index_builder for the posting
+# buffer sort. Header-only on its own; the per-arch object files (avx2 / skx)
+# are compiled with -march=haswell / -march=skylake-avx512 respectively, and
+# the dispatcher in lib/x86simdsort.cpp picks at runtime via CPU feature bits.
+# Only enabled on x86_64 with IKAFSSN_ENABLE_SIMD; aarch64 / SIMD-disabled
+# builds fall back to tbb::parallel_sort.
+if(IKAFSSN_ENABLE_SIMD AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+    include(FetchContent)
+    FetchContent_Declare(
+        x86_simd_sort
+        URL      https://github.com/numpy/x86-simd-sort/archive/refs/tags/v7.0.tar.gz
+        URL_HASH SHA256=f1658b0562a56255b157b7ffbb81e53e78e2571db1962262e55db6ca01733907
+    )
+    FetchContent_MakeAvailable(x86_simd_sort)
+
+    # Per-arch object libraries; runtime dispatch in x86simdsort.cpp picks one.
+    # All four arches must be linked in because the dispatcher's __attribute__
+    # ((constructor)) symbol-resolution functions reference every variant
+    # unconditionally; the runtime CPU check only chooses among them.
+    add_library(ikafssn_xss_avx2 OBJECT
+        ${x86_simd_sort_SOURCE_DIR}/lib/x86simdsort-avx2.cpp)
+    target_include_directories(ikafssn_xss_avx2 PRIVATE
+        ${x86_simd_sort_SOURCE_DIR}/src
+        ${x86_simd_sort_SOURCE_DIR}/lib)
+    target_compile_options(ikafssn_xss_avx2 PRIVATE -march=haswell)
+    set_property(TARGET ikafssn_xss_avx2 PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+    add_library(ikafssn_xss_skx OBJECT
+        ${x86_simd_sort_SOURCE_DIR}/lib/x86simdsort-skx.cpp)
+    target_include_directories(ikafssn_xss_skx PRIVATE
+        ${x86_simd_sort_SOURCE_DIR}/src
+        ${x86_simd_sort_SOURCE_DIR}/lib)
+    target_compile_options(ikafssn_xss_skx PRIVATE -march=skylake-avx512)
+    set_property(TARGET ikafssn_xss_skx PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+    add_library(ikafssn_xss_icl OBJECT
+        ${x86_simd_sort_SOURCE_DIR}/lib/x86simdsort-icl.cpp)
+    target_include_directories(ikafssn_xss_icl PRIVATE
+        ${x86_simd_sort_SOURCE_DIR}/src
+        ${x86_simd_sort_SOURCE_DIR}/lib)
+    target_compile_options(ikafssn_xss_icl PRIVATE -march=icelake-client)
+    set_property(TARGET ikafssn_xss_icl PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+    add_library(ikafssn_xss_spr OBJECT
+        ${x86_simd_sort_SOURCE_DIR}/lib/x86simdsort-spr.cpp)
+    target_include_directories(ikafssn_xss_spr PRIVATE
+        ${x86_simd_sort_SOURCE_DIR}/src
+        ${x86_simd_sort_SOURCE_DIR}/lib)
+    target_compile_options(ikafssn_xss_spr PRIVATE -march=sapphirerapids)
+    set_property(TARGET ikafssn_xss_spr PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+    add_library(ikafssn_xss STATIC
+        ${x86_simd_sort_SOURCE_DIR}/lib/x86simdsort.cpp
+        $<TARGET_OBJECTS:ikafssn_xss_avx2>
+        $<TARGET_OBJECTS:ikafssn_xss_skx>
+        $<TARGET_OBJECTS:ikafssn_xss_icl>
+        $<TARGET_OBJECTS:ikafssn_xss_spr>
+    )
+    target_include_directories(ikafssn_xss PUBLIC
+        ${x86_simd_sort_SOURCE_DIR}/lib)
+    target_include_directories(ikafssn_xss PRIVATE
+        ${x86_simd_sort_SOURCE_DIR}/src
+        ${x86_simd_sort_SOURCE_DIR}/utils)
+    set_property(TARGET ikafssn_xss PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+    set(IKAFSSN_HAS_X86_SIMD_SORT TRUE)
+    add_compile_definitions(IKAFSSN_HAS_X86_SIMD_SORT=1)
+else()
+    set(IKAFSSN_HAS_X86_SIMD_SORT FALSE)
+    add_compile_definitions(IKAFSSN_HAS_X86_SIMD_SORT=0)
+endif()
+
 # --- Subdirectories ---
 add_subdirectory(src)
 
