@@ -8,7 +8,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
-#include "core/varint.hpp"
+#include "search/seq_id_decoder.hpp"
 #include "util/logger.hpp"
 
 #include <cstdio>
@@ -753,21 +753,14 @@ static void test_ambig_expansion_in_index() {
     kix.close();
 }
 
-// Decode ID posting list
+// Decode ID posting list. Reads the v4-formatted blob via SeqIdDecoder so
+// the test stays decoupled from the underlying codec.
 static std::vector<uint32_t> decode_id_postings(
-    const uint8_t* data, uint64_t offset, uint32_t count) {
+    const uint8_t* data, uint64_t offset, uint64_t byte_len) {
     std::vector<uint32_t> result;
-    if (count == 0) return result;
-    result.reserve(count);
-    const uint8_t* p = data + offset;
-    uint32_t prev_id = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t delta;
-        p += varint_decode(p, delta);
-        uint32_t id = (i == 0) ? delta : prev_id + delta;
-        result.push_back(id);
-        prev_id = id;
-    }
+    if (byte_len == 0) return result;
+    SeqIdDecoder dec(data + offset, data + offset + byte_len);
+    while (dec.has_more()) result.push_back(dec.next());
     return result;
 }
 
@@ -805,7 +798,7 @@ static void test_ssu_db_kmer_check() {
 
     auto ids = decode_id_postings(
         kix.posting_data(), kix.posting_offset(target_kmer),
-        kix.count_postings(target_kmer));
+        kix.posting_byte_length(target_kmer));
     bool has_target = false;
     for (uint32_t id : ids) {
         if (id == target_oid) has_target = true;

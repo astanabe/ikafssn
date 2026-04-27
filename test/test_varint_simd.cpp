@@ -281,8 +281,12 @@ int main() {
     test_large_random_stream();
     test_size_boundaries();
     test_max_count_clamping();
-    test_seq_id_decoder_next_batch_matches_next();
-    test_pos_decoder_next_batch_matches_next();
+    // SeqIdDecoder / PosDecoder now consume PFor-encoded posting blobs (v4),
+    // not varint streams.  Coverage for the new decoder path lives in
+    // test_pfd_codec.cpp; the legacy varint-driven cases below exercise an
+    // input encoding that is no longer supported.
+    (void)test_seq_id_decoder_next_batch_matches_next;
+    (void)test_pos_decoder_next_batch_matches_next;
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

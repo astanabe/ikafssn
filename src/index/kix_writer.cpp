@@ -1,7 +1,7 @@
 #include "index/kix_writer.hpp"
 #include "index/kix_format.hpp"
+#include "index/pfd_codec.hpp"
 #include "core/config.hpp"
-#include "core/varint.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -36,17 +36,15 @@ void KixWriter::add_posting_list(uint32_t kmer_value, const std::vector<uint32_t
 
     if (seq_ids.empty()) return;
 
-    uint8_t buf[5];
-    // First ID: raw varint
-    size_t n = varint_encode(seq_ids[0], buf);
-    posting_data_.insert(posting_data_.end(), buf, buf + n);
-
-    // Subsequent: delta varint
+    // v4: encode delta-stream (first absolute, then differences) via FastPFor.
+    std::vector<uint32_t> deltas(seq_ids.size());
+    deltas[0] = seq_ids[0];
     for (size_t i = 1; i < seq_ids.size(); i++) {
-        uint32_t delta = seq_ids[i] - seq_ids[i - 1];
-        n = varint_encode(delta, buf);
-        posting_data_.insert(posting_data_.end(), buf, buf + n);
+        deltas[i] = seq_ids[i] - seq_ids[i - 1];
     }
+    pfd::encode_posting_kix(deltas.data(),
+                            static_cast<uint32_t>(deltas.size()),
+                            posting_data_);
 }
 
 bool KixWriter::write(const std::string& path) {
@@ -76,6 +74,13 @@ bool KixWriter::write(const std::string& path) {
     size_t name_len = std::min(db_.size(), size_t(32));
     hdr.db_len = static_cast<uint16_t>(name_len);
     std::memcpy(hdr.db, db_.c_str(), name_len);
+
+    // v4 codec fields
+    hdr.codec_id              = KIX_CODEC_PFOR_S8B;
+    hdr.codec_version         = 1;
+    hdr.block_size            = pfd::kPfdBlockSize;
+    hdr.tail_codec            = KIX_TAIL_VBYTE;
+    hdr.exception_codec_flags = 0;
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 

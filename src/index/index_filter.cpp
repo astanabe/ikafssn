@@ -4,6 +4,7 @@
 #include "index/kix_format.hpp"
 #include "index/kpx_format.hpp"
 #include "index/khx_writer.hpp"
+#include "index/pfd_codec.hpp"
 #include "core/config.hpp"
 #include "core/types.hpp"
 #include "util/logger.hpp"
@@ -85,6 +86,13 @@ static bool write_filtered_kix(
     kix_hdr.template_type = kix_in.header().template_type;
     std::memcpy(kix_hdr.db, kix_in.header().db, 32);
 
+    // v4 codec extension fields — propagate from input header.
+    kix_hdr.codec_id              = kix_in.header().codec_id;
+    kix_hdr.codec_version         = kix_in.header().codec_version;
+    kix_hdr.block_size            = kix_in.header().block_size;
+    kix_hdr.tail_codec            = kix_in.header().tail_codec;
+    kix_hdr.exception_codec_flags = kix_in.header().exception_codec_flags;
+
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
 
     // Write offsets
@@ -151,6 +159,12 @@ static bool write_filtered_kpx(
     kpx_hdr.template_type = kpx_in.header().template_type;
     kpx_hdr.total_postings = new_total_postings;
     kpx_hdr.offset_type = use_offset32 ? 0 : 1;
+
+    // v4 codec extension fields — propagate from input header.
+    kpx_hdr.codec_id      = kpx_in.header().codec_id;
+    kpx_hdr.codec_version = kpx_in.header().codec_version;
+    kpx_hdr.block_size    = kpx_in.header().block_size;
+    kpx_hdr.tail_codec    = kpx_in.header().tail_codec;
 
     std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
 

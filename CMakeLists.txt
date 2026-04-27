@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.04.27")
+set(IKAFSSN_VERSION "0.1.2026.04.28")
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
@@ -238,6 +238,17 @@ else()
     add_compile_definitions(IKAFSSN_HAS_X86_SIMD_SORT=0)
 endif()
 
+# --- FastPFor (unconditional, Phase 5b) ---
+# Used by ikafssn_index for the v4 .kix/.kpx posting codec (SIMD-FastPFOR* +
+# Simple-8b/VByte tail).  Static archive linked into ikafssn_index.
+include(FetchContent)
+FetchContent_Declare(
+    fastpfor
+    URL      https://github.com/lemire/FastPFor/archive/refs/tags/v0.4.0.tar.gz
+    URL_HASH SHA256=94c15a3e182c4f4ac0551cdd4c1afdb8465d337293a637c12483d0da026d75af
+)
+FetchContent_MakeAvailable(fastpfor)
+
 # --- Subdirectories ---
 add_subdirectory(src)
 
@@ -301,16 +312,6 @@ if(IKAFSSN_BUILD_BENCH)
         URL_HASH SHA256=b334658edd35efcf06a99d9be21e4e93e092bd5f95074c1673d5c8705d95c104
     )
     FetchContent_MakeAvailable(benchmark)
-
-    # FastPFor v0.4.0 — needed by bench_pfd_proto (Phase 5a feasibility study).
-    # Phase 5b will move this to an unconditional dependency.
-    FetchContent_Declare(
-        fastpfor
-        URL      https://github.com/lemire/FastPFor/archive/refs/tags/v0.4.0.tar.gz
-        URL_HASH SHA256=94c15a3e182c4f4ac0551cdd4c1afdb8465d337293a637c12483d0da026d75af
-    )
-    FetchContent_MakeAvailable(fastpfor)
-
     add_subdirectory(bench)
 endif()
 

@@ -5,11 +5,11 @@
 #include "core/kmer_encoding.hpp"
 #include "core/packed_kmer_scanner.hpp"
 #include "core/ambiguity_parser.hpp"
-#include "core/varint.hpp"
 #include "core/spaced_seed.hpp"
 #include "index/ksx_writer.hpp"
 #include "index/kix_format.hpp"
 #include "index/kpx_format.hpp"
+#include "index/pfd_codec.hpp"
 #include "index/parallel_sort_dispatch.hpp"
 #include "util/logger.hpp"
 #include "util/progress.hpp"
@@ -252,7 +252,10 @@ bool build_index(BlastDbReader& db,
     uint64_t reserve_entries = config.memory_limit / parallel_sort_entry_overhead();
 
     // Process each partition (sequentially to respect memory constraints)
-    uint8_t varint_buf[5];
+    // Buffers reused per k-mer for delta/abs encoding into the v4 PFor codec.
+    std::vector<uint32_t> seq_delta_buf;  seq_delta_buf.reserve(64 * 1024);
+    std::vector<uint32_t> abs_pos_buf;    abs_pos_buf.reserve(64 * 1024);
+    std::vector<uint8_t>  pfd_out_buf;    pfd_out_buf.reserve(256 * 1024);
 
     for (int p = 0; p < num_partitions; p++) {
         logger.info("  Partition %d/%d...", p + 1, num_partitions);
@@ -354,37 +357,30 @@ bool build_index(BlastDbReader& db,
             // Record offsets and actual counts for this kmer
             kix_offsets[cur_kmer] = kix_data_pos;
             if (!config.skip_kpx) kpx_offsets[cur_kmer] = kpx_data_pos;
-            // Write delta-compressed ID postings to kix
-            {
-                uint32_t prev_id = 0;
-                for (size_t e = i; e < j; e++) {
-                    uint32_t delta = (e == i) ? buffer[e].seq_id
-                                              : buffer[e].seq_id - prev_id;
-                    prev_id = buffer[e].seq_id;
-                    size_t n = varint_encode(delta, varint_buf);
-                    std::fwrite(varint_buf, 1, n, kix_fp);
-                    kix_data_pos += n;
-                }
-            }
 
-            // Write delta-compressed pos postings to kpx (skip if mode 1)
+            const uint32_t cnt = static_cast<uint32_t>(j - i);
+
+            // .kix: build seq_id delta then PFor encode (first abs, then deltas).
+            seq_delta_buf.resize(cnt);
+            seq_delta_buf[0] = buffer[i].seq_id;
+            for (size_t e = 1; e < cnt; e++) {
+                seq_delta_buf[e] = buffer[i + e].seq_id - buffer[i + e - 1].seq_id;
+            }
+            pfd_out_buf.clear();
+            pfd::encode_posting_kix(seq_delta_buf.data(), cnt, pfd_out_buf);
+            std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kix_fp);
+            kix_data_pos += pfd_out_buf.size();
+
+            // .kpx: encode absolute positions via PFor (skip if mode 1).
             if (!config.skip_kpx) {
-                uint32_t prev_id = UINT32_MAX; // force "new seq" on first
-                uint32_t prev_pos = 0;
-                for (size_t e = i; e < j; e++) {
-                    bool new_seq = (buffer[e].seq_id != prev_id);
-                    uint32_t val;
-                    if (new_seq) {
-                        val = buffer[e].pos; // raw position (delta reset)
-                    } else {
-                        val = buffer[e].pos - prev_pos; // delta
-                    }
-                    prev_id = buffer[e].seq_id;
-                    prev_pos = buffer[e].pos;
-                    size_t n = varint_encode(val, varint_buf);
-                    std::fwrite(varint_buf, 1, n, kpx_fp);
-                    kpx_data_pos += n;
+                abs_pos_buf.resize(cnt);
+                for (size_t e = 0; e < cnt; e++) {
+                    abs_pos_buf[e] = buffer[i + e].pos;
                 }
+                pfd_out_buf.clear();
+                pfd::encode_posting_kpx(abs_pos_buf.data(), cnt, pfd_out_buf);
+                std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kpx_fp);
+                kpx_data_pos += pfd_out_buf.size();
             }
 
             i = j;
@@ -418,8 +414,12 @@ bool build_index(BlastDbReader& db,
     const bool kix_offset32 = (kix_data_pos <= UINT32_MAX);
     const bool kpx_offset32 = (!config.skip_kpx && kpx_data_pos <= UINT32_MAX);
 
-    // Close the in-progress kix file; we'll rewrite it with the correct layout.
+    // Close the in-progress kix/kpx files; we'll rewrite them below with the
+    // correct (uint32 vs uint64) offset width.  Both must be flushed before
+    // we reopen them for read, otherwise stdio's userspace write buffer can
+    // shadow the just-written tail bytes of the last few k-mers.
     std::fclose(kix_fp);
+    if (kpx_fp) std::fclose(kpx_fp);
 
     // Rewrite .kix with correct offset width
     {
@@ -449,6 +449,12 @@ bool build_index(BlastDbReader& db,
         std::memcpy(kix_hdr.db, db_name.c_str(), name_len);
         kix_hdr.t = config.t;
         kix_hdr.template_type = config.template_type;
+        // v4 codec extension fields
+        kix_hdr.codec_id              = KIX_CODEC_PFOR_S8B;
+        kix_hdr.codec_version         = 1;
+        kix_hdr.block_size            = pfd::kPfdBlockSize;
+        kix_hdr.tail_codec            = KIX_TAIL_VBYTE;
+        kix_hdr.exception_codec_flags = 0;
         std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, wr);
 
         if (kix_offset32) {
@@ -488,6 +494,11 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.template_type = config.template_type;
         kpx_hdr.total_postings = total_postings;
         kpx_hdr.offset_type = kpx_offset32 ? 0 : 1;
+        // v4 codec extension fields
+        kpx_hdr.codec_id      = KPX_CODEC_PFOR_S8B;
+        kpx_hdr.codec_version = 1;
+        kpx_hdr.block_size    = pfd::kPfdBlockSize;
+        kpx_hdr.tail_codec    = KPX_TAIL_VBYTE;
         std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, wr);
 
         if (kpx_offset32) {

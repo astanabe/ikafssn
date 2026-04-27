@@ -9,7 +9,8 @@
 #include "core/config.hpp"
 #include "core/types.hpp"
 #include "core/kmer_encoding.hpp"
-#include "core/varint.hpp"
+#include "search/seq_id_decoder.hpp"
+#include "search/posting_decoder.hpp"
 #include "util/logger.hpp"
 #include "util/simd_dispatch.hpp"
 
@@ -26,45 +27,24 @@ using namespace ssu_fixture;
 static std::string g_testdb_path;
 static std::string g_output_dir;
 
-// Decode ID posting list from raw data
+// Decode ID posting list via the v4 SeqIdDecoder.
 static std::vector<uint32_t> decode_id_postings(
-    const uint8_t* data, uint64_t offset, uint32_t count) {
+    const uint8_t* data, uint64_t offset, uint64_t byte_len) {
     std::vector<uint32_t> result;
-    if (count == 0) return result;
-    result.reserve(count);
-
-    const uint8_t* p = data + offset;
-    uint32_t prev_id = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t delta;
-        p += varint_decode(p, delta);
-        uint32_t id = (i == 0) ? delta : prev_id + delta;
-        result.push_back(id);
-        prev_id = id;
-    }
+    if (byte_len == 0) return result;
+    SeqIdDecoder dec(data + offset, data + offset + byte_len);
+    while (dec.has_more()) result.push_back(dec.next());
     return result;
 }
 
-// Decode pos posting list from raw data (needs seq_ids to detect boundaries)
+// Decode pos posting list via the v4 PosDecoder. v4 stores absolute
+// positions, so the seq_ids hint is no longer required.
 static std::vector<uint32_t> decode_pos_postings(
-    const uint8_t* data, uint64_t offset, uint32_t count,
-    const std::vector<uint32_t>& seq_ids) {
+    const uint8_t* data, uint64_t offset, uint64_t byte_len) {
     std::vector<uint32_t> result;
-    if (count == 0) return result;
-    result.reserve(count);
-
-    const uint8_t* p = data + offset;
-    uint32_t prev_pos = 0;
-    uint32_t prev_id = UINT32_MAX;
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t val;
-        p += varint_decode(p, val);
-        bool new_seq = (seq_ids[i] != prev_id);
-        uint32_t pos = new_seq ? val : prev_pos + val;
-        result.push_back(pos);
-        prev_pos = pos;
-        prev_id = seq_ids[i];
-    }
+    if (byte_len == 0) return result;
+    PosDecoder dec(data + offset, data + offset + byte_len);
+    while (dec.has_more()) result.push_back(dec.next(false));
     return result;
 }
 
@@ -142,7 +122,8 @@ static void test_build_and_verify_kix_kpx() {
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids = decode_id_postings(
-            kix.posting_data(), kix.posting_offset(kmer), cnt);
+            kix.posting_data(), kix.posting_offset(kmer),
+            kix.posting_byte_length(kmer));
         CHECK_EQ(ids.size(), static_cast<size_t>(cnt));
 
         // IDs must be non-decreasing
@@ -155,9 +136,12 @@ static void test_build_and_verify_kix_kpx() {
             CHECK(id < kix.num_sequences());
         }
 
-        // Decode positions and verify they are valid
+        // Decode positions and verify they are valid. v4 .kpx postings are
+        // self-describing (count + payload_words header) so any over-large
+        // byte budget is fine; pass the full posting_data() span.
         std::vector<uint32_t> positions = decode_pos_postings(
-            kpx.posting_data(), kpx.pos_offset(kmer), cnt, ids);
+            kpx.posting_data(), kpx.pos_offset(kmer),
+            kpx.posting_data_size() - kpx.pos_offset(kmer));
         CHECK_EQ(positions.size(), static_cast<size_t>(cnt));
 
         kmers_checked++;
@@ -199,7 +183,8 @@ static void test_known_kmer_in_index() {
     CHECK(cnt > 0);
 
     std::vector<uint32_t> ids = decode_id_postings(
-        kix.posting_data(), kix.posting_offset(target_kmer), cnt);
+        kix.posting_data(), kix.posting_offset(target_kmer),
+        kix.posting_byte_length(target_kmer));
 
     // FJ876973.1 OID should be in the posting list
     bool has_target = false;
@@ -364,9 +349,11 @@ static void test_build_with_memory_limits() {
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids1 = decode_id_postings(
-            kix1.posting_data(), kix1.posting_offset(kmer), cnt);
+            kix1.posting_data(), kix1.posting_offset(kmer),
+            kix1.posting_byte_length(kmer));
         std::vector<uint32_t> ids4 = decode_id_postings(
-            kix4.posting_data(), kix4.posting_offset(kmer), cnt);
+            kix4.posting_data(), kix4.posting_offset(kmer),
+            kix4.posting_byte_length(kmer));
 
         CHECK_EQ(ids1.size(), ids4.size());
         for (size_t j = 0; j < ids1.size(); j++) {
@@ -441,9 +428,11 @@ static void test_build_parallel_scan() {
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids_st = decode_id_postings(
-            kix_st.posting_data(), kix_st.posting_offset(kmer), cnt);
+            kix_st.posting_data(), kix_st.posting_offset(kmer),
+            kix_st.posting_byte_length(kmer));
         std::vector<uint32_t> ids_mt = decode_id_postings(
-            kix_mt.posting_data(), kix_mt.posting_offset(kmer), cnt);
+            kix_mt.posting_data(), kix_mt.posting_offset(kmer),
+            kix_mt.posting_byte_length(kmer));
 
         CHECK_EQ(ids_st.size(), ids_mt.size());
         for (size_t j = 0; j < ids_st.size(); j++) {
@@ -468,11 +457,15 @@ static void test_build_parallel_scan() {
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids = decode_id_postings(
-            kix_st.posting_data(), kix_st.posting_offset(kmer), cnt);
+            kix_st.posting_data(), kix_st.posting_offset(kmer),
+            kix_st.posting_byte_length(kmer));
+        (void)ids;
         std::vector<uint32_t> pos_st = decode_pos_postings(
-            kpx_st.posting_data(), kpx_st.pos_offset(kmer), cnt, ids);
+            kpx_st.posting_data(), kpx_st.pos_offset(kmer),
+            kpx_st.posting_data_size() - kpx_st.pos_offset(kmer));
         std::vector<uint32_t> pos_mt = decode_pos_postings(
-            kpx_mt.posting_data(), kpx_mt.pos_offset(kmer), cnt, ids);
+            kpx_mt.posting_data(), kpx_mt.pos_offset(kmer),
+            kpx_mt.posting_data_size() - kpx_mt.pos_offset(kmer));
 
         CHECK_EQ(pos_st.size(), pos_mt.size());
         for (size_t j = 0; j < pos_st.size(); j++) {

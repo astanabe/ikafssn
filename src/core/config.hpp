@@ -24,8 +24,8 @@ inline constexpr int MAX_K = 16;
 inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t=0 only; for spaced seeds use kmer_type_for(k, t))
 
 // Format versions
-inline constexpr uint16_t KIX_FORMAT_VERSION = 3;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 3;
+inline constexpr uint16_t KIX_FORMAT_VERSION = 4;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 4;
 inline constexpr uint16_t KSX_FORMAT_VERSION = 2;
 inline constexpr uint16_t KHX_FORMAT_VERSION = 2;
 

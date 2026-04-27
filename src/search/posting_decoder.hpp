@@ -2,87 +2,70 @@
 
 #include <algorithm>
 #include <cstdint>
-#include "core/varint.hpp"
-#include "index/varint_simd.hpp"
+#include <cstring>
+#include "index/pfd_codec.hpp"
 
 namespace ikafssn {
 
-// Streaming decoder for delta-compressed position postings.
-// Must be used in lockstep with SeqIdDecoder: call next(was_new_seq) where
-// was_new_seq comes from the corresponding SeqIdDecoder, or use next_batch()
-// with the matching was_new_seq[] array from SeqIdDecoder::next_batch().
+// Streaming decoder for v4 .kpx postings.
+//
+// .kpx v4 stores absolute positions (FastPFor-encoded), so the
+// `was_new_seq` parameter is preserved for source compatibility but
+// **ignored**: positions are emitted directly without any delta-reset
+// logic.  Phase 5c will remove the parameter from the signature entirely.
 class PosDecoder {
 public:
-    static constexpr int kMaxBatch = kVarintMaxBatch;
+    static constexpr int kMaxBatch = 16;
 
     PosDecoder() = default;
-    explicit PosDecoder(const uint8_t* data) : ptr_(data), end_(nullptr) {}
-    PosDecoder(const uint8_t* data, const uint8_t* end) : ptr_(data), end_(end) {}
+    explicit PosDecoder(const uint8_t* data) : data_(data), bytes_(0) {}
+    PosDecoder(const uint8_t* data, const uint8_t* end)
+        : data_(data),
+          bytes_(end && end >= data ? static_cast<std::size_t>(end - data) : 0) {}
 
-    bool has_more() const { return end_ && ptr_ < end_; }
-
-    // Decode next position. was_new_seq indicates sequence boundary (delta reset).
-    uint32_t next(bool was_new_seq) {
-        uint32_t val;
-        ptr_ += varint_decode(ptr_, val);
-        if (was_new_seq) {
-            prev_pos_ = val; // raw value, not delta
-        } else {
-            prev_pos_ += val; // delta from previous pos
-        }
-        return prev_pos_;
+    bool has_more() {
+        ensure_decoded();
+        return ctx_.pos < ctx_.count;
     }
 
-    const uint8_t* ptr() const { return ptr_; }
+    // Decode the next absolute position. `was_new_seq` is ignored in v4
+    // (kept for API compatibility with the v3 lockstep contract).
+    uint32_t next(bool /*was_new_seq*/) {
+        ensure_decoded();
+        if (ctx_.pos < ctx_.count) {
+            return ctx_.decoded[ctx_.pos++];
+        }
+        return 0;
+    }
 
-    // Decode up to max_count positions. was_new_seq[i] (typically passed from
-    // the corresponding SeqIdDecoder::next_batch() output) controls per-element
-    // delta reset. Returns number decoded.
-    //
-    // When constructed with an end pointer, uses the SIMD-friendly
-    // varint_decode_batch path. When end_ is null (legacy construction),
-    // falls back to a pure scalar varint_decode loop bounded only by
-    // max_count, matching the original scalar next() exactly. The lockstep
-    // SeqIdDecoder is responsible for keeping max_count within the producer's
-    // length so we never read past the legitimate stream.
-    int next_batch(uint32_t* out_pos, const uint8_t* was_new_seq, int max_count) {
-        if (max_count <= 0) return 0;
+    const uint8_t* ptr() const { return data_; }
+
+    // Decode up to max_count absolute positions. `was_new_seq[]` is ignored
+    // (see class comment).
+    int next_batch(uint32_t* out_pos, const uint8_t* /*was_new_seq*/, int max_count) {
+        ensure_decoded();
+        if (max_count <= 0 || ctx_.pos >= ctx_.count) return 0;
         if (max_count > kMaxBatch) max_count = kMaxBatch;
-
-        if (end_) {
-            uint32_t raw[kMaxBatch];
-            std::size_t consumed = 0;
-            int n = varint_decode_batch(ptr_, end_, raw, &consumed, max_count);
-            ptr_ += consumed;
-            for (int i = 0; i < n; i++) {
-                if (was_new_seq[i]) {
-                    prev_pos_ = raw[i];
-                } else {
-                    prev_pos_ += raw[i];
-                }
-                out_pos[i] = prev_pos_;
-            }
-            return n;
-        }
-
-        // Unbounded: scalar decode, bit-exact with original next() x max_count.
-        for (int i = 0; i < max_count; i++) {
-            uint32_t v;
-            ptr_ += varint_decode(ptr_, v);
-            if (was_new_seq[i]) {
-                prev_pos_ = v;
-            } else {
-                prev_pos_ += v;
-            }
-            out_pos[i] = prev_pos_;
-        }
-        return max_count;
+        int avail = static_cast<int>(ctx_.count - ctx_.pos);
+        int n = (avail < max_count) ? avail : max_count;
+        std::memcpy(out_pos, ctx_.decoded.data() + ctx_.pos, n * sizeof(uint32_t));
+        ctx_.pos += n;
+        return n;
     }
 
 private:
-    const uint8_t* ptr_ = nullptr;
-    const uint8_t* end_ = nullptr;
-    uint32_t prev_pos_ = 0;
+    void ensure_decoded() {
+        if (decoded_) return;
+        decoded_ = true;
+        if (data_ && bytes_ > 0) {
+            pfd::open_stream_kpx(data_, bytes_, ctx_);
+        }
+    }
+
+    const uint8_t* data_ = nullptr;
+    std::size_t bytes_ = 0;
+    pfd::StreamCtx ctx_;
+    bool decoded_ = false;
 };
 
 } // namespace ikafssn

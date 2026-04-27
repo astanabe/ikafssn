@@ -1,7 +1,7 @@
 #include "index/kpx_writer.hpp"
 #include "index/kpx_format.hpp"
+#include "index/pfd_codec.hpp"
 #include "core/config.hpp"
-#include "core/varint.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -20,25 +20,16 @@ void KpxWriter::add_posting_list(uint32_t kmer_value,
 
     if (entries.empty()) return;
 
-    uint8_t buf[5];
-
-    // First entry: always raw pos
-    size_t n = varint_encode(entries[0].pos, buf);
-    posting_data_.insert(posting_data_.end(), buf, buf + n);
-
-    // Subsequent entries
-    for (size_t i = 1; i < entries.size(); i++) {
-        bool new_seq = (entries[i].seq_id != entries[i - 1].seq_id);
-        if (new_seq) {
-            // Sequence boundary: write raw pos (delta reset)
-            n = varint_encode(entries[i].pos, buf);
-        } else {
-            // Same sequence: write pos delta
-            uint32_t delta = entries[i].pos - entries[i - 1].pos;
-            n = varint_encode(delta, buf);
-        }
-        posting_data_.insert(posting_data_.end(), buf, buf + n);
+    // v4: encode absolute positions via FastPFor — sequence-boundary delta
+    // reset is no longer needed because absolute positions naturally fit
+    // FastPFor's per-block bit-width adaptation.
+    std::vector<uint32_t> abs_positions(entries.size());
+    for (size_t i = 0; i < entries.size(); i++) {
+        abs_positions[i] = entries[i].pos;
     }
+    pfd::encode_posting_kpx(abs_positions.data(),
+                            static_cast<uint32_t>(abs_positions.size()),
+                            posting_data_);
 }
 
 bool KpxWriter::write(const std::string& path) const {
@@ -57,6 +48,12 @@ bool KpxWriter::write(const std::string& path) const {
     hdr.k = static_cast<uint8_t>(k_);
     hdr.total_postings = total_postings_;
     hdr.offset_type = use_offset32 ? 0 : 1;
+
+    // v4 codec fields
+    hdr.codec_id      = KPX_CODEC_PFOR_S8B;
+    hdr.codec_version = 1;
+    hdr.block_size    = pfd::kPfdBlockSize;
+    hdr.tail_codec    = KPX_TAIL_VBYTE;
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 

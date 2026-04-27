@@ -1,6 +1,6 @@
 #include "index/kix_reader.hpp"
 #include "core/config.hpp"
-#include "core/varint.hpp"
+#include "index/pfd_codec.hpp"
 
 #include <cstring>
 #include <cstdio>
@@ -82,15 +82,8 @@ void KixReader::apply_madvise(bool willneed) {
 uint32_t KixReader::count_postings(uint32_t kmer) const {
     uint64_t byte_len = posting_byte_length(kmer);
     if (byte_len == 0) return 0;
-    const uint8_t* ptr = posting_data_ + posting_offset(kmer);
-    const uint8_t* end = ptr + byte_len;
-    uint32_t count = 0;
-    while (ptr < end) {
-        uint32_t dummy;
-        ptr += varint_decode(ptr, dummy);
-        count++;
-    }
-    return count;
+    // v4: count is the leading u32 of the per-kmer posting blob.
+    return pfd::posting_count(posting_data_ + posting_offset(kmer), byte_len);
 }
 
 std::vector<uint32_t> KixReader::bulk_count_postings() const {
