@@ -26,6 +26,17 @@ function(add_ikafssn_simd_test TEST_NAME)
 endfunction()
 
 add_ikafssn_test(test_varint test_varint.cpp)
+
+# varint SIMD batch decode test (Phase 3a)
+add_executable(test_varint_simd test_varint_simd.cpp)
+target_link_libraries(test_varint_simd PRIVATE
+    ikafssn_search ikafssn_index ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_varint_simd PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(test_varint_simd PRIVATE IKAFSSN_TESTING)
+add_test(NAME test_varint_simd COMMAND test_varint_simd)
+add_ikafssn_simd_test(test_varint_simd)
+
 add_ikafssn_test(test_kmer_encoding test_kmer_encoding.cpp)
 target_link_libraries(test_kmer_encoding PRIVATE ikafssn_util)
 target_compile_definitions(test_kmer_encoding PRIVATE IKAFSSN_TESTING)

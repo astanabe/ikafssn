@@ -114,6 +114,15 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     SeqId sid_batch[kBatch];
     int batch_count = 0;
 
+    // Phase 3a: decode varints in batches via SeqIdDecoder::next_batch() so
+    // the inner loop can amortize the per-call dispatch overhead and keep the
+    // input bytes hot in cache. Per-element coverscore / OID-filter skip is
+    // applied scalar-style on the small fixed-size buffer.
+    constexpr int kDecBatch = SeqIdDecoder::kMaxBatch;
+    static_assert(kDecBatch >= 1, "kDecBatch must be positive");
+    SeqId   raw_sids[kDecBatch];
+    uint8_t was_new[kDecBatch];
+
     for (size_t qi = 0; qi < n; qi++) {
         auto q_pos = static_cast<PosT>(positions[qi]);
         auto kmer_idx = kmers[qi];
@@ -123,14 +132,18 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
 
         SeqIdDecoder decoder(posting_data + off, posting_data + end_off);
         while (decoder.has_more()) {
-            SeqId sid = decoder.next();
-            if (use_coverscore && !decoder.was_new_seq()) continue;
-            if (!filter.pass(sid)) continue;
-            sid_batch[batch_count++] = sid;
-            if (batch_count == kBatch) {
-                flush_batch_simd<Tier>(sid_batch, kBatch, q_pos,
-                                       scores, last_pos, buf.dirty);
-                batch_count = 0;
+            int n_dec = decoder.next_batch(raw_sids, was_new, kDecBatch);
+            if (n_dec == 0) break;
+            for (int i = 0; i < n_dec; i++) {
+                SeqId sid = raw_sids[i];
+                if (use_coverscore && !was_new[i]) continue;
+                if (!filter.pass(sid)) continue;
+                sid_batch[batch_count++] = sid;
+                if (batch_count == kBatch) {
+                    flush_batch_simd<Tier>(sid_batch, kBatch, q_pos,
+                                           scores, last_pos, buf.dirty);
+                    batch_count = 0;
+                }
             }
         }
         if (batch_count > 0) {

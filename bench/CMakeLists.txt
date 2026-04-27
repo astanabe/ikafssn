@@ -35,3 +35,11 @@ target_link_libraries(bench_parallel_sort PRIVATE
 target_include_directories(bench_parallel_sort PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
+
+# Phase 3a — varint batch decode SIMD
+add_executable(bench_varint bench_varint.cpp)
+target_link_libraries(bench_varint PRIVATE
+    ikafssn_index ikafssn_io ikafssn_util benchmark::benchmark)
+target_include_directories(bench_varint PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}")

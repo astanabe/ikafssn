@@ -108,6 +108,11 @@ search_one_strand_preprocessed(
     const uint8_t* id_data = kix.posting_data();
     const uint8_t* pos_data = kpx.posting_data();
 
+    constexpr int kStage2Batch = SeqIdDecoder::kMaxBatch;
+    SeqId    sid_buf[kStage2Batch];
+    uint8_t  was_new_buf[kStage2Batch];
+    uint32_t pos_buf[kStage2Batch];
+
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
@@ -119,11 +124,14 @@ search_one_strand_preprocessed(
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx));
 
         while (id_decoder.has_more()) {
-            SeqId sid = id_decoder.next();
-            uint32_t s_pos = pos_decoder.next(id_decoder.was_new_seq());
-
-            if (candidate_set.count(sid)) {
-                hits_per_seq[sid].push_back({q_pos, s_pos});
+            int n_id = id_decoder.next_batch(sid_buf, was_new_buf, kStage2Batch);
+            if (n_id == 0) break;
+            int n_pos = pos_decoder.next_batch(pos_buf, was_new_buf, n_id);
+            int n = (n_pos < n_id) ? n_pos : n_id;
+            for (int i = 0; i < n; i++) {
+                if (candidate_set.count(sid_buf[i])) {
+                    hits_per_seq[sid_buf[i]].push_back({q_pos, pos_buf[i]});
+                }
             }
         }
     }
@@ -219,6 +227,11 @@ static void collect_position_hits(
     const uint8_t* id_data = kix.posting_data();
     const uint8_t* pos_data = kpx.posting_data();
 
+    constexpr int kStage2Batch = SeqIdDecoder::kMaxBatch;
+    SeqId    sid_buf[kStage2Batch];
+    uint8_t  was_new_buf[kStage2Batch];
+    uint32_t pos_buf[kStage2Batch];
+
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
@@ -230,11 +243,14 @@ static void collect_position_hits(
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx));
 
         while (id_decoder.has_more()) {
-            SeqId sid = id_decoder.next();
-            uint32_t s_pos = pos_decoder.next(id_decoder.was_new_seq());
-
-            if (candidate_set.count(sid)) {
-                hits_per_seq[sid].push_back({q_pos, s_pos});
+            int n_id = id_decoder.next_batch(sid_buf, was_new_buf, kStage2Batch);
+            if (n_id == 0) break;
+            int n_pos = pos_decoder.next_batch(pos_buf, was_new_buf, n_id);
+            int n = (n_pos < n_id) ? n_pos : n_id;
+            for (int i = 0; i < n; i++) {
+                if (candidate_set.count(sid_buf[i])) {
+                    hits_per_seq[sid_buf[i]].push_back({q_pos, pos_buf[i]});
+                }
             }
         }
     }
