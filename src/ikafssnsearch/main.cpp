@@ -19,6 +19,7 @@
 #include "io/result_writer.hpp"
 #include "io/sam_writer.hpp"
 #include "util/cli_parser.hpp"
+#include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
 #include "util/context_parser.hpp"
 #include "util/logger.hpp"
@@ -109,6 +110,26 @@ struct VolumeData {
     uint16_t volume_index;
 };
 
+// Per-template-side data. For "both" template_type the search holds two
+// contexts (coding + optimal); otherwise a single context is used. Each
+// context owns its own volume readers, KHX bitset, seed masks, and
+// preprocessed query data, so the rest of the pipeline iterates uniformly
+// over `ctxs` rather than duplicating coding/optimal logic.
+template <typename KmerInt>
+struct PreprocessedQuery { QueryKmerData<KmerInt> qdata; };
+
+struct TemplateContext {
+    TemplateType type = TemplateType::kBoth;
+    std::vector<DiscoveredVolume> vol_files;
+    std::vector<VolumeData> volumes;
+    KhxReader khx;
+    const KhxReader* khx_ptr = nullptr;
+    std::vector<uint32_t> seed_masks;
+    std::vector<const KixReader*> all_kix;
+    std::vector<PreprocessedQuery<uint16_t>> pp16;
+    std::vector<PreprocessedQuery<uint32_t>> pp32;
+};
+
 // A (query, volume) search job.
 struct SearchJob {
     size_t query_idx;
@@ -145,17 +166,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Primer mode validation
-    if (has_primer) {
-        if (cli.has("-stage1_min_score")) {
-            std::fprintf(stderr, "Error: -stage1_min_score cannot be used with -primer; use -stage1_primer_score instead\n");
-            return 1;
-        }
-        if (cli.has("-stage2_min_score")) {
-            std::fprintf(stderr, "Error: -stage2_min_score cannot be used with -primer; use -stage2_primer_score_add instead\n");
-            return 1;
-        }
-        if (!cli.has("-insert_length")) {
-            std::fprintf(stderr, "Error: -insert_length is required with -primer\n");
+    {
+        std::string err;
+        if (!validate_primer_mode_options(cli, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
     }
@@ -219,12 +233,10 @@ int main(int argc, char* argv[]) {
     stage3_config.traceback = (cli.get_int("-stage3_traceback", 0) != 0);
     stage3_config.min_ppositive = cli.get_double("-stage3_min_ppositive", 0.0);
     stage3_config.min_npositive = static_cast<uint32_t>(cli.get_int("-stage3_min_npositive", 0));
-    if (cli.has("-stage3_score_matrix")) {
-        stage3_config.score_matrix = cli.get_string("-stage3_score_matrix");
-        if (stage3_config.score_matrix != "degmatch" &&
-            stage3_config.score_matrix != "dnafull" &&
-            stage3_config.score_matrix != "nuc44") {
-            std::fprintf(stderr, "Error: -stage3_score_matrix must be degmatch, dnafull, or nuc44\n");
+    {
+        std::string err;
+        if (!parse_score_matrix(cli, stage3_config.score_matrix, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
     }
@@ -261,10 +273,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Mode 1: force sort_score=1
+    // Mode 1 consistency checks
     if (config.mode == 1) {
-        config.sort_score = 1;
-
         // Consistency check: fractional + explicit -stage2_min_score in mode 1
         // (min_score=0 is allowed since it means adaptive)
         if (config.min_stage1_score_frac > 0 && cli.has("-stage2_min_score") &&
@@ -294,26 +304,29 @@ int main(int argc, char* argv[]) {
     int accept_qdegen = cli.get_int("-accept_qdegen", 1);
 
     {
-        int mde = cli.get_int("-max_degen_expand", 16);
-        if (mde < 0 || mde > 256) {
-            std::fprintf(stderr, "Error: -max_degen_expand must be between 0 and 256\n");
+        std::string err;
+        if (!parse_max_degen_expand(cli, 16, config.max_degen_expand, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-        config.max_degen_expand = static_cast<uint16_t>(mde);
     }
 
-    int cli_t = cli.get_int("-t", 0);
-    if (cli_t != 0 && cli_t != 13 && cli_t != 15 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
-        std::fprintf(stderr, "Error: -t must be 0, 13, 15, 16, 18, or 21\n");
-        return 1;
+    uint8_t spaced_t = 0;
+    {
+        std::string err;
+        if (!parse_spaced_seed_t(cli, spaced_t, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
     }
-    uint8_t spaced_t = static_cast<uint8_t>(cli_t);
 
     TemplateType spaced_type = TemplateType::kBoth;
-    if (cli.has("-template_type")) {
-        spaced_type = template_type_from_string(cli.get_string("-template_type"));
-        if (spaced_type == TemplateType::kContiguous) {
-            std::fprintf(stderr, "Error: -template_type must be coding, optimal, or both\n");
+    {
+        std::string err;
+        if (!parse_template_type_cli(cli, TemplateType::kBoth,
+                                     /*allow_contiguous=*/false,
+                                     spaced_type, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
     }
@@ -356,37 +369,47 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Discover volumes
-    // For "both" template type, discover coding and optimal volumes separately
-    // so that we can open two independent sets of index readers.
-    std::vector<DiscoveredVolume> vol_files;
-    std::vector<DiscoveredVolume> vol_files_cod;  // coding volumes (both mode only)
-    std::vector<DiscoveredVolume> vol_files_opt;  // optimal volumes (both mode only)
+    // Discover volumes. For "both" template_type we hold two contexts
+    // (coding + optimal); otherwise a single context.
+    const bool is_both_mode = (spaced_t > 0 && spaced_type == TemplateType::kBoth);
+    std::vector<TemplateContext> ctxs;
+    ctxs.reserve(2);  // pin addresses; khx_ptr depends on stable storage
 
-    if (spaced_t > 0 && spaced_type == TemplateType::kBoth) {
-        vol_files_cod = discover_volumes(ix_prefix, filter_k, spaced_t,
-                                          static_cast<uint8_t>(TemplateType::kCoding));
-        vol_files_opt = discover_volumes(ix_prefix, filter_k, spaced_t,
-                                          static_cast<uint8_t>(TemplateType::kOptimal));
-        if (vol_files_cod.empty() || vol_files_opt.empty()) {
+    if (is_both_mode) {
+        ctxs.emplace_back();
+        ctxs.back().type = TemplateType::kCoding;
+        ctxs.back().vol_files = discover_volumes(
+            ix_prefix, filter_k, spaced_t,
+            static_cast<uint8_t>(TemplateType::kCoding));
+        ctxs.emplace_back();
+        ctxs.back().type = TemplateType::kOptimal;
+        ctxs.back().vol_files = discover_volumes(
+            ix_prefix, filter_k, spaced_t,
+            static_cast<uint8_t>(TemplateType::kOptimal));
+        if (ctxs[0].vol_files.empty() || ctxs[1].vol_files.empty()) {
             std::fprintf(stderr,
                 "Error: both-mode requires coding and optimal index files; "
                 "found %zu coding, %zu optimal for prefix %s\n",
-                vol_files_cod.size(), vol_files_opt.size(), ix_prefix.c_str());
+                ctxs[0].vol_files.size(), ctxs[1].vol_files.size(),
+                ix_prefix.c_str());
             return 1;
         }
-        if (vol_files_cod.size() != vol_files_opt.size()) {
+        if (ctxs[0].vol_files.size() != ctxs[1].vol_files.size()) {
             std::fprintf(stderr,
                 "Error: coding and optimal volume counts differ (%zu vs %zu)\n",
-                vol_files_cod.size(), vol_files_opt.size());
+                ctxs[0].vol_files.size(), ctxs[1].vol_files.size());
             return 1;
         }
-        // Use coding volumes as the primary vol_files for k determination and logging
-        vol_files = vol_files_cod;
     } else {
-        vol_files = discover_volumes(ix_prefix, filter_k, spaced_t,
-                                       spaced_t > 0 ? static_cast<uint8_t>(spaced_type) : uint8_t(0));
+        ctxs.emplace_back();
+        ctxs.back().type = spaced_type;
+        ctxs.back().vol_files = discover_volumes(
+            ix_prefix, filter_k, spaced_t,
+            spaced_t > 0 ? static_cast<uint8_t>(spaced_type) : uint8_t(0));
     }
+
+    // ctxs[0] is the canonical side (coding for both-mode, the only side otherwise).
+    const auto& vol_files = ctxs[0].vol_files;
 
     if (vol_files.empty()) {
         if (filter_k > 0) {
@@ -532,42 +555,25 @@ int main(int argc, char* argv[]) {
         return true;
     };
 
-    const bool is_both_mode = (spaced_t > 0 && spaced_type == TemplateType::kBoth);
     const bool need_kpx = (config.mode != 1);
 
-    // Pre-open volumes.
-    // For "both" mode: open coding and optimal volumes separately.
-    // For non-both mode: open a single set of volumes.
-    std::vector<VolumeData> vol_data;      // non-both mode (or coding side for both)
-    std::vector<VolumeData> vol_data_cod;  // both mode: coding volumes
-    std::vector<VolumeData> vol_data_opt;  // both mode: optimal volumes
-
-    if (is_both_mode) {
-        if (!open_volumes(vol_files_cod, vol_data_cod, need_kpx)) return 1;
-        if (!open_volumes(vol_files_opt, vol_data_opt, need_kpx)) return 1;
-    } else {
-        if (!open_volumes(vol_files, vol_data, need_kpx)) return 1;
+    // Pre-open volumes for every context.
+    for (auto& ctx : ctxs) {
+        if (!open_volumes(ctx.vol_files, ctx.volumes, need_kpx)) return 1;
     }
 
-    // Open shared .khx (non-fatal if missing).
-    // For "both" mode: open separate KHX for coding and optimal.
-    KhxReader shared_khx;       // non-both mode
-    KhxReader shared_khx_cod;   // both mode: coding
-    KhxReader shared_khx_opt;   // both mode: optimal
+    // Open shared .khx for every context (non-fatal if missing).
     {
         auto parts = parse_index_prefix(ix_prefix);
-        if (is_both_mode) {
-            shared_khx_cod.open(khx_path_for(parts.parent_dir, parts.db, k,
-                                             spaced_t, static_cast<uint8_t>(TemplateType::kCoding)));
-            shared_khx_opt.open(khx_path_for(parts.parent_dir, parts.db, k,
-                                             spaced_t, static_cast<uint8_t>(TemplateType::kOptimal)));
-        } else {
-            shared_khx.open(khx_path_for(parts.parent_dir, parts.db, k,
-                                         spaced_t, static_cast<uint8_t>(spaced_type)));
+        for (auto& ctx : ctxs) {
+            ctx.khx.open(khx_path_for(parts.parent_dir, parts.db, k,
+                                       spaced_t, static_cast<uint8_t>(ctx.type)));
         }
     }
 
-    // Apply madvise budget: prioritize khx > kix dict > kpx dict > ksx
+    // Apply madvise budget: prioritize khx > kix dict > kpx dict > ksx.
+    // Only ctxs[0]'s ksx is hinted because ksx contents are identical across
+    // contexts when both sides come from the same BLAST DB.
     {
         uint64_t budget = memory_limit;
         auto try_willneed = [&budget](auto& reader) {
@@ -576,38 +582,25 @@ int main(int argc, char* argv[]) {
             reader.apply_madvise(fits);
             if (fits) budget -= sz;
         };
-        if (is_both_mode) {
-            try_willneed(shared_khx_cod);
-            try_willneed(shared_khx_opt);
-            for (auto& vd : vol_data_cod) try_willneed(vd.kix);
-            for (auto& vd : vol_data_opt) try_willneed(vd.kix);
-            for (auto& vd : vol_data_cod) try_willneed(vd.kpx);
-            for (auto& vd : vol_data_opt) try_willneed(vd.kpx);
-            for (auto& vd : vol_data_cod) try_willneed(vd.ksx);
-            // optimal ksx not needed (identical content from same BLAST DB volume)
-        } else {
-            try_willneed(shared_khx);
-            for (auto& vd : vol_data) try_willneed(vd.kix);
-            for (auto& vd : vol_data) try_willneed(vd.kpx);
-            for (auto& vd : vol_data) try_willneed(vd.ksx);
-        }
+        for (auto& ctx : ctxs) try_willneed(ctx.khx);
+        for (auto& ctx : ctxs)
+            for (auto& vd : ctx.volumes) try_willneed(vd.kix);
+        for (auto& ctx : ctxs)
+            for (auto& vd : ctx.volumes) try_willneed(vd.kpx);
+        for (auto& vd : ctxs[0].volumes) try_willneed(vd.ksx);
         logger.info("madvise budget: %s used / %s total",
                     format_size(memory_limit - budget).c_str(),
                     format_size(memory_limit).c_str());
     }
 
     // Resolve -max_freq: 1/1.0 = disable, fraction -> absolute, else integer.
-    // For "both" mode, use coding volumes' ksx for total_nseq (identical to optimal).
+    // total_nseq is taken from ctxs[0] (identical across contexts).
     if (max_freq_raw == 1.0) {
         config.stage1.max_freq = Stage1Config::MAX_FREQ_DISABLED;
         logger.info("-stage1_max_freq=1 -> high-frequency k-mer filtering disabled");
     } else if (max_freq_raw > 0 && max_freq_raw < 1.0) {
         uint64_t total_nseq = 0;
-        if (is_both_mode) {
-            for (const auto& vd : vol_data_cod) total_nseq += vd.ksx.num_sequences();
-        } else {
-            for (const auto& vd : vol_data) total_nseq += vd.ksx.num_sequences();
-        }
+        for (const auto& vd : ctxs[0].volumes) total_nseq += vd.ksx.num_sequences();
         config.stage1.max_freq = static_cast<uint32_t>(
             std::ceil(max_freq_raw * total_nseq));
         if (config.stage1.max_freq == 0) config.stage1.max_freq = 1;
@@ -618,43 +611,12 @@ int main(int argc, char* argv[]) {
         config.stage1.max_freq = static_cast<uint32_t>(max_freq_raw);
     }
 
-    // Build vectors of KixReader pointers for global preprocessing.
-    // For "both" mode: separate vectors for coding and optimal.
-    std::vector<const KixReader*> all_kix;
-    std::vector<const KixReader*> all_kix_cod;  // both mode
-    std::vector<const KixReader*> all_kix_opt;  // both mode
-
-    if (is_both_mode) {
-        all_kix_cod.reserve(vol_data_cod.size());
-        for (const auto& vd : vol_data_cod) all_kix_cod.push_back(&vd.kix);
-        all_kix_opt.reserve(vol_data_opt.size());
-        for (const auto& vd : vol_data_opt) all_kix_opt.push_back(&vd.kix);
-    } else {
-        all_kix.reserve(vol_data.size());
-        for (const auto& vd : vol_data) all_kix.push_back(&vd.kix);
-    }
-
-    const KhxReader* khx_ptr = nullptr;
-    const KhxReader* khx_ptr_cod = nullptr;
-    const KhxReader* khx_ptr_opt = nullptr;
-    if (is_both_mode) {
-        khx_ptr_cod = shared_khx_cod.is_open() ? &shared_khx_cod : nullptr;
-        khx_ptr_opt = shared_khx_opt.is_open() ? &shared_khx_opt : nullptr;
-    } else {
-        khx_ptr = shared_khx.is_open() ? &shared_khx : nullptr;
-    }
-
-    // Resolve seed masks for the search template type.
-    std::vector<uint32_t> seed_masks;       // non-both mode
-    std::vector<uint32_t> seed_masks_cod;   // both mode: coding masks
-    std::vector<uint32_t> seed_masks_opt;   // both mode: optimal masks
-    if (spaced_t > 0) {
-        if (is_both_mode) {
-            seed_masks_cod = get_seed_masks(k, spaced_t, TemplateType::kCoding);
-            seed_masks_opt = get_seed_masks(k, spaced_t, TemplateType::kOptimal);
-        } else {
-            seed_masks = get_seed_masks(k, spaced_t, spaced_type);
-        }
+    // Per-context derived state: KixReader pointer vectors, KHX pointer, seed masks.
+    for (auto& ctx : ctxs) {
+        ctx.all_kix.reserve(ctx.volumes.size());
+        for (const auto& vd : ctx.volumes) ctx.all_kix.push_back(&vd.kix);
+        ctx.khx_ptr = ctx.khx.is_open() ? &ctx.khx : nullptr;
+        if (spaced_t > 0) ctx.seed_masks = get_seed_masks(k, spaced_t, ctx.type);
     }
 
     // Primer mode: parse pairs and generate query sequences (needs k and seed_masks)
@@ -666,12 +628,9 @@ int main(int argc, char* argv[]) {
         pcfg.insert_length = insert_length;
         pcfg.k = k;
         pcfg.t = spaced_t;
-        // For primer mode with both: use coding masks for position counting
-        if (is_both_mode) {
-            pcfg.masks = spaced_t > 0 ? &seed_masks_cod : nullptr;
-        } else {
-            pcfg.masks = spaced_t > 0 ? &seed_masks : nullptr;
-        }
+        // For primer mode: use ctxs[0]'s masks (coding side in both-mode) for
+        // position counting.
+        pcfg.masks = spaced_t > 0 ? &ctxs[0].seed_masks : nullptr;
 
         std::string primer_err = parse_primer_pairs(primer_records, pcfg, primer_pairs);
         if (!primer_err.empty()) {
@@ -734,133 +693,59 @@ int main(int argc, char* argv[]) {
     }
 
     // Phase 1: preprocess queries (sequential per-query, global high-freq determination)
-    // Store preprocessed data per non-skipped query.
-    // For "both" mode: two sets of preprocessed data (coding + optimal).
-    struct PreprocessedQuery16 { QueryKmerData<uint16_t> qdata; };
-    struct PreprocessedQuery32 { QueryKmerData<uint32_t> qdata; };
-    std::vector<PreprocessedQuery16> pp16;
-    std::vector<PreprocessedQuery32> pp32;
-    // Both mode: separate preprocessed data for coding and optimal
-    std::vector<PreprocessedQuery16> pp16_cod, pp16_opt;
-    std::vector<PreprocessedQuery32> pp32_cod, pp32_opt;
-    // Map from original query index to preprocessed index
+    // Store preprocessed data per non-skipped query, per template context.
+    const bool use_uint16 = (kmer_type_for(k, spaced_t) == 0);
+    // Map from original query index to preprocessed index (shared across ctxs).
     std::vector<size_t> query_pp_idx(queries.size(), SIZE_MAX);
 
-    // Helper: emit degen warning
-    auto warn_degen = [&](size_t qi, bool has_multi_degen) {
-        if (has_multi_degen) {
+    for (auto& ctx : ctxs) {
+        if (use_uint16) ctx.pp16.reserve(queries.size());
+        else            ctx.pp32.reserve(queries.size());
+    }
+
+    for (size_t qi = 0; qi < queries.size(); qi++) {
+        if (query_skipped[qi]) continue;
+        query_pp_idx[qi] = use_uint16 ? ctxs[0].pp16.size() : ctxs[0].pp32.size();
+        bool any_multi_degen = false;
+        for (auto& ctx : ctxs) {
+            if (use_uint16) {
+                ctx.pp16.push_back({preprocess_query<uint16_t>(
+                    queries[qi].sequence, k, ctx.all_kix, ctx.khx_ptr, config,
+                    spaced_t, ctx.seed_masks)});
+                if (ctx.pp16.back().qdata.has_multi_degen) any_multi_degen = true;
+            } else {
+                ctx.pp32.push_back({preprocess_query<uint32_t>(
+                    queries[qi].sequence, k, ctx.all_kix, ctx.khx_ptr, config,
+                    spaced_t, ctx.seed_masks)});
+                if (ctx.pp32.back().qdata.has_multi_degen) any_multi_degen = true;
+            }
+        }
+        if (any_multi_degen) {
             std::fprintf(stderr,
                 "Warning: query '%s' contains k-mers exceeding max_degen_expand=%u; "
                 "those k-mers are ignored and not used in the search\n",
                 queries[qi].id.c_str(),
                 static_cast<unsigned>(config.max_degen_expand));
         }
-    };
-
-    if (is_both_mode) {
-        // Both mode: preprocess twice (coding + optimal)
-        if (kmer_type_for(k, spaced_t) == 0) {
-            pp16_cod.reserve(queries.size());
-            pp16_opt.reserve(queries.size());
-            for (size_t qi = 0; qi < queries.size(); qi++) {
-                if (query_skipped[qi]) continue;
-                query_pp_idx[qi] = pp16_cod.size();
-                pp16_cod.push_back({preprocess_query<uint16_t>(
-                    queries[qi].sequence, k, all_kix_cod, khx_ptr_cod, config,
-                    spaced_t, seed_masks_cod)});
-                pp16_opt.push_back({preprocess_query<uint16_t>(
-                    queries[qi].sequence, k, all_kix_opt, khx_ptr_opt, config,
-                    spaced_t, seed_masks_opt)});
-                warn_degen(qi, pp16_cod.back().qdata.has_multi_degen ||
-                               pp16_opt.back().qdata.has_multi_degen);
-            }
-        } else {
-            pp32_cod.reserve(queries.size());
-            pp32_opt.reserve(queries.size());
-            for (size_t qi = 0; qi < queries.size(); qi++) {
-                if (query_skipped[qi]) continue;
-                query_pp_idx[qi] = pp32_cod.size();
-                pp32_cod.push_back({preprocess_query<uint32_t>(
-                    queries[qi].sequence, k, all_kix_cod, khx_ptr_cod, config,
-                    spaced_t, seed_masks_cod)});
-                pp32_opt.push_back({preprocess_query<uint32_t>(
-                    queries[qi].sequence, k, all_kix_opt, khx_ptr_opt, config,
-                    spaced_t, seed_masks_opt)});
-                warn_degen(qi, pp32_cod.back().qdata.has_multi_degen ||
-                               pp32_opt.back().qdata.has_multi_degen);
-            }
-        }
-    } else {
-        // Non-both mode: single preprocessing pass
-        if (kmer_type_for(k, spaced_t) == 0) {
-            pp16.reserve(queries.size());
-            for (size_t qi = 0; qi < queries.size(); qi++) {
-                if (query_skipped[qi]) continue;
-                query_pp_idx[qi] = pp16.size();
-                pp16.push_back({preprocess_query<uint16_t>(
-                    queries[qi].sequence, k, all_kix, khx_ptr, config,
-                    spaced_t, seed_masks)});
-                warn_degen(qi, pp16.back().qdata.has_multi_degen);
-            }
-        } else {
-            pp32.reserve(queries.size());
-            for (size_t qi = 0; qi < queries.size(); qi++) {
-                if (query_skipped[qi]) continue;
-                query_pp_idx[qi] = pp32.size();
-                pp32.push_back({preprocess_query<uint32_t>(
-                    queries[qi].sequence, k, all_kix, khx_ptr, config,
-                    spaced_t, seed_masks)});
-                warn_degen(qi, pp32.back().qdata.has_multi_degen);
-            }
-        }
     }
 
     // Thread-local Stage1Buffer to avoid per-job allocation.
-    // For "both" mode: need two buffers per thread (coding + optimal).
+    // For "both" mode we need two buffers per thread (coding + optimal).
     uint32_t max_num_seqs = 0;
-    if (is_both_mode) {
-        for (const auto& vd : vol_data_cod)
-            max_num_seqs = std::max(max_num_seqs, vd.kix.num_sequences());
-    } else {
-        for (const auto& vd : vol_data)
-            max_num_seqs = std::max(max_num_seqs, vd.kix.num_sequences());
-    }
+    for (const auto& vd : ctxs[0].volumes)
+        max_num_seqs = std::max(max_num_seqs, vd.kix.num_sequences());
 
     // Determine optimal tier from actual preprocessed k-mer counts
     uint32_t max_kmer_positions = 0;
-    if (is_both_mode) {
-        if (kmer_type_for(k, spaced_t) == 0) {
-            for (const auto& pp : pp16_cod) {
-                max_kmer_positions = std::max(max_kmer_positions,
-                    static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                                   pp.qdata.rc_positions.size())));
-            }
-            for (const auto& pp : pp16_opt) {
+    for (const auto& ctx : ctxs) {
+        if (use_uint16) {
+            for (const auto& pp : ctx.pp16) {
                 max_kmer_positions = std::max(max_kmer_positions,
                     static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
                                                    pp.qdata.rc_positions.size())));
             }
         } else {
-            for (const auto& pp : pp32_cod) {
-                max_kmer_positions = std::max(max_kmer_positions,
-                    static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                                   pp.qdata.rc_positions.size())));
-            }
-            for (const auto& pp : pp32_opt) {
-                max_kmer_positions = std::max(max_kmer_positions,
-                    static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                                   pp.qdata.rc_positions.size())));
-            }
-        }
-    } else {
-        if (kmer_type_for(k, spaced_t) == 0) {
-            for (const auto& pp : pp16) {
-                max_kmer_positions = std::max(max_kmer_positions,
-                    static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                                   pp.qdata.rc_positions.size())));
-            }
-        } else {
-            for (const auto& pp : pp32) {
+            for (const auto& pp : ctx.pp32) {
                 max_kmer_positions = std::max(max_kmer_positions,
                     static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
                                                    pp.qdata.rc_positions.size())));
@@ -869,22 +754,15 @@ int main(int argc, char* argv[]) {
     }
     Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
 
-    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(
-        [max_num_seqs, tier]() {
-            Stage1Buffer buf;
-            buf.tier = tier;
-            buf.ensure_capacity(max_num_seqs);
-            return buf;
-        });
-
-    // For "both" mode: a second set of thread-local buffers for the optimal side
-    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs_opt(
-        [max_num_seqs, tier]() {
-            Stage1Buffer buf;
-            buf.tier = tier;
-            buf.ensure_capacity(max_num_seqs);
-            return buf;
-        });
+    auto make_tls_buf = [max_num_seqs, tier]() {
+        Stage1Buffer buf;
+        buf.tier = tier;
+        buf.ensure_capacity(max_num_seqs);
+        return buf;
+    };
+    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(make_tls_buf);
+    // Second buffer set for the optimal side in both-mode.
+    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs_opt(make_tls_buf);
 
     // Thread-local hit collection (no mutex needed)
     tbb::combinable<std::vector<OutputHit>> tls_hits;
@@ -892,13 +770,8 @@ int main(int argc, char* argv[]) {
     // Adaptive parallel granularity:
     // - Many queries or single volume: parallel_for over queries (coarser tasks)
     // - Few queries, multiple volumes: parallel_for_each over (query, volume) pairs
-    size_t non_skipped_count;
-    if (is_both_mode) {
-        non_skipped_count = (kmer_type_for(k, spaced_t) == 0) ? pp16_cod.size() : pp32_cod.size();
-    } else {
-        non_skipped_count = (kmer_type_for(k, spaced_t) == 0) ? pp16.size() : pp32.size();
-    }
-    size_t num_volumes = is_both_mode ? vol_data_cod.size() : vol_data.size();
+    size_t non_skipped_count = use_uint16 ? ctxs[0].pp16.size() : ctxs[0].pp32.size();
+    size_t num_volumes = ctxs[0].volumes.size();
     bool use_query_level_parallel =
         (non_skipped_count > static_cast<size_t>(num_threads) * 2) ||
         (num_volumes == 1);
@@ -929,7 +802,53 @@ int main(int argc, char* argv[]) {
         }
     };
 
-    // Phase 2: execute search jobs in parallel using preprocessed data
+    // Phase 2: execute search jobs in parallel using preprocessed data.
+    // run_one() encapsulates the both-mode vs single-mode dispatch so the
+    // outer parallel paths only differ in their work distribution.
+    auto run_one = [&](size_t qi, size_t vi,
+                       Stage1Buffer& buf, Stage1Buffer& buf_opt,
+                       std::vector<OutputHit>& local_hits) {
+        const auto& query = queries[qi];
+        size_t pp_idx = query_pp_idx[qi];
+        const auto& ksx_primary = ctxs[0].volumes[vi].ksx;
+        const auto& filter_primary = ctxs[0].volumes[vi].filter;
+        const uint16_t volume_index = ctxs[0].volumes[vi].volume_index;
+
+        SearchResult sr;
+        if (is_both_mode) {
+            const auto& vd_cod = ctxs[0].volumes[vi];
+            const auto& vd_opt = ctxs[1].volumes[vi];
+            if (use_uint16) {
+                sr = search_volume_both<uint16_t>(
+                    query.id,
+                    ctxs[0].pp16[pp_idx].qdata, ctxs[1].pp16[pp_idx].qdata,
+                    k, vd_cod.kix, vd_cod.kpx, vd_opt.kix, vd_opt.kpx,
+                    ksx_primary, filter_primary, config, buf, buf_opt);
+            } else {
+                sr = search_volume_both<uint32_t>(
+                    query.id,
+                    ctxs[0].pp32[pp_idx].qdata, ctxs[1].pp32[pp_idx].qdata,
+                    k, vd_cod.kix, vd_cod.kpx, vd_opt.kix, vd_opt.kpx,
+                    ksx_primary, filter_primary, config, buf, buf_opt);
+            }
+        } else {
+            const auto& vd = ctxs[0].volumes[vi];
+            if (use_uint16) {
+                sr = search_volume<uint16_t>(
+                    query.id, ctxs[0].pp16[pp_idx].qdata, k,
+                    vd.kix, vd.kpx, vd.ksx, vd.filter, config, buf);
+            } else {
+                sr = search_volume<uint32_t>(
+                    query.id, ctxs[0].pp32[pp_idx].qdata, k,
+                    vd.kix, vd.kpx, vd.ksx, vd.filter, config, buf);
+            }
+        }
+        if (!sr.hits.empty()) {
+            collect_hits(sr, ksx_primary, volume_index,
+                         query.sequence, local_hits);
+        }
+    };
+
     tbb::task_arena arena(num_threads);
 
     if (use_query_level_parallel) {
@@ -941,56 +860,13 @@ int main(int argc, char* argv[]) {
                 tbb::blocked_range<size_t>(0, queries.size()),
                 [&](const tbb::blocked_range<size_t>& range) {
                     auto& buf = tls_bufs.local();
+                    auto& buf_opt = tls_bufs_opt.local();
                     auto& local_hits = tls_hits.local();
 
                     for (size_t qi = range.begin(); qi != range.end(); ++qi) {
                         if (query_skipped[qi]) continue;
-                        const auto& query = queries[qi];
-                        size_t pp_idx = query_pp_idx[qi];
-
                         for (size_t vi = 0; vi < num_volumes; vi++) {
-                            SearchResult sr;
-                            if (is_both_mode) {
-                                auto& buf_opt = tls_bufs_opt.local();
-                                const auto& vd_cod = vol_data_cod[vi];
-                                const auto& vd_opt = vol_data_opt[vi];
-                                if (kmer_type_for(k, spaced_t) == 0) {
-                                    sr = search_volume_both<uint16_t>(
-                                        query.id,
-                                        pp16_cod[pp_idx].qdata, pp16_opt[pp_idx].qdata,
-                                        k, vd_cod.kix, vd_cod.kpx,
-                                        vd_opt.kix, vd_opt.kpx,
-                                        vd_cod.ksx, vd_cod.filter, config,
-                                        &buf, &buf_opt);
-                                } else {
-                                    sr = search_volume_both<uint32_t>(
-                                        query.id,
-                                        pp32_cod[pp_idx].qdata, pp32_opt[pp_idx].qdata,
-                                        k, vd_cod.kix, vd_cod.kpx,
-                                        vd_opt.kix, vd_opt.kpx,
-                                        vd_cod.ksx, vd_cod.filter, config,
-                                        &buf, &buf_opt);
-                                }
-                                if (!sr.hits.empty()) {
-                                    collect_hits(sr, vd_cod.ksx, vd_cod.volume_index,
-                                                 query.sequence, local_hits);
-                                }
-                            } else {
-                                const auto& vd = vol_data[vi];
-                                if (kmer_type_for(k, spaced_t) == 0) {
-                                    sr = search_volume<uint16_t>(
-                                        query.id, pp16[pp_idx].qdata, k,
-                                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
-                                } else {
-                                    sr = search_volume<uint32_t>(
-                                        query.id, pp32[pp_idx].qdata, k,
-                                        vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
-                                }
-                                if (!sr.hits.empty()) {
-                                    collect_hits(sr, vd.ksx, vd.volume_index,
-                                                 query.sequence, local_hits);
-                                }
-                            }
+                            run_one(qi, vi, buf, buf_opt, local_hits);
                         }
                     }
                 });
@@ -1010,55 +886,10 @@ int main(int argc, char* argv[]) {
         arena.execute([&] {
             tbb::parallel_for_each(jobs.begin(), jobs.end(),
                 [&](const SearchJob& job) {
-                    const auto& query = queries[job.query_idx];
-                    size_t pp_idx = query_pp_idx[job.query_idx];
-
                     auto& buf = tls_bufs.local();
-
-                    SearchResult sr;
-                    if (is_both_mode) {
-                        auto& buf_opt = tls_bufs_opt.local();
-                        const auto& vd_cod = vol_data_cod[job.volume_idx];
-                        const auto& vd_opt = vol_data_opt[job.volume_idx];
-                        if (kmer_type_for(k, spaced_t) == 0) {
-                            sr = search_volume_both<uint16_t>(
-                                query.id,
-                                pp16_cod[pp_idx].qdata, pp16_opt[pp_idx].qdata,
-                                k, vd_cod.kix, vd_cod.kpx,
-                                vd_opt.kix, vd_opt.kpx,
-                                vd_cod.ksx, vd_cod.filter, config,
-                                &buf, &buf_opt);
-                        } else {
-                            sr = search_volume_both<uint32_t>(
-                                query.id,
-                                pp32_cod[pp_idx].qdata, pp32_opt[pp_idx].qdata,
-                                k, vd_cod.kix, vd_cod.kpx,
-                                vd_opt.kix, vd_opt.kpx,
-                                vd_cod.ksx, vd_cod.filter, config,
-                                &buf, &buf_opt);
-                        }
-                        if (!sr.hits.empty()) {
-                            auto& local_hits = tls_hits.local();
-                            collect_hits(sr, vd_cod.ksx, vd_cod.volume_index,
-                                         query.sequence, local_hits);
-                        }
-                    } else {
-                        const auto& vd = vol_data[job.volume_idx];
-                        if (kmer_type_for(k, spaced_t) == 0) {
-                            sr = search_volume<uint16_t>(
-                                query.id, pp16[pp_idx].qdata, k,
-                                vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
-                        } else {
-                            sr = search_volume<uint32_t>(
-                                query.id, pp32[pp_idx].qdata, k,
-                                vd.kix, vd.kpx, vd.ksx, vd.filter, config, &buf);
-                        }
-                        if (!sr.hits.empty()) {
-                            auto& local_hits = tls_hits.local();
-                            collect_hits(sr, vd.ksx, vd.volume_index,
-                                         query.sequence, local_hits);
-                        }
-                    }
+                    auto& buf_opt = tls_bufs_opt.local();
+                    auto& local_hits = tls_hits.local();
+                    run_one(job.query_idx, job.volume_idx, buf, buf_opt, local_hits);
                 });
         });
     }

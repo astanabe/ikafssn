@@ -19,33 +19,20 @@ IndexPrefixParts parse_index_prefix(const std::string& ix_prefix) {
 }
 
 std::string index_file_stem(const std::string& parent_dir,
-                            const std::string& vol_basename, int k) {
-    char kk[8];
-    std::snprintf(kk, sizeof(kk), "%02d", k);
-    return parent_dir + "/" + vol_basename + "." + kk + "mer";
-}
-
-std::string index_file_stem(const std::string& parent_dir,
                             const std::string& vol_basename, int k,
                             uint8_t t, uint8_t template_type) {
-    std::string stem = index_file_stem(parent_dir, vol_basename, k);
+    char kk[8];
+    std::snprintf(kk, sizeof(kk), "%02d", k);
+    std::string stem = parent_dir + "/" + vol_basename + "." + kk + "mer";
     if (t > 0) {
         char tt[8];
         std::snprintf(tt, sizeof(tt), "%02d", static_cast<int>(t));
-        std::string type_str;
-        switch (template_type) {
-            case 1:  type_str = "cod"; break;
-            case 2:  type_str = "opt"; break;
-            default: type_str = "con"; break;
-        }
-        stem += "." + std::string(tt) + "mer." + type_str;
+        const char* type_str =
+            template_type == 1 ? "cod" :
+            template_type == 2 ? "opt" : "con";
+        stem += std::string(".") + tt + "mer." + type_str;
     }
     return stem;
-}
-
-std::string khx_path_for(const std::string& parent_dir,
-                          const std::string& db, int k) {
-    return index_file_stem(parent_dir, db, k) + ".khx";
 }
 
 std::string khx_path_for(const std::string& parent_dir,
@@ -141,11 +128,6 @@ static std::set<int> scan_k_values(const std::string& parent_dir,
         }
     }
     return k_values;
-}
-
-std::vector<DiscoveredVolume> discover_volumes(
-    const std::string& ix_prefix, int filter_k) {
-    return discover_volumes(ix_prefix, filter_k, 0, 0);
 }
 
 std::vector<DiscoveredVolume> discover_volumes(

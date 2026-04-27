@@ -6,6 +6,7 @@
 #include "core/spaced_seed.hpp"
 #include "core/version.hpp"
 #include "protocol/info_format.hpp"
+#include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/primer_query.hpp"
@@ -294,17 +295,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Primer mode validation
-    if (has_primer) {
-        if (cli.has("-stage1_min_score")) {
-            std::fprintf(stderr, "Error: -stage1_min_score cannot be used with -primer; use -stage1_primer_score instead\n");
-            return 1;
-        }
-        if (cli.has("-stage2_min_score")) {
-            std::fprintf(stderr, "Error: -stage2_min_score cannot be used with -primer; use -stage2_primer_score_add instead\n");
-            return 1;
-        }
-        if (!cli.has("-insert_length")) {
-            std::fprintf(stderr, "Error: -insert_length is required with -primer\n");
+    {
+        std::string err;
+        if (!validate_primer_mode_options(cli, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
     }
@@ -432,25 +426,25 @@ int main(int argc, char* argv[]) {
     base_req.strand = static_cast<int8_t>(cli.get_int("-strand", 0));
     base_req.db = ix_name;
     {
-        int mde = cli.get_int("-max_degen_expand", 0);
-        if (mde < 0 || mde > 256) {
-            std::fprintf(stderr, "Error: -max_degen_expand must be between 0 and 256\n");
+        std::string err;
+        if (!parse_max_degen_expand(cli, 0, base_req.max_degen_expand, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-        base_req.max_degen_expand = static_cast<uint16_t>(mde);
     }
     {
-        int cli_t = cli.get_int("-t", 0);
-        if (cli_t != 0 && cli_t != 13 && cli_t != 15 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
-            std::fprintf(stderr, "Error: -t must be 0, 13, 15, 16, 18, or 21\n");
+        std::string err;
+        if (!parse_spaced_seed_t(cli, base_req.t, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-        base_req.t = static_cast<uint8_t>(cli_t);
     }
     if (cli.has("-template_type")) {
-        TemplateType tt = template_type_from_string(cli.get_string("-template_type"));
-        if (tt == TemplateType::kContiguous) {
-            std::fprintf(stderr, "Error: -template_type must be coding, optimal, or both\n");
+        TemplateType tt;
+        std::string err;
+        if (!parse_template_type_cli(cli, TemplateType::kBoth,
+                                     /*allow_contiguous=*/false, tt, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
         base_req.template_type = static_cast<uint8_t>(tt);
@@ -469,15 +463,14 @@ int main(int argc, char* argv[]) {
         base_req.stage3_min_ppositive_x100 = static_cast<uint16_t>(min_ppositive * 100.0);
     }
     base_req.stage3_min_npositive = static_cast<uint32_t>(cli.get_int("-stage3_min_npositive", 0));
-    if (cli.has("-stage3_score_matrix")) {
-        std::string sm = cli.get_string("-stage3_score_matrix");
-        if (sm == "degmatch") base_req.score_matrix = 1;
-        else if (sm == "dnafull") base_req.score_matrix = 2;
-        else if (sm == "nuc44") base_req.score_matrix = 3;
-        else {
-            std::fprintf(stderr, "Error: -stage3_score_matrix must be degmatch, dnafull, or nuc44\n");
+    {
+        std::string sm;
+        std::string err;
+        if (!parse_score_matrix(cli, sm, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
+        base_req.score_matrix = score_matrix_code(sm);
     }
 
     // Context

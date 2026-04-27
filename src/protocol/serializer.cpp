@@ -1,133 +1,10 @@
 #include "protocol/serializer.hpp"
+#include "protocol/binary_io.hpp"
 
 #include <cstring>
 #include <limits>
 
 namespace ikafssn {
-
-// Helper: append little-endian integer to buffer
-static void put_u8(std::vector<uint8_t>& buf, uint8_t v) {
-    buf.push_back(v);
-}
-
-static void put_i8(std::vector<uint8_t>& buf, int8_t v) {
-    buf.push_back(static_cast<uint8_t>(v));
-}
-
-static void put_u16(std::vector<uint8_t>& buf, uint16_t v) {
-    buf.push_back(static_cast<uint8_t>(v));
-    buf.push_back(static_cast<uint8_t>(v >> 8));
-}
-
-static void put_i16(std::vector<uint8_t>& buf, int16_t v) {
-    put_u16(buf, static_cast<uint16_t>(v));
-}
-
-static void put_u32(std::vector<uint8_t>& buf, uint32_t v) {
-    buf.push_back(static_cast<uint8_t>(v));
-    buf.push_back(static_cast<uint8_t>(v >> 8));
-    buf.push_back(static_cast<uint8_t>(v >> 16));
-    buf.push_back(static_cast<uint8_t>(v >> 24));
-}
-
-static void put_i32(std::vector<uint8_t>& buf, int32_t v) {
-    put_u32(buf, static_cast<uint32_t>(v));
-}
-
-static void put_u64(std::vector<uint8_t>& buf, uint64_t v) {
-    for (int i = 0; i < 8; i++) {
-        buf.push_back(static_cast<uint8_t>(v >> (i * 8)));
-    }
-}
-
-static void put_str16(std::vector<uint8_t>& buf, const std::string& s) {
-    put_u16(buf, static_cast<uint16_t>(s.size()));
-    buf.insert(buf.end(), s.begin(), s.end());
-}
-
-// Helper: read little-endian integer from buffer
-class Reader {
-public:
-    Reader(const uint8_t* data, size_t size) : data_(data), size_(size), pos_(0) {}
-
-    bool has(size_t n) const { return pos_ + n <= size_; }
-    size_t remaining() const { return size_ - pos_; }
-
-    bool get_u8(uint8_t& v) {
-        if (!has(1)) return false;
-        v = data_[pos_++];
-        return true;
-    }
-
-    bool get_i8(int8_t& v) {
-        uint8_t raw;
-        if (!get_u8(raw)) return false;
-        v = static_cast<int8_t>(raw);
-        return true;
-    }
-
-    bool get_u16(uint16_t& v) {
-        if (!has(2)) return false;
-        v = static_cast<uint16_t>(data_[pos_]) |
-            (static_cast<uint16_t>(data_[pos_ + 1]) << 8);
-        pos_ += 2;
-        return true;
-    }
-
-    bool get_i16(int16_t& v) {
-        uint16_t raw;
-        if (!get_u16(raw)) return false;
-        v = static_cast<int16_t>(raw);
-        return true;
-    }
-
-    bool get_u32(uint32_t& v) {
-        if (!has(4)) return false;
-        v = static_cast<uint32_t>(data_[pos_]) |
-            (static_cast<uint32_t>(data_[pos_ + 1]) << 8) |
-            (static_cast<uint32_t>(data_[pos_ + 2]) << 16) |
-            (static_cast<uint32_t>(data_[pos_ + 3]) << 24);
-        pos_ += 4;
-        return true;
-    }
-
-    bool get_i32(int32_t& v) {
-        uint32_t raw;
-        if (!get_u32(raw)) return false;
-        v = static_cast<int32_t>(raw);
-        return true;
-    }
-
-    bool get_u64(uint64_t& v) {
-        if (!has(8)) return false;
-        v = 0;
-        for (int i = 0; i < 8; i++) {
-            v |= static_cast<uint64_t>(data_[pos_ + i]) << (i * 8);
-        }
-        pos_ += 8;
-        return true;
-    }
-
-    bool get_str16(std::string& s) {
-        uint16_t len;
-        if (!get_u16(len)) return false;
-        if (!has(len)) return false;
-        s.assign(reinterpret_cast<const char*>(data_ + pos_), len);
-        pos_ += len;
-        return true;
-    }
-
-    bool skip(size_t n) {
-        if (!has(n)) return false;
-        pos_ += n;
-        return true;
-    }
-
-private:
-    const uint8_t* data_;
-    size_t size_;
-    size_t pos_;
-};
 
 // --- SearchRequest ---
 // Wire format (all fields in natural order, no backward-compat trailer):
@@ -168,48 +45,49 @@ private:
 
 std::vector<uint8_t> serialize(const SearchRequest& req) {
     std::vector<uint8_t> buf;
+    BinaryWriter w(buf);
     buf.reserve(256);
 
-    put_u8(buf, req.k);
-    put_u16(buf, req.stage2_min_score);
-    put_u16(buf, req.stage2_max_gap);
-    put_u32(buf, req.stage1_max_freq);
-    put_u8(buf, req.stage2_min_diag_hits);
-    put_u16(buf, req.stage1_topn);
-    put_u16(buf, req.stage1_min_score);
-    put_u16(buf, req.num_results);
-    put_u16(buf, req.stage1_min_score_frac_x10000);
-    put_u16(buf, req.stage1_max_freq_frac_x10000);
-    put_u8(buf, static_cast<uint8_t>(req.seqidlist_mode));
-    put_u8(buf, req.mode);
-    put_u8(buf, req.stage1_score);
-    put_u8(buf, req.accept_qdegen);
-    put_i8(buf, req.strand);
-    put_u8(buf, req.has_stage2_min_score);
-    put_u16(buf, req.stage2_max_lookback);
-    put_u8(buf, req.stage3_traceback);
-    put_i16(buf, req.stage3_gapopen);
-    put_i16(buf, req.stage3_gapext);
-    put_u16(buf, req.stage3_min_ppositive_x100);
-    put_u32(buf, req.stage3_min_npositive);
-    put_u32(buf, req.context_abs);
-    put_u16(buf, req.context_frac_x10000);
-    put_u16(buf, req.max_degen_expand);
-    put_u16(buf, req.stage2_max_nhit_per_subject);
-    put_u8(buf, req.t);
-    put_u8(buf, req.template_type);
-    put_u8(buf, req.score_matrix);
-    put_str16(buf, req.db);
+    w.u8(req.k);
+    w.u16(req.stage2_min_score);
+    w.u16(req.stage2_max_gap);
+    w.u32(req.stage1_max_freq);
+    w.u8(req.stage2_min_diag_hits);
+    w.u16(req.stage1_topn);
+    w.u16(req.stage1_min_score);
+    w.u16(req.num_results);
+    w.u16(req.stage1_min_score_frac_x10000);
+    w.u16(req.stage1_max_freq_frac_x10000);
+    w.u8(static_cast<uint8_t>(req.seqidlist_mode));
+    w.u8(req.mode);
+    w.u8(req.stage1_score);
+    w.u8(req.accept_qdegen);
+    w.i8(req.strand);
+    w.u8(req.has_stage2_min_score);
+    w.u16(req.stage2_max_lookback);
+    w.u8(req.stage3_traceback);
+    w.i16(req.stage3_gapopen);
+    w.i16(req.stage3_gapext);
+    w.u16(req.stage3_min_ppositive_x100);
+    w.u32(req.stage3_min_npositive);
+    w.u32(req.context_abs);
+    w.u16(req.context_frac_x10000);
+    w.u16(req.max_degen_expand);
+    w.u16(req.stage2_max_nhit_per_subject);
+    w.u8(req.t);
+    w.u8(req.template_type);
+    w.u8(req.score_matrix);
+    w.str16(req.db);
 
-    put_u32(buf, static_cast<uint32_t>(req.seqids.size()));
+    w.u32(static_cast<uint32_t>(req.seqids.size()));
     for (const auto& acc : req.seqids) {
-        put_str16(buf, acc);
+        w.str16(acc);
     }
 
-    put_u16(buf, static_cast<uint16_t>(req.queries.size()));
+    w.u16(static_cast<uint16_t>(req.queries.size()));
     for (const auto& q : req.queries) {
-        put_str16(buf, q.qseqid);
-        put_u32(buf, static_cast<uint32_t>(q.sequence.size()));
+        w.str16(q.qseqid);
+        w.u32(static_cast<uint32_t>(q.sequence.size()));
         buf.insert(buf.end(), q.sequence.begin(), q.sequence.end());
     }
 
@@ -217,7 +95,7 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
 }
 
 bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
-    Reader r(data.data(), data.size());
+    BinaryReader r(data.data(), data.size());
 
     if (!r.get_u8(req.k)) return false;
     if (!r.get_u16(req.stage2_min_score)) return false;
@@ -319,56 +197,57 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 
 std::vector<uint8_t> serialize(const SearchResponse& resp) {
     std::vector<uint8_t> buf;
+    BinaryWriter w(buf);
     buf.reserve(1024);
 
-    put_u8(buf, resp.status);
-    put_u8(buf, resp.k);
-    put_u8(buf, resp.mode);
-    put_u8(buf, resp.stage1_score);
-    put_u8(buf, resp.stage3_traceback);
-    put_u8(buf, resp.t);
-    put_str16(buf, resp.db);
-    put_u16(buf, static_cast<uint16_t>(resp.results.size()));
+    w.u8(resp.status);
+    w.u8(resp.k);
+    w.u8(resp.mode);
+    w.u8(resp.stage1_score);
+    w.u8(resp.stage3_traceback);
+    w.u8(resp.t);
+    w.str16(resp.db);
+    w.u16(static_cast<uint16_t>(resp.results.size()));
 
     for (const auto& qr : resp.results) {
-        put_str16(buf, qr.qseqid);
-        put_u8(buf, qr.skipped);
-        put_u8(buf, qr.warnings);
-        put_u16(buf, static_cast<uint16_t>(qr.hits.size()));
+        w.str16(qr.qseqid);
+        w.u8(qr.skipped);
+        w.u8(qr.warnings);
+        w.u16(static_cast<uint16_t>(qr.hits.size()));
         for (const auto& hit : qr.hits) {
-            put_str16(buf, hit.sseqid);
-            put_u8(buf, hit.sstrand);
-            put_u32(buf, hit.qstart);
-            put_u32(buf, hit.qend);
-            put_u32(buf, hit.qlen);
-            put_u32(buf, hit.sstart);
-            put_u32(buf, hit.send);
-            put_u32(buf, hit.slen);
-            put_u16(buf, hit.coverscore);
-            put_u16(buf, hit.matchscore);
-            put_u16(buf, hit.chainscore);
-            put_u16(buf, hit.volume);
-            put_i32(buf, hit.alnscore);
-            put_u32(buf, hit.npositive);
-            put_u32(buf, hit.nnegative);
-            put_u16(buf, hit.ppositive_x100);
-            put_str16(buf, hit.cigar);
-            put_str16(buf, hit.qseq);
-            put_str16(buf, hit.sseq);
+            w.str16(hit.sseqid);
+            w.u8(hit.sstrand);
+            w.u32(hit.qstart);
+            w.u32(hit.qend);
+            w.u32(hit.qlen);
+            w.u32(hit.sstart);
+            w.u32(hit.send);
+            w.u32(hit.slen);
+            w.u16(hit.coverscore);
+            w.u16(hit.matchscore);
+            w.u16(hit.chainscore);
+            w.u16(hit.volume);
+            w.i32(hit.alnscore);
+            w.u32(hit.npositive);
+            w.u32(hit.nnegative);
+            w.u16(hit.ppositive_x100);
+            w.str16(hit.cigar);
+            w.str16(hit.qseq);
+            w.str16(hit.sseq);
         }
     }
 
     // Rejected query IDs
-    put_u16(buf, static_cast<uint16_t>(resp.rejected_qseqids.size()));
+    w.u16(static_cast<uint16_t>(resp.rejected_qseqids.size()));
     for (const auto& qid : resp.rejected_qseqids) {
-        put_str16(buf, qid);
+        w.str16(qid);
     }
 
     return buf;
 }
 
 bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
-    Reader r(data.data(), data.size());
+    BinaryReader r(data.data(), data.size());
 
     if (!r.get_u8(resp.status)) return false;
     if (!r.get_u8(resp.k)) return false;
@@ -431,13 +310,14 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
 
 std::vector<uint8_t> serialize(const ErrorResponse& err) {
     std::vector<uint8_t> buf;
-    put_u32(buf, err.error_code);
-    put_str16(buf, err.message);
+    BinaryWriter w(buf);
+    w.u32(err.error_code);
+    w.str16(err.message);
     return buf;
 }
 
 bool deserialize(const std::vector<uint8_t>& data, ErrorResponse& err) {
-    Reader r(data.data(), data.size());
+    BinaryReader r(data.data(), data.size());
     if (!r.get_u32(err.error_code)) return false;
     if (!r.get_str16(err.message)) return false;
     return true;
@@ -457,12 +337,13 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, HealthRequest& /*req*/) {
 
 std::vector<uint8_t> serialize(const HealthResponse& resp) {
     std::vector<uint8_t> buf;
-    put_u8(buf, resp.status);
+    BinaryWriter w(buf);
+    w.u8(resp.status);
     return buf;
 }
 
 bool deserialize(const std::vector<uint8_t>& data, HealthResponse& resp) {
-    Reader r(data.data(), data.size());
+    BinaryReader r(data.data(), data.size());
     if (!r.get_u8(resp.status)) return false;
     return true;
 }
@@ -505,34 +386,35 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 
 std::vector<uint8_t> serialize(const InfoResponse& resp) {
     std::vector<uint8_t> buf;
+    BinaryWriter w(buf);
     buf.reserve(256);
 
-    put_u8(buf, resp.status);
-    put_u8(buf, resp.default_k);
-    put_i32(buf, resp.max_queue_size);
-    put_i32(buf, resp.queue_depth);
-    put_i32(buf, resp.max_seqs_per_req);
-    put_u16(buf, static_cast<uint16_t>(resp.databases.size()));
+    w.u8(resp.status);
+    w.u8(resp.default_k);
+    w.i32(resp.max_queue_size);
+    w.i32(resp.queue_depth);
+    w.i32(resp.max_seqs_per_req);
+    w.u16(static_cast<uint16_t>(resp.databases.size()));
 
     for (const auto& db : resp.databases) {
-        put_str16(buf, db.name);
-        put_u8(buf, db.default_k);
-        put_u8(buf, db.max_mode);
-        put_u16(buf, static_cast<uint16_t>(db.groups.size()));
+        w.str16(db.name);
+        w.u8(db.default_k);
+        w.u8(db.max_mode);
+        w.u16(static_cast<uint16_t>(db.groups.size()));
 
         for (const auto& g : db.groups) {
-            put_u8(buf, g.k);
-            put_u8(buf, g.kmer_type);
-            put_u8(buf, g.t);
-            put_u8(buf, g.template_type);
-            put_u16(buf, static_cast<uint16_t>(g.volumes.size()));
+            w.u8(g.k);
+            w.u8(g.kmer_type);
+            w.u8(g.t);
+            w.u8(g.template_type);
+            w.u16(static_cast<uint16_t>(g.volumes.size()));
 
             for (const auto& v : g.volumes) {
-                put_u16(buf, v.volume_index);
-                put_u32(buf, v.num_sequences);
-                put_u64(buf, v.total_postings);
-                put_u64(buf, v.total_bases);
-                put_str16(buf, v.db);
+                w.u16(v.volume_index);
+                w.u32(v.num_sequences);
+                w.u64(v.total_postings);
+                w.u64(v.total_bases);
+                w.str16(v.db);
             }
         }
     }
@@ -541,7 +423,7 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
 }
 
 bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
-    Reader r(data.data(), data.size());
+    BinaryReader r(data.data(), data.size());
 
     if (!r.get_u8(resp.status)) return false;
     if (!r.get_u8(resp.default_k)) return false;

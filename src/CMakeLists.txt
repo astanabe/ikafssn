@@ -90,6 +90,8 @@ add_library(ikafssn_util STATIC
     util/cli_parser.cpp
     util/size_parser.cpp
     util/socket_utils.cpp
+    util/common_init.cpp
+    util/cli_validators.cpp
 )
 target_link_libraries(ikafssn_util PUBLIC ikafssn_core)
 
@@ -103,6 +105,11 @@ target_link_libraries(ikafssn_protocol PUBLIC ikafssn_core)
 
 # --- Command executables ---
 
+# Common library set used by binaries that touch index + BLAST DB + IO.
+set(IKAFSSN_BASE_LIBS
+    ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+
 # ikafssnindex
 add_executable(ikafssnindex
     ikafssnindex/main.cpp
@@ -111,7 +118,7 @@ target_include_directories(ikafssnindex PRIVATE
     "${NCBI_TOOLKIT_INCLUDE}"
 )
 target_link_libraries(ikafssnindex PRIVATE
-    ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_builder ${IKAFSSN_BASE_LIBS}
     TBB::tbb
 )
 
@@ -124,7 +131,7 @@ target_include_directories(ikafssnsearch PRIVATE
 )
 target_link_libraries(ikafssnsearch PRIVATE
     ikafssn_search ikafssn_stage3 ikafssn_sam_writer
-    ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ${IKAFSSN_BASE_LIBS}
     TBB::tbb
 )
 
@@ -139,7 +146,7 @@ target_include_directories(ikafssn_server_lib PRIVATE
 )
 target_link_libraries(ikafssn_server_lib PUBLIC
     ikafssn_search ikafssn_stage3
-    ikafssn_protocol ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_protocol ${IKAFSSN_BASE_LIBS}
     parasail TBB::tbb
 )
 
@@ -169,8 +176,8 @@ add_executable(ikafssnclient
     ikafssnclient/checkpoint.cpp
 )
 target_link_libraries(ikafssnclient PRIVATE
-    ikafssn_client_lib ikafssn_io ikafssn_util ikafssn_core
-    ikafssn_sam_writer hts
+    ikafssn_client_lib ikafssn_sam_writer hts
+    ikafssn_io ikafssn_util ikafssn_core
     OpenSSL::Crypto
 )
 
@@ -200,7 +207,7 @@ target_include_directories(ikafssninfo PRIVATE
 )
 target_link_libraries(ikafssninfo PRIVATE
     ikafssn_client_lib
-    ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ${IKAFSSN_BASE_LIBS}
 )
 
 # ikafssnhttpd (requires Drogon)

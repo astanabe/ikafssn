@@ -2,7 +2,6 @@
 #include "index/khx_format.hpp"
 #include "core/config.hpp"
 
-#include <sys/mman.h>
 #include <cstring>
 #include <cstdio>
 
@@ -66,8 +65,7 @@ size_t KhxReader::willneed_size() const {
 }
 
 void KhxReader::apply_madvise(bool willneed) {
-    if (!mmap_.is_open()) return;
-    mmap_.advise(willneed ? MADV_WILLNEED : MADV_RANDOM);
+    mmap_.advise_all(willneed);
 }
 
 uint64_t KhxReader::count_excluded() const {

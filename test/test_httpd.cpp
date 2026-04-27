@@ -130,9 +130,10 @@ static void test_backend_search() {
     std::vector<const KixReader*> all_kix = {&kix};
     std::vector<SearchResult> local_results;
     for (const auto& q : queries) {
+    Stage1Buffer buf;
         auto qdata = preprocess_query<uint16_t>(q.sequence, k, all_kix, nullptr, config);
         auto sr = search_volume<uint16_t>(q.id, qdata, k,
-                                          kix, kpx, ksx, no_filter, config);
+                                          kix, kpx, ksx, no_filter, config, buf);
         local_results.push_back(sr);
     }
 

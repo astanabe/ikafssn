@@ -64,7 +64,8 @@ static void test_stage1_basic() {
     config.stage1_topn = 100;
     config.min_stage1_score = 1;
 
-    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config);
+    Stage1Buffer buf;
+    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config, buf);
 
     // Should find FJ876973.1 OID in candidates
     CHECK(!candidates.empty());
@@ -133,7 +134,8 @@ static void test_stage1_min_score() {
     config.stage1_topn = 100;
     config.min_stage1_score = 999999; // Very high threshold
 
-    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config);
+    Stage1Buffer buf;
+    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config, buf);
     CHECK(candidates.empty());
 
     kix.close();
@@ -164,7 +166,8 @@ static void test_stage1_with_oid_filter() {
     config.stage1_topn = 100;
     config.min_stage1_score = 1;
 
-    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config);
+    Stage1Buffer buf;
+    auto candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config, buf);
 
     // FJ876973.1 OID should NOT be in results
     for (const auto& c : candidates) {
@@ -197,7 +200,8 @@ static void test_stage1_coverscore_vs_matchscore() {
     config_cover.stage1_topn = 100;
     config_cover.min_stage1_score = 1;
     config_cover.stage1_score_type = 1;
-    auto cover_candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_cover);
+    Stage1Buffer buf_cover;
+    auto cover_candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_cover, buf_cover);
 
     // Matchscore mode (type=2)
     Stage1Config config_match;
@@ -205,7 +209,8 @@ static void test_stage1_coverscore_vs_matchscore() {
     config_match.stage1_topn = 100;
     config_match.min_stage1_score = 1;
     config_match.stage1_score_type = 2;
-    auto match_candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_match);
+    Stage1Buffer buf_match;
+    auto match_candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_match, buf_match);
 
     // Both should find FJ876973.1
     bool cover_found = false, match_found = false;
@@ -247,14 +252,16 @@ static void test_stage1_topn_zero() {
     config_unlimited.max_freq = 100000;
     config_unlimited.stage1_topn = 0;
     config_unlimited.min_stage1_score = 1;
-    auto unlimited = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_unlimited);
+    Stage1Buffer buf_unlimited;
+    auto unlimited = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_unlimited, buf_unlimited);
 
     // topn=2 (limited)
     Stage1Config config_limited;
     config_limited.max_freq = 100000;
     config_limited.stage1_topn = 2;
     config_limited.min_stage1_score = 1;
-    auto limited = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_limited);
+    Stage1Buffer buf_limited;
+    auto limited = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_limited, buf_limited);
 
     // Unlimited should return >= limited count
     CHECK(unlimited.size() >= limited.size());
@@ -291,6 +298,7 @@ static bool build_maxfreq_index() {
 }
 
 static void test_stage1_fractional_threshold() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_stage1_fractional_threshold\n");
 
     KixReader kix;
@@ -312,7 +320,7 @@ static void test_stage1_fractional_threshold() {
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
         "test_query", qdata, 7,
-        kix, kpx, ksx, filter, config);
+        kix, kpx, ksx, filter, config, buf);
 
     // The fractional threshold resolves to ceil(Nqkmer * 0.5)
     // With a 100bp query, k=7: 94 k-mer positions, many distinct values
@@ -331,7 +339,7 @@ static void test_stage1_fractional_threshold() {
     auto qdata_low = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config_low);
     auto result_low = search_volume<uint16_t>(
         "test_query", qdata_low, 7,
-        kix, kpx, ksx, filter, config_low);
+        kix, kpx, ksx, filter, config_low, buf);
 
     // Lower fraction should produce at least as many results as higher fraction
     CHECK(result_low.hits.size() >= result.hits.size());
@@ -342,6 +350,7 @@ static void test_stage1_fractional_threshold() {
 }
 
 static void test_stage1_fractional_with_highfreq() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_stage1_fractional_with_highfreq\n");
 
     // Build index with max_freq_build to create .khx file
@@ -379,12 +388,12 @@ static void test_stage1_fractional_with_highfreq() {
     auto qdata_with = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, &khx, config);
     auto result_with_khx = search_volume<uint16_t>(
         "test_query", qdata_with, 7,
-        kix, kpx, ksx, filter, config);
+        kix, kpx, ksx, filter, config, buf);
 
     auto qdata_without = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result_without_khx = search_volume<uint16_t>(
         "test_query", qdata_without, 7,
-        kix, kpx, ksx, filter, config);
+        kix, kpx, ksx, filter, config, buf);
 
     // With khx, the Nhighfreq subtraction makes the effective threshold lower
     // (because more k-mers are recognized as excluded), so we should get

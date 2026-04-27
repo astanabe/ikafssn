@@ -138,15 +138,15 @@ std::vector<Stage1Candidate> stage1_filter(
     const KixReader& kix,
     const OidFilter& filter,
     const Stage1Config& config,
-    Stage1Buffer* buf = nullptr);
+    Stage1Buffer& buf);
 
 extern template std::vector<Stage1Candidate> stage1_filter<uint16_t>(
     const uint32_t*, const uint16_t*, size_t,
     const KixReader&, const OidFilter&, const Stage1Config&,
-    Stage1Buffer*);
+    Stage1Buffer&);
 extern template std::vector<Stage1Candidate> stage1_filter<uint32_t>(
     const uint32_t*, const uint32_t*, size_t,
     const KixReader&, const OidFilter&, const Stage1Config&,
-    Stage1Buffer*);
+    Stage1Buffer&);
 
 } // namespace ikafssn

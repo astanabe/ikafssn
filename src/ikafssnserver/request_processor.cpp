@@ -436,7 +436,7 @@ SearchResponse process_search_request(
                                     k, vd_cod.kix, vd_cod.kpx,
                                     vd_opt.kix, vd_opt.kpx,
                                     vd_cod.ksx, oid_filter, config,
-                                    &buf, &buf_opt);
+                                    buf, buf_opt);
                             } else {
                                 sr = search_volume_both<uint32_t>(
                                     query.qseqid,
@@ -444,17 +444,17 @@ SearchResponse process_search_request(
                                     k, vd_cod.kix, vd_cod.kpx,
                                     vd_opt.kix, vd_opt.kpx,
                                     vd_cod.ksx, oid_filter, config,
-                                    &buf, &buf_opt);
+                                    buf, buf_opt);
                             }
                         } else {
                             if (group.kmer_type == 0) {
                                 sr = search_volume<uint16_t>(
                                     query.qseqid, pp16[pp_idx].qdata, k,
-                                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
+                                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, buf);
                             } else {
                                 sr = search_volume<uint32_t>(
                                     query.qseqid, pp32[pp_idx].qdata, k,
-                                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, &buf);
+                                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, buf);
                             }
                         }
 

@@ -2,7 +2,6 @@
 #include "index/ksx_format.hpp"
 #include "core/config.hpp"
 
-#include <sys/mman.h>
 #include <cstring>
 #include <cstdio>
 
@@ -72,8 +71,7 @@ size_t KsxReader::willneed_size() const {
 }
 
 void KsxReader::apply_madvise(bool willneed) {
-    if (!mmap_.is_open()) return;
-    mmap_.advise(willneed ? MADV_WILLNEED : MADV_RANDOM);
+    mmap_.advise_all(willneed);
 }
 
 } // namespace ikafssn

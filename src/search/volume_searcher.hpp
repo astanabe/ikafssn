@@ -37,7 +37,8 @@ struct SearchResult {
 
 // Search a single volume using pre-processed query k-mer data.
 // High-freq k-mers have already been removed and thresholds resolved globally.
-// buf: optional thread-local Stage1Buffer to avoid per-call allocation.
+// buf: thread-local Stage1Buffer (must have buf.tier set) to avoid per-call
+// allocation. Required.
 template <typename KmerInt>
 SearchResult search_volume(
     const std::string& query_id,
@@ -48,16 +49,16 @@ SearchResult search_volume(
     const KsxReader& ksx,
     const OidFilter& filter,
     const SearchConfig& config,
-    Stage1Buffer* buf = nullptr);
+    Stage1Buffer& buf);
 
 extern template SearchResult search_volume<uint16_t>(
     const std::string&, const QueryKmerData<uint16_t>&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&, Stage1Buffer*);
+    const OidFilter&, const SearchConfig&, Stage1Buffer&);
 extern template SearchResult search_volume<uint32_t>(
     const std::string&, const QueryKmerData<uint32_t>&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&, Stage1Buffer*);
+    const OidFilter&, const SearchConfig&, Stage1Buffer&);
 
 // Search a single volume using merged coding+optimal indexes ("both" mode).
 // Two separate QueryKmerData are provided: one for coding, one for optimal.
@@ -73,8 +74,8 @@ SearchResult search_volume_both(
     const KsxReader& ksx,
     const OidFilter& filter,
     const SearchConfig& config,
-    Stage1Buffer* buf_cod = nullptr,
-    Stage1Buffer* buf_opt = nullptr);
+    Stage1Buffer& buf_cod,
+    Stage1Buffer& buf_opt);
 
 extern template SearchResult search_volume_both<uint16_t>(
     const std::string&,
@@ -82,13 +83,13 @@ extern template SearchResult search_volume_both<uint16_t>(
     const KixReader&, const KpxReader&,
     const KixReader&, const KpxReader&,
     const KsxReader&, const OidFilter&, const SearchConfig&,
-    Stage1Buffer*, Stage1Buffer*);
+    Stage1Buffer&, Stage1Buffer&);
 extern template SearchResult search_volume_both<uint32_t>(
     const std::string&,
     const QueryKmerData<uint32_t>&, const QueryKmerData<uint32_t>&, int,
     const KixReader&, const KpxReader&,
     const KixReader&, const KpxReader&,
     const KsxReader&, const OidFilter&, const SearchConfig&,
-    Stage1Buffer*, Stage1Buffer*);
+    Stage1Buffer&, Stage1Buffer&);
 
 } // namespace ikafssn

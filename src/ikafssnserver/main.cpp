@@ -1,6 +1,7 @@
 #include "ikafssnserver/server.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
+#include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
 #include "util/context_parser.hpp"
 #include "util/size_parser.hpp"
@@ -177,12 +178,12 @@ int main(int argc, char* argv[]) {
     config.search_config.accept_qdegen =
         static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
     {
-        int mde = cli.get_int("-max_degen_expand", 16);
-        if (mde < 0 || mde > 256) {
-            std::fprintf(stderr, "Error: -max_degen_expand must be between 0 and 256\n");
+        std::string err;
+        if (!parse_max_degen_expand(cli, 16,
+                                    config.search_config.max_degen_expand, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-        config.search_config.max_degen_expand = static_cast<uint16_t>(mde);
     }
 
     // Stage 3 config
@@ -191,12 +192,10 @@ int main(int argc, char* argv[]) {
     config.stage3_config.traceback = (cli.get_int("-stage3_traceback", 0) != 0);
     config.stage3_config.min_ppositive = cli.get_double("-stage3_min_ppositive", 0.0);
     config.stage3_config.min_npositive = static_cast<uint32_t>(cli.get_int("-stage3_min_npositive", 0));
-    if (cli.has("-stage3_score_matrix")) {
-        config.stage3_config.score_matrix = cli.get_string("-stage3_score_matrix");
-        if (config.stage3_config.score_matrix != "degmatch" &&
-            config.stage3_config.score_matrix != "dnafull" &&
-            config.stage3_config.score_matrix != "nuc44") {
-            std::fprintf(stderr, "Error: -stage3_score_matrix must be degmatch, dnafull, or nuc44\n");
+    {
+        std::string err;
+        if (!parse_score_matrix(cli, config.stage3_config.score_matrix, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
     }

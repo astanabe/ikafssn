@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -18,54 +17,24 @@ namespace ikafssn {
 
 // Format __DATE__ ("Mmm dd yyyy") and __TIME__ ("HH:MM:SS") into ISO 8601
 // extended format with the timezone offset captured at CMake configure time.
-inline std::string format_build_timestamp(const char* date, const char* time_str) {
-    static const char* months[] = {
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-    };
-    int month = 1;
-    for (int i = 0; i < 12; i++) {
-        if (std::strncmp(date, months[i], 3) == 0) {
-            month = i + 1;
-            break;
-        }
-    }
-    int day = (date[4] == ' ') ? (date[5] - '0')
-                                : ((date[4] - '0') * 10 + (date[5] - '0'));
-    int year = std::atoi(date + 7);
-
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%s%s",
-                  year, month, day, time_str, IKAFSSN_BUILD_TZ_OFFSET);
-    return std::string(buf);
-}
+std::string format_build_timestamp(const char* date, const char* time_str);
 
 // Print version info if -version or --version is present.
-// Uses __DATE__ and __TIME__ default arguments so the build timestamp reflects
-// the compile time of the caller's translation unit.
 // Returns true if version was handled (caller should return 0).
-inline bool check_version(const CliParser& cli, const char* cmd_name,
-                           const char* build_date = __DATE__,
-                           const char* build_time = __TIME__) {
-    if (cli.has("-version") || cli.has("--version")) {
-        std::string ts = format_build_timestamp(build_date, build_time);
-        std::fprintf(stderr, "%s: %s\n Package: ikafssn %s, build %s\n",
-                     cmd_name, IKAFSSN_VERSION, IKAFSSN_VERSION, ts.c_str());
-        return true;
-    }
-    return false;
+// build_date / build_time default to the caller's __DATE__ / __TIME__ so the
+// stamp reflects each translation unit's compile time.
+bool check_version(const CliParser& cli, const char* cmd_name,
+                   const char* build_date, const char* build_time);
+
+inline bool check_version(const CliParser& cli, const char* cmd_name) {
+    return check_version(cli, cmd_name, __DATE__, __TIME__);
 }
 
 // Print "cmd_name: version\n\n" header for -h / usage display.
-inline void print_version_header(const char* cmd_name) {
-    std::fprintf(stderr, "%s: %s\n\n", cmd_name, IKAFSSN_VERSION);
-}
+void print_version_header(const char* cmd_name);
 
 // Create a Logger from -v / --verbose flags.
-inline Logger make_logger(const CliParser& cli) {
-    bool verbose = cli.has("-v") || cli.has("--verbose");
-    return Logger(verbose ? Logger::kDebug : Logger::kInfo);
-}
+Logger make_logger(const CliParser& cli);
 
 // Resolve thread count from CLI (0 or negative → hardware_concurrency).
 inline int resolve_threads(const CliParser& cli,
@@ -89,7 +58,9 @@ inline uint64_t default_memory_limit() {
     return uint64_t(1) << 30; // fallback: 1 GB
 }
 
-// Format a byte size as a human-readable string with K/M/G suffix.
+// Format a byte size as a compact string with K/M/G suffix.
+// Only adds a suffix when the value is an exact multiple of the unit;
+// otherwise returns the raw byte count. Suitable for echoing config values.
 inline std::string format_size(uint64_t bytes) {
     if (bytes >= (uint64_t(1) << 30) && bytes % (uint64_t(1) << 30) == 0)
         return std::to_string(bytes >> 30) + "G";
@@ -99,5 +70,9 @@ inline std::string format_size(uint64_t bytes) {
         return std::to_string(bytes >> 10) + "K";
     return std::to_string(bytes);
 }
+
+// Format a byte size for human display: "1.5 GiB", "512 KiB", "42 B".
+// Always emits a unit; one decimal digit for KiB and above.
+std::string format_size_human(uint64_t bytes);
 
 } // namespace ikafssn

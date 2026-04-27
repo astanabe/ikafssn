@@ -30,6 +30,7 @@ static std::string g_test_dir;
 static std::string g_query_seq;
 
 static void test_stage3_pipeline() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_stage3_pipeline (build -> search -> align)\n");
 
     // Build index with k=7
@@ -77,7 +78,7 @@ static void test_stage3_pipeline() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", qdata, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
     CHECK(!result.hits.empty());
 
@@ -145,6 +146,7 @@ static void test_stage3_pipeline() {
 }
 
 static void test_stage3_score_only() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_stage3_score_only (traceback=0)\n");
 
     Logger logger(Logger::kError);
@@ -186,7 +188,7 @@ static void test_stage3_score_only() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(query, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", qdata, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
     CHECK(!result.hits.empty());
 
     std::vector<OutputHit> all_hits;
@@ -228,6 +230,7 @@ static void test_stage3_score_only() {
 }
 
 static void test_stage3_context() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_stage3_context\n");
 
     Logger logger(Logger::kError);
@@ -268,7 +271,7 @@ static void test_stage3_context() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(query, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", qdata, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
     if (result.hits.empty()) {
         std::fprintf(stderr, "  (no hits, skipping context test)\n");

@@ -26,38 +26,25 @@ struct IndexPrefixParts {
 IndexPrefixParts parse_index_prefix(const std::string& ix_prefix);
 
 // Build the file stem for index files.
-// e.g. index_file_stem("dir", "nt.00", 9) -> "dir/nt.00.09mer"
-std::string index_file_stem(const std::string& parent_dir,
-                            const std::string& vol_basename, int k);
-
-// Build the file stem for spaced seed index files.
-// t=0: "dir/vol.11mer" (delegates to contiguous overload)
-// t>0: "dir/vol.11mer.16mer.both" (appends template info)
+// Contiguous (t=0):  "dir/vol.09mer"
+// Spaced (t>0):      "dir/vol.09mer.16mer.<cod|opt|con>"
 std::string index_file_stem(const std::string& parent_dir,
                             const std::string& vol_basename, int k,
-                            uint8_t t, uint8_t template_type);
+                            uint8_t t = 0, uint8_t template_type = 0);
 
 // Build the .khx file path.
 // e.g. khx_path_for("dir", "nt", 9) -> "dir/nt.09mer.khx"
 std::string khx_path_for(const std::string& parent_dir,
-                          const std::string& db, int k);
-
-// Build the .khx file path for spaced seed indexes.
-std::string khx_path_for(const std::string& parent_dir,
                           const std::string& db, int k,
-                          uint8_t t, uint8_t template_type);
+                          uint8_t t = 0, uint8_t template_type = 0);
 
 // Discover index volumes from .kvx manifests.
 // If filter_k > 0, only that k value. If filter_k == 0, all available k values.
-// Results are sorted by (k, volume_index) ascending.
-std::vector<DiscoveredVolume> discover_volumes(
-    const std::string& ix_prefix, int filter_k = 0);
-
-// Discover index volumes with spaced seed filter.
 // If filter_t > 0, only that template length. If filter_template_type > 0, only that type.
+// Results are sorted by (k, t, template_type, volume_index) ascending.
 std::vector<DiscoveredVolume> discover_volumes(
-    const std::string& ix_prefix, int filter_k,
-    uint8_t filter_t, uint8_t filter_template_type);
+    const std::string& ix_prefix, int filter_k = 0,
+    uint8_t filter_t = 0, uint8_t filter_template_type = 0);
 
 // Return available k values for the given index prefix.
 std::vector<int> discover_k_values(const std::string& ix_prefix);

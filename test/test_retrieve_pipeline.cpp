@@ -31,6 +31,7 @@ static uint32_t g_fj_oid = UINT32_MAX;
 
 // Build index, search, write results, read results back, retrieve subsequences.
 static void test_full_pipeline() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_full_pipeline\n");
 
     // Step 1: Build index
@@ -67,7 +68,7 @@ static void test_full_pipeline() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", qdata, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
     CHECK(!result.hits.empty());
 
     // Convert to OutputHit

@@ -76,7 +76,7 @@ search_one_strand_preprocessed(
     const SearchConfig& config,
     uint32_t resolved_threshold,
     uint32_t effective_min_score,
-    Stage1Buffer* buf) {
+    Stage1Buffer& buf) {
 
     if (resolved_threshold == 0 || n_kmers == 0) return {};
 
@@ -179,7 +179,7 @@ SearchResult search_volume(
     const KsxReader& ksx,
     const OidFilter& filter,
     const SearchConfig& config,
-    Stage1Buffer* buf) {
+    Stage1Buffer& buf) {
 
     SearchResult result;
     result.query_id = query_id;
@@ -255,8 +255,8 @@ search_one_strand_both(
     uint32_t resolved_threshold_cod,
     uint32_t resolved_threshold_opt,
     uint32_t effective_min_score,
-    Stage1Buffer* buf_cod,
-    Stage1Buffer* buf_opt) {
+    Stage1Buffer& buf_cod,
+    Stage1Buffer& buf_opt) {
 
     if (n_cod == 0 && n_opt == 0) return {};
 
@@ -365,8 +365,8 @@ SearchResult search_volume_both(
     const KsxReader& ksx,
     const OidFilter& filter,
     const SearchConfig& config,
-    Stage1Buffer* buf_cod,
-    Stage1Buffer* buf_opt) {
+    Stage1Buffer& buf_cod,
+    Stage1Buffer& buf_opt) {
 
     SearchResult result;
     result.query_id = query_id;
@@ -411,11 +411,11 @@ SearchResult search_volume_both(
 template SearchResult search_volume<uint16_t>(
     const std::string&, const QueryKmerData<uint16_t>&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&, Stage1Buffer*);
+    const OidFilter&, const SearchConfig&, Stage1Buffer&);
 template SearchResult search_volume<uint32_t>(
     const std::string&, const QueryKmerData<uint32_t>&, int,
     const KixReader&, const KpxReader&, const KsxReader&,
-    const OidFilter&, const SearchConfig&, Stage1Buffer*);
+    const OidFilter&, const SearchConfig&, Stage1Buffer&);
 
 template SearchResult search_volume_both<uint16_t>(
     const std::string&,
@@ -423,13 +423,13 @@ template SearchResult search_volume_both<uint16_t>(
     const KixReader&, const KpxReader&,
     const KixReader&, const KpxReader&,
     const KsxReader&, const OidFilter&, const SearchConfig&,
-    Stage1Buffer*, Stage1Buffer*);
+    Stage1Buffer&, Stage1Buffer&);
 template SearchResult search_volume_both<uint32_t>(
     const std::string&,
     const QueryKmerData<uint32_t>&, const QueryKmerData<uint32_t>&, int,
     const KixReader&, const KpxReader&,
     const KixReader&, const KpxReader&,
     const KsxReader&, const OidFilter&, const SearchConfig&,
-    Stage1Buffer*, Stage1Buffer*);
+    Stage1Buffer&, Stage1Buffer&);
 
 } // namespace ikafssn

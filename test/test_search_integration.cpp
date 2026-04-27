@@ -32,6 +32,7 @@ static std::string g_query_seq;   // 100bp from FJ876973.1
 static uint32_t g_fj_oid = UINT32_MAX;
 
 static void test_build_and_search() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_build_and_search\n");
 
     // Build index with k=7
@@ -68,7 +69,7 @@ static void test_build_and_search() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "query1", qdata, 7, kix, kpx, ksx, filter, config);
+        "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
     CHECK(!result.hits.empty());
     CHECK(result.query_id == "query1");
@@ -89,6 +90,7 @@ static void test_build_and_search() {
 }
 
 static void test_revcomp_search() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_revcomp_search\n");
 
     std::string prefix = g_test_dir + "/test.00.07mer";
@@ -126,7 +128,7 @@ static void test_revcomp_search() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(rc_query, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "rc_query", qdata, 7, kix, kpx, ksx, filter, config);
+        "rc_query", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
     // Verify the search completes without error
     CHECK(result.query_id == "rc_query");
@@ -137,6 +139,7 @@ static void test_revcomp_search() {
 }
 
 static void test_seqidlist_filter() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_seqidlist_filter\n");
 
     std::string prefix = g_test_dir + "/test.00.07mer";
@@ -173,7 +176,7 @@ static void test_seqidlist_filter() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "filtered_query", qdata, 7, kix, kpx, ksx, filter, config);
+        "filtered_query", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
     // Results should only contain the included OIDs, not FJ876973.1
     for (const auto& cr : result.hits) {
@@ -186,6 +189,7 @@ static void test_seqidlist_filter() {
 }
 
 static void test_negative_seqidlist() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_negative_seqidlist\n");
 
     std::string prefix = g_test_dir + "/test.00.07mer";
@@ -214,7 +218,7 @@ static void test_negative_seqidlist() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "neg_query", qdata, 7, kix, kpx, ksx, filter, config);
+        "neg_query", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
     // FJ876973.1 OID should be excluded from results
     for (const auto& cr : result.hits) {
@@ -305,6 +309,7 @@ static void test_fasta_reader() {
 }
 
 static void test_search_k9() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_search_k9\n");
 
     // Build index with k=9
@@ -338,7 +343,7 @@ static void test_search_k9() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint32_t>(g_query_seq, 9, all_kix, nullptr, config);
     auto result = search_volume<uint32_t>(
-        "query_k9", qdata, 9, kix, kpx, ksx, filter, config);
+        "query_k9", qdata, 9, kix, kpx, ksx, filter, config, buf);
 
     // Should find hits (seq1 has this pattern)
     CHECK(result.query_id == "query_k9");
@@ -357,6 +362,7 @@ static void test_search_k9() {
 }
 
 static void test_search_mode1() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_search_mode1\n");
 
     std::string prefix = g_test_dir + "/test.00.07mer";
@@ -382,7 +388,7 @@ static void test_search_mode1() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
     auto result = search_volume<uint16_t>(
-        "mode1_query", qdata, 7, kix, kpx, ksx, filter, config);
+        "mode1_query", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
     CHECK(result.query_id == "mode1_query");
     CHECK(!result.hits.empty());
@@ -407,6 +413,7 @@ static void test_search_mode1() {
 }
 
 static void test_search_num_results_zero() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_search_num_results_zero\n");
 
     std::string prefix = g_test_dir + "/test.00.07mer";
@@ -433,7 +440,7 @@ static void test_search_num_results_zero() {
     std::vector<const KixReader*> all_kix = {&kix};
     auto qdata_lim = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config_limited);
     auto result_limited = search_volume<uint16_t>(
-        "q_lim", qdata_lim, 7, kix, kpx, ksx, filter, config_limited);
+        "q_lim", qdata_lim, 7, kix, kpx, ksx, filter, config_limited, buf);
 
     // num_results=0 (unlimited)
     SearchConfig config_unlimited;
@@ -447,7 +454,7 @@ static void test_search_num_results_zero() {
 
     auto qdata_unlim = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config_unlimited);
     auto result_unlimited = search_volume<uint16_t>(
-        "q_unlim", qdata_unlim, 7, kix, kpx, ksx, filter, config_unlimited);
+        "q_unlim", qdata_unlim, 7, kix, kpx, ksx, filter, config_unlimited, buf);
 
     // Limited should have at most 2
     CHECK(result_limited.hits.size() <= 2);

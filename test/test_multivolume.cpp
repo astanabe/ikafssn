@@ -124,13 +124,15 @@ static std::vector<OutputHit> search_sequential(
         for (const auto& query : queries) {
             SearchResult sr;
             if (k < K_TYPE_THRESHOLD) {
+    Stage1Buffer buf;
                 auto qdata = preprocess_query<uint16_t>(query.sequence, k, vol_kix, nullptr, config);
                 sr = search_volume<uint16_t>(
-                    query.id, qdata, k, kix, kpx, ksx, filter, config);
+                    query.id, qdata, k, kix, kpx, ksx, filter, config, buf);
             } else {
+    Stage1Buffer buf;
                 auto qdata = preprocess_query<uint32_t>(query.sequence, k, vol_kix, nullptr, config);
                 sr = search_volume<uint32_t>(
-                    query.id, qdata, k, kix, kpx, ksx, filter, config);
+                    query.id, qdata, k, kix, kpx, ksx, filter, config, buf);
             }
 
             for (const auto& cr : sr.hits) {
@@ -216,15 +218,17 @@ static std::vector<OutputHit> search_parallel(
 
                 SearchResult sr;
                 if (k < K_TYPE_THRESHOLD) {
+    Stage1Buffer buf;
                     auto qdata = preprocess_query<uint16_t>(query.sequence, k, job_kix, nullptr, config);
                     sr = search_volume<uint16_t>(
                         query.id, qdata, k,
-                        vd.kix, vd.kpx, vd.ksx, filter, config);
+                        vd.kix, vd.kpx, vd.ksx, filter, config, buf);
                 } else {
+    Stage1Buffer buf;
                     auto qdata = preprocess_query<uint32_t>(query.sequence, k, job_kix, nullptr, config);
                     sr = search_volume<uint32_t>(
                         query.id, qdata, k,
-                        vd.kix, vd.kpx, vd.ksx, filter, config);
+                        vd.kix, vd.kpx, vd.ksx, filter, config, buf);
                 }
 
                 if (!sr.hits.empty()) {
@@ -372,6 +376,7 @@ static void test_result_merge_ordering() {
 }
 
 static void test_parallel_counting_pass() {
+    Stage1Buffer buf;
     std::fprintf(stderr, "-- test_parallel_counting_pass\n");
 
     // Build index with k=7 using parallel counting (threads=2)
@@ -444,11 +449,11 @@ static void test_parallel_counting_pass() {
     std::vector<const KixReader*> kix_st_vec = {&kix_st};
     auto qdata_st = preprocess_query<uint16_t>(g_query_fj, 7, kix_st_vec, nullptr, sconfig);
     auto sr_st = search_volume<uint16_t>(
-        "q", qdata_st, 7, kix_st, kpx_st, ksx_st, filter, sconfig);
+        "q", qdata_st, 7, kix_st, kpx_st, ksx_st, filter, sconfig, buf);
     std::vector<const KixReader*> kix_mt_vec = {&kix_mt};
     auto qdata_mt = preprocess_query<uint16_t>(g_query_fj, 7, kix_mt_vec, nullptr, sconfig);
     auto sr_mt = search_volume<uint16_t>(
-        "q", qdata_mt, 7, kix_mt, kpx_mt, ksx_mt, filter, sconfig);
+        "q", qdata_mt, 7, kix_mt, kpx_mt, ksx_mt, filter, sconfig, buf);
 
     CHECK_EQ(sr_st.hits.size(), sr_mt.hits.size());
     for (size_t i = 0; i < sr_st.hits.size() && i < sr_mt.hits.size(); i++) {

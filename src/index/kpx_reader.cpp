@@ -1,7 +1,6 @@
 #include "index/kpx_reader.hpp"
 #include "core/config.hpp"
 
-#include <sys/mman.h>
 #include <cstring>
 #include <cstdio>
 
@@ -75,17 +74,7 @@ size_t KpxReader::willneed_size() const {
 }
 
 void KpxReader::apply_madvise(bool willneed) {
-    if (!mmap_.is_open()) return;
-    size_t dict_size = willneed_size();
-    if (willneed) {
-        mmap_.advise(0, dict_size, MADV_WILLNEED);
-        mmap_.advise(dict_size, posting_data_size_, MADV_RANDOM);
-    } else {
-        mmap_.advise(MADV_RANDOM);
-    }
-#ifdef MADV_HUGEPAGE
-    mmap_.advise(0, dict_size, MADV_HUGEPAGE);
-#endif
+    mmap_.advise_dict_posting(willneed_size(), willneed);
 }
 
 } // namespace ikafssn
