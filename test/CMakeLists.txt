@@ -27,16 +27,6 @@ endfunction()
 
 add_ikafssn_test(test_varint test_varint.cpp)
 
-# varint SIMD batch decode test (Phase 3a)
-add_executable(test_varint_simd test_varint_simd.cpp)
-target_link_libraries(test_varint_simd PRIVATE
-    ikafssn_search ikafssn_index ikafssn_io ikafssn_util ikafssn_core
-)
-target_include_directories(test_varint_simd PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_compile_definitions(test_varint_simd PRIVATE IKAFSSN_TESTING)
-add_test(NAME test_varint_simd COMMAND test_varint_simd)
-add_ikafssn_simd_test(test_varint_simd)
-
 add_ikafssn_test(test_kmer_encoding test_kmer_encoding.cpp)
 target_link_libraries(test_kmer_encoding PRIVATE ikafssn_util)
 target_compile_definitions(test_kmer_encoding PRIVATE IKAFSSN_TESTING)
@@ -83,23 +73,6 @@ target_compile_definitions(test_builder PRIVATE
 )
 add_test(NAME test_builder COMMAND test_builder)
 add_ikafssn_simd_test(test_builder)
-
-# Phase 5b — bit-exact v3-vs-v4 posting equivalence test (temporary; removed
-# in Phase 5c together with test/data/golden_v3/).
-add_executable(test_v3_v4_equivalence test_v3_v4_equivalence.cpp)
-target_link_libraries(test_v3_v4_equivalence PRIVATE
-    ikafssn_builder ikafssn_search ikafssn_index ikafssn_blastdb
-    ikafssn_io ikafssn_util ikafssn_core
-)
-target_include_directories(test_v3_v4_equivalence PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}"
-    "${NCBI_TOOLKIT_INCLUDE}"
-)
-target_compile_definitions(test_v3_v4_equivalence PRIVATE
-    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-    IKAFSSN_TESTING
-)
-add_test(NAME test_v3_v4_equivalence COMMAND test_v3_v4_equivalence)
 
 # parallel_sort_dispatch unit test (Phase 2c, no BLAST DB dependency)
 add_executable(test_parallel_sort test_parallel_sort.cpp)

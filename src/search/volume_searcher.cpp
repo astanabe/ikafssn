@@ -127,7 +127,7 @@ search_one_strand_preprocessed(
         while (id_decoder.has_more()) {
             int n_id = id_decoder.next_batch(sid_buf, was_new_buf, kStage2Batch);
             if (n_id == 0) break;
-            int n_pos = pos_decoder.next_batch(pos_buf, was_new_buf, n_id);
+            int n_pos = pos_decoder.next_batch(pos_buf, n_id);
             int n = (n_pos < n_id) ? n_pos : n_id;
             for (int i = 0; i < n; i++) {
                 if (candidate_set.count(sid_buf[i])) {
@@ -247,7 +247,7 @@ static void collect_position_hits(
         while (id_decoder.has_more()) {
             int n_id = id_decoder.next_batch(sid_buf, was_new_buf, kStage2Batch);
             if (n_id == 0) break;
-            int n_pos = pos_decoder.next_batch(pos_buf, was_new_buf, n_id);
+            int n_pos = pos_decoder.next_batch(pos_buf, n_id);
             int n = (n_pos < n_id) ? n_pos : n_id;
             for (int i = 0; i < n; i++) {
                 if (candidate_set.count(sid_buf[i])) {

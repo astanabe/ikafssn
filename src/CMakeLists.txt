@@ -17,7 +17,6 @@ add_library(ikafssn_index STATIC
     index/khx_reader.cpp
     index/index_filter.cpp
     index/parallel_sort_dispatch.cpp
-    index/varint_simd.cpp
     index/pfd_codec.cpp
 )
 target_link_libraries(ikafssn_index PUBLIC ikafssn_core ikafssn_io TBB::tbb)

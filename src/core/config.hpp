@@ -23,11 +23,13 @@ inline constexpr int MIN_K = 5;
 inline constexpr int MAX_K = 16;
 inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t=0 only; for spaced seeds use kmer_type_for(k, t))
 
-// Format versions
+// Format versions — all index files share a single major version (4) as of
+// Phase 5c so users only have to track one number, even though .ksx and
+// .khx data layouts are unchanged from v3.
 inline constexpr uint16_t KIX_FORMAT_VERSION = 4;
 inline constexpr uint16_t KPX_FORMAT_VERSION = 4;
-inline constexpr uint16_t KSX_FORMAT_VERSION = 2;
-inline constexpr uint16_t KHX_FORMAT_VERSION = 2;
+inline constexpr uint16_t KSX_FORMAT_VERSION = 4;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 4;
 
 // Direct-address table size for k-mer value k: 4^k
 // Max supported: 2 * 4^12 = 33,554,432 (fits uint32_t).

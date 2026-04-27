@@ -44,7 +44,7 @@ static std::vector<uint32_t> decode_pos_postings(
     std::vector<uint32_t> result;
     if (byte_len == 0) return result;
     PosDecoder dec(data + offset, data + offset + byte_len);
-    while (dec.has_more()) result.push_back(dec.next(false));
+    while (dec.has_more()) result.push_back(dec.next());
     return result;
 }
 

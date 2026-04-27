@@ -21,8 +21,7 @@ static std::vector<uint32_t> decode_pos_postings(
     std::vector<uint32_t> result;
     PosDecoder decoder(data, end);
     while (decoder.has_more() && result.size() < expected_count) {
-        // was_new_seq is ignored in v4 — pass dummy.
-        result.push_back(decoder.next(false));
+        result.push_back(decoder.next());
     }
     return result;
 }
