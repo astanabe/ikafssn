@@ -238,16 +238,112 @@ else()
     add_compile_definitions(IKAFSSN_HAS_X86_SIMD_SORT=0)
 endif()
 
-# --- FastPFor (unconditional, Phase 5b) ---
-# Used by ikafssn_index for the v4 .kix/.kpx posting codec (SIMD-FastPFOR* +
-# Simple-8b/VByte tail).  Static archive linked into ikafssn_index.
+# --- FastPFor (Phase 5d: per-tier object libraries for runtime dispatch) ---
+#
+# FastPFor 0.4.0 ships with FASTPFOR_SIMD_MODE = "native" by default, which
+# bakes the build host's -march into the static archive — incompatible with
+# ikafssn's runtime SIMD dispatch policy.  Worse, FastPFor's own source
+# files contain no explicit AVX-512 intrinsics (only SSE2-SSE4.2 and a
+# handful of AVX2 in src/varintdecode.c); whatever AVX-512 instructions
+# end up in libFastPFOR.a come purely from the compiler's auto-
+# vectorization of surrounding scalar/SSE code.
+#
+# We side-step the upstream build entirely by populating the source tree
+# (no add_subdirectory) and compiling the FastPFor TUs ourselves into 3
+# OBJECT libraries, one per ISA tier:
+#
+#   - ikafssn_pfd_avx2          -mavx2 -mbmi2 -mfma
+#   - ikafssn_pfd_avx512bw      -mavx512bw -mavx512vl + AVX2 deps
+#   - ikafssn_pfd_avx512vbmi2   -mavx512vbmi2 -mavx512vbmi + above
+#
+# AVX-512 VBMI/VBMI2 are merged into a single top tier — FastPFor's actual
+# source contains no byte-level shuffle/permute that VBMI/VBMI2 would
+# unlock, so the gap between the two tiers is purely auto-vectorization
+# and doesn't justify a separate object library.
+#
+# Symbol collision (every tier compiles the same FastPForLib::* symbols)
+# is avoided by remapping the namespace at compile time via
+# `-DFastPForLib=FastPForLib_<tier>`.  ikafssn_pfd_dispatch.cpp has
+# forward declarations that name the per-tier wrapper namespaces and
+# selects the right entry points from current_simd_cap() at first use.
 include(FetchContent)
 FetchContent_Declare(
     fastpfor
     URL      https://github.com/lemire/FastPFor/archive/refs/tags/v0.4.0.tar.gz
     URL_HASH SHA256=94c15a3e182c4f4ac0551cdd4c1afdb8465d337293a637c12483d0da026d75af
 )
-FetchContent_MakeAvailable(fastpfor)
+FetchContent_GetProperties(fastpfor)
+if(NOT fastpfor_POPULATED)
+    # Populate sources but do not run FastPFor's own CMakeLists (which
+    # would build a "native" libFastPFOR archive we can't use).
+    FetchContent_Populate(fastpfor)
+endif()
+
+set(FASTPFOR_SRC_DIR "${fastpfor_SOURCE_DIR}")
+set(FASTPFOR_INC_DIR "${FASTPFOR_SRC_DIR}/headers")
+
+# FastPFor TUs that we compile per tier.  The list mirrors libFastPFOR's
+# target_sources block in FastPFor/CMakeLists.txt.
+set(IKAFSSN_FASTPFOR_SOURCES
+    ${FASTPFOR_SRC_DIR}/src/bitpacking.cpp
+    ${FASTPFOR_SRC_DIR}/src/bitpackingaligned.cpp
+    ${FASTPFOR_SRC_DIR}/src/bitpackingunaligned.cpp
+    ${FASTPFOR_SRC_DIR}/src/horizontalbitpacking.cpp
+    ${FASTPFOR_SRC_DIR}/src/simdunalignedbitpacking.cpp
+    ${FASTPFOR_SRC_DIR}/src/codecfactory.cpp
+    ${FASTPFOR_SRC_DIR}/src/simdbitpacking.cpp
+    ${FASTPFOR_SRC_DIR}/src/varintdecode.c
+    ${FASTPFOR_SRC_DIR}/src/streamvbyte.c
+)
+
+# Helper: define ONE per-tier OBJECT library that bundles the FastPFor
+# sources + the ikafssn pfd wrapper TU, all under a tier-specific
+# namespace (FastPForLib_<tier>) and -march flag set.
+function(ikafssn_add_pfd_tier_object TIER)
+    set(_options)
+    set(_one)
+    set(_multi MARCH_FLAGS)
+    cmake_parse_arguments(ARG "${_options}" "${_one}" "${_multi}" ${ARGN})
+
+    set(_target ikafssn_pfd_${TIER})
+    add_library(${_target} OBJECT
+        ${IKAFSSN_FASTPFOR_SOURCES}
+        ${CMAKE_SOURCE_DIR}/src/index/pfd_codec_tier.cpp
+    )
+    target_include_directories(${_target} PRIVATE
+        ${FASTPFOR_INC_DIR}
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_BINARY_DIR}/generated
+    )
+    target_compile_options(${_target} PRIVATE
+        ${ARG_MARCH_FLAGS}
+        # Silence a few warnings that the FastPFor sources hit at the
+        # warning levels we use; we don't own the upstream code.
+        -Wno-unused-parameter
+        -Wno-unused-variable
+        -Wno-unused-but-set-variable
+        -Wno-unused-function
+        -Wno-conversion
+        -Wno-sign-compare
+        -Wno-effc++
+        -Wno-shadow
+    )
+    target_compile_definitions(${_target} PRIVATE
+        FastPForLib=FastPForLib_${TIER}
+        IKAFSSN_PFD_TIER_NAME=${TIER}
+    )
+    set_property(TARGET ${_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
+endfunction()
+
+ikafssn_add_pfd_tier_object(avx2
+    MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2)
+ikafssn_add_pfd_tier_object(avx512bw
+    MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2
+                -mavx512f -mavx512bw -mavx512vl -mavx512cd -mavx512dq)
+ikafssn_add_pfd_tier_object(avx512vbmi2
+    MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2
+                -mavx512f -mavx512bw -mavx512vl -mavx512cd -mavx512dq
+                -mavx512vbmi -mavx512vbmi2)
 
 # --- Subdirectories ---
 add_subdirectory(src)

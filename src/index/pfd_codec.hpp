@@ -97,4 +97,9 @@ inline uint32_t posting_count(const uint8_t* posting, size_t bytes) {
     return cnt;
 }
 
+// Name of the FastPFor ISA tier that the runtime dispatcher selected
+// ("avx2" / "avx512bw" / "avx512vbmi2").  First call resolves the tier;
+// subsequent calls are cached.  Useful for diagnostic logging.
+const char* active_tier_name();
+
 } // namespace ikafssn::pfd

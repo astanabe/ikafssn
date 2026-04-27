@@ -6,6 +6,16 @@ target_include_directories(ikafssn_core INTERFACE
 )
 
 # Index library (reader/writer without NCBI dependency)
+#
+# The pfd codec is split into two layers:
+#   - pfd_codec.cpp   — public-API runtime dispatcher (no SIMD intrinsics
+#                       and no FastPForLib symbols; safe to compile under
+#                       the default (-march unset) flags)
+#   - pfd_codec_tier.cpp — per-tier wrapper, compiled THREE TIMES via the
+#                       ikafssn_pfd_{avx2,avx512bw,avx512vbmi2} OBJECT
+#                       libraries declared in the top-level CMakeLists.txt
+#                       (each with a different -march and a different
+#                       FastPForLib namespace remapping).
 add_library(ikafssn_index STATIC
     index/ksx_writer.cpp
     index/ksx_reader.cpp
@@ -18,9 +28,11 @@ add_library(ikafssn_index STATIC
     index/index_filter.cpp
     index/parallel_sort_dispatch.cpp
     index/pfd_codec.cpp
+    $<TARGET_OBJECTS:ikafssn_pfd_avx2>
+    $<TARGET_OBJECTS:ikafssn_pfd_avx512bw>
+    $<TARGET_OBJECTS:ikafssn_pfd_avx512vbmi2>
 )
 target_link_libraries(ikafssn_index PUBLIC ikafssn_core ikafssn_io TBB::tbb)
-target_link_libraries(ikafssn_index PRIVATE FastPFOR)
 if(IKAFSSN_HAS_X86_SIMD_SORT)
     target_link_libraries(ikafssn_index PRIVATE ikafssn_xss)
 endif()
