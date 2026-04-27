@@ -1,4 +1,5 @@
 #include "io/fasta_reader.hpp"
+#include "io/text_simd.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -12,9 +13,8 @@ namespace ikafssn {
 static void finish_record(std::vector<FastaRecord>& records,
                           std::string& cur_id, std::string& cur_seq) {
     if (!cur_id.empty()) {
-        // Convert sequence to uppercase
-        for (auto& c : cur_seq)
-            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        toupper_inplace_ascii(reinterpret_cast<std::uint8_t*>(cur_seq.data()),
+                              cur_seq.size());
         records.push_back({std::move(cur_id), std::move(cur_seq)});
     }
     cur_id.clear();

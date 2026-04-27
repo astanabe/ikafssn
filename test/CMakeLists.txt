@@ -31,6 +31,12 @@ target_link_libraries(test_kmer_encoding PRIVATE ikafssn_util)
 target_compile_definitions(test_kmer_encoding PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_kmer_encoding)
 
+# FASTA toupper SIMD test (Phase 1a)
+add_ikafssn_test(test_fasta_toupper test_fasta_toupper.cpp)
+target_link_libraries(test_fasta_toupper PRIVATE ikafssn_util)
+target_compile_definitions(test_fasta_toupper PRIVATE IKAFSSN_TESTING)
+add_ikafssn_simd_test(test_fasta_toupper)
+
 # Phase 0 SIMD dispatch unit test (no external dependencies).
 add_executable(test_simd_dispatch test_simd_dispatch.cpp)
 target_link_libraries(test_simd_dispatch PRIVATE ikafssn_util ikafssn_core)

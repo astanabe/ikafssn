@@ -41,8 +41,9 @@ add_library(ikafssn_io STATIC
     io/result_writer.cpp
     io/result_reader.cpp
     io/primer_query.cpp
+    io/text_simd.cpp
 )
-target_link_libraries(ikafssn_io PUBLIC ikafssn_core)
+target_link_libraries(ikafssn_io PUBLIC ikafssn_core ikafssn_util)
 
 # IO library for BLAST DB access (requires NCBI C++ Toolkit)
 add_library(ikafssn_blastdb STATIC
