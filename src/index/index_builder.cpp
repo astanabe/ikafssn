@@ -450,7 +450,7 @@ bool build_index(BlastDbReader& db,
         kix_hdr.t = config.t;
         kix_hdr.template_type = config.template_type;
         // v4 codec extension fields
-        kix_hdr.codec_id              = KIX_CODEC_PFOR_S8B;
+        kix_hdr.codec_id              = KIX_CODEC_PFOR_FOR;
         kix_hdr.codec_version         = 1;
         kix_hdr.block_size            = pfd::kPfdBlockSize;
         kix_hdr.tail_codec            = KIX_TAIL_VBYTE;
@@ -495,7 +495,7 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.total_postings = total_postings;
         kpx_hdr.offset_type = kpx_offset32 ? 0 : 1;
         // v4 codec extension fields
-        kpx_hdr.codec_id      = KPX_CODEC_PFOR_S8B;
+        kpx_hdr.codec_id      = KPX_CODEC_PFOR_FOR;
         kpx_hdr.codec_version = 1;
         kpx_hdr.block_size    = pfd::kPfdBlockSize;
         kpx_hdr.tail_codec    = KPX_TAIL_VBYTE;

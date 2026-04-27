@@ -76,7 +76,7 @@ bool KixWriter::write(const std::string& path) {
     std::memcpy(hdr.db, db_.c_str(), name_len);
 
     // v4 codec fields
-    hdr.codec_id              = KIX_CODEC_PFOR_S8B;
+    hdr.codec_id              = KIX_CODEC_PFOR_FOR;
     hdr.codec_version         = 1;
     hdr.block_size            = pfd::kPfdBlockSize;
     hdr.tail_codec            = KIX_TAIL_VBYTE;

@@ -33,6 +33,16 @@ bool KpxReader::open(const std::string& path) {
         return false;
     }
 
+    if (header_->codec_id != KPX_CODEC_PFOR_FOR) {
+        std::fprintf(stderr,
+            "KpxReader: unsupported codec_id=%u (expected %u, FOR-within-block).\n"
+            "           Indexes built before Phase 5e use codec_id=1 and must "
+            "be rebuilt with the current ikafssnindex.\n",
+            header_->codec_id, KPX_CODEC_PFOR_FOR);
+        close();
+        return false;
+    }
+
     table_size_ = ikafssn::table_size(header_->k);
 
     // offset_type: 0=uint32, 1=uint64

@@ -50,7 +50,7 @@ bool KpxWriter::write(const std::string& path) const {
     hdr.offset_type = use_offset32 ? 0 : 1;
 
     // v4 codec fields
-    hdr.codec_id      = KPX_CODEC_PFOR_S8B;
+    hdr.codec_id      = KPX_CODEC_PFOR_FOR;
     hdr.codec_version = 1;
     hdr.block_size    = pfd::kPfdBlockSize;
     hdr.tail_codec    = KPX_TAIL_VBYTE;

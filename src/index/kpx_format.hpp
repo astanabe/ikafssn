@@ -11,9 +11,15 @@ namespace ikafssn {
 inline constexpr char KPX_MAGIC[4] = {'K', 'P', 'X', '4'};
 
 // codec_id values (codec_id field).
-inline constexpr uint8_t KPX_CODEC_PFOR_S8B = 1; // SIMD-FastPFOR* on absolute positions
+//   1 — Phase 5b: FastPFor CompositeCodec on absolute positions (legacy).
+//   2 — Phase 5e: custom FOR-within-block — each 128-element block
+//       subtracts its min before bitpacking, dramatically lowering the
+//       effective bit-width on long-sequence DBs (e.g. NCBI nt-class).
+//       Tail uses a single FOR base + varint stream.
+inline constexpr uint8_t KPX_CODEC_PFOR_S8B = 1; // legacy
+inline constexpr uint8_t KPX_CODEC_PFOR_FOR = 2; // current
 // Tail codec id.
-inline constexpr uint8_t KPX_TAIL_VBYTE     = 1; // FastPFor CompositeCodec inner tail (VariableByte)
+inline constexpr uint8_t KPX_TAIL_VBYTE     = 1; // LEB128 varint stream (FOR base + values)
 
 #pragma pack(push, 1)
 struct KpxHeader {

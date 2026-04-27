@@ -14,9 +14,15 @@ inline constexpr uint32_t KIX_FLAG_HAS_KSX      = 0x02; // 0=no .ksx, 1=has .ksx
 inline constexpr uint32_t KIX_FLAG_OFFSET32     = 0x04; // 0=uint64 offsets, 1=uint32 offsets
 
 // Codec id (codec_id field in extended v4 header).
-inline constexpr uint8_t  KIX_CODEC_PFOR_S8B    = 1; // SIMD-FastPFOR* + Simple-8b/VByte tail
+//   1 — Phase 5b: FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
+//       (no longer accepted; layout differs from current encoder).
+//   2 — Phase 5e: custom block codec — delta stream, 128-element bitpacked
+//       blocks with adaptive bit-width, varint tail.  This is the only
+//       codec readers currently accept.
+inline constexpr uint8_t  KIX_CODEC_PFOR_S8B    = 1; // legacy, kept for telemetry
+inline constexpr uint8_t  KIX_CODEC_PFOR_FOR    = 2; // current
 // Tail codec id (tail_codec field).
-inline constexpr uint8_t  KIX_TAIL_VBYTE        = 1; // FastPFor CompositeCodec inner tail (VariableByte)
+inline constexpr uint8_t  KIX_TAIL_VBYTE        = 1; // LEB128 varint stream
 
 #pragma pack(push, 1)
 struct KixHeader {

@@ -282,18 +282,17 @@ endif()
 set(FASTPFOR_SRC_DIR "${fastpfor_SOURCE_DIR}")
 set(FASTPFOR_INC_DIR "${FASTPFOR_SRC_DIR}/headers")
 
-# FastPFor TUs that we compile per tier.  The list mirrors libFastPFOR's
-# target_sources block in FastPFor/CMakeLists.txt.
+# FastPFor TUs we compile per tier.  Phase 5e trimmed this list down to
+# only the bitpacker primitives — codecfactory.cpp / streamvbyte.c /
+# varintdecode.c / horizontalbitpacking.cpp are no longer used now that
+# pfd_codec_tier.cpp drives `simdpackwithoutmask` / `simdunpack` directly
+# under a custom block layout (FOR-within-block + varint tail).
 set(IKAFSSN_FASTPFOR_SOURCES
     ${FASTPFOR_SRC_DIR}/src/bitpacking.cpp
     ${FASTPFOR_SRC_DIR}/src/bitpackingaligned.cpp
     ${FASTPFOR_SRC_DIR}/src/bitpackingunaligned.cpp
-    ${FASTPFOR_SRC_DIR}/src/horizontalbitpacking.cpp
     ${FASTPFOR_SRC_DIR}/src/simdunalignedbitpacking.cpp
-    ${FASTPFOR_SRC_DIR}/src/codecfactory.cpp
     ${FASTPFOR_SRC_DIR}/src/simdbitpacking.cpp
-    ${FASTPFOR_SRC_DIR}/src/varintdecode.c
-    ${FASTPFOR_SRC_DIR}/src/streamvbyte.c
 )
 
 # Helper: define ONE per-tier OBJECT library that bundles the FastPFor
