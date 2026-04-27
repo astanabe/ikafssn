@@ -137,6 +137,18 @@ target_compile_definitions(test_stage1 PRIVATE
 add_test(NAME test_stage1 COMMAND test_stage1)
 add_ikafssn_simd_test(test_stage1)
 
+# Stage 1 SIMD kernel unit test (Phase 2b, no BLAST DB dependency)
+add_executable(test_stage1_simd_kernel test_stage1_simd_kernel.cpp)
+target_link_libraries(test_stage1_simd_kernel PRIVATE
+    ikafssn_search ikafssn_index ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_stage1_simd_kernel PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_compile_definitions(test_stage1_simd_kernel PRIVATE IKAFSSN_TESTING)
+add_test(NAME test_stage1_simd_kernel COMMAND test_stage1_simd_kernel)
+add_ikafssn_simd_test(test_stage1_simd_kernel)
+
 # Search integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_search_integration test_search_integration.cpp)
 target_link_libraries(test_search_integration PRIVATE

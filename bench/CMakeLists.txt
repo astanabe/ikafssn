@@ -19,3 +19,11 @@ target_link_libraries(bench_ncbi2na_unpack PRIVATE
 target_include_directories(bench_ncbi2na_unpack PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
+
+# Phase 2b — Stage 1 batch SIMD update
+add_executable(bench_stage1 bench_stage1.cpp)
+target_link_libraries(bench_stage1 PRIVATE
+    ikafssn_search ikafssn_index ikafssn_io ikafssn_util benchmark::benchmark)
+target_include_directories(bench_stage1 PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}")

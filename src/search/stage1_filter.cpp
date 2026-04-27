@@ -1,4 +1,5 @@
 #include "search/stage1_filter.hpp"
+#include "search/stage1_filter_simd.hpp"
 #include "search/oid_filter.hpp"
 #include "search/seq_id_decoder.hpp"
 #include "index/kix_reader.hpp"
@@ -105,6 +106,14 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     auto* scores   = score_ptr<Tier>(buf);
     auto* last_pos = last_pos_ptr<Tier>(buf);
 
+    // Batch sids per (kix, q_pos) so flush_batch_simd<Tier> can apply gather/
+    // scatter SIMD updates in one shot. q_pos changes per qi iteration, so the
+    // partial batch must be flushed at the end of each qi to keep the scalar
+    // semantics of comparing last_pos[sid] against the current q_pos.
+    constexpr int kBatch = 16;
+    SeqId sid_batch[kBatch];
+    int batch_count = 0;
+
     for (size_t qi = 0; qi < n; qi++) {
         auto q_pos = static_cast<PosT>(positions[qi]);
         auto kmer_idx = kmers[qi];
@@ -117,11 +126,17 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
             SeqId sid = decoder.next();
             if (use_coverscore && !decoder.was_new_seq()) continue;
             if (!filter.pass(sid)) continue;
-            if (scores[sid] == 0) buf.dirty.push_back(sid);
-            if (last_pos[sid] != q_pos) {
-                scores[sid]++;
-                last_pos[sid] = q_pos;
+            sid_batch[batch_count++] = sid;
+            if (batch_count == kBatch) {
+                flush_batch_simd<Tier>(sid_batch, kBatch, q_pos,
+                                       scores, last_pos, buf.dirty);
+                batch_count = 0;
             }
+        }
+        if (batch_count > 0) {
+            flush_batch_simd<Tier>(sid_batch, batch_count, q_pos,
+                                   scores, last_pos, buf.dirty);
+            batch_count = 0;
         }
     }
 
