@@ -60,12 +60,13 @@ target_link_libraries(ikafssn_blastdb PUBLIC ikafssn_core
 add_library(ikafssn_search STATIC
     search/oid_filter.cpp
     search/stage1_filter.cpp
+    search/stage1_filter_simd.cpp
     search/diagonal_filter.cpp
     search/stage2_chaining.cpp
     search/query_preprocessor.cpp
     search/volume_searcher.cpp
 )
-target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_io)
+target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_io ikafssn_util)
 
 # Stage 3 alignment library (requires Parasail + BLAST DB)
 add_library(ikafssn_stage3 STATIC

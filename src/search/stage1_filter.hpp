@@ -1,11 +1,11 @@
 #pragma once
 
 #include <cstdint>
-#include <cstring>
-#include <limits>
+#include <type_traits>
 #include <vector>
 
 #include "core/types.hpp"
+#include "util/aligned_buffer.hpp"
 
 namespace ikafssn {
 
@@ -15,96 +15,53 @@ class OidFilter;
 // Tier selection for Stage1Buffer: controls entry size per sequence.
 enum class Stage1Tier : uint8_t { T8 = 0, T16 = 1, T32 = 2 };
 
-// AoS entry: score + last_scored_pos packed together.
-template <Stage1Tier> struct Stage1Entry;
+// Determine the position type (PosT) and score type (ScoreT) for a tier.
+// They are the same width because last_pos and score share the tier bit width.
+template <Stage1Tier Tier> struct Stage1TierTraits;
+template <> struct Stage1TierTraits<Stage1Tier::T8>  { using PosT = uint8_t;  using ScoreT = uint8_t;  };
+template <> struct Stage1TierTraits<Stage1Tier::T16> { using PosT = uint16_t; using ScoreT = uint16_t; };
+template <> struct Stage1TierTraits<Stage1Tier::T32> { using PosT = uint32_t; using ScoreT = uint32_t; };
 
-template <> struct Stage1Entry<Stage1Tier::T8> {
-    uint8_t score;
-    uint8_t last_pos;
-};
-
-template <> struct Stage1Entry<Stage1Tier::T16> {
-    uint16_t score;
-    uint16_t last_pos;
-};
-
-template <> struct Stage1Entry<Stage1Tier::T32> {
-    uint32_t score;
-    uint32_t last_pos;
-};
-
-static_assert(sizeof(Stage1Entry<Stage1Tier::T8>)  == 2, "T8 entry must be 2 bytes");
-static_assert(sizeof(Stage1Entry<Stage1Tier::T16>) == 4, "T16 entry must be 4 bytes");
-static_assert(sizeof(Stage1Entry<Stage1Tier::T32>) == 8, "T32 entry must be 8 bytes");
-
-// Type-erased Stage1Buffer. Internally stores AoS entries at the selected tier.
+// SoA Stage 1 buffer: score and last_pos kept in separate cache-line aligned
+// heap buffers (64-byte alignment for AVX-512 gather/scatter friendly access).
+// The underlying byte storage is reinterpret_cast to the tier-specific element
+// type via the score_ptr / last_pos_ptr helpers below.
 struct Stage1Buffer {
-    std::vector<uint8_t> data;       // raw storage for Stage1Entry<Tier>[]
-    std::vector<uint32_t> dirty;     // dirty list of modified seq IDs
+    AlignedBuffer<uint8_t> score_data;     // tier-erased: bytes for score[]
+    AlignedBuffer<uint8_t> last_pos_data;  // tier-erased: bytes for last_pos[]
+    std::vector<uint32_t>  dirty;          // sentinel-marked seq IDs touched in this query batch
     Stage1Tier tier = Stage1Tier::T32;
-    uint32_t capacity = 0;           // num_seqs capacity
+    uint32_t   capacity = 0;               // num_seqs capacity
 
-    void ensure_capacity(uint32_t num_seqs) {
-        if (capacity >= num_seqs) return;
-        capacity = num_seqs;
-        switch (tier) {
-        case Stage1Tier::T8:
-            data.resize(num_seqs * sizeof(Stage1Entry<Stage1Tier::T8>));
-            break;
-        case Stage1Tier::T16:
-            data.resize(num_seqs * sizeof(Stage1Entry<Stage1Tier::T16>));
-            break;
-        case Stage1Tier::T32:
-            data.resize(num_seqs * sizeof(Stage1Entry<Stage1Tier::T32>));
-            break;
-        }
-        std::memset(data.data(), 0, data.size());
-        // Set sentinel values for last_pos
-        reset_all();
-    }
+    Stage1Buffer() = default;
+    Stage1Buffer(Stage1Buffer&&) noexcept = default;
+    Stage1Buffer& operator=(Stage1Buffer&&) noexcept = default;
+    Stage1Buffer(const Stage1Buffer&) = delete;
+    Stage1Buffer& operator=(const Stage1Buffer&) = delete;
 
-    // Reset all entries to zero score and sentinel last_pos.
-    void reset_all() {
-        switch (tier) {
-        case Stage1Tier::T8: {
-            auto* e = reinterpret_cast<Stage1Entry<Stage1Tier::T8>*>(data.data());
-            for (uint32_t i = 0; i < capacity; i++) {
-                e[i].score = 0;
-                e[i].last_pos = std::numeric_limits<uint8_t>::max();
-            }
-            break;
-        }
-        case Stage1Tier::T16: {
-            auto* e = reinterpret_cast<Stage1Entry<Stage1Tier::T16>*>(data.data());
-            for (uint32_t i = 0; i < capacity; i++) {
-                e[i].score = 0;
-                e[i].last_pos = std::numeric_limits<uint16_t>::max();
-            }
-            break;
-        }
-        case Stage1Tier::T32: {
-            auto* e = reinterpret_cast<Stage1Entry<Stage1Tier::T32>*>(data.data());
-            for (uint32_t i = 0; i < capacity; i++) {
-                e[i].score = 0;
-                e[i].last_pos = std::numeric_limits<uint32_t>::max();
-            }
-            break;
-        }
-        }
-    }
+    void ensure_capacity(uint32_t num_seqs);
+    void reset_all();
 
     template <Stage1Tier Tier>
-    void clear_dirty_typed() {
-        using Entry = Stage1Entry<Tier>;
-        using PosT = decltype(Entry::last_pos);
-        auto* entries = reinterpret_cast<Entry*>(data.data());
-        for (uint32_t idx : dirty) {
-            entries[idx].score = 0;
-            entries[idx].last_pos = std::numeric_limits<PosT>::max();
-        }
-        dirty.clear();
-    }
+    void clear_dirty_typed();
 };
+
+// SoA accessors: header-inline so the hot path is fully visible to the optimizer.
+template <Stage1Tier Tier>
+inline typename Stage1TierTraits<Tier>::ScoreT* score_ptr(Stage1Buffer& buf) {
+    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
+    return reinterpret_cast<ScoreT*>(buf.score_data.data());
+}
+
+template <Stage1Tier Tier>
+inline typename Stage1TierTraits<Tier>::PosT* last_pos_ptr(Stage1Buffer& buf) {
+    using PosT = typename Stage1TierTraits<Tier>::PosT;
+    return reinterpret_cast<PosT*>(buf.last_pos_data.data());
+}
+
+extern template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T8>();
+extern template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T16>();
+extern template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T32>();
 
 // Determine the optimal tier based on max query k-mer position count and max position value.
 inline Stage1Tier select_tier(uint32_t max_kmer_positions, uint32_t max_position_value) {

@@ -7,7 +7,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <limits>
 #include <numeric>
+#include <type_traits>
 
 namespace ikafssn {
 
@@ -23,6 +26,64 @@ uint32_t compute_effective_max_freq(uint32_t config_max_freq,
     return max_freq;
 }
 
+namespace {
+template <Stage1Tier Tier>
+inline std::size_t tier_byte_size(uint32_t num_seqs) noexcept {
+    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
+    return static_cast<std::size_t>(num_seqs) * sizeof(ScoreT);
+}
+
+template <Stage1Tier Tier>
+inline void reset_all_typed(Stage1Buffer& buf) {
+    using PosT = typename Stage1TierTraits<Tier>::PosT;
+    auto* s = score_ptr<Tier>(buf);
+    auto* p = last_pos_ptr<Tier>(buf);
+    std::memset(s, 0, static_cast<std::size_t>(buf.capacity) * sizeof(typename Stage1TierTraits<Tier>::ScoreT));
+    constexpr PosT sentinel = std::numeric_limits<PosT>::max();
+    for (uint32_t i = 0; i < buf.capacity; i++) p[i] = sentinel;
+}
+} // namespace
+
+void Stage1Buffer::ensure_capacity(uint32_t num_seqs) {
+    if (capacity >= num_seqs) return;
+    capacity = num_seqs;
+    std::size_t bytes = 0;
+    switch (tier) {
+    case Stage1Tier::T8:  bytes = tier_byte_size<Stage1Tier::T8> (num_seqs); break;
+    case Stage1Tier::T16: bytes = tier_byte_size<Stage1Tier::T16>(num_seqs); break;
+    case Stage1Tier::T32: bytes = tier_byte_size<Stage1Tier::T32>(num_seqs); break;
+    }
+    score_data.resize(bytes);
+    last_pos_data.resize(bytes);
+    reset_all();
+}
+
+void Stage1Buffer::reset_all() {
+    switch (tier) {
+    case Stage1Tier::T8:  reset_all_typed<Stage1Tier::T8> (*this); break;
+    case Stage1Tier::T16: reset_all_typed<Stage1Tier::T16>(*this); break;
+    case Stage1Tier::T32: reset_all_typed<Stage1Tier::T32>(*this); break;
+    }
+}
+
+template <Stage1Tier Tier>
+void Stage1Buffer::clear_dirty_typed() {
+    using PosT = typename Stage1TierTraits<Tier>::PosT;
+    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
+    auto* s = score_ptr<Tier>(*this);
+    auto* p = last_pos_ptr<Tier>(*this);
+    constexpr PosT sentinel = std::numeric_limits<PosT>::max();
+    for (uint32_t idx : dirty) {
+        s[idx] = ScoreT{0};
+        p[idx] = sentinel;
+    }
+    dirty.clear();
+}
+
+template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T8>();
+template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T16>();
+template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T32>();
+
 // Internal implementation with KmerInt + Tier template dispatch.
 template <typename KmerInt, Stage1Tier Tier>
 static std::vector<Stage1Candidate> stage1_filter_impl(
@@ -32,8 +93,7 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     const Stage1Config& config,
     Stage1Buffer& buf) {
 
-    using Entry = Stage1Entry<Tier>;
-    using PosT = decltype(Entry::last_pos);
+    using PosT = typename Stage1TierTraits<Tier>::PosT;
 
     uint32_t num_seqs = kix.num_sequences();
     if (num_seqs == 0 || n == 0) return {};
@@ -42,7 +102,8 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     const bool use_coverscore = (config.stage1_score_type == 1);
 
     buf.ensure_capacity(num_seqs);
-    auto* entries = reinterpret_cast<Entry*>(buf.data.data());
+    auto* scores   = score_ptr<Tier>(buf);
+    auto* last_pos = last_pos_ptr<Tier>(buf);
 
     for (size_t qi = 0; qi < n; qi++) {
         auto q_pos = static_cast<PosT>(positions[qi]);
@@ -56,18 +117,18 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
             SeqId sid = decoder.next();
             if (use_coverscore && !decoder.was_new_seq()) continue;
             if (!filter.pass(sid)) continue;
-            if (entries[sid].score == 0) buf.dirty.push_back(sid);
-            if (entries[sid].last_pos != q_pos) {
-                entries[sid].score++;
-                entries[sid].last_pos = q_pos;
+            if (scores[sid] == 0) buf.dirty.push_back(sid);
+            if (last_pos[sid] != q_pos) {
+                scores[sid]++;
+                last_pos[sid] = q_pos;
             }
         }
     }
 
     std::vector<Stage1Candidate> candidates;
     for (uint32_t sid : buf.dirty) {
-        if (entries[sid].score >= config.min_stage1_score) {
-            candidates.push_back({sid, static_cast<uint32_t>(entries[sid].score)});
+        if (scores[sid] >= config.min_stage1_score) {
+            candidates.push_back({sid, static_cast<uint32_t>(scores[sid])});
         }
     }
 

@@ -14,6 +14,7 @@
 #include "core/kmer_encoding.hpp"
 #include "core/config.hpp"
 #include "util/logger.hpp"
+#include "util/simd_dispatch.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -478,6 +479,9 @@ static void test_global_highfreq_across_volumes() {
 }
 
 int main() {
+    init_simd_dispatch(nullptr);
+    check_required_tier_or_skip();
+
     check_ssu_available();
 
     g_testdb_path = ssu_db_prefix();

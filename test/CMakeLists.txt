@@ -132,8 +132,10 @@ target_include_directories(test_stage1 PRIVATE
 )
 target_compile_definitions(test_stage1 PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    IKAFSSN_TESTING
 )
 add_test(NAME test_stage1 COMMAND test_stage1)
+add_ikafssn_simd_test(test_stage1)
 
 # Search integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_search_integration test_search_integration.cpp)
