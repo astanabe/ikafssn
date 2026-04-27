@@ -27,3 +27,6 @@ conda-ikafssn/
 
 # Claude Code conversation logs
 claude*.txt
+
+# Local SIMD vectorization plan (working notes, not part of the repo)
+vectorize_plan.md
