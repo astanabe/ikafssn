@@ -55,6 +55,12 @@ target_compile_definitions(test_simd_dispatch PRIVATE IKAFSSN_TESTING)
 add_test(NAME test_simd_dispatch COMMAND test_simd_dispatch)
 add_ikafssn_simd_test(test_simd_dispatch)
 add_ikafssn_test(test_spaced_seed test_spaced_seed.cpp)
+
+# Phase 4b-1 — extract_for_mask_batch SIMD kernel test
+add_ikafssn_test(test_extract_for_mask_batch test_extract_for_mask_batch.cpp)
+target_link_libraries(test_extract_for_mask_batch PRIVATE ikafssn_util)
+target_compile_definitions(test_extract_for_mask_batch PRIVATE IKAFSSN_TESTING)
+add_ikafssn_simd_test(test_extract_for_mask_batch)
 add_ikafssn_test(test_ksx_io test_ksx_io.cpp)
 add_ikafssn_test(test_kix_io test_kix_io.cpp)
 add_ikafssn_test(test_kpx_io test_kpx_io.cpp)

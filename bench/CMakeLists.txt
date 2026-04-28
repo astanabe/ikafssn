@@ -52,3 +52,11 @@ target_include_directories(bench_degenerate_scan PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
 
+# Phase 4b-1 — spaced-seed batch extraction SIMD
+add_executable(bench_extract_for_mask bench_extract_for_mask.cpp)
+target_link_libraries(bench_extract_for_mask PRIVATE
+    ikafssn_util benchmark::benchmark)
+target_include_directories(bench_extract_for_mask PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}")
+
