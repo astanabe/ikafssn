@@ -2,6 +2,8 @@
 #include "core/spaced_seed.hpp"
 #include "core/kmer_encoding.hpp"
 #include "core/types.hpp"
+#include "util/simd_dispatch.hpp"
+#include <random>
 #include <string>
 #include <vector>
 #include <map>
@@ -719,7 +721,97 @@ static void test_kmer_type_for() {
     }
 }
 
+// Phase 4b-2: chunk-boundary bit-exact tests for the buffered scan_spaced
+// path. The internal batch chunk size is 64; sequence lengths around that
+// boundary stress the warmup tail, mid-chunk fill, and final flush.
+static void test_scan_spaced_chunk_boundary() {
+    std::fprintf(stderr, "-- test_scan_spaced_chunk_boundary\n");
+    std::mt19937 rng(0xC4B0u);
+    const char ab[4] = {'A', 'C', 'G', 'T'};
+
+    struct TestCase { uint32_t mask; int t, k; };
+    const TestCase cases[] = {
+        {MASK_K8_T13_CODING,   13,  8},
+        {MASK_K9_T18_OPTIMAL,  18,  9},
+        {MASK_K11_T16_CODING,  16, 11},
+        {MASK_K11_T21_OPTIMAL, 21, 11},
+        {MASK_K12_T18_CODING,  18, 12},
+    };
+
+    for (size_t len : {size_t{63},  size_t{64},  size_t{65},
+                       size_t{127}, size_t{128}, size_t{129},
+                       size_t{191}, size_t{192}, size_t{193}}) {
+        std::string seq(len, 'A');
+        for (size_t i = 0; i < len; ++i) seq[i] = ab[rng() & 3];
+        // Sprinkle a few Ns to exercise n_bits gating across chunk boundaries.
+        for (int k = 0; k < 4; ++k) {
+            size_t pos = rng() % len;
+            seq[pos] = 'N';
+        }
+        for (const auto& tc : cases) {
+            std::vector<uint32_t> masks = {tc.mask};
+            std::vector<std::pair<uint32_t, uint32_t>> ref, got;
+            scan_spaced_reference<uint32_t>(tc.k, seq.data(), seq.size(), masks,
+                tc.t,
+                [&](uint32_t p, uint32_t k) { ref.emplace_back(p, k); });
+            KmerScanner<uint32_t> scanner(tc.k);
+            scanner.scan_spaced(seq.data(), seq.size(), masks, tc.t,
+                [&](uint32_t p, uint32_t k) { got.emplace_back(p, k); });
+            CHECK_EQ(got.size(), ref.size());
+            for (size_t i = 0; i < got.size() && i < ref.size(); ++i) {
+                CHECK_EQ(got[i].first, ref[i].first);
+                CHECK_EQ(got[i].second, ref[i].second);
+            }
+        }
+    }
+}
+
+static void test_scan_spaced_kBoth_chunk_boundary() {
+    std::fprintf(stderr, "-- test_scan_spaced_kBoth_chunk_boundary\n");
+    std::mt19937 rng(0xCAFEu);
+    const char ab[4] = {'A', 'C', 'G', 'T'};
+    std::vector<uint32_t> both = {MASK_K11_T16_CODING, MASK_K11_T16_OPTIMAL};
+    for (size_t len : {size_t{64}, size_t{65}, size_t{128}, size_t{129}, size_t{200}}) {
+        std::string seq(len, 'A');
+        for (size_t i = 0; i < len; ++i) seq[i] = ab[rng() & 3];
+        std::vector<std::pair<uint32_t, uint32_t>> ref, got;
+        scan_spaced_reference<uint32_t>(11, seq.data(), seq.size(), both, 16,
+            [&](uint32_t p, uint32_t k) { ref.emplace_back(p, k); });
+        KmerScanner<uint32_t> scanner(11);
+        scanner.scan_spaced(seq.data(), seq.size(), both, 16,
+            [&](uint32_t p, uint32_t k) { got.emplace_back(p, k); });
+        CHECK_EQ(got.size(), ref.size());
+        for (size_t i = 0; i < got.size() && i < ref.size(); ++i) {
+            CHECK_EQ(got[i].first, ref[i].first);
+            CHECK_EQ(got[i].second, ref[i].second);
+        }
+    }
+}
+
+static void test_scan_spaced_short() {
+    std::fprintf(stderr, "-- test_scan_spaced_short\n");
+    // Sequences just at the warmup boundary or shorter, so the SIMD chunk
+    // never fires and only the scalar tail runs.
+    for (size_t len : {size_t{0}, size_t{1}, size_t{12}, size_t{13}, size_t{14}, size_t{16}}) {
+        std::string seq(len, 'C');
+        std::vector<uint32_t> masks = {MASK_K8_T13_CODING};
+        std::vector<std::pair<uint32_t, uint32_t>> ref, got;
+        scan_spaced_reference<uint32_t>(8, seq.data(), seq.size(), masks, 13,
+            [&](uint32_t p, uint32_t k) { ref.emplace_back(p, k); });
+        KmerScanner<uint32_t> scanner(8);
+        scanner.scan_spaced(seq.data(), seq.size(), masks, 13,
+            [&](uint32_t p, uint32_t k) { got.emplace_back(p, k); });
+        CHECK_EQ(got.size(), ref.size());
+        for (size_t i = 0; i < got.size() && i < ref.size(); ++i) {
+            CHECK_EQ(got[i].first, ref[i].first);
+            CHECK_EQ(got[i].second, ref[i].second);
+        }
+    }
+}
+
 int main() {
+    init_simd_dispatch(nullptr);
+    check_required_tier_or_skip();
     test_validate_spaced_seed();
     test_get_seed_masks();
     test_seed_span();
@@ -740,6 +832,9 @@ int main() {
     test_extract_for_mask_all_templates();
     test_scan_spaced_accumulator_vs_reference();
     test_scan_spaced_ambig_vs_reference();
+    test_scan_spaced_chunk_boundary();
+    test_scan_spaced_kBoth_chunk_boundary();
+    test_scan_spaced_short();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

@@ -9,6 +9,7 @@
 #include "core/config.hpp"
 #include "core/degenerate_scan_simd.hpp"
 #include "core/spaced_seed.hpp"
+#include "core/spaced_seed_simd.hpp"
 
 namespace ikafssn {
 
@@ -333,6 +334,11 @@ public:
     // Scan with spaced seed templates.
     // Uses sliding accumulator + bitmask extraction for O(1) per-position advance.
     // mask bit j (from LSB) corresponds to sequence position p + (t-1-j).
+    //
+    // Phase 4b-2: per-position k-mer extraction is buffered in chunks of
+    // kSpacedBatchChunk and processed via extract_for_mask_batch() at flush
+    // time. The callback emit order (per-position, then per-mask) is preserved
+    // bit-exact with the previous scalar path.
     template <typename Callback>
     void scan_spaced(const char* seq, size_t len, const std::vector<uint32_t>& masks,
                      int t, Callback&& callback) const {
@@ -341,6 +347,29 @@ public:
         const int num_masks = static_cast<int>(masks.size());
         const uint64_t accum_mask = (1ULL << (2 * t)) - 1;
         const uint32_t n_window_mask = (1u << t) - 1;
+
+        constexpr size_t kBatchChunk = 64;  // matches kNcbi2naUnpackChunkSize
+        alignas(64) uint64_t accum_buf[kBatchChunk];
+        alignas(64) uint32_t nbits_buf[kBatchChunk];
+        alignas(64) uint32_t pos_buf[kBatchChunk];
+        alignas(64) KmerInt kmer_buf[2][kBatchChunk];  // num_masks <= 2 (kBoth)
+        size_t fill = 0;
+
+        auto flush = [&]() {
+            if (fill == 0) return;
+            for (int mi = 0; mi < num_masks; mi++) {
+                extract_for_mask_batch<KmerInt>(accum_buf, fill, masks[mi],
+                                                kmer_buf[mi]);
+            }
+            for (size_t j = 0; j < fill; j++) {
+                for (int mi = 0; mi < num_masks; mi++) {
+                    if ((nbits_buf[j] & masks[mi]) == 0) {
+                        callback(pos_buf[j], kmer_buf[mi][j]);
+                    }
+                }
+            }
+            fill = 0;
+        };
 
         uint64_t accum = 0;
         uint32_t n_bits = 0;  // bit j set = window position j has invalid base
@@ -362,19 +391,25 @@ public:
                 continue;
             }
 
-            uint32_t p = static_cast<uint32_t>(i) - static_cast<uint32_t>(t) + 1;
-
-            for (int mi = 0; mi < num_masks; mi++) {
-                uint32_t mask = masks[mi];
-                if ((n_bits & mask) != 0) continue;  // N on a set-bit position
-                KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
-                callback(p, kmer);
-            }
+            accum_buf[fill] = accum;
+            nbits_buf[fill] = n_bits;
+            pos_buf[fill] =
+                static_cast<uint32_t>(i) - static_cast<uint32_t>(t) + 1;
+            fill++;
+            if (fill == kBatchChunk) flush();
         }
+        flush();
     }
 
     // Scan with spaced seed templates, handling degenerate bases.
     // Uses sliding accumulator + dual bitsets (n_bits / degen_bits) for efficient tracking.
+    //
+    // Phase 4b-2: pure-fast-path positions (no degenerate base on any
+    // mask's set bits) are buffered and emitted via extract_for_mask_batch()
+    // at flush time. Positions that hit slow-path on at least one mask drain
+    // the buffer first (so window_ncbi4na is consistent at the slow position)
+    // and then take the unchanged scalar path. Callback emit order is
+    // preserved bit-exact with the previous scalar implementation.
     template <typename Callback, typename AmbigCallback>
     void scan_spaced_ambig(const char* seq, size_t len,
                             const std::vector<uint32_t>& masks, int t,
@@ -387,6 +422,29 @@ public:
         const int num_masks = static_cast<int>(masks.size());
         const uint64_t accum_mask = (1ULL << (2 * t)) - 1;
         const uint32_t window_mask = (1u << t) - 1;
+
+        constexpr size_t kBatchChunk = 64;
+        alignas(64) uint64_t accum_buf[kBatchChunk];
+        alignas(64) uint32_t nbits_buf[kBatchChunk];
+        alignas(64) uint32_t pos_buf[kBatchChunk];
+        alignas(64) KmerInt kmer_buf[2][kBatchChunk];
+        size_t fill = 0;
+
+        auto flush = [&]() {
+            if (fill == 0) return;
+            for (int mi = 0; mi < num_masks; mi++) {
+                extract_for_mask_batch<KmerInt>(accum_buf, fill, masks[mi],
+                                                kmer_buf[mi]);
+            }
+            for (size_t j = 0; j < fill; j++) {
+                for (int mi = 0; mi < num_masks; mi++) {
+                    if ((nbits_buf[j] & masks[mi]) == 0) {
+                        callback(pos_buf[j], kmer_buf[mi][j]);
+                    }
+                }
+            }
+            fill = 0;
+        };
 
         uint64_t accum = 0;
         uint32_t n_bits = 0;      // truly invalid (N, not degenerate)
@@ -422,57 +480,76 @@ public:
 
             uint32_t p = static_cast<uint32_t>(i) - static_cast<uint32_t>(t) + 1;
 
+            // If any mask hits the slow path at this position, drain the
+            // buffer (so older fast-path callbacks fire in order) and then
+            // process this position scalar — window_ncbi4na is read at the
+            // current i, which would be stale for buffered positions.
+            bool needs_slow = false;
             for (int mi = 0; mi < num_masks; mi++) {
                 uint32_t mask = masks[mi];
+                if ((n_bits & mask) != 0) continue;
+                if ((degen_bits & mask) != 0) { needs_slow = true; break; }
+            }
 
-                if ((n_bits & mask) != 0) continue;  // N on a set-bit position
+            if (needs_slow) {
+                flush();
+                for (int mi = 0; mi < num_masks; mi++) {
+                    uint32_t mask = masks[mi];
+                    if ((n_bits & mask) != 0) continue;
 
-                if ((degen_bits & mask) == 0) {
-                    // Fast path: no degenerate bases on set-bit positions
-                    KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
-                    callback(p, kmer);
-                } else if (max_expansion <= 1) {
-                    if (has_multi_degen) *has_multi_degen = true;
-                } else {
-                    // Slow path: degenerate bases on some set-bit positions
-                    KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
-                    const auto& ext = extractor_for_mask(mask);
-                    AmbigInfo infos[MAX_K];
-                    int degen_count = 0;
-                    int product = 1;
-                    bool exceeded = false;
+                    if ((degen_bits & mask) == 0) {
+                        KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
+                        callback(p, kmer);
+                    } else if (max_expansion <= 1) {
+                        if (has_multi_degen) *has_multi_degen = true;
+                    } else {
+                        KmerInt kmer = extract_for_mask<KmerInt>(accum, mask);
+                        const auto& ext = extractor_for_mask(mask);
+                        AmbigInfo infos[MAX_K];
+                        int degen_count = 0;
+                        int product = 1;
+                        bool exceeded = false;
 
-                    uint32_t affected = degen_bits & mask;
-                    while (affected != 0) {
-                        int j = std::countr_zero(affected);
-                        affected &= affected - 1;
+                        uint32_t affected = degen_bits & mask;
+                        while (affected != 0) {
+                            int j = std::countr_zero(affected);
+                            affected &= affected - 1;
 
-                        size_t seq_pos = static_cast<size_t>(p) + static_cast<size_t>(t - 1 - j);
-                        uint8_t a4na = window_ncbi4na[seq_pos % t];
+                            size_t seq_pos = static_cast<size_t>(p) +
+                                static_cast<size_t>(t - 1 - j);
+                            uint8_t a4na = window_ncbi4na[seq_pos % t];
 
-                        int kbit_off = ext.kmer_bit_offset[j];
-                        kmer &= ~(static_cast<KmerInt>(0x03) << kbit_off);
+                            int kbit_off = ext.kmer_bit_offset[j];
+                            kmer &= ~(static_cast<KmerInt>(0x03) << kbit_off);
 
-                        int ec = ncbi4na_expansion_count(a4na);
-                        product *= ec;
-                        if (product > max_expansion) {
-                            exceeded = true;
-                            break;
+                            int ec = ncbi4na_expansion_count(a4na);
+                            product *= ec;
+                            if (product > max_expansion) {
+                                exceeded = true;
+                                break;
+                            }
+
+                            infos[degen_count].ncbi4na = a4na;
+                            infos[degen_count].bit_offset = kbit_off;
+                            degen_count++;
                         }
 
-                        infos[degen_count].ncbi4na = a4na;
-                        infos[degen_count].bit_offset = kbit_off;
-                        degen_count++;
-                    }
-
-                    if (!exceeded && degen_count > 0) {
-                        ambig_callback(p, kmer, infos, degen_count);
-                    } else if (exceeded && has_multi_degen) {
-                        *has_multi_degen = true;
+                        if (!exceeded && degen_count > 0) {
+                            ambig_callback(p, kmer, infos, degen_count);
+                        } else if (exceeded && has_multi_degen) {
+                            *has_multi_degen = true;
+                        }
                     }
                 }
+            } else {
+                accum_buf[fill] = accum;
+                nbits_buf[fill] = n_bits;
+                pos_buf[fill]   = p;
+                fill++;
+                if (fill == kBatchChunk) flush();
             }
         }
+        flush();
     }
 
 private:
