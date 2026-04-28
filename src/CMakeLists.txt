@@ -28,11 +28,18 @@ add_library(ikafssn_index STATIC
     index/index_filter.cpp
     index/parallel_sort_dispatch.cpp
     index/pfd_codec.cpp
-    $<TARGET_OBJECTS:ikafssn_pfd_sse42>
-    $<TARGET_OBJECTS:ikafssn_pfd_avx2>
-    $<TARGET_OBJECTS:ikafssn_pfd_avx512bw>
-    $<TARGET_OBJECTS:ikafssn_pfd_avx512vbmi2>
 )
+# x86_64 only — the four FastPFor tier objects use SSE/AVX intrinsics
+# that the aarch64 build cannot compile. pfd_codec.cpp's tier dispatcher
+# is `#if`-guarded to match (Phase 5h-prelim).
+if(IKAFSSN_HAS_X86_PFD)
+    target_sources(ikafssn_index PRIVATE
+        $<TARGET_OBJECTS:ikafssn_pfd_sse42>
+        $<TARGET_OBJECTS:ikafssn_pfd_avx2>
+        $<TARGET_OBJECTS:ikafssn_pfd_avx512bw>
+        $<TARGET_OBJECTS:ikafssn_pfd_avx512vbmi2>
+    )
+endif()
 target_link_libraries(ikafssn_index PUBLIC ikafssn_core ikafssn_io TBB::tbb)
 if(IKAFSSN_HAS_X86_SIMD_SORT)
     target_link_libraries(ikafssn_index PRIVATE ikafssn_xss)

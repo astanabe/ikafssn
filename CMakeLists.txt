@@ -345,17 +345,28 @@ function(ikafssn_add_pfd_tier_object TIER)
     set_property(TARGET ${_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
 endfunction()
 
-ikafssn_add_pfd_tier_object(sse42
-    MARCH_FLAGS -msse4.2 -mpopcnt)
-ikafssn_add_pfd_tier_object(avx2
-    MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2)
-ikafssn_add_pfd_tier_object(avx512bw
-    MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2
-                -mavx512f -mavx512bw -mavx512vl -mavx512cd -mavx512dq)
-ikafssn_add_pfd_tier_object(avx512vbmi2
-    MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2
-                -mavx512f -mavx512bw -mavx512vl -mavx512cd -mavx512dq
-                -mavx512vbmi -mavx512vbmi2)
+# The four x86_64 PForDelta tiers (Phase 5f ladder). On non-x86 builds
+# (aarch64 etc.) FastPFor's bitpacker primitives — simdpackwithoutmask /
+# simdunpack — are SSE2-only and the surrounding -m<x86 ISA> flags are
+# rejected by GCC, so we simply do not build these targets there. The
+# pfd_codec.cpp dispatcher is `#if`-guarded to match (Phase 5h-prelim).
+# Phase 5h proper will introduce a parallel `ikafssn_pfd_arm_*` family.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+    set(IKAFSSN_HAS_X86_PFD TRUE)
+    ikafssn_add_pfd_tier_object(sse42
+        MARCH_FLAGS -msse4.2 -mpopcnt)
+    ikafssn_add_pfd_tier_object(avx2
+        MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2)
+    ikafssn_add_pfd_tier_object(avx512bw
+        MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2
+                    -mavx512f -mavx512bw -mavx512vl -mavx512cd -mavx512dq)
+    ikafssn_add_pfd_tier_object(avx512vbmi2
+        MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2
+                    -mavx512f -mavx512bw -mavx512vl -mavx512cd -mavx512dq
+                    -mavx512vbmi -mavx512vbmi2)
+else()
+    set(IKAFSSN_HAS_X86_PFD FALSE)
+endif()
 
 # --- Subdirectories ---
 add_subdirectory(src)
