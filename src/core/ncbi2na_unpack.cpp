@@ -241,7 +241,7 @@ static void unpack_neon(const char*    packed,
 
 #if IKAFSSN_NU_HAVE_SVE_HEADER
 
-__attribute__((target("sve")))
+__attribute__((target("+sve")))
 static void unpack_sve(const char*    packed,
                        std::uint32_t  start,
                        std::uint32_t  count,
@@ -275,7 +275,7 @@ static void unpack_sve(const char*    packed,
     if (i < count) unpack_scalar(packed, start + i, count - i, out + i);
 }
 
-__attribute__((target("sve2,sve")))
+__attribute__((target("+sve2")))
 static void unpack_sve2(const char*    packed,
                         std::uint32_t  start,
                         std::uint32_t  count,

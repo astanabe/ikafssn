@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.04.28")
+set(IKAFSSN_VERSION "0.1.2026.04.29")
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
@@ -293,6 +293,34 @@ endif()
 set(FASTPFOR_SRC_DIR "${fastpfor_SOURCE_DIR}")
 set(FASTPFOR_INC_DIR "${FASTPFOR_SRC_DIR}/headers")
 
+# --- SIMDe (Phase 5h: AArch64 NEON support for FastPFor) ---
+#
+# FastPFor's headers/common.h has a native dispatch path for aarch64 that
+# requires <simde/x86/sse4.1.h>; SIMDe (https://github.com/simd-everywhere/simde)
+# is the upstream-blessed SSE/AVX → NEON emulation layer.  We populate the
+# SIMDe sources only on aarch64 builds and feed them into the per-tier
+# OBJECT library defined below.  The exact commit is the one FastPFor
+# 0.4.0's cmake_modules/simde.cmake pins (kept verbatim so any future
+# FastPFor bump can simply re-sync).
+#
+# SVE / SVE2 capable CPUs are NOT given a separate FastPFor tier object:
+# SIMDe translates SSE intrinsics into NEON only, and a SVE-native bitpacker
+# would be a hand-coded effort orthogonal to the SIMDe path.  At runtime
+# pfd_codec.cpp's dispatcher routes any aarch64 SimdCap >= NEON (which
+# includes SVE / SVE2) to the single ikafssn_pfd_neon tier object.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
+    FetchContent_Declare(
+        simde
+        URL      https://github.com/simd-everywhere/simde/archive/c6ddddc4a5bee9913b60de6757227aa078192663.tar.gz
+        URL_HASH SHA256=8e83d4812476598a77a4a3c633c37f277040a6bbf08fd1a9667f4655b4deff01
+    )
+    FetchContent_GetProperties(simde)
+    if(NOT simde_POPULATED)
+        FetchContent_Populate(simde)
+    endif()
+    set(SIMDE_INC_DIR "${simde_SOURCE_DIR}")
+endif()
+
 # FastPFor TUs we compile per tier.  Phase 5e trimmed this list down to
 # only the bitpacker primitives — codecfactory.cpp / streamvbyte.c /
 # varintdecode.c / horizontalbitpacking.cpp are no longer used now that
@@ -312,7 +340,7 @@ set(IKAFSSN_FASTPFOR_SOURCES
 function(ikafssn_add_pfd_tier_object TIER)
     set(_options)
     set(_one)
-    set(_multi MARCH_FLAGS)
+    set(_multi MARCH_FLAGS INCLUDE_DIRS EXTRA_DEFINES)
     cmake_parse_arguments(ARG "${_options}" "${_one}" "${_multi}" ${ARGN})
 
     set(_target ikafssn_pfd_${TIER})
@@ -324,6 +352,7 @@ function(ikafssn_add_pfd_tier_object TIER)
         ${FASTPFOR_INC_DIR}
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_BINARY_DIR}/generated
+        ${ARG_INCLUDE_DIRS}
     )
     target_compile_options(${_target} PRIVATE
         ${ARG_MARCH_FLAGS}
@@ -341,6 +370,7 @@ function(ikafssn_add_pfd_tier_object TIER)
     target_compile_definitions(${_target} PRIVATE
         FastPForLib=FastPForLib_${TIER}
         IKAFSSN_PFD_TIER_NAME=${TIER}
+        ${ARG_EXTRA_DEFINES}
     )
     set_property(TARGET ${_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
 endfunction()
@@ -349,8 +379,7 @@ endfunction()
 # (aarch64 etc.) FastPFor's bitpacker primitives — simdpackwithoutmask /
 # simdunpack — are SSE2-only and the surrounding -m<x86 ISA> flags are
 # rejected by GCC, so we simply do not build these targets there. The
-# pfd_codec.cpp dispatcher is `#if`-guarded to match (Phase 5h-prelim).
-# Phase 5h proper will introduce a parallel `ikafssn_pfd_arm_*` family.
+# pfd_codec.cpp dispatcher is `#if`-guarded to match (Phase 5h).
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
     set(IKAFSSN_HAS_X86_PFD TRUE)
     ikafssn_add_pfd_tier_object(sse42
@@ -366,6 +395,22 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
                     -mavx512vbmi -mavx512vbmi2)
 else()
     set(IKAFSSN_HAS_X86_PFD FALSE)
+endif()
+
+# AArch64 PForDelta tier (Phase 5h proper).  Single tier object covering
+# NEON / SVE / SVE2 capable CPUs alike — SIMDe's SSE → NEON translation
+# is the only emulation path, and adding hand-coded SVE bitpackers would
+# be orthogonal work not handled here.  The MARCH_FLAGS slot is left empty
+# so the compiler's default ISA (or whatever cmake/aarch64.toolchain.cmake
+# / IKAFSSN_AARCH64_MARCH supplies via CMAKE_CXX_FLAGS_INIT) carries
+# through unchanged.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
+    set(IKAFSSN_HAS_ARM_PFD TRUE)
+    ikafssn_add_pfd_tier_object(neon
+        INCLUDE_DIRS  ${SIMDE_INC_DIR}
+        EXTRA_DEFINES SIMDE_ENABLE_NATIVE_ALIASES)
+else()
+    set(IKAFSSN_HAS_ARM_PFD FALSE)
 endif()
 
 # --- Subdirectories ---

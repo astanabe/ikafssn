@@ -148,7 +148,7 @@ static void toupper_neon(std::uint8_t* p, std::size_t n) noexcept {
 
 #if IKAFSSN_TS_HAVE_SVE_HEADER
 
-__attribute__((target("sve")))
+__attribute__((target("+sve")))
 static void toupper_sve(std::uint8_t* p, std::size_t n) noexcept {
     std::size_t i = 0;
     while (i < n) {
@@ -164,7 +164,7 @@ static void toupper_sve(std::uint8_t* p, std::size_t n) noexcept {
     }
 }
 
-__attribute__((target("sve2,sve")))
+__attribute__((target("+sve2")))
 static void toupper_sve2(std::uint8_t* p, std::size_t n) noexcept {
     std::size_t i = 0;
     while (i < n) {

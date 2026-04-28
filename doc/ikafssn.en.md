@@ -1258,7 +1258,7 @@ ikafssnindex -version
 ### CPU requirements
 
 - **x86_64**: SSE4.2 minimum (Intel Nehalem 2008+, AMD Bulldozer 2011+). The runtime SIMD dispatcher additionally targets AVX2, AVX-512 BW, and AVX-512 VBMI2 when present. CPUs without SSE4.2 are rejected at startup with `exit(2)`.
-- **aarch64**: NEON (ASIMD) minimum. SVE / SVE2 are used when available.
+- **aarch64**: NEON (ASIMD) minimum (Armv8.0+). Pre-NEON aarch64 CPUs are rejected at startup with `exit(2)`. SVE / SVE2 capable CPUs use the NEON-tier FastPFor codec object (the dispatcher routes any tier ≥ NEON to a single SIMDe-translated NEON OBJECT library); per-kernel SIMD files (toupper, ncbi2na unpack, k-mer revcomp, degenerate scan, spaced-seed) keep their separate SVE / SVE2 dispatches.
 
 ### Installing Dependencies
 

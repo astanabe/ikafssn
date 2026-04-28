@@ -314,7 +314,7 @@ static void kmer_revcomp_batch_neon_u16(const std::uint16_t* in,
 
 #if IKAFSSN_KR_HAVE_SVE_HEADER
 
-__attribute__((target("sve")))
+__attribute__((target("+sve")))
 static void kmer_revcomp_batch_sve_u32(const std::uint32_t* in,
                                        std::uint32_t* out,
                                        std::size_t n, int k) noexcept {
@@ -328,21 +328,21 @@ static void kmer_revcomp_batch_sve_u32(const std::uint32_t* in,
     for (std::size_t i = 0; i < n; ++i) out[i] = kmer_revcomp<std::uint32_t>(in[i], k);
 }
 
-__attribute__((target("sve2,sve")))
+__attribute__((target("+sve2")))
 static void kmer_revcomp_batch_sve2_u32(const std::uint32_t* in,
                                         std::uint32_t* out,
                                         std::size_t n, int k) noexcept {
     for (std::size_t i = 0; i < n; ++i) out[i] = kmer_revcomp<std::uint32_t>(in[i], k);
 }
 
-__attribute__((target("sve")))
+__attribute__((target("+sve")))
 static void kmer_revcomp_batch_sve_u16(const std::uint16_t* in,
                                        std::uint16_t* out,
                                        std::size_t n, int k) noexcept {
     for (std::size_t i = 0; i < n; ++i) out[i] = kmer_revcomp<std::uint16_t>(in[i], k);
 }
 
-__attribute__((target("sve2,sve")))
+__attribute__((target("+sve2")))
 static void kmer_revcomp_batch_sve2_u16(const std::uint16_t* in,
                                         std::uint16_t* out,
                                         std::size_t n, int k) noexcept {

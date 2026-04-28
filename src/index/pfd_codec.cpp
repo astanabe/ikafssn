@@ -1,21 +1,23 @@
-// Phase 5d/5f — runtime dispatcher for the per-tier FastPFor wrappers.
+// Phase 5d/5f/5h — runtime dispatcher for the per-tier FastPFor wrappers.
 //
-// pfd_codec_tier.cpp is compiled four times (once per ISA tier) under the
-// ikafssn::pfd::ikafssn_pfd_{sse42,avx2,avx512bw,avx512vbmi2} namespaces.
-// Here we expose forward declarations of the per-tier API and pick one
-// at first use based on the runtime CPU detection done by simd_dispatch.
+// pfd_codec_tier.cpp is compiled once per ISA tier under the
+// ikafssn::pfd::ikafssn_pfd_<tier> namespaces.  Here we expose forward
+// declarations of the per-tier API and pick one at first use based on the
+// runtime CPU detection done by simd_dispatch.
 //
 // This TU itself is built with the project's default flags (no -m...
 // pinning), so it must not include any FastPFor header or use any
 // SIMD intrinsics directly — it only routes through function pointers.
 //
-// Phase 5h-prelim: on non-x86_64 builds (aarch64 etc.) the four x86 tier
-// OBJECT libraries are not produced (FastPFor's simdpackwithoutmask /
-// simdunpack are SSE-only).  The corresponding tier-namespace forward
-// declarations and dispatch branches are guarded by `#if defined(__x86_64__)`
-// here.  On other architectures `active_vtable()` aborts on first use with
-// a clear error; Phase 5h proper will introduce a NEON / SVE2 tier family
-// (`ikafssn_pfd_neon` / `ikafssn_pfd_sve2`) that takes those branches.
+// Active tiers per architecture:
+//   x86_64 : sse42 / avx2 / avx512bw / avx512vbmi2  (Phase 5f 4-tier ladder)
+//   aarch64: neon                                   (Phase 5h, single tier)
+//
+// AArch64 SVE / SVE2 capable CPUs are *not* given a separate tier object:
+// the ikafssn_pfd_neon library uses SIMDe (https://github.com/simd-everywhere/simde)
+// to translate FastPFor's SSE intrinsics into NEON, and a SVE-native
+// bitpacker would be orthogonal hand-coded work.  The dispatcher therefore
+// routes any aarch64 SimdCap >= NEON to the single neon tier.
 
 #include "index/pfd_codec.hpp"
 #include "util/simd_dispatch.hpp"
@@ -28,15 +30,21 @@
 #include <vector>
 
 #if defined(__x86_64__) || defined(__i386__)
-  #define IKAFSSN_PFD_HAS_X86 1
+  #define IKAFSSN_PFD_HAS_X86  1
 #else
-  #define IKAFSSN_PFD_HAS_X86 0
+  #define IKAFSSN_PFD_HAS_X86  0
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+  #define IKAFSSN_PFD_HAS_NEON 1
+#else
+  #define IKAFSSN_PFD_HAS_NEON 0
 #endif
 
 namespace ikafssn::pfd {
 
-#if IKAFSSN_PFD_HAS_X86
-// Forward declarations of every per-tier API.
+// Forward declarations of every per-tier API.  The macro body is unchanged
+// across architectures; only the set of namespaces declared differs.
 #define DECLARE_TIER_NS(ns)                                                   \
     namespace ns {                                                            \
         std::size_t encode_posting_kix(const std::uint32_t*, std::uint32_t,   \
@@ -51,13 +59,18 @@ namespace ikafssn::pfd {
                              StreamCtx&);                                     \
     }
 
+#if IKAFSSN_PFD_HAS_X86
 DECLARE_TIER_NS(ikafssn_pfd_sse42)
 DECLARE_TIER_NS(ikafssn_pfd_avx2)
 DECLARE_TIER_NS(ikafssn_pfd_avx512bw)
 DECLARE_TIER_NS(ikafssn_pfd_avx512vbmi2)
+#endif
+
+#if IKAFSSN_PFD_HAS_NEON
+DECLARE_TIER_NS(ikafssn_pfd_neon)
+#endif
 
 #undef DECLARE_TIER_NS
-#endif // IKAFSSN_PFD_HAS_X86
 
 namespace {
 
@@ -140,18 +153,39 @@ const VTable& active_vtable() {
             "ikafssn: pfd codec requires SSE4.2; current CPU tier is below SSE4.2.\n"
             "         (Phase 5f treats SSE4.2 as the x86_64 baseline.)\n");
         std::exit(2);
-#else
-        // Phase 5h-prelim: non-x86_64 builds (aarch64 etc.) have no
-        // FastPFor tier wired up yet.  Tests that do not touch the codec
-        // (most of the SIMD-kernel suite) link and run fine because this
-        // lambda is only entered on the first .kix/.kpx encode/open call.
-        // Real index build / search hits this and aborts with a clear
-        // message until Phase 5h proper introduces NEON / SVE2 tiers.
+#endif // IKAFSSN_PFD_HAS_X86
+
+#if IKAFSSN_PFD_HAS_NEON
+        // AArch64 single tier: NEON via SIMDe.  Any SimdCap >= NEON
+        // (NEON / SVE / SVE2) routes to the same OBJECT library — see
+        // header comment for rationale.
+        if (cap >= SimdCap::NEON) {
+            return {
+                ikafssn_pfd_neon::encode_posting_kix,
+                ikafssn_pfd_neon::encode_posting_kpx,
+                ikafssn_pfd_neon::open_stream_kix,
+                ikafssn_pfd_neon::open_stream_kpx,
+                "neon",
+            };
+        }
+        // init_simd_dispatch() rejects sub-NEON aarch64 startups with
+        // exit(2) the same way it rejects sub-SSE4.2 x86_64.  Reaching
+        // this branch implies a build_disabled (IKAFSSN_ENABLE_SIMD=0)
+        // path bypassed the normal init.
         std::fprintf(stderr,
-            "ikafssn: pfd codec is not yet implemented for non-x86_64 architectures.\n"
-            "         (Phase 5h-prelim shipped scaffolding; Phase 5h proper will add\n"
-            "          NEON / SVE2 PForDelta tier objects.  The SIMD-kernel test suite\n"
-            "          still runs natively on aarch64.)\n");
+            "ikafssn: pfd codec requires NEON; current CPU tier is below NEON.\n"
+            "         (Phase 5h treats NEON as the aarch64 baseline.)\n");
+        std::exit(2);
+#endif // IKAFSSN_PFD_HAS_NEON
+
+#if !IKAFSSN_PFD_HAS_X86 && !IKAFSSN_PFD_HAS_NEON
+        // Unknown architecture: no FastPFor tier object was built.  The
+        // SIMD-kernel test suite still runs (this lambda only fires on
+        // first .kix/.kpx encode/open), but real index build / search
+        // aborts here.
+        std::fprintf(stderr,
+            "ikafssn: pfd codec is not implemented for this architecture.\n"
+            "         (Only x86_64 and aarch64 are supported.)\n");
         std::exit(2);
 #endif
     }();

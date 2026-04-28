@@ -1253,7 +1253,7 @@ ikafssnindex -version
 ### CPU 要件
 
 - **x86_64**: SSE4.2 必須 (Intel Nehalem 2008 年以降、AMD Bulldozer 2011 年以降)。実行時 SIMD ディスパッチャーは利用可能な場合に AVX2、AVX-512 BW、AVX-512 VBMI2 を選択します。SSE4.2 非対応の CPU では起動時に `exit(2)` で拒否されます。
-- **aarch64**: NEON (ASIMD) 必須。SVE / SVE2 は利用可能な場合に使用されます。
+- **aarch64**: NEON (ASIMD) 必須 (Armv8.0+)。NEON 非対応の aarch64 CPU は起動時に `exit(2)` で拒否されます。SVE / SVE2 対応 CPU でも FastPFor PForDelta codec は SIMDe 経由で NEON 翻訳された単一の OBJECT library に降格して使用されます (ディスパッチャは tier ≥ NEON を一括して NEON tier object に流す)。各カーネル SIMD ファイル (toupper / ncbi2na unpack / k-mer revcomp / degenerate scan / spaced-seed) は SVE / SVE2 個別のディスパッチを保持します。
 
 ### 依存パッケージのインストール
 

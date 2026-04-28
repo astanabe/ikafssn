@@ -37,6 +37,33 @@ std::atomic<bool>    g_slow_bmi2  { false };
 std::atomic<bool>    g_avx512f_only { false };
 std::atomic<bool>    g_initialized { false };
 
+// Architecture bucket for a given SimdCap value.  Used to detect
+// cross-architecture force-simd requests (e.g. IKAFSSN_FORCE_SIMD=sse42 on
+// an aarch64 host).  The numeric ranges are arch-segregated by design
+// (see SimdCap definition) but `force_simd_cap` and the test-skip helper
+// previously compared raw integers, which silently accepted nonsense like
+// "x86 tier requested on arm host" as a downgrade.
+enum class SimdArch : int { None = 0, X86 = 1, Arm = 2 };
+inline SimdArch arch_of(SimdCap c) noexcept {
+    int v = static_cast<int>(c);
+    if (v == 0) return SimdArch::None;       // Scalar sentinel
+    if (v >= 100) return SimdArch::Arm;      // 100..199 reserved for arm
+    return SimdArch::X86;                    //  10..50  reserved for x86
+}
+
+// Returns true if `requested` cannot legally apply on a host whose CPU was
+// auto-detected as `host`.  Cross-arch requests collapse to Scalar; same-
+// arch over-requests also collapse to Scalar (Scalar is the universal
+// "below floor" sentinel).  None on either side (Scalar host or Scalar
+// request) bypasses the check — caller decides.
+inline bool force_request_invalid(SimdCap requested, SimdCap host) noexcept {
+    SimdArch ra = arch_of(requested);
+    SimdArch ha = arch_of(host);
+    if (ra == SimdArch::None || ha == SimdArch::None) return false;
+    if (ra != ha) return true;
+    return static_cast<int>(requested) > static_cast<int>(host);
+}
+
 // Normalize a force-simd token: lowercase, strip '-', '_', '.', whitespace.
 std::string normalize_token(const char* raw) {
     std::string out;
@@ -196,12 +223,15 @@ void do_init_once(Logger* logger) noexcept {
             current = SimdCap::Scalar;
             forced = true;
             force_warned = true;
-        } else if (static_cast<int>(parsed.cap) >
-                   static_cast<int>(auto_cap)) {
-            // over-request rejected
+        } else if (force_request_invalid(parsed.cap, auto_cap)) {
+            // over-request OR cross-arch request rejected.  The cross-arch
+            // case (e.g. IKAFSSN_FORCE_SIMD=sse42 on aarch64) used to be
+            // silently accepted as a downgrade because the SimdCap values
+            // for x86 (10..50) sort below those for arm (100..199); fixing
+            // it required arch-aware comparison (Phase 5h).
             if (logger) logger->warn(
-                "simd: IKAFSSN_FORCE_SIMD=%s exceeds detected capability %s; "
-                "using scalar",
+                "simd: IKAFSSN_FORCE_SIMD=%s incompatible with detected "
+                "capability %s; using scalar",
                 env, simd_cap_name(auto_cap).data());
             current = SimdCap::Scalar;
             forced = true;
@@ -230,8 +260,7 @@ void do_init_once(Logger* logger) noexcept {
         if (req && *req) {
             ParseForceResult req_parsed = parse_force_simd_env(req);
             if (req_parsed.explicit_value &&
-                static_cast<int>(req_parsed.cap) >
-                    static_cast<int>(auto_cap)) {
+                force_request_invalid(req_parsed.cap, auto_cap)) {
                 std::fprintf(stderr,
                     "SKIP: CPU does not support %s (auto-detected=%s)\n",
                     req, simd_cap_name(auto_cap).data());
@@ -336,9 +365,9 @@ std::string_view simd_cap_name(SimdCap cap) noexcept {
 
 SimdCap force_simd_cap(SimdCap requested) noexcept {
     SimdCap auto_cap = auto_detected_simd_cap();
-    SimdCap applied  = (static_cast<int>(requested) <= static_cast<int>(auto_cap))
-                         ? requested
-                         : SimdCap::Scalar;
+    SimdCap applied  = force_request_invalid(requested, auto_cap)
+                         ? SimdCap::Scalar
+                         : requested;
     g_current.store(applied, std::memory_order_release);
     return applied;
 }
@@ -409,7 +438,7 @@ void check_required_tier_or_skip() noexcept {
         return;
     }
     SimdCap auto_cap = auto_detected_simd_cap();
-    if (static_cast<int>(parsed.cap) > static_cast<int>(auto_cap)) {
+    if (force_request_invalid(parsed.cap, auto_cap)) {
         std::fprintf(stderr,
             "SKIP: CPU does not support %s (auto-detected=%s)\n",
             req, simd_cap_name(auto_cap).data());
