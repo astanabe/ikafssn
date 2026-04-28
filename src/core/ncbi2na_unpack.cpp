@@ -165,47 +165,16 @@ static void unpack_avx512bw(const char*    packed,
     if (i < count) unpack_scalar(packed, start + i, count - i, out + i);
 }
 
-__attribute__((target("avx512vbmi,avx512bw,avx512f")))
-static void unpack_avx512vbmi(const char*    packed,
-                              std::uint32_t  start,
-                              std::uint32_t  count,
-                              std::uint8_t*  out) noexcept {
-    // VBMI's vpermb is lane-crossing: broadcast 16 input bytes to 64 output
-    // bytes in a single instruction (no need for vbroadcast_i32x4 first).
-    const __m512i idx   = _mm512_load_si512(kBroadcastIdx);
-    const __m512i mask0 = _mm512_set1_epi32(0x00000003);
-    const __m512i mask1 = _mm512_set1_epi32(0x00000300);
-    const __m512i mask2 = _mm512_set1_epi32(0x00030000);
-    const __m512i mask3 = _mm512_set1_epi32(0x03000000);
-
-    std::uint32_t in_byte = start >> 2;
-    std::uint32_t i = 0;
-    for (; i + 64 <= count; i += 64, in_byte += 16) {
-        __m128i in128 = _mm_loadu_si128(
-            reinterpret_cast<const __m128i*>(packed + in_byte));
-        __m512i in512 = _mm512_castsi128_si512(in128);
-        __m512i bcast = _mm512_permutexvar_epi8(idx, in512);
-        __m512i v6 = _mm512_srli_epi16(bcast, 6);
-        __m512i v4 = _mm512_srli_epi16(bcast, 4);
-        __m512i v2 = _mm512_srli_epi16(bcast, 2);
-        __m512i out512 = _mm512_or_si512(
-            _mm512_or_si512(_mm512_and_si512(v6, mask0),
-                            _mm512_and_si512(v4, mask1)),
-            _mm512_or_si512(_mm512_and_si512(v2, mask2),
-                            _mm512_and_si512(bcast, mask3)));
-        _mm512_storeu_si512(reinterpret_cast<void*>(out + i), out512);
-    }
-    if (i < count) unpack_scalar(packed, start + i, count - i, out + i);
-}
-
 __attribute__((target("avx512vbmi2,avx512vbmi,avx512bw,avx512f")))
 static void unpack_avx512vbmi2(const char*    packed,
                                std::uint32_t  start,
                                std::uint32_t  count,
                                std::uint8_t*  out) noexcept {
-    // VBMI2 introduces vpcompressb/vpexpandb/vpshrdv but no per-byte variable
-    // shift, so the unpack body matches VBMI exactly. Kept as a separate
-    // symbol so tier-effect benchmarking can isolate it.
+    // Uses VBMI's vpermb (lane-crossing byte broadcast) under a wider
+    // target attribute. VBMI2 introduces vpcompressb/vpexpandb/vpshrdv but
+    // no per-byte variable shift, so the body matches the BW shape — the
+    // kernel is kept as a separate symbol so the runtime dispatcher can
+    // pick the VBMI2 tier without an explicit VBMI ladder.
     const __m512i idx   = _mm512_load_si512(kBroadcastIdx);
     const __m512i mask0 = _mm512_set1_epi32(0x00000003);
     const __m512i mask1 = _mm512_set1_epi32(0x00000300);
@@ -367,10 +336,6 @@ void unpack_ncbi2na_chunk(const char*    packed,
 #if IKAFSSN_NU_X86
     if (cap >= SimdCap::AVX512VBMI2 && count >= 64) {
         unpack_avx512vbmi2(packed, start, count, out);
-        return;
-    }
-    if (cap >= SimdCap::AVX512VBMI && count >= 64) {
-        unpack_avx512vbmi(packed, start, count, out);
         return;
     }
     if (cap >= SimdCap::AVX512BW && count >= 64) {

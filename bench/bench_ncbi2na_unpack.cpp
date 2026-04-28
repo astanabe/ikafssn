@@ -36,12 +36,10 @@ static void BM_Ncbi2naUnpack(benchmark::State& state) {
 
 static void RegisterUnpackArgs(benchmark::internal::Benchmark* b) {
     static constexpr int kTiers[] = {
-        static_cast<int>(SimdCap::Scalar),
 #if defined(__x86_64__) || defined(__i386__)
         static_cast<int>(SimdCap::SSE42),
         static_cast<int>(SimdCap::AVX2),
         static_cast<int>(SimdCap::AVX512BW),
-        static_cast<int>(SimdCap::AVX512VBMI),
         static_cast<int>(SimdCap::AVX512VBMI2),
 #elif defined(__aarch64__)
         static_cast<int>(SimdCap::NEON),

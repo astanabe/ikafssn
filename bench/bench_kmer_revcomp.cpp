@@ -57,22 +57,18 @@ static void BM_KmerRevcompBatch(benchmark::State& state) {
 // uint16_t (k <= 8)
 BENCHMARK(BM_KmerRevcompBatch<uint16_t>)
     ->ArgsProduct({{
-        (int64_t)SimdCap::Scalar,
         (int64_t)SimdCap::SSE42,
         (int64_t)SimdCap::AVX2,
         (int64_t)SimdCap::AVX512BW,
-        (int64_t)SimdCap::AVX512VBMI,
         (int64_t)SimdCap::AVX512VBMI2,
     }, {6, 8}, {32, 256, 4096}});
 
 // uint32_t (k = 9..16)
 BENCHMARK(BM_KmerRevcompBatch<uint32_t>)
     ->ArgsProduct({{
-        (int64_t)SimdCap::Scalar,
         (int64_t)SimdCap::SSE42,
         (int64_t)SimdCap::AVX2,
         (int64_t)SimdCap::AVX512BW,
-        (int64_t)SimdCap::AVX512VBMI,
         (int64_t)SimdCap::AVX512VBMI2,
     }, {11, 12}, {32, 256, 4096}});
 

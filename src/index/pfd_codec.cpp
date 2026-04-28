@@ -1,7 +1,7 @@
-// Phase 5d — runtime dispatcher for the per-tier FastPFor wrappers.
+// Phase 5d/5f — runtime dispatcher for the per-tier FastPFor wrappers.
 //
-// pfd_codec_tier.cpp is compiled three times (once per ISA tier) under
-// the ikafssn::pfd::ikafssn_pfd_{avx2,avx512bw,avx512vbmi2} namespaces.
+// pfd_codec_tier.cpp is compiled four times (once per ISA tier) under the
+// ikafssn::pfd::ikafssn_pfd_{sse42,avx2,avx512bw,avx512vbmi2} namespaces.
 // Here we expose forward declarations of the per-tier API and pick one
 // at first use based on the runtime CPU detection done by simd_dispatch.
 //
@@ -32,6 +32,7 @@ namespace ikafssn::pfd {
         bool open_stream_kpx(const std::uint8_t*, std::size_t, StreamCtx&);  \
     }
 
+DECLARE_TIER_NS(ikafssn_pfd_sse42)
 DECLARE_TIER_NS(ikafssn_pfd_avx2)
 DECLARE_TIER_NS(ikafssn_pfd_avx512bw)
 DECLARE_TIER_NS(ikafssn_pfd_avx512vbmi2)
@@ -66,8 +67,9 @@ const VTable& active_vtable() {
         // and VBMI2 into a single top tier here because FastPFor's source
         // contains no byte-level shuffle/permute that VBMI/VBMI2 could
         // exploit; the only difference between the two is compiler auto-
-        // vectorization quirks.
-        if (cap >= SimdCap::AVX512VBMI) {
+        // vectorization quirks.  Phase 5f removed the standalone VBMI tier
+        // from SimdCap, so the highest tier we encounter is AVX512VBMI2.
+        if (cap >= SimdCap::AVX512VBMI2) {
             return {
                 ikafssn_pfd_avx512vbmi2::encode_posting_kix,
                 ikafssn_pfd_avx512vbmi2::encode_posting_kpx,
@@ -94,18 +96,25 @@ const VTable& active_vtable() {
                 "avx2",
             };
         }
+        if (cap >= SimdCap::SSE42) {
+            return {
+                ikafssn_pfd_sse42::encode_posting_kix,
+                ikafssn_pfd_sse42::encode_posting_kpx,
+                ikafssn_pfd_sse42::open_stream_kix,
+                ikafssn_pfd_sse42::open_stream_kpx,
+                "sse42",
+            };
+        }
 
-        // AVX2 is the floor for the v4 codec.  ikafssn's other SIMD code
-        // can still run on SSE4.2 hosts, but the FastPFor backend was
-        // selected on the assumption (Phase 5d, plan §3) that any
-        // modern x86-64 deployment target supports AVX2.  Exit code 77
-        // is the CTest "skip" code so tier-pinned variants on incapable
-        // hosts behave correctly; production binaries should never
-        // observe this path in practice.
+        // SSE4.2 is the x86_64 floor (Phase 5f).  init_simd_dispatch()
+        // already rejects pre-SSE4.2 CPUs at startup with exit(2), so the
+        // only way to reach this branch is a programmer bug — for example
+        // calling the codec on a build_disabled (IKAFSSN_ENABLE_SIMD=0)
+        // configuration that bypassed the normal init path.  Abort hard.
         std::fprintf(stderr,
-            "ikafssn: pfd codec requires AVX2; current CPU tier is below AVX2.\n"
-            "         (Phase 5d treats AVX2 as the x86-64 baseline.)\n");
-        std::exit(77);
+            "ikafssn: pfd codec requires SSE4.2; current CPU tier is below SSE4.2.\n"
+            "         (Phase 5f treats SSE4.2 as the x86_64 baseline.)\n");
+        std::exit(2);
     }();
     return instance;
 }

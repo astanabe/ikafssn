@@ -11,8 +11,8 @@ target_include_directories(ikafssn_core INTERFACE
 #   - pfd_codec.cpp   — public-API runtime dispatcher (no SIMD intrinsics
 #                       and no FastPForLib symbols; safe to compile under
 #                       the default (-march unset) flags)
-#   - pfd_codec_tier.cpp — per-tier wrapper, compiled THREE TIMES via the
-#                       ikafssn_pfd_{avx2,avx512bw,avx512vbmi2} OBJECT
+#   - pfd_codec_tier.cpp — per-tier wrapper, compiled FOUR TIMES via the
+#                       ikafssn_pfd_{sse42,avx2,avx512bw,avx512vbmi2} OBJECT
 #                       libraries declared in the top-level CMakeLists.txt
 #                       (each with a different -march and a different
 #                       FastPForLib namespace remapping).
@@ -28,6 +28,7 @@ add_library(ikafssn_index STATIC
     index/index_filter.cpp
     index/parallel_sort_dispatch.cpp
     index/pfd_codec.cpp
+    $<TARGET_OBJECTS:ikafssn_pfd_sse42>
     $<TARGET_OBJECTS:ikafssn_pfd_avx2>
     $<TARGET_OBJECTS:ikafssn_pfd_avx512bw>
     $<TARGET_OBJECTS:ikafssn_pfd_avx512vbmi2>

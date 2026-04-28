@@ -104,27 +104,6 @@ static void toupper_avx512bw(std::uint8_t* p, std::size_t n) noexcept {
     if (i < n) toupper_scalar(p + i, n - i);
 }
 
-// AVX-512 VBMI — 64-byte chunks. VBMI does not provide a more efficient
-// route for plain to-upper (byte sub is already optimal), but the plan calls
-// for an independent kernel so we can measure tier effects. Use the same BW
-// ops compiled under the wider target attribute.
-__attribute__((target("avx512vbmi,avx512bw,avx512f")))
-static void toupper_avx512vbmi(std::uint8_t* p, std::size_t n) noexcept {
-    const __m512i va  = _mm512_set1_epi8(static_cast<char>('a'));
-    const __m512i vz  = _mm512_set1_epi8(static_cast<char>('z'));
-    const __m512i v20 = _mm512_set1_epi8(static_cast<char>(0x20));
-    std::size_t i = 0;
-    for (; i + 64 <= n; i += 64) {
-        __m512i v = _mm512_loadu_si512(reinterpret_cast<const void*>(p + i));
-        __mmask64 m_ge = _mm512_cmpge_epu8_mask(v, va);
-        __mmask64 m_le = _mm512_cmple_epu8_mask(v, vz);
-        __mmask64 m    = m_ge & m_le;
-        __m512i out = _mm512_mask_sub_epi8(v, m, v, v20);
-        _mm512_storeu_si512(reinterpret_cast<void*>(p + i), out);
-    }
-    if (i < n) toupper_scalar(p + i, n - i);
-}
-
 // AVX-512 VBMI2 — same body, separate symbol for tier-effect measurement.
 __attribute__((target("avx512vbmi2,avx512vbmi,avx512bw,avx512f")))
 static void toupper_avx512vbmi2(std::uint8_t* p, std::size_t n) noexcept {
@@ -215,10 +194,6 @@ void toupper_inplace_ascii(std::uint8_t* p, std::size_t n) noexcept {
 #if IKAFSSN_TS_X86
     if (cap >= SimdCap::AVX512VBMI2 && n >= kSimdMinBytes_AVX512VBMI2) {
         toupper_avx512vbmi2(p, n);
-        return;
-    }
-    if (cap >= SimdCap::AVX512VBMI && n >= kSimdMinBytes_AVX512VBMI) {
-        toupper_avx512vbmi(p, n);
         return;
     }
     if (cap >= SimdCap::AVX512BW && n >= kSimdMinBytes_AVX512BW) {

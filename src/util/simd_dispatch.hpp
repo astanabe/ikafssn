@@ -13,12 +13,16 @@ namespace ikafssn {
 //   x86_64 :  10..50
 //   aarch64: 100..199
 enum class SimdCap : int {
+    // Scalar = 0 is the detection-phase sentinel (no SIMD detected) and
+    // the over-request collapse target for force_simd_cap(). Phase 5f
+    // makes SSE4.2 the production x86_64 floor: init_simd_dispatch()
+    // rejects auto_cap == Scalar with exit(2) unless the build was
+    // configured with IKAFSSN_ENABLE_SIMD=0 (build_disabled path).
     Scalar       =   0,
-    // x86_64
+    // x86_64 (Phase 5f 4-tier ladder)
     SSE42        =  10,
     AVX2         =  20,  // BMI1/BMI2 implied; slow_bmi2 is tracked separately
-    AVX512BW     =  30,
-    AVX512VBMI   =  40,
+    AVX512BW     =  30,  // standalone VBMI removed in Phase 5f (demoted to BW)
     AVX512VBMI2  =  50,
     // aarch64
     NEON         = 100,
@@ -37,7 +41,6 @@ struct SimdAuxFlags {
 inline constexpr std::size_t kSimdMinBytes_SSE42       =  16;
 inline constexpr std::size_t kSimdMinBytes_AVX2        =  64;
 inline constexpr std::size_t kSimdMinBytes_AVX512BW    = 128;
-inline constexpr std::size_t kSimdMinBytes_AVX512VBMI  = 256;
 inline constexpr std::size_t kSimdMinBytes_AVX512VBMI2 = 512;
 inline constexpr std::size_t kSimdMinBytes_NEON        =  16;
 inline constexpr std::size_t kSimdMinBytes_SVE         =  64;

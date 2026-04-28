@@ -59,11 +59,9 @@ void BM_Stage1FlushBatchT32(benchmark::State& state) {
 
 void RegisterArgs(benchmark::internal::Benchmark* b) {
     static constexpr int kTiers[] = {
-        static_cast<int>(SimdCap::Scalar),
         static_cast<int>(SimdCap::SSE42),
         static_cast<int>(SimdCap::AVX2),
         static_cast<int>(SimdCap::AVX512BW),
-        static_cast<int>(SimdCap::AVX512VBMI),
         static_cast<int>(SimdCap::AVX512VBMI2),
     };
     static constexpr int kBatchSizes[]   = {16, 32, 64};

@@ -1244,6 +1244,11 @@ ikafssnindex -version
 - Drogon (ikafssnhttpd 用、オプション)
 - libcurl (HTTP クライアントモードおよびリモート取得用、オプション)
 
+### CPU 要件
+
+- **x86_64**: SSE4.2 必須 (Intel Nehalem 2008 年以降、AMD Bulldozer 2011 年以降)。実行時 SIMD ディスパッチャーは利用可能な場合に AVX2、AVX-512 BW、AVX-512 VBMI2 を選択します。SSE4.2 非対応の CPU では起動時に `exit(2)` で拒否されます。
+- **aarch64**: NEON (ASIMD) 必須。SVE / SVE2 は利用可能な場合に使用されます。
+
 ### 依存パッケージのインストール
 
 NCBI C++ Toolkit 以外の依存パッケージを以下のコマンドでインストールできます。

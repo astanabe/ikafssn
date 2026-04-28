@@ -238,7 +238,7 @@ else()
     add_compile_definitions(IKAFSSN_HAS_X86_SIMD_SORT=0)
 endif()
 
-# --- FastPFor (Phase 5d: per-tier object libraries for runtime dispatch) ---
+# --- FastPFor (Phase 5d/5f: per-tier object libraries for runtime dispatch) ---
 #
 # FastPFor 0.4.0 ships with FASTPFOR_SIMD_MODE = "native" by default, which
 # bakes the build host's -march into the static archive — incompatible with
@@ -249,12 +249,23 @@ endif()
 # vectorization of surrounding scalar/SSE code.
 #
 # We side-step the upstream build entirely by populating the source tree
-# (no add_subdirectory) and compiling the FastPFor TUs ourselves into 3
-# OBJECT libraries, one per ISA tier:
+# (no add_subdirectory) and compiling the FastPFor TUs ourselves into 4
+# OBJECT libraries, one per ISA tier (Phase 5f x86_64 4-tier ladder):
 #
-#   - ikafssn_pfd_avx2          -mavx2 -mbmi2 -mfma
+#   - ikafssn_pfd_sse42         -msse4.2 -mpopcnt
+#   - ikafssn_pfd_avx2          -mavx2 -mbmi -mbmi2 -mfma
 #   - ikafssn_pfd_avx512bw      -mavx512bw -mavx512vl + AVX2 deps
 #   - ikafssn_pfd_avx512vbmi2   -mavx512vbmi2 -mavx512vbmi + above
+#
+# The sse42 tier is semantically equivalent to FASTPFOR_SIMD_MODE=portable
+# (FastPFor's SSE4.2 baseline). The other three tiers are equivalent to
+# FASTPFOR_SIMD_MODE=native with the upstream `-march=native` replaced by
+# the explicit ISA flag set listed above. Because we drive the per-tier
+# compile from `target_compile_options`, no `-march=native` ever reaches
+# `flags.make`, so the resulting object files run on any CPU that supports
+# the named tier — e.g. a GitHub Actions runner without AVX-512 VBMI2 can
+# still build the avx512vbmi2 OBJECT library because we only set the ISA
+# flags rather than asking the compiler to introspect the build host.
 #
 # AVX-512 VBMI/VBMI2 are merged into a single top tier — FastPFor's actual
 # source contains no byte-level shuffle/permute that VBMI/VBMI2 would
@@ -334,6 +345,8 @@ function(ikafssn_add_pfd_tier_object TIER)
     set_property(TARGET ${_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
 endfunction()
 
+ikafssn_add_pfd_tier_object(sse42
+    MARCH_FLAGS -msse4.2 -mpopcnt)
 ikafssn_add_pfd_tier_object(avx2
     MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2)
 ikafssn_add_pfd_tier_object(avx512bw

@@ -10,9 +10,12 @@ endfunction()
 # kernel selection and IKAFSSN_TEST_REQUIRE_TIER ensuring CPUs that do not
 # actually support that tier exit(77) (CTest skip).
 function(add_ikafssn_simd_test TEST_NAME)
+    # Phase 5f x86_64 4-tier ladder (SSE4.2 floor, no standalone VBMI).
+    # The Scalar tier is intentionally omitted: init_simd_dispatch() rejects
+    # auto_cap == Scalar with exit(2) so a `_force_scalar` variant would
+    # always fail rather than skip cleanly.
     set(_simd_tiers
-        scalar
-        sse42 avx2 avx512bw avx512vbmi avx512vbmi2
+        sse42 avx2 avx512bw avx512vbmi2
         neon sve sve2
     )
     foreach(tier IN LISTS _simd_tiers)

@@ -1248,6 +1248,11 @@ ikafssnindex -version
 - Drogon (for ikafssnhttpd, optional)
 - libcurl (for HTTP client mode and remote retrieval, optional)
 
+### CPU requirements
+
+- **x86_64**: SSE4.2 minimum (Intel Nehalem 2008+, AMD Bulldozer 2011+). The runtime SIMD dispatcher additionally targets AVX2, AVX-512 BW, and AVX-512 VBMI2 when present. CPUs without SSE4.2 are rejected at startup with `exit(2)`.
+- **aarch64**: NEON (ASIMD) minimum. SVE / SVE2 are used when available.
+
 ### Installing Dependencies
 
 Install the required packages (excluding NCBI C++ Toolkit) with the following commands.

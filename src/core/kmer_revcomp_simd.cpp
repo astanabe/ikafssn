@@ -124,40 +124,6 @@ static void kmer_revcomp_batch_avx512bw_u32(const std::uint32_t* in,
     for (; i < n; ++i) out[i] = kmer_revcomp<std::uint32_t>(in[i], k);
 }
 
-__attribute__((target("avx512vbmi,avx512bw,avx512f,avx2")))
-static void kmer_revcomp_batch_avx512vbmi_u32(const std::uint32_t* in,
-                                              std::uint32_t* out,
-                                              std::size_t n, int k) noexcept {
-    // VBMI's vpermb does not save instructions over the BW shuffle here
-    // (a single vpshufb already covers the byte-reverse-per-dword pattern).
-    // Body matches BW; separate symbol for tier-effect benchmarking.
-    const int shift_out = 32 - 2 * k;
-    alignas(64) static const std::int8_t bswap_pattern[64] = {
-        3,2,1,0,  7,6,5,4,  11,10,9,8,  15,14,13,12,
-        3,2,1,0,  7,6,5,4,  11,10,9,8,  15,14,13,12,
-        3,2,1,0,  7,6,5,4,  11,10,9,8,  15,14,13,12,
-        3,2,1,0,  7,6,5,4,  11,10,9,8,  15,14,13,12,
-    };
-    const __m512i bswap = _mm512_load_si512(bswap_pattern);
-    const __m512i mask_0f = _mm512_set1_epi8(0x0F);
-    const __m512i mask_33 = _mm512_set1_epi8(0x33);
-    std::size_t i = 0;
-    for (; i + 16 <= n; i += 16) {
-        __m512i v = _mm512_loadu_si512(reinterpret_cast<const void*>(in + i));
-        v = _mm512_xor_si512(v, _mm512_set1_epi8(-1));
-        v = _mm512_shuffle_epi8(v, bswap);
-        __m512i lo = _mm512_and_si512(v, mask_0f);
-        __m512i hi = _mm512_and_si512(_mm512_srli_epi16(v, 4), mask_0f);
-        v = _mm512_or_si512(_mm512_slli_epi16(lo, 4), hi);
-        __m512i lo2 = _mm512_and_si512(v, mask_33);
-        __m512i hi2 = _mm512_and_si512(_mm512_srli_epi16(v, 2), mask_33);
-        v = _mm512_or_si512(_mm512_slli_epi16(lo2, 2), hi2);
-        v = _mm512_srli_epi32(v, shift_out);
-        _mm512_storeu_si512(reinterpret_cast<void*>(out + i), v);
-    }
-    for (; i < n; ++i) out[i] = kmer_revcomp<std::uint32_t>(in[i], k);
-}
-
 __attribute__((target("avx512vbmi2,avx512vbmi,avx512bw,avx512f,avx2")))
 static void kmer_revcomp_batch_avx512vbmi2_u32(const std::uint32_t* in,
                                                std::uint32_t* out,
@@ -277,14 +243,6 @@ static void kmer_revcomp_batch_avx512bw_u16(const std::uint16_t* in,
         _mm512_storeu_si512(reinterpret_cast<void*>(out + i), v);
     }
     for (; i < n; ++i) out[i] = kmer_revcomp<std::uint16_t>(in[i], k);
-}
-
-__attribute__((target("avx512vbmi,avx512bw,avx512f,avx2")))
-static void kmer_revcomp_batch_avx512vbmi_u16(const std::uint16_t* in,
-                                              std::uint16_t* out,
-                                              std::size_t n, int k) noexcept {
-    // Body matches BW; separate symbol for tier-effect measurement.
-    kmer_revcomp_batch_avx512bw_u16(in, out, n, k);
 }
 
 __attribute__((target("avx512vbmi2,avx512vbmi,avx512bw,avx512f,avx2")))
@@ -409,9 +367,6 @@ void kmer_revcomp_batch(const KmerInt* in, KmerInt* out, std::size_t n,
         if (cap >= SimdCap::AVX512VBMI2 && n >= 16) {
             kmer_revcomp_batch_avx512vbmi2_u32(in, out, n, k); return;
         }
-        if (cap >= SimdCap::AVX512VBMI && n >= 16) {
-            kmer_revcomp_batch_avx512vbmi_u32(in, out, n, k); return;
-        }
         if (cap >= SimdCap::AVX512BW && n >= 16) {
             kmer_revcomp_batch_avx512bw_u32(in, out, n, k); return;
         }
@@ -424,9 +379,6 @@ void kmer_revcomp_batch(const KmerInt* in, KmerInt* out, std::size_t n,
     } else if constexpr (std::is_same_v<KmerInt, std::uint16_t>) {
         if (cap >= SimdCap::AVX512VBMI2 && n >= 32) {
             kmer_revcomp_batch_avx512vbmi2_u16(in, out, n, k); return;
-        }
-        if (cap >= SimdCap::AVX512VBMI && n >= 32) {
-            kmer_revcomp_batch_avx512vbmi_u16(in, out, n, k); return;
         }
         if (cap >= SimdCap::AVX512BW && n >= 32) {
             kmer_revcomp_batch_avx512bw_u16(in, out, n, k); return;

@@ -11,12 +11,12 @@ static void test_init_no_logger() {
     reset_simd_dispatch_for_testing();
     init_simd_dispatch(nullptr);
     SimdCap cap = current_simd_cap();
-    // Must be one of the known enum values.
+    // Must be one of the known enum values (Phase 5f: VBMI tier removed).
     bool valid = false;
     for (SimdCap c : {SimdCap::Scalar, SimdCap::SSE42, SimdCap::AVX2,
-                      SimdCap::AVX512BW, SimdCap::AVX512VBMI,
-                      SimdCap::AVX512VBMI2, SimdCap::NEON, SimdCap::SVE,
-                      SimdCap::SVE2, SimdCap::SME, SimdCap::SME2}) {
+                      SimdCap::AVX512BW, SimdCap::AVX512VBMI2,
+                      SimdCap::NEON, SimdCap::SVE, SimdCap::SVE2,
+                      SimdCap::SME, SimdCap::SME2}) {
         if (cap == c) { valid = true; break; }
     }
     CHECK(valid);
@@ -25,9 +25,9 @@ static void test_init_no_logger() {
 static void test_simd_cap_name_complete() {
     // All known enum values must produce a name that is not "unknown".
     for (SimdCap c : {SimdCap::Scalar, SimdCap::SSE42, SimdCap::AVX2,
-                      SimdCap::AVX512BW, SimdCap::AVX512VBMI,
-                      SimdCap::AVX512VBMI2, SimdCap::NEON, SimdCap::SVE,
-                      SimdCap::SVE2, SimdCap::SME, SimdCap::SME2}) {
+                      SimdCap::AVX512BW, SimdCap::AVX512VBMI2,
+                      SimdCap::NEON, SimdCap::SVE, SimdCap::SVE2,
+                      SimdCap::SME, SimdCap::SME2}) {
         CHECK(simd_cap_name(c) != "unknown");
     }
 }
@@ -37,7 +37,9 @@ static void test_parse_force_simd_env_basic() {
     CHECK(parse_force_simd_env(nullptr).explicit_value == false);
     CHECK(parse_force_simd_env("").explicit_value == false);
 
-    // Recognized tokens (case + separator insensitive)
+    // Recognized tokens (case + separator insensitive). "scalar" is still
+    // recognised at the parser level even though init_simd_dispatch() will
+    // exit(2) when it ends up as the active tier (Phase 5f Scalar reject).
     CHECK(parse_force_simd_env("scalar").explicit_value);
     CHECK(parse_force_simd_env("scalar").cap == SimdCap::Scalar);
 
@@ -52,6 +54,12 @@ static void test_parse_force_simd_env_basic() {
 
     CHECK(parse_force_simd_env("avx512vbmi2").explicit_value);
     CHECK(parse_force_simd_env("avx512vbmi2").cap == SimdCap::AVX512VBMI2);
+
+    // Phase 5f: standalone VBMI tier is removed; "avx512vbmi" silent-demotes
+    // to AVX512BW so callers that hard-coded that string keep working.
+    CHECK(parse_force_simd_env("avx512vbmi").explicit_value);
+    CHECK(parse_force_simd_env("avx512vbmi").cap == SimdCap::AVX512BW);
+    CHECK(parse_force_simd_env("AVX-512-VBMI").cap == SimdCap::AVX512BW);
 
     CHECK(parse_force_simd_env("sve2").explicit_value);
     CHECK(parse_force_simd_env("sve2").cap == SimdCap::SVE2);
@@ -98,25 +106,38 @@ static void test_force_simd_cap_downgrade() {
 }
 
 static void test_reset_and_re_init() {
-    // Reset, set env, re-init, and verify that the env was honored.
-    reset_simd_dispatch_for_testing();
-    setenv("IKAFSSN_FORCE_SIMD", "scalar", 1);
-    init_simd_dispatch(nullptr);
-    CHECK(current_simd_cap() == SimdCap::Scalar);
+    // Reset, force the lowest supported tier (SSE4.2 on x86, NEON on arm),
+    // and verify that the env was honored. We can no longer use "scalar"
+    // here because Phase 5f rejects Scalar at startup with exit(2) —
+    // running that path inside the unit binary would terminate the process.
+#if defined(__x86_64__) || defined(__i386__)
+    const char* low_tier = "sse42";
+    SimdCap     low_cap  = SimdCap::SSE42;
+#elif defined(__aarch64__)
+    const char* low_tier = "neon";
+    SimdCap     low_cap  = SimdCap::NEON;
+#else
+    const char* low_tier = nullptr;
+    SimdCap     low_cap  = SimdCap::Scalar;
+#endif
+    if (low_tier) {
+        reset_simd_dispatch_for_testing();
+        setenv("IKAFSSN_FORCE_SIMD", low_tier, 1);
+        init_simd_dispatch(nullptr);
+        CHECK(current_simd_cap() == low_cap);
 
-    // Detected (auto) value should still reflect the actual CPU.
-    SimdCap auto_cap = auto_detected_simd_cap();
-    // It can be any tier (>= Scalar). We just ensure it is a valid value.
-    bool valid = false;
-    for (SimdCap c : {SimdCap::Scalar, SimdCap::SSE42, SimdCap::AVX2,
-                      SimdCap::AVX512BW, SimdCap::AVX512VBMI,
-                      SimdCap::AVX512VBMI2, SimdCap::NEON, SimdCap::SVE,
-                      SimdCap::SVE2}) {
-        if (auto_cap == c) { valid = true; break; }
+        // Detected (auto) value should still reflect the actual CPU.
+        SimdCap auto_cap = auto_detected_simd_cap();
+        bool valid = false;
+        for (SimdCap c : {SimdCap::Scalar, SimdCap::SSE42, SimdCap::AVX2,
+                          SimdCap::AVX512BW, SimdCap::AVX512VBMI2,
+                          SimdCap::NEON, SimdCap::SVE, SimdCap::SVE2}) {
+            if (auto_cap == c) { valid = true; break; }
+        }
+        CHECK(valid);
+
+        unsetenv("IKAFSSN_FORCE_SIMD");
     }
-    CHECK(valid);
-
-    unsetenv("IKAFSSN_FORCE_SIMD");
 
     // Reset again and confirm default detection works without env override.
     reset_simd_dispatch_for_testing();
