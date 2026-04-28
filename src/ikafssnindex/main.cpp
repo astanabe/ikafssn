@@ -654,7 +654,7 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
-            std::fprintf(fp, "FORMAT_VERSION 4\n");
+            std::fprintf(fp, "FORMAT_VERSION 5\n");
             std::fprintf(fp, "TITLE %s\n", db_base.c_str());
             std::fprintf(fp, "DBLIST");
             for (const auto& bn : vol_basenames) {

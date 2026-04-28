@@ -5,29 +5,24 @@
 
 namespace ikafssn {
 
-// .kix v4: SIMD-FastPFOR* + Simple-8b posting format (Phase 5b).
-inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '4'};
+// .kix v5 (Phase 5g-1): FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
+// per-posting payload (PForDelta with exception VByte).
+inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '5'};
 
 // Flag bits
 inline constexpr uint32_t KIX_FLAG_SEQ_ID_WIDTH = 0x01; // 0=uint32, 1=uint64 (future)
 inline constexpr uint32_t KIX_FLAG_HAS_KSX      = 0x02; // 0=no .ksx, 1=has .ksx
 inline constexpr uint32_t KIX_FLAG_OFFSET32     = 0x04; // 0=uint64 offsets, 1=uint32 offsets
 
-// Codec id (codec_id field in extended v4 header).
-//   1 — Phase 5b: FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
-//       (no longer accepted; layout differs from current encoder).
-//   2 — Phase 5e: custom block codec — delta stream, 128-element bitpacked
-//       blocks with adaptive bit-width, varint tail.  This is the only
-//       codec readers currently accept.
-inline constexpr uint8_t  KIX_CODEC_PFOR_S8B    = 1; // legacy, kept for telemetry
-inline constexpr uint8_t  KIX_CODEC_PFOR_FOR    = 2; // current
-// Tail codec id (tail_codec field).
-inline constexpr uint8_t  KIX_TAIL_VBYTE        = 1; // LEB128 varint stream
+// Codec selection moved to format_version (v4 = Phase 5e custom block,
+// v5 = Phase 5g-1 SIMDFastPFor<4>+VByte). The legacy codec_id field in
+// the header is kept as a reserved byte for header-size stability but
+// readers no longer dispatch on it.
 
 #pragma pack(push, 1)
 struct KixHeader {
-    char     magic[4];                   // 0x00: "KIX4"
-    uint16_t format_version;             // 0x04: 4
+    char     magic[4];                   // 0x00: "KIX5"
+    uint16_t format_version;             // 0x04: 5
     uint8_t  k;                          // 0x06
     uint8_t  kmer_type;                  // 0x07: 0=uint16, 1=uint32
     uint32_t num_sequences;              // 0x08
@@ -39,17 +34,22 @@ struct KixHeader {
     uint8_t  t;                          // 0x1E: template length (0=contiguous)
     uint8_t  template_type;              // 0x1F: TemplateType enum (0=contiguous)
     char     db[32];                     // 0x20
-    // ---- v4 codec extension (32 B, total header size = 96 B) ----
-    uint8_t  codec_id;                   // 0x40: KIX_CODEC_PFOR_S8B
-    uint8_t  codec_version;              // 0x41: 1
-    uint16_t block_size;                 // 0x42: 128
-    uint8_t  tail_codec;                 // 0x44: KIX_TAIL_VBYTE
+    // ---- 32 B codec-extension area (total header size = 96 B) ----
+    // codec_id / codec_version / block_size / tail_codec are reserved
+    // since Phase 5g-1: codec selection now follows format_version. They
+    // are kept as struct fields for header-byte stability and so that
+    // legacy v4 readers built against this header give a clean
+    // format_version mismatch error rather than misparsing the codec area.
+    uint8_t  codec_id;                   // 0x40: 0 (reserved)
+    uint8_t  codec_version;              // 0x41: 0 (reserved)
+    uint16_t block_size;                 // 0x42: 0 (reserved)
+    uint8_t  tail_codec;                 // 0x44: 0 (reserved)
     uint8_t  reserved0[3];               // 0x45
     uint32_t exception_codec_flags;      // 0x48: future use
     uint8_t  reserved1[20];              // 0x4C: pads header to a 96 B total
 };
 #pragma pack(pop)
 
-static_assert(sizeof(KixHeader) == 96, "KixHeader v4 must be 96 bytes");
+static_assert(sizeof(KixHeader) == 96, "KixHeader v5 must be 96 bytes");
 
 } // namespace ikafssn

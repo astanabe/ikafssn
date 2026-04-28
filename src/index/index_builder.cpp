@@ -449,11 +449,12 @@ bool build_index(BlastDbReader& db,
         std::memcpy(kix_hdr.db, db_name.c_str(), name_len);
         kix_hdr.t = config.t;
         kix_hdr.template_type = config.template_type;
-        // v4 codec extension fields
-        kix_hdr.codec_id              = KIX_CODEC_PFOR_FOR;
-        kix_hdr.codec_version         = 1;
-        kix_hdr.block_size            = pfd::kPfdBlockSize;
-        kix_hdr.tail_codec            = KIX_TAIL_VBYTE;
+        // Reserved codec-extension area (zero in v5; codec follows
+        // format_version since Phase 5g-1).
+        kix_hdr.codec_id              = 0;
+        kix_hdr.codec_version         = 0;
+        kix_hdr.block_size            = 0;
+        kix_hdr.tail_codec            = 0;
         kix_hdr.exception_codec_flags = 0;
         std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, wr);
 
@@ -494,11 +495,11 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.template_type = config.template_type;
         kpx_hdr.total_postings = total_postings;
         kpx_hdr.offset_type = kpx_offset32 ? 0 : 1;
-        // v4 codec extension fields
-        kpx_hdr.codec_id      = KPX_CODEC_PFOR_FOR;
-        kpx_hdr.codec_version = 1;
-        kpx_hdr.block_size    = pfd::kPfdBlockSize;
-        kpx_hdr.tail_codec    = KPX_TAIL_VBYTE;
+        // Reserved codec-extension area (zero in v5).
+        kpx_hdr.codec_id      = 0;
+        kpx_hdr.codec_version = 0;
+        kpx_hdr.block_size    = 0;
+        kpx_hdr.tail_codec    = 0;
         std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, wr);
 
         if (kpx_offset32) {

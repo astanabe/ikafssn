@@ -29,18 +29,11 @@ bool KixReader::open(const std::string& path) {
     }
 
     if (header_->format_version != KIX_FORMAT_VERSION) {
-        std::fprintf(stderr, "KixReader: unsupported format version %u\n",
-                     header_->format_version);
-        close();
-        return false;
-    }
-
-    if (header_->codec_id != KIX_CODEC_PFOR_FOR) {
         std::fprintf(stderr,
-            "KixReader: unsupported codec_id=%u (expected %u, FOR-within-block).\n"
-            "           Indexes built before Phase 5e use codec_id=1 and must "
-            "be rebuilt with the current ikafssnindex.\n",
-            header_->codec_id, KIX_CODEC_PFOR_FOR);
+            "KixReader: unsupported format version %u (expected %u).\n"
+            "           Indexes built before Phase 5g-1 use format_version<=4 "
+            "and must be rebuilt with the current ikafssnindex.\n",
+            header_->format_version, KIX_FORMAT_VERSION);
         close();
         return false;
     }

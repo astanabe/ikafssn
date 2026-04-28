@@ -1,23 +1,30 @@
 #pragma once
 
-// Phase 5b — SIMD-FastPFOR* + Simple-8b/VByte posting codec (.kix v4 / .kpx v4).
+// Phase 5g-1 — split codec for .kix v5 and .kpx v5.
 //
-// Posting layout (per k-mer, on disk):
+//   .kix v5: FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
+//            (PForDelta + VByte tail).  Restored from Phase 5b after the
+//            Phase 5e custom block codec was found to mishandle the
+//            outlier-in-block case that PForDelta's exception stream is
+//            specifically designed for.  Posting layout on disk:
+//              [u32 count]                  — number of seq_id deltas
+//              [u32 payload_words]          — payload size in u32 words
+//              [u32 payload[payload_words]] — codec output, byte-unaligned
+//                                             on the wire (use memcpy)
 //
-//   [u32 count]              — number of postings encoded
-//   [u32 payload_words]      — number of uint32_t words in the encoded payload
-//   [uint32 payload[N]]      — encoded payload (FastPFor CompositeCodec output)
+//   .kpx v5: custom FOR-within-block codec (Phase 5e), unchanged in v5.
+//            Each 128-element block subtracts its min before bitpacking,
+//            making the per-block bit-width depend on within-sequence
+//            spread rather than absolute position magnitude.  Posting
+//            layout on disk:
+//              [u32 count]
+//              repeated count/128 times:
+//                [u8 b][u32 min][128*b/8 bytes bitpacked (value-min)]
+//              [u8 tail_count][u32 tail_min][varint stream of tail-min]
 //
-// For .kix the input array is the **delta-encoded** seq_id stream (first
-// element absolute, then differences).  For .kpx the input array is the
-// **absolute** position stream — FastPFor's per-block bit-width adapts to
-// the position range so dense per-sequence clusters compress efficiently
-// without the explicit within-seq delta reset that v3 needed.
-//
-// The on-disk byte stream is unaligned wrt 4-byte boundaries; readers use
-// std::memcpy to materialise the count + payload-word-count + payload
-// pointer.  Decoded data is materialised lazily into the StreamCtx buffer
-// when open_stream_*() is called.
+// Both reader entry points materialise the entire decoded posting into
+// StreamCtx::decoded at open_stream_*() time; refill() is a no-op kept
+// for API symmetry with potential future per-block streaming codecs.
 
 #include <cstdint>
 #include <cstddef>

@@ -23,13 +23,17 @@ inline constexpr int MIN_K = 5;
 inline constexpr int MAX_K = 16;
 inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t=0 only; for spaced seeds use kmer_type_for(k, t))
 
-// Format versions — all index files share a single major version (4) as of
-// Phase 5c so users only have to track one number, even though .ksx and
-// .khx data layouts are unchanged from v3.
-inline constexpr uint16_t KIX_FORMAT_VERSION = 4;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 4;
-inline constexpr uint16_t KSX_FORMAT_VERSION = 4;
-inline constexpr uint16_t KHX_FORMAT_VERSION = 4;
+// Format versions — all index files share a single major version so users
+// only have to track one number. Phase 5c established this convention at
+// v4. Phase 5g-1 bumps to v5: .kix codec is replaced by FastPFor's
+// CompositeCodec<SIMDFastPFor<4>, VariableByte> (PForDelta + VByte tail);
+// .kpx data layout is unchanged from v4 but .kpx magic still bumps to KPX5
+// to keep the version aligned. .ksx / .khx / .kvx data layouts are
+// unchanged but their format_version field bumps too.
+inline constexpr uint16_t KIX_FORMAT_VERSION = 5;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 5;
+inline constexpr uint16_t KSX_FORMAT_VERSION = 5;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 5;
 
 // Direct-address table size for k-mer value k: 4^k
 // Max supported: 2 * 4^12 = 33,554,432 (fits uint32_t).

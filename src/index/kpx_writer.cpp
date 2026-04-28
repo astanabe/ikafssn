@@ -49,11 +49,12 @@ bool KpxWriter::write(const std::string& path) const {
     hdr.total_postings = total_postings_;
     hdr.offset_type = use_offset32 ? 0 : 1;
 
-    // v4 codec fields
-    hdr.codec_id      = KPX_CODEC_PFOR_FOR;
-    hdr.codec_version = 1;
-    hdr.block_size    = pfd::kPfdBlockSize;
-    hdr.tail_codec    = KPX_TAIL_VBYTE;
+    // Reserved codec-extension area (codec selection follows
+    // format_version since Phase 5g-1).
+    hdr.codec_id      = 0;
+    hdr.codec_version = 0;
+    hdr.block_size    = 0;
+    hdr.tail_codec    = 0;
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
