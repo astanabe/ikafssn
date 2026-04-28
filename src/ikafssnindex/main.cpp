@@ -194,6 +194,11 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         > 1: absolute count threshold\n"
         "                         0: not allowed (error)\n"
         "                         Counts are aggregated across all volumes before filtering\n"
+        "  -freq_threshold_part <int>\n"
+        "                         .kpx v6 per-(kmer, seq_id) partition threshold (default: 8)\n"
+        "                         A (k-mer, seq_id) cluster with occurrence count > threshold\n"
+        "                         is split into its own partition group; lower-multiplicity\n"
+        "                         clusters merge into a shared short bucket\n"
         "  -highfreq_filter_threads <int>\n"
         "                         Threads for cross-volume filtering (default: min(8, threads))\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)\n"
@@ -342,6 +347,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    int freq_threshold_part = cli.get_int("-freq_threshold_part", 8);
+    if (freq_threshold_part < 0) {
+        std::fprintf(stderr, "Error: -freq_threshold_part must be >= 0\n");
+        return 1;
+    }
+
     int cli_t = cli.get_int("-t", 0);
     if (cli_t != 0 && cli_t != 13 && cli_t != 15 && cli_t != 16 && cli_t != 18 && cli_t != 21) {
         std::fprintf(stderr, "Error: -t must be 0, 13, 15, 16, 18, or 21\n");
@@ -407,6 +418,7 @@ int main(int argc, char* argv[]) {
     config.max_degen_expand = max_degen_expand;
     config.t = spaced_t;
     config.template_type = static_cast<uint8_t>(spaced_type);
+    config.freq_threshold_part = static_cast<uint32_t>(freq_threshold_part);
     // When max_freq_build is active (not 1.0 = disabled), keep .tmp files for cross-volume filtering
     bool freq_filter_active = (max_freq_build != 1.0);
     config.keep_tmp = freq_filter_active;
@@ -654,7 +666,7 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
-            std::fprintf(fp, "FORMAT_VERSION 5\n");
+            std::fprintf(fp, "FORMAT_VERSION 6\n");
             std::fprintf(fp, "TITLE %s\n", db_base.c_str());
             std::fprintf(fp, "DBLIST");
             for (const auto& bn : vol_basenames) {

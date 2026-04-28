@@ -5,24 +5,25 @@
 
 namespace ikafssn {
 
-// .kix v5 (Phase 5g-1): FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
-// per-posting payload (PForDelta with exception VByte).
-inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '5'};
+// .kix v6 (Phase 5g-2): FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
+// per-posting payload (PForDelta with exception VByte).  Wire format is
+// unchanged from v5; the magic / format_version bump alongside the .kpx
+// v6 partition+short layout for family-wide version alignment.
+inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '6'};
 
 // Flag bits
 inline constexpr uint32_t KIX_FLAG_SEQ_ID_WIDTH = 0x01; // 0=uint32, 1=uint64 (future)
 inline constexpr uint32_t KIX_FLAG_HAS_KSX      = 0x02; // 0=no .ksx, 1=has .ksx
 inline constexpr uint32_t KIX_FLAG_OFFSET32     = 0x04; // 0=uint64 offsets, 1=uint32 offsets
 
-// Codec selection moved to format_version (v4 = Phase 5e custom block,
-// v5 = Phase 5g-1 SIMDFastPFor<4>+VByte). The legacy codec_id field in
-// the header is kept as a reserved byte for header-size stability but
-// readers no longer dispatch on it.
+// Codec selection follows format_version since Phase 5g-1.  The legacy
+// codec_id field in the header is kept as a reserved byte for header-size
+// stability but readers do not dispatch on it.
 
 #pragma pack(push, 1)
 struct KixHeader {
-    char     magic[4];                   // 0x00: "KIX5"
-    uint16_t format_version;             // 0x04: 5
+    char     magic[4];                   // 0x00: "KIX6"
+    uint16_t format_version;             // 0x04: 6
     uint8_t  k;                          // 0x06
     uint8_t  kmer_type;                  // 0x07: 0=uint16, 1=uint32
     uint32_t num_sequences;              // 0x08
@@ -38,8 +39,8 @@ struct KixHeader {
     // codec_id / codec_version / block_size / tail_codec are reserved
     // since Phase 5g-1: codec selection now follows format_version. They
     // are kept as struct fields for header-byte stability and so that
-    // legacy v4 readers built against this header give a clean
-    // format_version mismatch error rather than misparsing the codec area.
+    // readers built against an older header give a clean format_version
+    // mismatch error rather than misparsing the codec area.
     uint8_t  codec_id;                   // 0x40: 0 (reserved)
     uint8_t  codec_version;              // 0x41: 0 (reserved)
     uint16_t block_size;                 // 0x42: 0 (reserved)
@@ -50,6 +51,6 @@ struct KixHeader {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(KixHeader) == 96, "KixHeader v5 must be 96 bytes");
+static_assert(sizeof(KixHeader) == 96, "KixHeader v6 must be 96 bytes");
 
 } // namespace ikafssn

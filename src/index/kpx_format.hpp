@@ -4,20 +4,23 @@
 
 namespace ikafssn {
 
-// .kpx v5 (Phase 5g-1): position posting format with custom FOR-within-block.
-// Stores absolute positions; each 128-element block subtracts its min before
-// bitpacking. Data layout is unchanged from v4; magic and format_version
-// bump with the rest of the index family for alignment (Phase 5c policy).
-inline constexpr char KPX_MAGIC[4] = {'K', 'P', 'X', '5'};
+// .kpx v6 (Phase 5g-2): per-(kmer, seq_id) partitioned position posting.
+// Each (k-mer, seq_id) cluster whose occurrence count exceeds the build-
+// time `freq_threshold_part` is split out into its own partition group;
+// the rest of the occurrences for that k-mer are merged into a single
+// short bucket.  Both partition groups and the short bucket use the
+// Phase 5e FOR-within-block stream layout.  See src/index/pfd_codec.hpp
+// for the byte-level wire format and lock-step merge protocol.
+inline constexpr char KPX_MAGIC[4] = {'K', 'P', 'X', '6'};
 
-// Codec selection moved to format_version. The header still carries an
-// 8-bit codec_id field for layout stability but readers no longer dispatch
-// on it.
+// Codec selection follows format_version (since Phase 5g-1). The header
+// still carries an 8-bit codec_id field for layout stability but readers
+// no longer dispatch on it.
 
 #pragma pack(push, 1)
 struct KpxHeader {
-    char     magic[4];                   // 0x00: "KPX5"
-    uint16_t format_version;             // 0x04: 5
+    char     magic[4];                   // 0x00: "KPX6"
+    uint16_t format_version;             // 0x04: 6
     uint8_t  k;                          // 0x06
     uint8_t  t;                          // 0x07: template length (0=contiguous)
     uint64_t total_postings;             // 0x08
@@ -36,6 +39,6 @@ struct KpxHeader {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(KpxHeader) == 64, "KpxHeader v5 must be 64 bytes");
+static_assert(sizeof(KpxHeader) == 64, "KpxHeader v6 must be 64 bytes");
 
 } // namespace ikafssn

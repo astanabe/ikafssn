@@ -79,6 +79,13 @@ Options:
                           > 1: absolute count threshold
                           0: not allowed (error)
                           Counts are aggregated across all volumes before filtering
+  -freq_threshold_part <int>
+                          .kpx v6 per-(kmer, seq_id) partition threshold (default: 8)
+                          A (k-mer, seq_id) cluster with occurrence count > threshold
+                          gets its own partition group; lower-multiplicity clusters
+                          merge into a shared short bucket (improves chromosome-class
+                          subject compression by decoupling per-block bit-width from
+                          absolute position magnitude)
   -highfreq_filter_threads <int>
                           Threads for cross-volume high-frequency filtering
                           (default: min(8, threads))
@@ -1154,12 +1161,12 @@ Examples:
 - Spaced seed with k=12, t=21, coding: `nt.00.12mer.21mer.cod.kix`
 - Manifest: `nt.11mer.16mer.cod.kvx`
 
-**Index format version:** The current index format is version 3 for `.kix` and `.kpx` files. Key changes from version 2:
+**Index format version:** The current index format is version 6 for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`). Key changes from earlier versions:
 
-- **`.kix` v3:** The counts table has been removed. The offsets array now has `table_size + 1` entries (sentinel at end), allowing posting byte lengths to be computed as `offsets[kmer+1] - offsets[kmer]`. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, offsets are stored as `uint32_t` instead of `uint64_t` (applicable when posting data < 4 GiB), reducing the dictionary size by up to 50%.
-- **`.kpx` v3:** The header `offset_type` field (byte 0x11) indicates offset width: 0 = `uint32_t`, 1 = `uint64_t`. When position posting data < 4 GiB, `uint32_t` offsets are used, halving the dictionary size.
+- **`.kix` v6 (Phase 5g-1, wire-compatible with v5):** Per-posting payload is FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the `[abs_first, d1, d2, ...]` seq_id stream. The leading `[u32 count][u32 payload_words]` per-posting header makes `count` an O(1) read. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, offsets are stored as `uint32_t` instead of `uint64_t` (applicable when posting data < 4 GiB).
+- **`.kpx` v6 (Phase 5g-2):** Per-(kmer, seq_id) partitioned layout. Each (k-mer, seq_id) cluster whose occurrence count exceeds the build-time `-freq_threshold_part` (default 8) becomes its own partition group; the rest of the occurrences merge into a shared short bucket. Both partition groups and the short bucket use the FOR-within-block stream from Phase 5e (per-128-element block stores its min, then bitpacks the spread). The decoder takes the .kix-decoded seq_id stream as input and walks lock-step against it. The header `offset_type` field (byte 0x11) indicates offset width: 0 = `uint32_t`, 1 = `uint64_t`.
 
-These v3 index files are not compatible with older versions of ikafssn. Rebuild indexes after upgrading.
+Indexes built before Phase 5g-2 (format_version <= 5) are rejected at open with a clear "rebuild your index" message. Rebuild indexes after upgrading.
 
 ## Installation
 

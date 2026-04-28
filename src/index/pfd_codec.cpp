@@ -22,14 +22,18 @@
 namespace ikafssn::pfd {
 
 // Forward declarations of every per-tier API.
-#define DECLARE_TIER_NS(ns)                                                  \
-    namespace ns {                                                           \
-        std::size_t encode_posting_kix(const std::uint32_t*, std::uint32_t,  \
-                                       std::vector<std::uint8_t>&);          \
-        std::size_t encode_posting_kpx(const std::uint32_t*, std::uint32_t,  \
-                                       std::vector<std::uint8_t>&);          \
-        bool open_stream_kix(const std::uint8_t*, std::size_t, StreamCtx&);  \
-        bool open_stream_kpx(const std::uint8_t*, std::size_t, StreamCtx&);  \
+#define DECLARE_TIER_NS(ns)                                                   \
+    namespace ns {                                                            \
+        std::size_t encode_posting_kix(const std::uint32_t*, std::uint32_t,   \
+                                       std::vector<std::uint8_t>&);           \
+        std::size_t encode_posting_kpx(const std::uint32_t*,                  \
+                                       const std::uint32_t*,                  \
+                                       std::uint32_t, std::uint32_t,          \
+                                       std::vector<std::uint8_t>&);           \
+        bool open_stream_kix(const std::uint8_t*, std::size_t, StreamCtx&);   \
+        bool open_stream_kpx(const std::uint8_t*, std::size_t,                \
+                             const std::uint32_t*, std::size_t,               \
+                             StreamCtx&);                                     \
     }
 
 DECLARE_TIER_NS(ikafssn_pfd_sse42)
@@ -44,10 +48,13 @@ namespace {
 struct VTable {
     std::size_t (*encode_kix)(const std::uint32_t*, std::uint32_t,
                               std::vector<std::uint8_t>&);
-    std::size_t (*encode_kpx)(const std::uint32_t*, std::uint32_t,
+    std::size_t (*encode_kpx)(const std::uint32_t*, const std::uint32_t*,
+                              std::uint32_t, std::uint32_t,
                               std::vector<std::uint8_t>&);
     bool (*open_kix)(const std::uint8_t*, std::size_t, StreamCtx&);
-    bool (*open_kpx)(const std::uint8_t*, std::size_t, StreamCtx&);
+    bool (*open_kpx)(const std::uint8_t*, std::size_t,
+                     const std::uint32_t*, std::size_t,
+                     StreamCtx&);
     const char* tier_name;
 };
 
@@ -131,10 +138,13 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
     return active_vtable().encode_kix(delta_array, count, out);
 }
 
-std::size_t encode_posting_kpx(const std::uint32_t* abs_pos_array,
+std::size_t encode_posting_kpx(const std::uint32_t* sid_array,
+                               const std::uint32_t* abs_pos_array,
                                std::uint32_t count,
+                               std::uint32_t freq_threshold_part,
                                std::vector<std::uint8_t>& out) {
-    return active_vtable().encode_kpx(abs_pos_array, count, out);
+    return active_vtable().encode_kpx(sid_array, abs_pos_array, count,
+                                       freq_threshold_part, out);
 }
 
 bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
@@ -143,8 +153,9 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
 }
 
 bool open_stream_kpx(const std::uint8_t* posting, std::size_t bytes,
+                     const std::uint32_t* sid_stream, std::size_t n_sids,
                      StreamCtx& ctx) {
-    return active_vtable().open_kpx(posting, bytes, ctx);
+    return active_vtable().open_kpx(posting, bytes, sid_stream, n_sids, ctx);
 }
 
 } // namespace ikafssn::pfd

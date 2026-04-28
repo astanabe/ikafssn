@@ -8,8 +8,10 @@
 
 namespace ikafssn {
 
-KpxWriter::KpxWriter(int k)
-    : k_(k), table_size_(ikafssn::table_size(k)) {
+KpxWriter::KpxWriter(int k, uint32_t freq_threshold_part)
+    : k_(k),
+      table_size_(ikafssn::table_size(k)),
+      freq_threshold_part_(freq_threshold_part) {
     pos_offsets_.resize(table_size_, 0);
 }
 
@@ -20,15 +22,17 @@ void KpxWriter::add_posting_list(uint32_t kmer_value,
 
     if (entries.empty()) return;
 
-    // v4: encode absolute positions via FastPFor — sequence-boundary delta
-    // reset is no longer needed because absolute positions naturally fit
-    // FastPFor's per-block bit-width adaptation.
+    // v6: hand both seq_ids and absolute positions to the codec; entries
+    // are already grouped by seq_id (caller contract).
+    std::vector<uint32_t> sids(entries.size());
     std::vector<uint32_t> abs_positions(entries.size());
     for (size_t i = 0; i < entries.size(); i++) {
+        sids[i]          = entries[i].seq_id;
         abs_positions[i] = entries[i].pos;
     }
-    pfd::encode_posting_kpx(abs_positions.data(),
+    pfd::encode_posting_kpx(sids.data(), abs_positions.data(),
                             static_cast<uint32_t>(abs_positions.size()),
+                            freq_threshold_part_,
                             posting_data_);
 }
 

@@ -19,6 +19,12 @@ struct IndexBuilderConfig {
     int max_degen_expand = 4;           // max degenerate expansion per k-mer (0/1: disable)
     uint8_t t = 0;                      // template length (0=contiguous, 16/18/21=spaced)
     uint8_t template_type = 0;          // TemplateType enum value
+    // Phase 5g-2: per-(kmer, seq_id) partition threshold for .kpx v6.
+    // A (k-mer, seq_id) cluster with occurrence count > threshold is
+    // split into its own partition group; smaller clusters merge into a
+    // shared short bucket.  Default 8 mirrors -max_freq_build's `>`
+    // comparison semantics.
+    uint32_t freq_threshold_part = 8;
 };
 
 // Build .kix, .kpx, .ksx index files for a single BLAST DB volume.

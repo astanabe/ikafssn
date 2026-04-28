@@ -121,8 +121,13 @@ search_one_strand_preprocessed(
         if (off == end_off) continue;
 
         SeqIdDecoder id_decoder(id_data + off, id_data + end_off);
+        // Phase 5g-2: PosDecoder needs the .kix decoded seq_id array up
+        // front so its partition+short merge can walk lock-step.
+        id_decoder.ensure_decoded();
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
-                               pos_data + kpx.posting_data_size());
+                               pos_data + kpx.posting_data_size(),
+                               id_decoder.decoded_data(),
+                               id_decoder.decoded_count());
 
         while (id_decoder.has_more()) {
             int n_id = id_decoder.next_batch(sid_buf, was_new_buf, kStage2Batch);
@@ -241,8 +246,13 @@ static void collect_position_hits(
         if (off == end_off) continue;
 
         SeqIdDecoder id_decoder(id_data + off, id_data + end_off);
+        // Phase 5g-2: PosDecoder needs the .kix decoded seq_id array up
+        // front so its partition+short merge can walk lock-step.
+        id_decoder.ensure_decoded();
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
-                               pos_data + kpx.posting_data_size());
+                               pos_data + kpx.posting_data_size(),
+                               id_decoder.decoded_data(),
+                               id_decoder.decoded_count());
 
         while (id_decoder.has_more()) {
             int n_id = id_decoder.next_batch(sid_buf, was_new_buf, kStage2Batch);

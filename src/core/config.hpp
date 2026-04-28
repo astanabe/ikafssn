@@ -25,15 +25,17 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t
 
 // Format versions — all index files share a single major version so users
 // only have to track one number. Phase 5c established this convention at
-// v4. Phase 5g-1 bumps to v5: .kix codec is replaced by FastPFor's
-// CompositeCodec<SIMDFastPFor<4>, VariableByte> (PForDelta + VByte tail);
-// .kpx data layout is unchanged from v4 but .kpx magic still bumps to KPX5
-// to keep the version aligned. .ksx / .khx / .kvx data layouts are
-// unchanged but their format_version field bumps too.
-inline constexpr uint16_t KIX_FORMAT_VERSION = 5;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 5;
-inline constexpr uint16_t KSX_FORMAT_VERSION = 5;
-inline constexpr uint16_t KHX_FORMAT_VERSION = 5;
+// v4. Phase 5g-1 bumped to v5 (.kix codec replaced with FastPFor's
+// CompositeCodec<SIMDFastPFor<4>, VariableByte>). Phase 5g-2 bumps to v6:
+// .kpx now stores per-(kmer, seq_id) partition groups + a short bucket
+// (see src/index/pfd_codec.hpp); .kix data layout is unchanged from v5
+// but its magic / format_version bump along with the rest of the family
+// (Phase 5c policy).  .ksx / .khx / .kvx data layouts are unchanged but
+// their format_version field bumps too.
+inline constexpr uint16_t KIX_FORMAT_VERSION = 6;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 6;
+inline constexpr uint16_t KSX_FORMAT_VERSION = 6;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 6;
 
 // Direct-address table size for k-mer value k: 4^k
 // Max supported: 2 * 4^12 = 33,554,432 (fits uint32_t).

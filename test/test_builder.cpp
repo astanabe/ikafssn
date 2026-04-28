@@ -37,13 +37,17 @@ static std::vector<uint32_t> decode_id_postings(
     return result;
 }
 
-// Decode pos posting list via the v4 PosDecoder. v4 stores absolute
-// positions, so the seq_ids hint is no longer required.
+// Decode pos posting list via the v6 PosDecoder.  v6 .kpx splits
+// postings into per-(kmer, seq_id) partition groups + a short bucket;
+// the decoder needs the .kix-decoded seq_id stream up front so the merge
+// can walk lock-step with it.
 static std::vector<uint32_t> decode_pos_postings(
-    const uint8_t* data, uint64_t offset, uint64_t byte_len) {
+    const uint8_t* data, uint64_t offset, uint64_t byte_len,
+    const std::vector<uint32_t>& seq_ids) {
     std::vector<uint32_t> result;
     if (byte_len == 0) return result;
-    PosDecoder dec(data + offset, data + offset + byte_len);
+    PosDecoder dec(data + offset, data + offset + byte_len,
+                   seq_ids.data(), seq_ids.size());
     while (dec.has_more()) result.push_back(dec.next());
     return result;
 }
@@ -136,12 +140,13 @@ static void test_build_and_verify_kix_kpx() {
             CHECK(id < kix.num_sequences());
         }
 
-        // Decode positions and verify they are valid. v4 .kpx postings are
-        // self-describing (count + payload_words header) so any over-large
-        // byte budget is fine; pass the full posting_data() span.
+        // Decode positions and verify they are valid. v6 .kpx postings
+        // need the .kix-decoded seq_id stream (already loaded into `ids`
+        // above) so the partition+short merge can walk lock-step.
         std::vector<uint32_t> positions = decode_pos_postings(
             kpx.posting_data(), kpx.pos_offset(kmer),
-            kpx.posting_data_size() - kpx.pos_offset(kmer));
+            kpx.posting_data_size() - kpx.pos_offset(kmer),
+            ids);
         CHECK_EQ(positions.size(), static_cast<size_t>(cnt));
 
         kmers_checked++;
@@ -459,13 +464,14 @@ static void test_build_parallel_scan() {
         std::vector<uint32_t> ids = decode_id_postings(
             kix_st.posting_data(), kix_st.posting_offset(kmer),
             kix_st.posting_byte_length(kmer));
-        (void)ids;
         std::vector<uint32_t> pos_st = decode_pos_postings(
             kpx_st.posting_data(), kpx_st.pos_offset(kmer),
-            kpx_st.posting_data_size() - kpx_st.pos_offset(kmer));
+            kpx_st.posting_data_size() - kpx_st.pos_offset(kmer),
+            ids);
         std::vector<uint32_t> pos_mt = decode_pos_postings(
             kpx_mt.posting_data(), kpx_mt.pos_offset(kmer),
-            kpx_mt.posting_data_size() - kpx_mt.pos_offset(kmer));
+            kpx_mt.posting_data_size() - kpx_mt.pos_offset(kmer),
+            ids);
 
         CHECK_EQ(pos_st.size(), pos_mt.size());
         for (size_t j = 0; j < pos_st.size(); j++) {

@@ -7,21 +7,29 @@
 
 namespace ikafssn {
 
-// Streaming decoder for v4 .kpx postings.
+// Streaming decoder for v6 .kpx postings.
 //
-// .kpx v4 stores absolute positions (FastPFor-encoded), so unlike v3 the
-// decoder does not need any sequence-boundary signal from the
-// SeqIdDecoder.  Construction takes a byte range that fully contains the
-// k-mer's posting blob (the leading [u32 count][u32 payload_words] header
-// describes the actual blob length).
+// .kpx v6 stores absolute positions partitioned per-(kmer, seq_id) above
+// a build-time threshold, plus a shared short bucket for the rest (see
+// src/index/pfd_codec.hpp).  The decoder requires the caller to provide
+// the .kix-decoded seq_id array for the same k-mer so the merge can walk
+// lock-step against it; ctx_.decoded[i] then corresponds to sids[i].
+//
+// Construction takes a byte range that fully contains the k-mer's
+// posting blob (the leading [u32 total_count][u32 partition_count]
+// header — and the per-section trailers — describes the actual blob
+// length).
 class PosDecoder {
 public:
     static constexpr int kMaxBatch = 16;
 
     PosDecoder() = default;
-    PosDecoder(const uint8_t* data, const uint8_t* end)
+    PosDecoder(const uint8_t* data, const uint8_t* end,
+               const uint32_t* sids, std::size_t n_sids)
         : data_(data),
-          bytes_(end && end >= data ? static_cast<std::size_t>(end - data) : 0) {}
+          bytes_(end && end >= data ? static_cast<std::size_t>(end - data) : 0),
+          sids_(sids),
+          n_sids_(n_sids) {}
 
     bool has_more() {
         ensure_decoded();
@@ -52,12 +60,14 @@ private:
         if (decoded_) return;
         decoded_ = true;
         if (data_ && bytes_ > 0) {
-            pfd::open_stream_kpx(data_, bytes_, ctx_);
+            pfd::open_stream_kpx(data_, bytes_, sids_, n_sids_, ctx_);
         }
     }
 
     const uint8_t* data_ = nullptr;
     std::size_t bytes_ = 0;
+    const uint32_t* sids_ = nullptr;
+    std::size_t n_sids_ = 0;
     pfd::StreamCtx ctx_;
     bool decoded_ = false;
 };

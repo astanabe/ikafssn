@@ -4,6 +4,9 @@
 
 namespace ikafssn {
 
+// .ksx v6 (Phase 5g-2): data layout is unchanged from v3; the
+// format_version field bumps along with the rest of the index family
+// for alignment (Phase 5c policy).  Magic stays "KMSX".
 inline constexpr char KSX_MAGIC[4] = {'K', 'M', 'S', 'X'};
 
 #pragma pack(push, 1)

@@ -252,8 +252,9 @@ bool build_index(BlastDbReader& db,
     uint64_t reserve_entries = config.memory_limit / parallel_sort_entry_overhead();
 
     // Process each partition (sequentially to respect memory constraints)
-    // Buffers reused per k-mer for delta/abs encoding into the v4 PFor codec.
+    // Buffers reused per k-mer for delta/abs encoding into the v6 PFor codec.
     std::vector<uint32_t> seq_delta_buf;  seq_delta_buf.reserve(64 * 1024);
+    std::vector<uint32_t> sid_buf;        sid_buf.reserve(64 * 1024);
     std::vector<uint32_t> abs_pos_buf;    abs_pos_buf.reserve(64 * 1024);
     std::vector<uint8_t>  pfd_out_buf;    pfd_out_buf.reserve(256 * 1024);
 
@@ -372,13 +373,20 @@ bool build_index(BlastDbReader& db,
             kix_data_pos += pfd_out_buf.size();
 
             // .kpx: encode absolute positions via PFor (skip if mode 1).
+            // v6 splits per-(kmer, seq_id) clusters > freq_threshold_part
+            // into partition groups, so we hand both sids and positions to
+            // the codec.
             if (!config.skip_kpx) {
+                sid_buf.resize(cnt);
                 abs_pos_buf.resize(cnt);
                 for (size_t e = 0; e < cnt; e++) {
+                    sid_buf[e]    = buffer[i + e].seq_id;
                     abs_pos_buf[e] = buffer[i + e].pos;
                 }
                 pfd_out_buf.clear();
-                pfd::encode_posting_kpx(abs_pos_buf.data(), cnt, pfd_out_buf);
+                pfd::encode_posting_kpx(sid_buf.data(), abs_pos_buf.data(),
+                                        cnt, config.freq_threshold_part,
+                                        pfd_out_buf);
                 std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kpx_fp);
                 kpx_data_pos += pfd_out_buf.size();
             }

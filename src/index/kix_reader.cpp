@@ -31,7 +31,7 @@ bool KixReader::open(const std::string& path) {
     if (header_->format_version != KIX_FORMAT_VERSION) {
         std::fprintf(stderr,
             "KixReader: unsupported format version %u (expected %u).\n"
-            "           Indexes built before Phase 5g-1 use format_version<=4 "
+            "           Indexes built before Phase 5g-2 use format_version<=5 "
             "and must be rebuilt with the current ikafssnindex.\n",
             header_->format_version, KIX_FORMAT_VERSION);
         close();
