@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include "core/config.hpp"
+#include "core/degenerate_scan_simd.hpp"
 #include "core/spaced_seed.hpp"
 
 namespace ikafssn {
@@ -99,13 +100,10 @@ inline const bool* degenerate_base_table() {
     return table;
 }
 
-// Check if a sequence contains any IUPAC degenerate bases
+// Check if a sequence contains any IUPAC degenerate bases.
+// SIMD-accelerated via has_degenerate_base() (Phase 4a, M-2).
 inline bool contains_degenerate_base(const std::string& seq) {
-    const bool* tbl = degenerate_base_table();
-    for (char c : seq) {
-        if (tbl[static_cast<uint8_t>(c)]) return true;
-    }
-    return false;
+    return has_degenerate_base(seq.data(), seq.size());
 }
 
 // 256-element LUT: IUPAC degenerate char -> ncbi4na bitmask (0 = not degenerate).

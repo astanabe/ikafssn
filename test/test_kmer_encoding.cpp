@@ -234,6 +234,73 @@ static void test_contains_degenerate_base() {
     // Single degenerate character
     CHECK(contains_degenerate_base("N"));
     CHECK(contains_degenerate_base("R"));
+
+    // Phase 4a: SIMD chunk-boundary and randomized cases.
+    // (1) Long pure ACGT runs the chunk loop to completion (no hits).
+    {
+        std::string s(1024, 'A');
+        for (size_t i = 0; i < s.size(); i++) {
+            const char ab[4] = {'A', 'C', 'G', 'T'};
+            s[i] = ab[i & 3];
+        }
+        CHECK(!contains_degenerate_base(s));
+    }
+    // (2) Single degenerate base placed at chunk-boundary positions.
+    for (size_t pad : {size_t{31}, size_t{63}, size_t{127}}) {
+        std::string s(pad, 'A');
+        s.push_back('R');
+        CHECK(contains_degenerate_base(s));
+        std::string s2(pad, 'A');
+        s2.push_back('N');
+        CHECK(contains_degenerate_base(s2));
+        std::string s3(pad, 'A');
+        s3.push_back('Y');
+        CHECK(contains_degenerate_base(s3));
+    }
+    // (3) Lane-internal hit (17th char) — covers SSE4.2 second-chunk path.
+    {
+        std::string s(32, 'A');
+        s[16] = 'N';
+        CHECK(contains_degenerate_base(s));
+    }
+    // (4) All N: chunk 1 must report hit immediately.
+    {
+        std::string s(64, 'N');
+        CHECK(contains_degenerate_base(s));
+    }
+    // (5) Mixed-case lowercase at chunk end.
+    for (char c : {'r', 'k', 'b'}) {
+        std::string s(63, 'A');
+        s.push_back(c);
+        CHECK(contains_degenerate_base(s));
+    }
+    // (6) Empty input is false.
+    CHECK(!contains_degenerate_base(std::string{}));
+    // (7) Randomized bit-exact comparison vs scalar reference, all 256 byte
+    //     values exercised, lengths 16..2048, hit position varied.
+    {
+        std::mt19937 rng(0xC0FFEEu);
+        const bool* tbl = degenerate_base_table();
+        for (int trial = 0; trial < 200; trial++) {
+            size_t len = 16 + (rng() % (2048 - 16 + 1));
+            std::string s(len, 'A');
+            // Fill with a mix of ACGT and the occasional arbitrary byte.
+            for (size_t i = 0; i < len; i++) {
+                uint32_t r = rng();
+                if ((r & 0xFF) < 240) {
+                    const char ab[4] = {'A', 'C', 'G', 'T'};
+                    s[i] = ab[(r >> 8) & 3];
+                } else {
+                    s[i] = static_cast<char>(rng() & 0xFF);
+                }
+            }
+            bool expected = false;
+            for (char c : s) {
+                if (tbl[static_cast<uint8_t>(c)]) { expected = true; break; }
+            }
+            CHECK_EQ(contains_degenerate_base(s), expected);
+        }
+    }
 }
 
 static void test_degenerate_ncbi4na() {

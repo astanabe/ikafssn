@@ -44,3 +44,11 @@ target_include_directories(bench_kmer_revcomp PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
 
+# Phase 4a — degenerate-base scan SIMD
+add_executable(bench_degenerate_scan bench_degenerate_scan.cpp)
+target_link_libraries(bench_degenerate_scan PRIVATE
+    ikafssn_util benchmark::benchmark)
+target_include_directories(bench_degenerate_scan PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}")
+
