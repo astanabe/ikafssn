@@ -15,9 +15,18 @@
 #endif
 
 #if defined(__aarch64__)
-  #include <sys/auxv.h>
-  #include <asm/hwcap.h>
   #define IKAFSSN_ARCH_ARM 1
+  #if defined(__linux__)
+    // Linux exposes per-feature bits via the ELF auxiliary vector.
+    #include <sys/auxv.h>
+    #include <asm/hwcap.h>
+    #define IKAFSSN_ARCH_ARM_LINUX 1
+  #endif
+  // Other aarch64 OSes (Darwin / BSD) take the NEON-baseline path below.
+  // Darwin specifically: Apple Silicon (M1+) is ARMv8.0+ with NEON/ASIMD
+  // always present; SVE/SVE2/SME/SME2 are not exposed by any shipping Apple
+  // chip as of macOS 26. <sys/auxv.h> and <asm/hwcap.h> do not exist on
+  // Darwin, so we cannot use the Linux path even at compile time.
 #endif
 
 #ifndef IKAFSSN_ENABLE_SIMD
@@ -165,13 +174,16 @@ void do_init_once(Logger* logger) noexcept {
     }
 #elif IKAFSSN_ARCH_ARM
     if (!build_disabled) {
-        unsigned long hwcap  = getauxval(AT_HWCAP);
-        unsigned long hwcap2 = getauxval(AT_HWCAP2);
-        bool has_neon = (hwcap & HWCAP_ASIMD) != 0;
-        bool has_sve  = (hwcap & HWCAP_SVE)   != 0;
+        bool has_neon = false;
+        bool has_sve  = false;
         bool has_sve2 = false;
         bool has_sme  = false;
         bool has_sme2 = false;
+    #if IKAFSSN_ARCH_ARM_LINUX
+        unsigned long hwcap  = getauxval(AT_HWCAP);
+        unsigned long hwcap2 = getauxval(AT_HWCAP2);
+        has_neon = (hwcap & HWCAP_ASIMD) != 0;
+        has_sve  = (hwcap & HWCAP_SVE)   != 0;
         #ifdef HWCAP2_SVE2
             has_sve2 = (hwcap2 & HWCAP2_SVE2) != 0;
         #endif
@@ -181,6 +193,15 @@ void do_init_once(Logger* logger) noexcept {
         #ifdef HWCAP2_SME2
             has_sme2 = (hwcap2 & HWCAP2_SME2) != 0;
         #endif
+    #else
+        // Darwin / BSD aarch64: NEON is guaranteed by the ARMv8.0 baseline
+        // (Apple Silicon M1+ etc.).  SVE / SVE2 / SME / SME2 are left false
+        // because (a) no shipping Apple chip exposes them, and (b) ikafssn's
+        // aarch64 build wires up a single NEON FastPFor tier object that
+        // already serves any higher tier at runtime — so reporting NEON here
+        // gives users the correct effective capability.
+        has_neon = true;
+    #endif
         if (has_sme2)      auto_cap = SimdCap::SME2;
         else if (has_sme)  auto_cap = SimdCap::SME;
         else if (has_sve2) auto_cap = SimdCap::SVE2;
