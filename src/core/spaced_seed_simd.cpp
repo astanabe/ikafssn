@@ -12,6 +12,11 @@
   #define IKAFSSN_SS_X86 1
 #endif
 
+#if defined(__aarch64__)
+  #include <arm_neon.h>
+  #define IKAFSSN_SS_ARM 1
+#endif
+
 namespace ikafssn {
 
 // ===========================================================================
@@ -218,6 +223,73 @@ static void extract_kmer_ct_batch_avx512vbmi2(const std::uint64_t* a,
 #endif // IKAFSSN_SS_X86
 
 // ===========================================================================
+// aarch64 NEON kernel.
+//
+// Same shape as the x86_64 SSE4.2 path: 2 u64 lanes per iteration in a Q
+// register. NEON shift-by-immediate intrinsics (vshrq_n_u64 / vshlq_n_u64)
+// require a compile-time constant, which is satisfied because each
+// Ext.runs[I].accum_shift / kmer_shift comes from a constexpr NTTP. The
+// shift count must additionally be in [1, 63]; an `if constexpr` guards
+// the zero-shift case (vshrq_n_u64 rejects 0, and a zero shift is a no-op).
+// SVE / SVE2 are not used here — Cortex-A72 has no SVE, and a SVE-native
+// extractor would be orthogonal hand-coded work; the NEON tier covers all
+// aarch64 CPUs from the ASIMD baseline upward at runtime.
+// ===========================================================================
+#if IKAFSSN_SS_ARM
+
+template <SpacedSeedExtractor Ext, std::size_t I>
+__attribute__((always_inline)) static inline
+uint64x2_t apply_runs_neon(uint64x2_t kmer, uint64x2_t accum) noexcept {
+    if constexpr (I < Ext.num_runs) {
+        constexpr int as = Ext.runs[I].accum_shift;
+        constexpr int ks = Ext.runs[I].kmer_shift;
+        constexpr std::uint64_t m =
+            (1ULL << Ext.runs[I].width_bits) - 1;
+        uint64x2_t shifted;
+        if constexpr (as == 0) {
+            shifted = accum;
+        } else {
+            shifted = vshrq_n_u64(accum, as);
+        }
+        uint64x2_t masked = vandq_u64(shifted, vdupq_n_u64(m));
+        uint64x2_t shl;
+        if constexpr (ks == 0) {
+            shl = masked;
+        } else {
+            shl = vshlq_n_u64(masked, ks);
+        }
+        kmer = vorrq_u64(kmer, shl);
+        return apply_runs_neon<Ext, I + 1>(kmer, accum);
+    } else {
+        return kmer;
+    }
+}
+
+template <SpacedSeedExtractor Ext, typename KmerInt>
+static void extract_kmer_ct_batch_neon(const std::uint64_t* a, std::size_t n,
+                                       KmerInt* out) noexcept {
+    std::size_t i = 0;
+    for (; i + 2 <= n; i += 2) {
+        uint64x2_t v = vld1q_u64(a + i);
+        uint64x2_t kmer = apply_runs_neon<Ext, 0>(vdupq_n_u64(0), v);
+        if constexpr (sizeof(KmerInt) == 4) {
+            // u64x2 -> u32x2 (truncate low 32 bits of each lane).
+            uint32x2_t p = vmovn_u64(kmer);
+            vst1_u32(reinterpret_cast<std::uint32_t*>(out + i), p);
+        } else {
+            // u16: scalar narrow (only 2 lanes).
+            std::uint64_t buf[2];
+            vst1q_u64(buf, kmer);
+            out[i + 0] = static_cast<std::uint16_t>(buf[0]);
+            out[i + 1] = static_cast<std::uint16_t>(buf[1]);
+        }
+    }
+    for (; i < n; ++i) out[i] = extract_kmer_ct<Ext, KmerInt>(a[i]);
+}
+
+#endif // IKAFSSN_SS_ARM
+
+// ===========================================================================
 // Per-Ext dispatcher: extract_kmer_ct_batch<Ext, KmerInt>.
 //
 // 24 explicit specializations are emitted via the X-macro below. Each
@@ -275,6 +347,20 @@ void extract_kmer_ct_batch<EXT_VAL, KmerT>(const std::uint64_t* a,              
     }                                                                           \
     if (cap >= SimdCap::SSE42 && n >= 2) {                                      \
         extract_kmer_ct_batch_sse42<EXT_VAL, KmerT>(a, n, out);                 \
+        return;                                                                 \
+    }                                                                           \
+    extract_kmer_ct_batch_scalar<EXT_VAL, KmerT>(a, n, out);                    \
+}
+#elif IKAFSSN_SS_ARM
+#define IKAFSSN_DEFINE_SEED_DISPATCHER(EXT_VAL, KmerT)                         \
+template <>                                                                     \
+void extract_kmer_ct_batch<EXT_VAL, KmerT>(const std::uint64_t* a,              \
+                                            std::size_t n,                      \
+                                            KmerT* out) noexcept {              \
+    if (n == 0) return;                                                         \
+    SimdCap cap = current_simd_cap();                                           \
+    if (cap >= SimdCap::NEON && n >= 2) {                                       \
+        extract_kmer_ct_batch_neon<EXT_VAL, KmerT>(a, n, out);                  \
         return;                                                                 \
     }                                                                           \
     extract_kmer_ct_batch_scalar<EXT_VAL, KmerT>(a, n, out);                    \
