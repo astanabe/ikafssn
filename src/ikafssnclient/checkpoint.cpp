@@ -100,8 +100,6 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "stage1_topn=" << req.stage1_topn << "\n";
     oss << "stage1_min_score=" << req.stage1_min_score << "\n";
     oss << "stage1_min_score_frac_x10000=" << req.stage1_min_score_frac_x10000 << "\n";
-    oss << "stage1_max_freq=" << req.stage1_max_freq << "\n";
-    oss << "stage1_max_freq_frac_x10000=" << req.stage1_max_freq_frac_x10000 << "\n";
     oss << "stage2_min_score=" << req.stage2_min_score << "\n";
     oss << "has_stage2_min_score=" << static_cast<int>(req.has_stage2_min_score) << "\n";
     oss << "stage2_max_gap=" << req.stage2_max_gap << "\n";

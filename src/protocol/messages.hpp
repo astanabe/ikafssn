@@ -25,13 +25,11 @@ struct SearchRequest {
     uint8_t  k = 0;                  // 0 = server default
     uint16_t stage2_min_score = 0;   // 0 = server default (see has_stage2_min_score)
     uint16_t stage2_max_gap = 0;     // 0 = server default
-    uint32_t stage1_max_freq = 0;    // 0 = server default
     uint8_t  stage2_min_diag_hits = 0; // 0 = server default
     uint16_t stage1_topn = 0;        // 0 = server default
     uint16_t stage1_min_score = 0;   // 0 = server default
     uint16_t num_results = 0;        // 0 = server default
     uint16_t stage1_min_score_frac_x10000 = 0; // P * 10000, 0 = use integer field
-    uint16_t stage1_max_freq_frac_x10000 = 0;  // P * 10000, 0 = use integer field
     SeqidlistMode seqidlist_mode = SeqidlistMode::kNone;
     uint8_t  mode = 0;              // 0 = server default, 1 = stage1 only, 2 = stage1+stage2
     uint8_t  stage1_score = 0;      // 0 = server default, 1 = coverscore, 2 = matchscore

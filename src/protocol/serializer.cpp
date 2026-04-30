@@ -11,13 +11,11 @@ namespace ikafssn {
 //   u8   k
 //   u16  stage2_min_score
 //   u16  stage2_max_gap
-//   u32  stage1_max_freq
 //   u8   stage2_min_diag_hits
 //   u16  stage1_topn
 //   u16  stage1_min_score
 //   u16  num_results
 //   u16  stage1_min_score_frac_x10000
-//   u16  stage1_max_freq_frac_x10000
 //   u8   seqidlist_mode
 //   u8   mode
 //   u8   stage1_score
@@ -51,13 +49,11 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     w.u8(req.k);
     w.u16(req.stage2_min_score);
     w.u16(req.stage2_max_gap);
-    w.u32(req.stage1_max_freq);
     w.u8(req.stage2_min_diag_hits);
     w.u16(req.stage1_topn);
     w.u16(req.stage1_min_score);
     w.u16(req.num_results);
     w.u16(req.stage1_min_score_frac_x10000);
-    w.u16(req.stage1_max_freq_frac_x10000);
     w.u8(static_cast<uint8_t>(req.seqidlist_mode));
     w.u8(req.mode);
     w.u8(req.stage1_score);
@@ -100,13 +96,11 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u8(req.k)) return false;
     if (!r.get_u16(req.stage2_min_score)) return false;
     if (!r.get_u16(req.stage2_max_gap)) return false;
-    if (!r.get_u32(req.stage1_max_freq)) return false;
     if (!r.get_u8(req.stage2_min_diag_hits)) return false;
     if (!r.get_u16(req.stage1_topn)) return false;
     if (!r.get_u16(req.stage1_min_score)) return false;
     if (!r.get_u16(req.num_results)) return false;
     if (!r.get_u16(req.stage1_min_score_frac_x10000)) return false;
-    if (!r.get_u16(req.stage1_max_freq_frac_x10000)) return false;
 
     uint8_t seqidlist_mode;
     if (!r.get_u8(seqidlist_mode)) return false;
@@ -359,7 +353,7 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format (v8):
+// Wire format (v9):
 //   u8   status
 //   u8   default_k
 //   i32  max_queue_size

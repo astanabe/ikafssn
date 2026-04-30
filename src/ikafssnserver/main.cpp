@@ -45,10 +45,6 @@ static void print_usage(const char* prog) {
         "  -stage2_max_gap <int>    Default chaining gap tolerance (default: 100)\n"
         "  -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject <int>  Default max chains per subject (default: 1, 0=unlimited)\n"
-        "  -stage1_max_freq <num>   Default high-freq k-mer skip threshold (default: 0.5)\n"
-        "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
-        "                           1 or 1.0: disable high-freq filtering entirely\n"
-        "                           > 1: absolute count threshold; 0 = auto\n"
         "  -stage2_min_diag_hits <int>  Default diagonal filter min hits (default: 1)\n"
         "  -stage1_topn <int>       Default Stage 1 candidate limit (default: 0)\n"
         "  -stage1_min_score <num>  Default Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
@@ -155,7 +151,6 @@ int main(int argc, char* argv[]) {
     config.log_level = logger.level();
 
     // Search config (renamed options)
-    config.max_freq_raw = cli.get_double("-stage1_max_freq", 0.5);
     config.search_config.stage1.stage1_topn =
         static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
     {

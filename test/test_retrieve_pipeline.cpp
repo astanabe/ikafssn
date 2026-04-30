@@ -56,7 +56,6 @@ static void test_full_pipeline() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -65,8 +64,7 @@ static void test_full_pipeline() {
     config.num_results = 50;
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
     CHECK(!result.hits.empty());

@@ -25,7 +25,7 @@ struct DatabaseEntry {
     uint8_t default_t = 0;
     uint8_t default_template_type = 0;
     uint8_t max_mode = 2;                   // 2 or 3
-    SearchConfig resolved_search_config;    // max_freq resolved per-DB
+    SearchConfig resolved_search_config;    // resolved per-DB
     Stage3Config stage3_config;
     bool context_is_ratio = true;
     double context_ratio = 2.0;
@@ -59,7 +59,6 @@ struct ServerConfig {
     int shutdown_timeout = 30;      // seconds
     uint64_t memory_limit = 0;     // 0 = auto (half of RAM)
     SearchConfig search_config;
-    double max_freq_raw = 0.5;          // raw -max_freq value (fraction or absolute)
     Logger::Level log_level = Logger::kInfo;
     // Stage 3 / BLAST DB config
     Stage3Config stage3_config;     // default stage3 config

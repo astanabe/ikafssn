@@ -1,14 +1,11 @@
 #include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
-#include "search/stage1_filter.hpp"
-#include "index/kix_reader.hpp"
 #include "index/khx_reader.hpp"
 #include "core/kmer_encoding.hpp"
 #include "core/kmer_revcomp_simd.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/config.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <unordered_set>
@@ -59,27 +56,9 @@ extract_kmers_spaced(const std::string& seq, int k,
     return kmers;
 }
 
-// Compute global max_freq: aggregate across all volumes if auto mode.
-static uint32_t compute_global_max_freq(
-    uint32_t config_max_freq,
-    const std::vector<const KixReader*>& all_kix) {
-    if (config_max_freq > 0) return config_max_freq;
-
-    // Auto mode: aggregate distinct postings and table_size across all volumes
-    // (v7: total_distinct_postings is the sum of distinct seq_id counts).
-    uint64_t total_postings = 0;
-    uint64_t tbl_size = 0;
-    for (const auto* kix : all_kix) {
-        total_postings += kix->total_distinct_postings();
-        tbl_size = kix->table_size(); // same for all volumes
-    }
-    return compute_effective_max_freq(0, total_postings, tbl_size);
-}
-
 template <typename KmerInt>
 QueryKmerData<KmerInt> preprocess_query(
     const std::string& query_seq, int k,
-    const std::vector<const KixReader*>& all_kix,
     const KhxReader* khx,
     const SearchConfig& config,
     uint8_t t,
@@ -129,14 +108,8 @@ QueryKmerData<KmerInt> preprocess_query(
         }
     }
 
-    // 3. Determine global max_freq
-    uint32_t global_max_freq = compute_global_max_freq(
-        config.stage1.max_freq, all_kix);
-
-    // 4-5. Build high-freq set and filter (skip entirely when disabled)
-    std::unordered_set<uint32_t> highfreq_set;
-
-    // Helper: convert pair vector to SoA
+    // 3. SoA conversion (no search-time high-freq filtering; build-time
+    //    exclusion via .khx is the only frequency gate now).
     auto to_soa = [](const std::vector<std::pair<uint32_t, KmerInt>>& pairs,
                      std::vector<uint32_t>& positions,
                      std::vector<KmerInt>& kmer_values) {
@@ -147,64 +120,10 @@ QueryKmerData<KmerInt> preprocess_query(
             kmer_values.push_back(kmer);
         }
     };
+    to_soa(fwd_kmers, result.fwd_positions, result.fwd_kmer_values);
+    to_soa(rc_kmers, result.rc_positions, result.rc_kmer_values);
 
-    if (global_max_freq == Stage1Config::MAX_FREQ_DISABLED) {
-        // High-freq filtering disabled: use all k-mers as-is
-        to_soa(fwd_kmers, result.fwd_positions, result.fwd_kmer_values);
-        to_soa(rc_kmers, result.rc_positions, result.rc_kmer_values);
-    } else {
-        // Collect all distinct k-mer values from both strands
-        std::unordered_set<uint32_t> all_query_kmer_values;
-        for (const auto& [pos, kmer] : fwd_kmers) {
-            all_query_kmer_values.insert(static_cast<uint32_t>(kmer));
-        }
-        for (const auto& [pos, kmer] : rc_kmers) {
-            all_query_kmer_values.insert(static_cast<uint32_t>(kmer));
-        }
-
-        for (uint32_t kmer_idx : all_query_kmer_values) {
-            uint32_t khx_idx = static_cast<uint32_t>(kmer_idx);
-            // Check .khx exclusion
-            if (khx != nullptr && khx->is_excluded(khx_idx)) {
-                highfreq_set.insert(kmer_idx);
-                continue;
-            }
-            // Sum distinct seq_id counts across all volumes (v7: count_postings
-            // returns the distinct sequence count per k-mer, so the threshold
-            // -stage1_max_freq selects the high-frequency k-mers by the number
-            // of containing sequences — matching the original design intent).
-            uint64_t total_count = 0;
-            for (const auto* kix : all_kix) {
-                total_count += kix->count_postings(kmer_idx);
-            }
-            if (total_count > global_max_freq) {
-                highfreq_set.insert(kmer_idx);
-            }
-        }
-
-        // Filter out high-freq k-mers from both strand vectors (SoA)
-        result.fwd_positions.reserve(fwd_kmers.size());
-        result.fwd_kmer_values.reserve(fwd_kmers.size());
-        for (const auto& [pos, kmer] : fwd_kmers) {
-            if (highfreq_set.count(static_cast<uint32_t>(kmer)) == 0) {
-                result.fwd_positions.push_back(pos);
-                result.fwd_kmer_values.push_back(kmer);
-            }
-        }
-
-        result.rc_positions.reserve(rc_kmers.size());
-        result.rc_kmer_values.reserve(rc_kmers.size());
-        for (const auto& [pos, kmer] : rc_kmers) {
-            if (highfreq_set.count(static_cast<uint32_t>(kmer)) == 0) {
-                result.rc_positions.push_back(pos);
-                result.rc_kmer_values.push_back(kmer);
-            }
-        }
-    }
-
-    // 6. Resolve per-strand thresholds
-    const bool use_coverscore = (config.stage1.stage1_score_type == 1);
-
+    // 4. Resolve per-strand thresholds
     // Default thresholds (non-fractional mode)
     result.resolved_threshold_fwd = config.stage1.min_stage1_score;
     result.resolved_threshold_rc = config.stage1.min_stage1_score;
@@ -223,19 +142,21 @@ QueryKmerData<KmerInt> preprocess_query(
         uint32_t Nqkmer_rc = count_nqkmer(rc_kmers);
 
         // Count Nhighfreq per strand: count position only if ALL expanded
-        // k-mers at that position are high-freq (adjacency guaranteed by extract_kmers)
+        // k-mers at that position are excluded by .khx (build-time exclusion).
+        // Adjacency guaranteed by extract_kmers.
         auto count_nhighfreq = [&](const std::vector<std::pair<uint32_t, KmerInt>>& kmers) -> uint32_t {
+            if (khx == nullptr) return 0;
             uint32_t count = 0;
             size_t i = 0;
             while (i < kmers.size()) {
                 uint32_t cur_pos = kmers[i].first;
-                bool all_highfreq = true;
+                bool all_excluded = true;
                 while (i < kmers.size() && kmers[i].first == cur_pos) {
-                    if (highfreq_set.count(static_cast<uint32_t>(kmers[i].second)) == 0)
-                        all_highfreq = false;
+                    if (!khx->is_excluded(static_cast<uint32_t>(kmers[i].second)))
+                        all_excluded = false;
                     i++;
                 }
-                if (all_highfreq) count++;
+                if (all_excluded) count++;
             }
             return count;
         };
@@ -265,7 +186,7 @@ QueryKmerData<KmerInt> preprocess_query(
         result.resolved_threshold_rc = resolve_threshold(Nqkmer_rc, Nhighfreq_rc, "rc");
     }
 
-    // 7. Resolve effective_min_score per strand
+    // 5. Resolve effective_min_score per strand
     if (config.stage2.min_score > 0) {
         // Explicit min_score: use directly for both strands
         result.effective_min_score_fwd = config.stage2.min_score;
@@ -289,14 +210,12 @@ QueryKmerData<KmerInt> preprocess_query(
 // Explicit template instantiations
 template QueryKmerData<uint16_t> preprocess_query<uint16_t>(
     const std::string&, int,
-    const std::vector<const KixReader*>&,
     const KhxReader*,
     const SearchConfig&,
     uint8_t,
     const std::vector<uint32_t>&);
 template QueryKmerData<uint32_t> preprocess_query<uint32_t>(
     const std::string&, int,
-    const std::vector<const KixReader*>&,
     const KhxReader*,
     const SearchConfig&,
     uint8_t,

@@ -120,17 +120,16 @@ static std::vector<OutputHit> search_sequential(
 
         OidFilter filter;
 
-        std::vector<const KixReader*> vol_kix = {&kix};
         for (const auto& query : queries) {
             SearchResult sr;
             if (k < K_TYPE_THRESHOLD) {
     Stage1Buffer buf;
-                auto qdata = preprocess_query<uint16_t>(query.sequence, k, vol_kix, nullptr, config);
+                auto qdata = preprocess_query<uint16_t>(query.sequence, k, nullptr, config);
                 sr = search_volume<uint16_t>(
                     query.id, qdata, k, kix, kpx, ksx, filter, config, buf);
             } else {
     Stage1Buffer buf;
-                auto qdata = preprocess_query<uint32_t>(query.sequence, k, vol_kix, nullptr, config);
+                auto qdata = preprocess_query<uint32_t>(query.sequence, k, nullptr, config);
                 sr = search_volume<uint32_t>(
                     query.id, qdata, k, kix, kpx, ksx, filter, config, buf);
             }
@@ -214,18 +213,17 @@ static std::vector<OutputHit> search_parallel(
                 const auto& query = queries[job.query_idx];
                 const auto& vd = vols[job.volume_idx];
                 OidFilter filter;
-                std::vector<const KixReader*> job_kix = {&vd.kix};
 
                 SearchResult sr;
                 if (k < K_TYPE_THRESHOLD) {
     Stage1Buffer buf;
-                    auto qdata = preprocess_query<uint16_t>(query.sequence, k, job_kix, nullptr, config);
+                    auto qdata = preprocess_query<uint16_t>(query.sequence, k, nullptr, config);
                     sr = search_volume<uint16_t>(
                         query.id, qdata, k,
                         vd.kix, vd.kpx, vd.ksx, filter, config, buf);
                 } else {
     Stage1Buffer buf;
-                    auto qdata = preprocess_query<uint32_t>(query.sequence, k, job_kix, nullptr, config);
+                    auto qdata = preprocess_query<uint32_t>(query.sequence, k, nullptr, config);
                     sr = search_volume<uint32_t>(
                         query.id, qdata, k,
                         vd.kix, vd.kpx, vd.ksx, filter, config, buf);
@@ -284,7 +282,6 @@ static void test_multivolume_search() {
     };
 
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -322,7 +319,6 @@ static void test_parallel_equals_sequential() {
     };
 
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -357,7 +353,6 @@ static void test_result_merge_ordering() {
     };
 
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -438,7 +433,6 @@ static void test_parallel_counting_pass() {
 
     OidFilter filter;
     SearchConfig sconfig;
-    sconfig.stage1.max_freq = 100000;
     sconfig.stage1.stage1_topn = 100;
     sconfig.stage1.min_stage1_score = 1;
     sconfig.stage2.max_gap = 100;
@@ -446,12 +440,10 @@ static void test_parallel_counting_pass() {
     sconfig.stage2.min_score = 2;
     sconfig.num_results = 50;
 
-    std::vector<const KixReader*> kix_st_vec = {&kix_st};
-    auto qdata_st = preprocess_query<uint16_t>(g_query_fj, 7, kix_st_vec, nullptr, sconfig);
+    auto qdata_st = preprocess_query<uint16_t>(g_query_fj, 7, nullptr, sconfig);
     auto sr_st = search_volume<uint16_t>(
         "q", qdata_st, 7, kix_st, kpx_st, ksx_st, filter, sconfig, buf);
-    std::vector<const KixReader*> kix_mt_vec = {&kix_mt};
-    auto qdata_mt = preprocess_query<uint16_t>(g_query_fj, 7, kix_mt_vec, nullptr, sconfig);
+    auto qdata_mt = preprocess_query<uint16_t>(g_query_fj, 7, nullptr, sconfig);
     auto sr_mt = search_volume<uint16_t>(
         "q", qdata_mt, 7, kix_mt, kpx_mt, ksx_mt, filter, sconfig, buf);
 
@@ -479,7 +471,6 @@ static void test_multivolume_k9() {
     };
 
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;

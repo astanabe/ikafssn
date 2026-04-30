@@ -77,17 +77,10 @@ struct Stage1Candidate {
 };
 
 struct Stage1Config {
-    static constexpr uint32_t MAX_FREQ_DISABLED = UINT32_MAX;
-
-    uint32_t max_freq = 0;
     uint32_t stage1_topn = 0;
     uint32_t min_stage1_score = 1;
     uint8_t  stage1_score_type = 1;
 };
-
-uint32_t compute_effective_max_freq(uint32_t config_max_freq,
-                                    uint64_t total_postings,
-                                    uint32_t table_size);
 
 template <typename KmerInt>
 std::vector<Stage1Candidate> stage1_filter(

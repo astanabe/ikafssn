@@ -25,15 +25,14 @@ struct QueryKmerData {
     bool has_multi_degen = false;  // true if any k-mer had 2+ degenerate bases (skipped)
 };
 
-// Pre-process a query sequence: extract k-mers, determine global high-freq
-// k-mers across all volumes, filter them out, and resolve per-strand thresholds.
+// Pre-process a query sequence: extract k-mers (forward + reverse complement)
+// into SoA buffers and resolve per-strand Stage 1 thresholds.
 //
-// all_kix: pointers to KixReaders for ALL volumes (for global count aggregation).
 // khx: nullable pointer to shared KhxReader for build-time exclusion info.
+//      Used only for fractional min_stage1_score Nhighfreq accounting.
 template <typename KmerInt>
 QueryKmerData<KmerInt> preprocess_query(
     const std::string& query_seq, int k,
-    const std::vector<const KixReader*>& all_kix,
     const KhxReader* khx,
     const SearchConfig& config,
     uint8_t t = 0,
@@ -41,14 +40,12 @@ QueryKmerData<KmerInt> preprocess_query(
 
 extern template QueryKmerData<uint16_t> preprocess_query<uint16_t>(
     const std::string&, int,
-    const std::vector<const KixReader*>&,
     const KhxReader*,
     const SearchConfig&,
     uint8_t,
     const std::vector<uint32_t>&);
 extern template QueryKmerData<uint32_t> preprocess_query<uint32_t>(
     const std::string&, int,
-    const std::vector<const KixReader*>&,
     const KhxReader*,
     const SearchConfig&,
     uint8_t,

@@ -71,12 +71,13 @@ static void test_k7_uint16() {
         CHECK(reader.posting_byte_length(100) > 0);
         CHECK(reader.posting_byte_length(ts - 1) > 0);
 
-        // Check on-demand count
-        CHECK_EQ(reader.count_postings(0), 5u);
-        CHECK_EQ(reader.count_postings(1), 2u);
-        CHECK_EQ(reader.count_postings(2), 0u);
-        CHECK_EQ(reader.count_postings(100), 6u);
-        CHECK_EQ(reader.count_postings(ts - 1), 1u);
+        // Check counts via bulk_count_postings
+        auto counts = reader.bulk_count_postings();
+        CHECK_EQ(counts[0], 5u);
+        CHECK_EQ(counts[1], 2u);
+        CHECK_EQ(counts[2], 0u);
+        CHECK_EQ(counts[100], 6u);
+        CHECK_EQ(counts[ts - 1], 1u);
 
         // Decode and verify postings using byte-limit decoder
         auto decoded0 = decode_id_postings(
@@ -159,11 +160,12 @@ static void test_k9_uint32() {
         CHECK_EQ(reader.kmer_type(), 1u);
         CHECK_EQ(reader.table_size(), ts);
 
-        // Verify posting counts via on-demand decode
-        CHECK_EQ(reader.count_postings(0), 1u);
-        CHECK_EQ(reader.count_postings(1), 0u);
-        CHECK_EQ(reader.count_postings(1000), 4u);
-        CHECK_EQ(reader.count_postings(ts - 1), 2u);
+        // Verify posting counts via bulk decode
+        auto counts = reader.bulk_count_postings();
+        CHECK_EQ(counts[0], 1u);
+        CHECK_EQ(counts[1], 0u);
+        CHECK_EQ(counts[1000], 4u);
+        CHECK_EQ(counts[ts - 1], 2u);
 
         // Decode k-mer 1000
         auto decoded = decode_id_postings(

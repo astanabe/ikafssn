@@ -81,15 +81,6 @@ SearchResponse process_search_request(
         config.stage2.chain_max_lookback = req.stage2_max_lookback;
     if (req.stage2_max_nhit_per_subject != 0)
         config.stage2.max_nhit_per_subject = req.stage2_max_nhit_per_subject;
-    if (req.stage1_max_freq_frac_x10000 != 0) {
-        double frac = static_cast<double>(req.stage1_max_freq_frac_x10000) / 10000.0;
-        uint64_t total_nseq = 0;
-        for (const auto& vol : group.volumes) total_nseq += vol.ksx.num_sequences();
-        config.stage1.max_freq = static_cast<uint32_t>(std::ceil(frac * total_nseq));
-        if (config.stage1.max_freq == 0) config.stage1.max_freq = 1;
-    } else if (req.stage1_max_freq != 0) {
-        config.stage1.max_freq = req.stage1_max_freq;
-    }
     if (req.stage2_min_diag_hits != 0)
         config.stage2.min_diag_hits = req.stage2_min_diag_hits;
     if (req.stage1_topn != 0)
@@ -231,24 +222,15 @@ SearchResponse process_search_request(
         is_accepted[valid_indices[i]] = true;
     }
 
-    // Build vector of KixReader pointers for global preprocessing
-    std::vector<const KixReader*> all_kix;
-    std::vector<const KixReader*> all_kix_cod;
-    std::vector<const KixReader*> all_kix_opt;
+    // KhxReader pointers (used for fractional Stage 1 threshold's Nhighfreq)
     const KhxReader* khx_ptr = nullptr;
     const KhxReader* khx_ptr_cod = nullptr;
     const KhxReader* khx_ptr_opt = nullptr;
 
     if (is_both_mode) {
-        all_kix_cod.reserve(group_cod->volumes.size());
-        for (const auto& vol : group_cod->volumes) all_kix_cod.push_back(&vol.kix);
-        all_kix_opt.reserve(group_opt->volumes.size());
-        for (const auto& vol : group_opt->volumes) all_kix_opt.push_back(&vol.kix);
         khx_ptr_cod = group_cod->khx.is_open() ? &group_cod->khx : nullptr;
         khx_ptr_opt = group_opt->khx.is_open() ? &group_opt->khx : nullptr;
     } else {
-        all_kix.reserve(group.volumes.size());
-        for (const auto& vol : group.volumes) all_kix.push_back(&vol.kix);
         khx_ptr = group.khx.is_open() ? &group.khx : nullptr;
     }
 
@@ -286,20 +268,20 @@ SearchResponse process_search_request(
             if (group.kmer_type == 0) {
                 query_pp_idx[qi] = pp16_cod.size();
                 pp16_cod.push_back({preprocess_query<uint16_t>(
-                    req.queries[qi].sequence, k, all_kix_cod, khx_ptr_cod, config,
+                    req.queries[qi].sequence, k, khx_ptr_cod, config,
                     t, seed_masks_cod)});
                 pp16_opt.push_back({preprocess_query<uint16_t>(
-                    req.queries[qi].sequence, k, all_kix_opt, khx_ptr_opt, config,
+                    req.queries[qi].sequence, k, khx_ptr_opt, config,
                     t, seed_masks_opt)});
                 multi_degen = pp16_cod.back().qdata.has_multi_degen ||
                               pp16_opt.back().qdata.has_multi_degen;
             } else {
                 query_pp_idx[qi] = pp32_cod.size();
                 pp32_cod.push_back({preprocess_query<uint32_t>(
-                    req.queries[qi].sequence, k, all_kix_cod, khx_ptr_cod, config,
+                    req.queries[qi].sequence, k, khx_ptr_cod, config,
                     t, seed_masks_cod)});
                 pp32_opt.push_back({preprocess_query<uint32_t>(
-                    req.queries[qi].sequence, k, all_kix_opt, khx_ptr_opt, config,
+                    req.queries[qi].sequence, k, khx_ptr_opt, config,
                     t, seed_masks_opt)});
                 multi_degen = pp32_cod.back().qdata.has_multi_degen ||
                               pp32_opt.back().qdata.has_multi_degen;
@@ -308,13 +290,13 @@ SearchResponse process_search_request(
             if (group.kmer_type == 0) {
                 query_pp_idx[qi] = pp16.size();
                 pp16.push_back({preprocess_query<uint16_t>(
-                    req.queries[qi].sequence, k, all_kix, khx_ptr, config,
+                    req.queries[qi].sequence, k, khx_ptr, config,
                     t, seed_masks)});
                 multi_degen = pp16.back().qdata.has_multi_degen;
             } else {
                 query_pp_idx[qi] = pp32.size();
                 pp32.push_back({preprocess_query<uint32_t>(
-                    req.queries[qi].sequence, k, all_kix, khx_ptr, config,
+                    req.queries[qi].sequence, k, khx_ptr, config,
                     t, seed_masks)});
                 multi_degen = pp32.back().qdata.has_multi_degen;
             }

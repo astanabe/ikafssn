@@ -15,18 +15,6 @@
 
 namespace ikafssn {
 
-uint32_t compute_effective_max_freq(uint32_t config_max_freq,
-                                    uint64_t total_postings,
-                                    uint32_t table_size) {
-    if (config_max_freq > 0) return config_max_freq;
-    double mean = static_cast<double>(total_postings) /
-                  static_cast<double>(table_size);
-    uint32_t max_freq = static_cast<uint32_t>(mean * 10.0);
-    if (max_freq < 1000) max_freq = 1000;
-    if (max_freq > 100000) max_freq = 100000;
-    return max_freq;
-}
-
 namespace {
 template <Stage1Tier Tier>
 inline std::size_t tier_byte_size(uint32_t num_seqs) noexcept {

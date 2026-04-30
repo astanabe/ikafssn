@@ -71,14 +71,6 @@ void HttpController::search(
     sreq.stage2_max_gap = static_cast<uint16_t>(j.get("stage2_max_gap", 0).asUInt());
     sreq.stage2_max_lookback = static_cast<uint16_t>(j.get("stage2_max_lookback", 0).asUInt());
     sreq.stage2_max_nhit_per_subject = static_cast<uint16_t>(j.get("stage2_max_nhit_per_subject", 0).asUInt());
-    if (j.isMember("stage1_max_freq_frac") && j["stage1_max_freq_frac"].isDouble()) {
-        double frac = j["stage1_max_freq_frac"].asDouble();
-        if (frac > 0 && frac < 1.0) {
-            sreq.stage1_max_freq_frac_x10000 = static_cast<uint16_t>(frac * 10000.0);
-        }
-    } else {
-        sreq.stage1_max_freq = j.get("stage1_max_freq", 0).asUInt();
-    }
     if (j.isMember("stage1_min_score_frac") && j["stage1_min_score_frac"].isDouble()) {
         double frac = j["stage1_min_score_frac"].asDouble();
         if (frac > 0 && frac < 1.0) {

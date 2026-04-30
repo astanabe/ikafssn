@@ -30,10 +30,9 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t
 // (.kpx partition + short bucket layout). Phase 5i bumps to v7:
 //   - .kix stores **distinct seq_ids only** (intra-sequence k-mer
 //     duplicates are removed by a SIMD dedup kernel at build time), so
-//     `count_postings()` and `bulk_count_postings()` now report the
-//     number of distinct sequences containing the k-mer.  This realigns
-//     `-max_freq_build` and `-stage1_max_freq` with their original
-//     "matched-entry-count" semantics.
+//     `bulk_count_postings()` now reports the number of distinct
+//     sequences containing the k-mer.  This realigns `-max_freq_build`
+//     with its original "matched-entry-count" semantics.
 //   - .kpx short bucket is self-describing per distinct seq_id (carries
 //     its own seq_id list + per-seq_id occurrence counts), so the .kpx
 //     decoder no longer requires lock-step alignment with the .kix

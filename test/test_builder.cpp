@@ -198,7 +198,8 @@ static void test_known_kmer_in_index() {
     KixReader kix;
     CHECK(kix.open(prefix + ".kix"));
 
-    uint32_t cnt = kix.count_postings(target_kmer);
+    auto cnts_target = kix.bulk_count_postings();
+    uint32_t cnt = cnts_target[target_kmer];
     CHECK(cnt > 0);
 
     std::vector<uint32_t> ids = decode_id_postings(

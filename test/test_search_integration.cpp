@@ -57,7 +57,6 @@ static void test_build_and_search() {
     // Search with query from FJ876973.1
     OidFilter filter;
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -66,8 +65,7 @@ static void test_build_and_search() {
     config.num_results = 50;
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
@@ -104,7 +102,6 @@ static void test_revcomp_search() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -125,8 +122,7 @@ static void test_revcomp_search() {
         }
     }
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(rc_query, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(rc_query, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "rc_query", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
@@ -165,7 +161,6 @@ static void test_seqidlist_filter() {
     filter.build(include_list, ksx, OidFilterMode::kInclude);
 
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -173,8 +168,7 @@ static void test_seqidlist_filter() {
     config.stage2.min_score = 1;
     config.num_results = 50;
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "filtered_query", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
@@ -207,7 +201,6 @@ static void test_negative_seqidlist() {
     filter.build(exclude_list, ksx, OidFilterMode::kExclude);
 
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -215,8 +208,7 @@ static void test_negative_seqidlist() {
     config.stage2.min_score = 1;
     config.num_results = 50;
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "neg_query", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
@@ -332,7 +324,6 @@ static void test_search_k9() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -340,8 +331,7 @@ static void test_search_k9() {
     config.stage2.min_score = 2;
     config.num_results = 50;
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint32_t>(g_query_seq, 9, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint32_t>(g_query_seq, 9, nullptr, config);
     auto result = search_volume<uint32_t>(
         "query_k9", qdata, 9, kix, kpx, ksx, filter, config, buf);
 
@@ -375,7 +365,6 @@ static void test_search_mode1() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -385,8 +374,7 @@ static void test_search_mode1() {
     config.mode = 1;         // stage1 only
     config.sort_score = 1;   // sort by stage1 score
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "mode1_query", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
@@ -429,7 +417,6 @@ static void test_search_num_results_zero() {
 
     // num_results=50 (limited)
     SearchConfig config_limited;
-    config_limited.stage1.max_freq = 100000;
     config_limited.stage1.stage1_topn = 100;
     config_limited.stage1.min_stage1_score = 1;
     config_limited.stage2.max_gap = 100;
@@ -437,14 +424,12 @@ static void test_search_num_results_zero() {
     config_limited.stage2.min_score = 1;
     config_limited.num_results = 2;
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata_lim = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config_limited);
+    auto qdata_lim = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config_limited);
     auto result_limited = search_volume<uint16_t>(
         "q_lim", qdata_lim, 7, kix, kpx, ksx, filter, config_limited, buf);
 
     // num_results=0 (unlimited)
     SearchConfig config_unlimited;
-    config_unlimited.stage1.max_freq = 100000;
     config_unlimited.stage1.stage1_topn = 100;
     config_unlimited.stage1.min_stage1_score = 1;
     config_unlimited.stage2.max_gap = 100;
@@ -452,7 +437,7 @@ static void test_search_num_results_zero() {
     config_unlimited.stage2.min_score = 1;
     config_unlimited.num_results = 0;
 
-    auto qdata_unlim = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config_unlimited);
+    auto qdata_unlim = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config_unlimited);
     auto result_unlimited = search_volume<uint16_t>(
         "q_unlim", qdata_unlim, 7, kix, kpx, ksx, filter, config_unlimited, buf);
 

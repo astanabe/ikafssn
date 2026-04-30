@@ -747,8 +747,9 @@ static void test_ambig_expansion_in_index() {
     ref.scan(kmer_g.data(), 5, [&](uint32_t, uint16_t km) { kval_g = km; });
 
     // Both should have non-zero counts in the index
-    CHECK(kix.count_postings(kval_a) > 0);
-    CHECK(kix.count_postings(kval_g) > 0);
+    auto counts_ag = kix.bulk_count_postings();
+    CHECK(counts_ag[kval_a] > 0);
+    CHECK(counts_ag[kval_g] > 0);
 
     kix.close();
 }
@@ -794,7 +795,10 @@ static void test_ssu_db_kmer_check() {
     KmerScanner<uint16_t> ref(7);
     ref.scan(first7.data(), 7, [&](uint32_t, uint16_t km) { target_kmer = km; });
 
-    CHECK(kix.count_postings(target_kmer) > 0);
+    {
+        auto counts = kix.bulk_count_postings();
+        CHECK(counts[target_kmer] > 0);
+    }
 
     auto ids = decode_id_postings(
         kix.posting_data(), kix.posting_offset(target_kmer),

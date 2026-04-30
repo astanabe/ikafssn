@@ -41,7 +41,7 @@ static void test_frame_round_trip() {
     assert(hdr.magic == FRAME_MAGIC);
     assert(hdr.payload_size == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 7);
+    assert(hdr.msg_version == 9);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -83,7 +83,7 @@ static void test_frame_invalid_magic() {
     bad_hdr.magic = 0xDEADBEEF;
     bad_hdr.payload_size = 0;
     bad_hdr.msg_type = 0x01;
-    bad_hdr.msg_version = 7;
+    bad_hdr.msg_version = 9;
     bad_hdr.reserved = 0;
     assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 
@@ -127,7 +127,6 @@ static void test_search_request_serialize() {
     req.k = 9;
     req.stage2_min_score = 5;
     req.stage2_max_gap = 100;
-    req.stage1_max_freq = 50000;
     req.stage2_min_diag_hits = 3;
     req.stage1_topn = 500;
     req.stage1_min_score = 2;
@@ -147,7 +146,6 @@ static void test_search_request_serialize() {
     assert(req2.k == 9);
     assert(req2.stage2_min_score == 5);
     assert(req2.stage2_max_gap == 100);
-    assert(req2.stage1_max_freq == 50000);
     assert(req2.stage2_min_diag_hits == 3);
     assert(req2.stage1_topn == 500);
     assert(req2.stage1_min_score == 2);
@@ -182,7 +180,6 @@ static void test_search_request_defaults() {
     assert(req2.k == 0);
     assert(req2.stage2_min_score == 0);
     assert(req2.stage2_max_gap == 0);
-    assert(req2.stage1_max_freq == 0);
     assert(req2.max_degen_expand == 0);
     assert(req2.db.empty());
     assert(req2.seqidlist_mode == SeqidlistMode::kNone);

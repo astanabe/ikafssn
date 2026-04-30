@@ -74,10 +74,6 @@ static void print_usage(const char* prog) {
         "  -stage2_max_gap <int>    Chaining diagonal gap tolerance (default: 100)\n"
         "  -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: 1, 0=unlimited)\n"
-        "  -stage1_max_freq <num>   High-frequency k-mer skip threshold (default: 0.5)\n"
-        "                           0 < x < 1: fraction of total NSEQ across all volumes\n"
-        "                           1 or 1.0: disable high-freq filtering entirely\n"
-        "                           > 1: absolute count threshold; 0 = auto\n"
         "  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: 1)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
         "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
@@ -126,7 +122,6 @@ struct TemplateContext {
     KhxReader khx;
     const KhxReader* khx_ptr = nullptr;
     std::vector<uint32_t> seed_masks;
-    std::vector<const KixReader*> all_kix;
     std::vector<PreprocessedQuery<uint16_t>> pp16;
     std::vector<PreprocessedQuery<uint32_t>> pp32;
 };
@@ -199,7 +194,6 @@ int main(int argc, char* argv[]) {
 
     // Search config
     SearchConfig config;
-    double max_freq_raw = cli.get_double("-stage1_max_freq", 0.5);
     config.stage1.stage1_topn = static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
     config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-stage2_max_gap", 100));
@@ -595,28 +589,8 @@ int main(int argc, char* argv[]) {
                     format_size(memory_limit).c_str());
     }
 
-    // Resolve -max_freq: 1/1.0 = disable, fraction -> absolute, else integer.
-    // total_nseq is taken from ctxs[0] (identical across contexts).
-    if (max_freq_raw == 1.0) {
-        config.stage1.max_freq = Stage1Config::MAX_FREQ_DISABLED;
-        logger.info("-stage1_max_freq=1 -> high-frequency k-mer filtering disabled");
-    } else if (max_freq_raw > 0 && max_freq_raw < 1.0) {
-        uint64_t total_nseq = 0;
-        for (const auto& vd : ctxs[0].volumes) total_nseq += vd.ksx.num_sequences();
-        config.stage1.max_freq = static_cast<uint32_t>(
-            std::ceil(max_freq_raw * total_nseq));
-        if (config.stage1.max_freq == 0) config.stage1.max_freq = 1;
-        logger.info("-stage1_max_freq=%.6g (fraction) -> threshold=%u (total_nseq=%lu)",
-                    max_freq_raw, config.stage1.max_freq,
-                    static_cast<unsigned long>(total_nseq));
-    } else {
-        config.stage1.max_freq = static_cast<uint32_t>(max_freq_raw);
-    }
-
-    // Per-context derived state: KixReader pointer vectors, KHX pointer, seed masks.
+    // Per-context derived state: KHX pointer, seed masks.
     for (auto& ctx : ctxs) {
-        ctx.all_kix.reserve(ctx.volumes.size());
-        for (const auto& vd : ctx.volumes) ctx.all_kix.push_back(&vd.kix);
         ctx.khx_ptr = ctx.khx.is_open() ? &ctx.khx : nullptr;
         if (spaced_t > 0) ctx.seed_masks = get_seed_masks(k, spaced_t, ctx.type);
     }
@@ -712,12 +686,12 @@ int main(int argc, char* argv[]) {
         for (auto& ctx : ctxs) {
             if (use_uint16) {
                 ctx.pp16.push_back({preprocess_query<uint16_t>(
-                    queries[qi].sequence, k, ctx.all_kix, ctx.khx_ptr, config,
+                    queries[qi].sequence, k, ctx.khx_ptr, config,
                     spaced_t, ctx.seed_masks)});
                 if (ctx.pp16.back().qdata.has_multi_degen) any_multi_degen = true;
             } else {
                 ctx.pp32.push_back({preprocess_query<uint32_t>(
-                    queries[qi].sequence, k, ctx.all_kix, ctx.khx_ptr, config,
+                    queries[qi].sequence, k, ctx.khx_ptr, config,
                     spaced_t, ctx.seed_masks)});
                 if (ctx.pp32.back().qdata.has_multi_degen) any_multi_degen = true;
             }

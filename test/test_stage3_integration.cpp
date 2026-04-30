@@ -66,7 +66,6 @@ static void test_stage3_pipeline() {
     // Stage 1+2 search
     OidFilter filter;
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -75,8 +74,7 @@ static void test_stage3_pipeline() {
     config.num_results = 10;
     config.mode = 2;
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
 
@@ -177,7 +175,6 @@ static void test_stage3_score_only() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -185,8 +182,7 @@ static void test_stage3_score_only() {
     config.stage2.min_score = 2;
     config.num_results = 5;
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(query, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(query, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
     CHECK(!result.hits.empty());
@@ -260,7 +256,6 @@ static void test_stage3_context() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.max_freq = 100000;
     config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
@@ -268,8 +263,7 @@ static void test_stage3_context() {
     config.stage2.min_score = 2;
     config.num_results = 5;
 
-    std::vector<const KixReader*> all_kix = {&kix};
-    auto qdata = preprocess_query<uint16_t>(query, 7, all_kix, nullptr, config);
+    auto qdata = preprocess_query<uint16_t>(query, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
         "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
 

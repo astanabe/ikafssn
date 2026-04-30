@@ -168,10 +168,6 @@ Options:
   -db <path>              BLAST DB path for mode 3 (default: same as -ix)
   -stage1_score <1|2>     Stage 1 score type (default: 1)
                           1=coverscore, 2=matchscore
-  -stage1_max_freq <num>  High-frequency k-mer skip threshold (default: 0.5)
-                          0 < x < 1: fraction of total NSEQ across all volumes
-                          1 or 1.0: disable high-freq filtering entirely
-                          > 1: absolute count threshold; 0 = auto
   -stage1_topn <int>      Stage 1 candidate limit, 0=unlimited (default: 0)
   -stage1_min_score <num> Stage 1 minimum score (default: 0.5)
                           Integer (>= 1): absolute threshold
@@ -249,7 +245,7 @@ ikafssnsearch -ix ./index/mydb -k 11 -query query.fasta
 
 # Increase sensitivity
 ikafssnsearch -ix ./index/mydb -query query.fasta \
-    -stage2_min_score 2 -stage1_topn 2000 -stage1_max_freq 50000
+    -stage2_min_score 2 -stage1_topn 2000
 
 # Restrict to specific accessions
 ikafssnsearch -ix ./index/mydb -query query.fasta -seqidlist targets.txt
@@ -413,10 +409,6 @@ Options:
   -pid <path>             PID file path
   -db <path>              BLAST DB path for mode 3 (repeatable, paired with -ix;
                           default: same as corresponding -ix prefix)
-  -stage1_max_freq <num>  Default high-freq k-mer skip threshold (default: 0.5)
-                          0 < x < 1: fraction of total NSEQ across all volumes
-                          1 or 1.0: disable high-freq filtering entirely
-                          > 1: absolute count threshold; 0 = auto
   -stage1_topn <int>      Default Stage 1 candidate limit (default: 0)
   -stage1_min_score <num> Default Stage 1 minimum score (default: 0.5)
                           Integer (>= 1) or fraction (0 < P < 1)
@@ -565,10 +557,6 @@ Options:
   -k <int>                 K-mer size (default: server default)
   -mode <1|2|3>            Search mode (default: server default)
   -stage1_score <1|2>      Stage 1 score type (default: server default)
-  -stage1_max_freq <num>   High-freq k-mer skip threshold (default: server default)
-                           0 < x < 1: fraction of total NSEQ across all volumes
-                           1 or 1.0: disable high-freq filtering entirely
-                           > 1: absolute count threshold
   -stage1_topn <int>       Stage 1 candidate limit (default: server default)
   -stage1_min_score <num>  Stage 1 minimum score (default: server default)
                            Integer (>= 1) or fraction (0 < P < 1)
@@ -790,20 +778,9 @@ Valid (k, t) combinations and their mask values:
 
 ### High-Frequency K-mer Filtering
 
-High-frequency k-mer filtering is performed globally across all volumes before the per-volume search loop. K-mer counts are aggregated across all volumes, and k-mers exceeding `stage1_max_freq` are removed from the query once. This ensures consistent filtering regardless of how data is partitioned across volumes. Build-time exclusions (`.khx`) are also checked globally.
+High-frequency k-mer filtering is performed exclusively at index build time via `-max_freq_build`. There is no search-time high-frequency filter — the search hot path no longer pays the cost of per-query k-mer count aggregation across volumes.
 
-The default value of `-stage1_max_freq` is `0.5`, meaning k-mers occurring in more than 50% of the total sequences across all volumes are skipped. More generally, when a fractional value (0 < x < 1) is specified, the threshold is resolved as `ceil(x * total_NSEQ)` where `total_NSEQ` is the sum of sequence counts across all volumes. Setting `-stage1_max_freq 1` (or `1.0`) disables high-frequency k-mer filtering entirely — no k-mers are removed from the query. An integer value > 1 is used as an absolute count threshold directly.
-
-When `-stage1_max_freq 0` is specified explicitly, the threshold is auto-calculated per volume as:
-
-```
-max_freq = mean_count * 10    (clamped to [1000, 100000])
-where mean_count = total_postings / 4^k
-```
-
-This auto mode is computed per volume from the `.kix` header.
-
-**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. K-mer counts are aggregated across all volumes before applying the threshold, so a k-mer that is locally below the threshold in each volume but exceeds it globally will be correctly excluded. A single shared `.khx` file (per k value, not per volume) records which k-mers were excluded. When a fractional value (0 < x < 1) is specified, the threshold is resolved using the total NSEQ across all volumes (same as `-stage1_max_freq`). At search time, when fractional `-stage1_min_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation.
+**Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. K-mer counts are aggregated across all volumes before applying the threshold, so a k-mer that is locally below the threshold in each volume but exceeds it globally will be correctly excluded. A single shared `.khx` file (per k value, not per volume) records which k-mers were excluded. When a fractional value (0 < x < 1) is specified, the threshold is resolved using the total NSEQ across all volumes. At search time, when fractional `-stage1_min_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation (`Nhighfreq` term in the formula below).
 
 ### Fractional Stage 1 Threshold
 
@@ -815,9 +792,7 @@ threshold = ceil(Nqkmer * P) - Nhighfreq
 
 Where:
 - **Nqkmer**: number of query k-mers (distinct for coverscore, total positions for matchscore)
-- **Nhighfreq**: number of query k-mers that are excluded, combining:
-  - Search-time exclusion: k-mers with count > `max_freq`
-  - Build-time exclusion: k-mers marked in `.khx` (if present)
+- **Nhighfreq**: number of query k-mers excluded at build time via `.khx` (0 if `.khx` is absent)
 
 If the resolved threshold is <= 0, the query strand is skipped with a warning.
 
@@ -1165,7 +1140,7 @@ Examples:
 
 **Index format version:** The current index format is version 7 for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`). Key changes from earlier versions:
 
-- **`.kix` v7 (Phase 5i):** Per-posting payload is FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the **distinct seq_id** delta stream `[abs_first, d1, d2, ...]` with `d_i >= 1`. Intra-sequence k-mer duplicates are removed at build time by a SIMD dedup kernel. The leading `[u32 distinct_count][u32 payload_words]` per-posting header makes `distinct_count` an O(1) read. As a result, `-max_freq_build` and `-stage1_max_freq` now threshold by **the number of containing sequences** (matching the original design intent), not by total occurrences. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, offsets are stored as `uint32_t` instead of `uint64_t` (applicable when posting data < 4 GiB).
+- **`.kix` v7 (Phase 5i):** Per-posting payload is FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the **distinct seq_id** delta stream `[abs_first, d1, d2, ...]` with `d_i >= 1`. Intra-sequence k-mer duplicates are removed at build time by a SIMD dedup kernel. The leading `[u32 distinct_count][u32 payload_words]` per-posting header makes `distinct_count` an O(1) read. As a result, `-max_freq_build` now thresholds by **the number of containing sequences** (matching the original design intent), not by total occurrences. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, offsets are stored as `uint32_t` instead of `uint64_t` (applicable when posting data < 4 GiB).
 - **`.kpx` v7 (Phase 5i):** Per-(kmer, seq_id) partitioned layout with a self-describing short bucket. Each (k-mer, seq_id) cluster whose occurrence count exceeds the build-time `-freq_threshold_part` (default 8, max 255) becomes its own partition group; remaining low-multiplicity occurrences merge into a short bucket that carries its own delta-encoded seq_id list and per-seq_id u8 occurrence counts. Both partition groups and the short bucket use the FOR-within-block stream from Phase 5e (per-128-element block stores its min, then bitpacks the spread). Decoding is candidate-set-driven (the caller passes a sorted candidate seq_id array; the decoder returns per-candidate position vectors), eliminating the v6 lock-step dependency on the .kix stream. The header `offset_type` field (byte 0x11) indicates offset width: 0 = `uint32_t`, 1 = `uint64_t`.
 
 Indexes built before Phase 5i (format_version <= 6) are rejected at open with a clear "rebuild your index" message. Rebuild indexes after upgrading.

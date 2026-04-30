@@ -166,10 +166,6 @@ ikafssnsearch [options]
   -db <path>              モード 3 用 BLAST DB パス (デフォルト: -ix と同じ)
   -stage1_score <1|2>     Stage 1 スコア種別 (デフォルト: 1)
                           1=coverscore、2=matchscore
-  -stage1_max_freq <num>  高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
-                          0〜1 未満: 全ボリューム合計 NSEQ に対する割合
-                          1 または 1.0: 高頻度 k-mer フィルタリングを完全無効化
-                          1 超: 絶対カウント閾値; 0 = 自動計算
   -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 0)
   -stage1_min_score <num> Stage 1 最小スコア閾値 (デフォルト: 0.5)
                           整数 (>= 1): 絶対閾値
@@ -242,7 +238,7 @@ ikafssnsearch -ix ./index/mydb -k 11 -query query.fasta
 
 # 感度を上げた検索
 ikafssnsearch -ix ./index/mydb -query query.fasta \
-    -stage2_min_score 2 -stage1_topn 2000 -stage1_max_freq 50000
+    -stage2_min_score 2 -stage1_topn 2000
 
 # seqidlist で検索対象を限定
 ikafssnsearch -ix ./index/mydb -query query.fasta -seqidlist targets.txt
@@ -406,10 +402,6 @@ ikafssnserver [options]
   -pid <path>             PID ファイルパス
   -db <path>              モード 3 用 BLAST DB パス (繰り返し指定、-ix と対応;
                           デフォルト: 対応する -ix プレフィックスと同じ)
-  -stage1_max_freq <num>  デフォルト高頻度 k-mer スキップ閾値 (デフォルト: 0.5)
-                          0〜1 未満: 全ボリューム合計 NSEQ に対する割合
-                          1 または 1.0: 高頻度 k-mer フィルタリングを完全無効化
-                          1 超: 絶対カウント閾値; 0 = 自動計算
   -stage1_topn <int>      デフォルト Stage 1 候補数上限 (デフォルト: 0)
   -stage1_min_score <num> デフォルト Stage 1 最小スコア閾値 (デフォルト: 0.5)
                           整数 (>= 1) または小数 (0 < P < 1)
@@ -559,10 +551,6 @@ ikafssnclient [options]
   -k <int>                 使用する k-mer サイズ (デフォルト: サーバ側デフォルト)
   -mode <1|2|3>            検索モード (デフォルト: サーバ側デフォルト)
   -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: サーバ側デフォルト)
-  -stage1_max_freq <num>   高頻度 k-mer スキップ閾値 (デフォルト: サーバ側デフォルト)
-                           0〜1 未満: 全ボリューム合計 NSEQ に対する割合
-                           1 または 1.0: 高頻度 k-mer フィルタリングを完全無効化
-                           1 超: 絶対カウント閾値
   -stage1_topn <int>       Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
   -stage1_min_score <num>  Stage 1 最小スコア閾値 (デフォルト: サーバ側デフォルト)
                            整数 (>= 1) または小数 (0 < P < 1)
@@ -785,20 +773,9 @@ ikafssn は 3 段階の検索パイプラインを使用します。
 
 ### 高頻度 k-mer フィルタリング
 
-高頻度 k-mer フィルタリングはボリューム単位のループに入る前に全ボリューム横断でグローバルに行われます。全ボリュームの k-mer カウントを合算し、`stage1_max_freq` を超える k-mer はクエリから一度だけ除去されます。これにより、データのボリューム分割方法に関わらず一貫したフィルタリングが保証されます。ビルド時除外情報 (`.khx`) もグローバルにチェックされます。
+高頻度 k-mer フィルタリングはインデックス構築時の `-max_freq_build` のみで行われます。検索時の高頻度フィルタは存在せず、検索ホットパスでクエリごとにボリューム横断の k-mer カウント集計を行うコストは発生しません。
 
-`-stage1_max_freq` のデフォルト値は `0.5` で、全ボリューム合計配列数の 50% を超えて出現する k-mer がスキップされます。より一般に、小数値 (0 < x < 1) を指定すると、閾値は `ceil(x * total_NSEQ)` に解決されます (total_NSEQ は全ボリュームの配列数の合計)。`-stage1_max_freq 1` (または `1.0`) を指定すると高頻度 k-mer フィルタリングが完全に無効化され、クエリから k-mer が除去されなくなります。1 を超える整数値はそのまま絶対カウント閾値として使用されます。
-
-`-stage1_max_freq 0` を明示的に指定すると、ボリュームごとに以下の式で自動計算されます:
-
-```
-max_freq = mean_count * 10    ([1000, 100000] に制限)
-ここで mean_count = total_postings / 4^k
-```
-
-この自動計算モードではボリュームごとに `.kix` ヘッダから値が算出されます。
-
-**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。k-mer カウントは全ボリュームで合算された後に閾値と比較されるため、各ボリュームでは閾値未満だが合計では閾値を超える k-mer も正しく除外されます。除外された k-mer は共有 `.khx` ファイル (k 値ごとに 1 つ、ボリュームごとではない) に記録されます。小数値 (0 < x < 1) を指定した場合、閾値は全ボリューム合計 NSEQ に基づいて解決されます (`-stage1_max_freq` と同じ方式)。検索時に割合指定の `-stage1_min_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算から差し引かれます。
+**構築時除外** (`-max_freq_build`): `-max_freq_build` を指定してインデックスを構築すると、高頻度 k-mer がインデックスから完全に除外されます。k-mer カウントは全ボリュームで合算された後に閾値と比較されるため、各ボリュームでは閾値未満だが合計では閾値を超える k-mer も正しく除外されます。除外された k-mer は共有 `.khx` ファイル (k 値ごとに 1 つ、ボリュームごとではない) に記録されます。小数値 (0 < x < 1) を指定した場合、閾値は全ボリューム合計 NSEQ に基づいて解決されます。検索時に割合指定の `-stage1_min_score` を使用する場合、構築時に除外された k-mer が `.khx` ファイルから認識され、閾値計算 (下記の `Nhighfreq`) から差し引かれます。
 
 ### 割合指定の Stage 1 閾値
 
@@ -810,9 +787,7 @@ threshold = ceil(Nqkmer * P) - Nhighfreq
 
 各変数の意味:
 - **Nqkmer**: クエリ k-mer の数 (coverscore では種類数、matchscore では総位置数)
-- **Nhighfreq**: 除外されるクエリ k-mer の数。以下を合算:
-  - 検索時除外: カウント > `max_freq` の k-mer
-  - 構築時除外: `.khx` に記録された k-mer (存在する場合)
+- **Nhighfreq**: 構築時に `.khx` で除外された k-mer の数 (`.khx` が存在する場合のみカウント、それ以外は 0)
 
 解決された閾値が 0 以下の場合、その鎖は警告付きでスキップされます。
 
@@ -1160,7 +1135,7 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 
 **インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`) でバージョン 7 です。主な変更点:
 
-- **`.kix` v7 (Phase 5i):** ポスティングごとのペイロードは FastPFor の `CompositeCodec<SIMDFastPFor<4>, VariableByte>`（PForDelta + VByte 例外ストリーム）で、**distinct seq_id** delta 列 `[abs_first, d1, d2, ...]`（`d_i >= 1` 保証）をエンコードします。同一シーケンス内での k-mer 重複は構築時の SIMD dedup カーネルで除去されます。各ポスティングの先頭 `[u32 distinct_count][u32 payload_words]` ヘッダにより `distinct_count` は O(1) 取得可能。これにより `-max_freq_build` および `-stage1_max_freq` は **当該 k-mer を含むシーケンス数** を閾値として高頻度 k-mer を除外する本来の設計意図に整合しました（v6 までは総出現数を閾値としていた）。`KIX_FLAG_OFFSET32` フラグ (0x04) が設定されている場合、オフセットは `uint32_t` で格納されます（ポスティングデータが 4 GiB 未満時に適用）。
+- **`.kix` v7 (Phase 5i):** ポスティングごとのペイロードは FastPFor の `CompositeCodec<SIMDFastPFor<4>, VariableByte>`（PForDelta + VByte 例外ストリーム）で、**distinct seq_id** delta 列 `[abs_first, d1, d2, ...]`（`d_i >= 1` 保証）をエンコードします。同一シーケンス内での k-mer 重複は構築時の SIMD dedup カーネルで除去されます。各ポスティングの先頭 `[u32 distinct_count][u32 payload_words]` ヘッダにより `distinct_count` は O(1) 取得可能。これにより `-max_freq_build` は **当該 k-mer を含むシーケンス数** を閾値として高頻度 k-mer を除外する本来の設計意図に整合しました（v6 までは総出現数を閾値としていた）。`KIX_FLAG_OFFSET32` フラグ (0x04) が設定されている場合、オフセットは `uint32_t` で格納されます（ポスティングデータが 4 GiB 未満時に適用）。
 - **`.kpx` v7 (Phase 5i):** (k-mer, seq_id) 単位パーティション + 自己記述 short bucket レイアウト。1 つの (k-mer, seq_id) クラスタの出現回数が構築時の `-freq_threshold_part`（デフォルト 8、上限 255）を超えると独立パーティショングループとして切り出され、それ以下の出現は short bucket にまとめられます。short bucket は自身の delta 圧縮された seq_id リストと per-seq_id u8 出現数を持ちます。パーティショングループも short bucket も Phase 5e の FOR-within-block ストリーム（128 要素ブロックごとに min を引いてビットパック）で格納されます。デコードは candidate-set 駆動（呼び出し側がソート済み candidate seq_id 配列を渡し、各 candidate の position 配列を受け取る）になり、v6 の `.kix` ストリームとの lock-step 依存が解消されました。ヘッダの `offset_type` フィールド（バイト 0x11）がオフセット幅を示します: 0 = `uint32_t`、1 = `uint64_t`。
 
 Phase 5i 以前 (format_version <= 6) のインデックスは open 時に明確な「rebuild」エラーで拒否されます。アップグレード後にインデックスを再構築してください。

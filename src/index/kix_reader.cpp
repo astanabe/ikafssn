@@ -81,18 +81,14 @@ void KixReader::apply_madvise(bool willneed) {
     mmap_.advise_dict_posting(willneed_size(), willneed);
 }
 
-uint32_t KixReader::count_postings(uint32_t kmer) const {
-    uint64_t byte_len = posting_byte_length(kmer);
-    if (byte_len == 0) return 0;
-    // v7: distinct_count is the leading u32 of the per-kmer payload
-    // (number of distinct sequences containing the k-mer).
-    return pfd::posting_count(posting_data_ + posting_offset(kmer), byte_len);
-}
-
 std::vector<uint32_t> KixReader::bulk_count_postings() const {
     std::vector<uint32_t> counts(table_size_, 0);
     for (uint32_t i = 0; i < table_size_; i++) {
-        counts[i] = count_postings(i);
+        uint64_t byte_len = posting_byte_length(i);
+        if (byte_len == 0) continue;
+        // v7: distinct_count is the leading u32 of the per-kmer payload
+        // (number of distinct sequences containing the k-mer).
+        counts[i] = pfd::posting_count(posting_data_ + posting_offset(i), byte_len);
     }
     return counts;
 }

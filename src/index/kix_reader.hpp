@@ -42,14 +42,10 @@ public:
         return posting_offset(kmer + 1) - posting_offset(kmer);
     }
 
-    // Count distinct seq_ids for a k-mer (O(1) read of the leading u32 of
-    // the per-kmer payload).  In v7 this is the number of distinct
-    // sequences containing the k-mer (intra-sequence duplicates are
-    // removed at build time), realigning -max_freq_build /
-    // -stage1_max_freq with the original "matched-entry-count" semantic.
-    uint32_t count_postings(uint32_t kmer) const;
-
-    // Bulk count all postings (distinct seq_ids per k-mer in v7).
+    // Bulk count all postings: for each k-mer, returns the number of
+    // distinct sequences containing it (v7: intra-sequence duplicates are
+    // removed at build time).  Used by ikafssninfo and index_filter for
+    // build-time exclusion via .khx; not used on the search hot path.
     std::vector<uint32_t> bulk_count_postings() const;
 
 private:
