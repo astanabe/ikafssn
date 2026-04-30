@@ -1156,6 +1156,8 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 - スペースドシード (k=12, t=21, coding): `nt.00.12mer.21mer.cod.kix`
 - マニフェスト: `nt.11mer.16mer.cod.kvx`
 
+**マルチアクセッション defline:** 元の BLAST DB が `makeblastdb -parse_seqids` で構築され、`\x01` (`^A`) 区切りの multi-defline レコード（同一塩基配列を複数アクセッションで登録する NCBI 慣習）を含んでいる場合、`ikafssnindex` は OID ごとに**全てのアクセッション**を保持します。`.ksx` のアクセッション文字列は OID ごとに全アクセッションを `\x01` で連結した形で格納され、検索出力 (`sseqid` カラム / SAM RNAME / FASTA defline / プロトコルの `sseqid` フィールド) も同じ `\x01` 連結形のまま emit されます。受け取り側で `\x01` を区切りとして分割してください。`-seqidlist` フィルタと `ikafssnretrieve` は `\x01` 連結形・個別アクセッションのいずれを指定しても解決できます。
+
 **インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`) でバージョン 7 です。主な変更点:
 
 - **`.kix` v7 (Phase 5i):** ポスティングごとのペイロードは FastPFor の `CompositeCodec<SIMDFastPFor<4>, VariableByte>`（PForDelta + VByte 例外ストリーム）で、**distinct seq_id** delta 列 `[abs_first, d1, d2, ...]`（`d_i >= 1` 保証）をエンコードします。同一シーケンス内での k-mer 重複は構築時の SIMD dedup カーネルで除去されます。各ポスティングの先頭 `[u32 distinct_count][u32 payload_words]` ヘッダにより `distinct_count` は O(1) 取得可能。これにより `-max_freq_build` および `-stage1_max_freq` は **当該 k-mer を含むシーケンス数** を閾値として高頻度 k-mer を除外する本来の設計意図に整合しました（v6 までは総出現数を閾値としていた）。`KIX_FLAG_OFFSET32` フラグ (0x04) が設定されている場合、オフセットは `uint32_t` で格納されます（ポスティングデータが 4 GiB 未満時に適用）。

@@ -1,5 +1,6 @@
 #include "ikafssnretrieve/local_retriever.hpp"
 #include "io/blastdb_reader.hpp"
+#include "io/accession_utils.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -47,9 +48,16 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
         uint32_t nseqs = readers[vi].num_sequences();
         for (uint32_t oid = 0; oid < nseqs; oid++) {
             std::string acc = readers[vi].get_accession(oid);
-            if (!acc.empty()) {
-                acc_map[acc] = {vi, oid};
+            if (acc.empty()) continue;
+            // Multi-defline OIDs register every individual accession so
+            // a hit row's sseqid (which may be any one of the joined
+            // accessions or the full '\x01'-joined form) resolves back
+            // to the OID.  Also register the original joined form so
+            // callers that pass it through verbatim still match.
+            for (auto token : split_accessions(acc)) {
+                acc_map[std::string(token)] = {vi, oid};
             }
+            acc_map[acc] = {vi, oid};
         }
     }
 

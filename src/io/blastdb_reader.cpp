@@ -215,23 +215,35 @@ std::string BlastDbReader::get_accession(uint32_t oid) const {
         std::list<ncbi::CRef<ncbi::objects::CSeq_id>> ids =
             impl_->db->GetSeqIDs(static_cast<int>(oid));
 
-        // Find the best accession: prefer textseq_id with accession
+        // Multi-defline support: a single OID may carry multiple Seq_ids
+        // (NCBI native `\x01`-separated deflines registered via
+        // `makeblastdb -parse_seqids`).  Return *all* accessions joined
+        // by '\x01' (BLAST's native separator) so downstream consumers
+        // can present every label registered for the sequence.  The
+        // separator is preserved on disk in `.ksx` and translated to
+        // a display form at output time (see io/accession_utils.hpp).
+        std::string out;
+        out.reserve(64);
         for (const auto& id : ids) {
+            std::string token;
+            // Prefer textseq accession (genbank/embl/ddbj/other/tpg/tpe/tpd);
+            // fall back to GetLabel(eContent) for everything else (gnl|, lcl|,
+            // pir, sp, prf, pdb, ...).
             if (id->IsGenbank() || id->IsEmbl() || id->IsDdbj() ||
                 id->IsOther() || id->IsTpg() || id->IsTpe() || id->IsTpd()) {
                 const auto* tsid = id->GetTextseq_Id();
                 if (tsid && tsid->IsSetAccession()) {
-                    return tsid->GetAccession();
+                    token = tsid->GetAccession();
                 }
             }
+            if (token.empty()) {
+                id->GetLabel(&token, ncbi::objects::CSeq_id::eContent);
+            }
+            if (token.empty()) continue;
+            if (!out.empty()) out.push_back('\x01');
+            out.append(token);
         }
-
-        // Fallback: use GetSeqIdString for the first ID
-        if (!ids.empty()) {
-            std::string id_str;
-            ids.front()->GetLabel(&id_str, ncbi::objects::CSeq_id::eContent);
-            return id_str;
-        }
+        return out;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "BlastDbReader: get_accession(%u) failed: %s\n",
                      oid, e.what());

@@ -1,5 +1,6 @@
 #include "search/oid_filter.hpp"
 #include "index/ksx_reader.hpp"
+#include "io/accession_utils.hpp"
 
 #include <cstdio>
 #include <unordered_map>
@@ -18,12 +19,17 @@ void OidFilter::build(const std::vector<std::string>& accessions,
 
     uint32_t num_seqs = ksx.num_sequences();
 
-    // Build accession → OID reverse map
+    // Build accession → OID reverse map.  Multi-defline OIDs (`.ksx`
+    // stores accessions joined by '\x01') register every individual
+    // accession in the map so a -seqidlist entry naming any one of
+    // them resolves to the underlying OID.
     std::unordered_map<std::string, uint32_t> acc_to_oid;
     acc_to_oid.reserve(num_seqs);
     for (uint32_t oid = 0; oid < num_seqs; oid++) {
         auto acc = ksx.accession(oid);
-        acc_to_oid.emplace(std::string(acc), oid);
+        for (auto token : split_accessions(acc)) {
+            acc_to_oid.emplace(std::string(token), oid);
+        }
     }
 
     // Resolve accessions to OIDs and build bitset

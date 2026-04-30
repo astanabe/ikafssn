@@ -1161,6 +1161,8 @@ Examples:
 - Spaced seed with k=12, t=21, coding: `nt.00.12mer.21mer.cod.kix`
 - Manifest: `nt.11mer.16mer.cod.kvx`
 
+**Multi-accession deflines:** When the source BLAST DB was built with `makeblastdb -parse_seqids` and carries multi-defline records (the NCBI convention for registering identical sequences under several accessions, separated by `\x01` / `^A` in the FASTA defline), `ikafssnindex` preserves **all** accessions for each OID. The `.ksx` accession string for such OIDs contains every accession joined by `\x01`, and search output emits the same `\x01`-joined string in the `sseqid` column / SAM RNAME / FASTA defline / protocol `sseqid` field. Downstream consumers should split on `\x01` to recover individual accessions. The `-seqidlist` filter and `ikafssnretrieve` accept either the full `\x01`-joined form or any individual constituent accession.
+
 **Index format version:** The current index format is version 7 for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`). Key changes from earlier versions:
 
 - **`.kix` v7 (Phase 5i):** Per-posting payload is FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the **distinct seq_id** delta stream `[abs_first, d1, d2, ...]` with `d_i >= 1`. Intra-sequence k-mer duplicates are removed at build time by a SIMD dedup kernel. The leading `[u32 distinct_count][u32 payload_words]` per-posting header makes `distinct_count` an O(1) read. As a result, `-max_freq_build` and `-stage1_max_freq` now threshold by **the number of containing sequences** (matching the original design intent), not by total occurrences. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, offsets are stored as `uint32_t` instead of `uint64_t` (applicable when posting data < 4 GiB).

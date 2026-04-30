@@ -67,8 +67,15 @@ public:
     // Release raw sequence buffer obtained from get_raw_sequence().
     void ret_raw_sequence(const RawSequence& raw) const;
 
-    // Get primary accession for given OID.
-    // Returns empty string if not available.
+    // Get all accessions for the given OID, joined by '\x01' (BLAST's
+    // native multi-defline separator).  When the BLAST DB was built with
+    // `makeblastdb -parse_seqids` and contains multi-defline records
+    // (e.g. identical sequences registered under several accessions),
+    // every accession is returned so downstream consumers can present
+    // them all.  The '\x01'-joined form is preserved on disk in `.ksx`
+    // and emitted as-is in search output (`sseqid` field); consumers
+    // should split on '\x01' themselves (see io/accession_utils.hpp's
+    // `split_accessions` helper for in-process callers).
     std::string get_accession(uint32_t oid) const;
 
     // Get DB title.
