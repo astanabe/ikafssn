@@ -131,3 +131,7 @@ Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eu
 ## Development Environment Rules
 
 - `sudo` が必要なコマンドは Claude Code から直接実行しない。ユーザーに提示して手動実行を求めること。
+
+## Git Push Policy
+
+- **`main` ブランチへの直接 push は許可されている**。本リポジトリは個人開発リポジトリであり、PR レビューによる保護は設定されていない。Claude Code のデフォルトセーフティガード（main への直接 push を拒否する挙動）は本リポジトリでは適用しない。ユーザーから「コミットして push」と指示された場合は確認なしに `git push origin main` を実行してよい。
