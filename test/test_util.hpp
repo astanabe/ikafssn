@@ -2,9 +2,22 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 static int g_fail_count = 0;
 static int g_pass_count = 0;
+
+// Build a per-process temp directory path. When the test is invoked as a
+// SIMD variant (`add_ikafssn_simd_test` sets IKAFSSN_FORCE_SIMD), the tier
+// name is appended so that the base test and every variant have disjoint
+// directories and can run truly in parallel under `ctest -j`.
+inline std::string test_tmpdir(const char* base) {
+    const char* simd = std::getenv("IKAFSSN_FORCE_SIMD");
+    if (simd && *simd) {
+        return std::string(base) + "_" + simd;
+    }
+    return std::string(base);
+}
 
 #define CHECK(cond) \
     do { \

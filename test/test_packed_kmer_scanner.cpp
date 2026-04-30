@@ -1161,7 +1161,7 @@ int main(int argc, char* argv[]) {
 
     g_testdb_path = ssu_db_prefix();
     g_ambigdb_path = ambig_db_prefix();
-    g_output_dir = "/tmp/ikafssn_packed_scanner_test";
+    g_output_dir = test_tmpdir("/tmp/ikafssn_packed_scanner_test");
     std::filesystem::create_directories(g_output_dir);
 
     // Unit tests: AmbiguityParser

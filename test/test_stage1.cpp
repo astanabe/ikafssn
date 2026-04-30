@@ -485,8 +485,8 @@ int main() {
     check_ssu_available();
 
     g_testdb_path = ssu_db_prefix();
-    g_index_dir = "/tmp/ikafssn_stage1_test";
-    g_maxfreq_index_dir = "/tmp/ikafssn_stage1_maxfreq_test";
+    g_index_dir = test_tmpdir("/tmp/ikafssn_stage1_test");
+    g_maxfreq_index_dir = test_tmpdir("/tmp/ikafssn_stage1_maxfreq_test");
     std::filesystem::create_directories(g_index_dir);
     std::filesystem::create_directories(g_maxfreq_index_dir);
 

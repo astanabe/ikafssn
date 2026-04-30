@@ -509,7 +509,7 @@ int main(int argc, char* argv[]) {
     check_ssu_available();
 
     g_testdb_path = ssu_db_prefix();
-    g_output_dir = "/tmp/ikafssn_builder_test";
+    g_output_dir = test_tmpdir("/tmp/ikafssn_builder_test");
 
     // Create output directory
     std::filesystem::create_directories(g_output_dir);
