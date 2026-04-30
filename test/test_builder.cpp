@@ -37,19 +37,30 @@ static std::vector<uint32_t> decode_id_postings(
     return result;
 }
 
-// Decode pos posting list via the v6 PosDecoder.  v6 .kpx splits
-// postings into per-(kmer, seq_id) partition groups + a short bucket;
-// the decoder needs the .kix-decoded seq_id stream up front so the merge
-// can walk lock-step with it.
+// Decode pos posting list via the v7 PosDecoder.  Candidate-set-driven:
+// pass a sorted distinct seq_id list and concatenate the per-candidate
+// position vectors in candidate order.
 static std::vector<uint32_t> decode_pos_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len,
-    const std::vector<uint32_t>& seq_ids) {
+    const std::vector<uint32_t>& distinct_sids) {
     std::vector<uint32_t> result;
-    if (byte_len == 0) return result;
+    if (byte_len == 0 || distinct_sids.empty()) return result;
     PosDecoder dec(data + offset, data + offset + byte_len,
-                   seq_ids.data(), seq_ids.size());
-    while (dec.has_more()) result.push_back(dec.next());
+                   distinct_sids.data(), distinct_sids.size());
+    for (size_t i = 0; i < distinct_sids.size(); i++) {
+        const auto& v = dec.positions_for(i);
+        result.insert(result.end(), v.begin(), v.end());
+    }
     return result;
+}
+
+// Read the v7 .kpx position_count field for a k-mer (u32 at offset 4 of
+// the per-kmer payload).
+static uint32_t kpx_position_count(const KpxReader& kpx, uint32_t kmer) {
+    const uint8_t* p = kpx.posting_data() + kpx.pos_offset(kmer);
+    uint32_t pos_cnt;
+    std::memcpy(&pos_cnt, p + sizeof(uint32_t), sizeof(uint32_t));
+    return pos_cnt;
 }
 
 static void test_build_and_verify_ksx() {
@@ -104,19 +115,21 @@ static void test_build_and_verify_kix_kpx() {
     CHECK_EQ(kix.kmer_type(), 0u); // uint16_t for k=7
     CHECK(kix.num_sequences() > 0);
     CHECK_EQ(kpx.k(), 7);
-    CHECK_EQ(kix.total_postings(), kpx.total_postings());
+    // v7: distinct count <= position count (intra-sequence k-mer
+    // duplicates are removed from the .kix stream but kept in .kpx).
+    CHECK(kix.total_distinct_postings() <= kpx.total_position_count());
 
     uint64_t tbl_sz = table_size(7); // 4^7 = 16384
     CHECK_EQ(kix.table_size(), tbl_sz);
     CHECK_EQ(kpx.table_size(), tbl_sz);
 
-    // Verify total postings via counts
+    // Verify total distinct postings via counts
     auto counts = kix.bulk_count_postings();
     uint64_t sum_counts = 0;
     for (uint32_t i = 0; i < tbl_sz; i++) {
         sum_counts += counts[i];
     }
-    CHECK_EQ(sum_counts, kix.total_postings());
+    CHECK_EQ(sum_counts, kix.total_distinct_postings());
 
     // Verify the posting lists are correctly sorted
     // For each kmer with postings, decode and check seq_ids are non-decreasing
@@ -140,14 +153,15 @@ static void test_build_and_verify_kix_kpx() {
             CHECK(id < kix.num_sequences());
         }
 
-        // Decode positions and verify they are valid. v6 .kpx postings
-        // need the .kix-decoded seq_id stream (already loaded into `ids`
-        // above) so the partition+short merge can walk lock-step.
+        // Decode positions via v7 candidate-set API: ids is already a
+        // sorted distinct seq_id list (decoded from .kix v7).  Total
+        // positions returned equal the .kpx per-kmer position_count.
         std::vector<uint32_t> positions = decode_pos_postings(
             kpx.posting_data(), kpx.pos_offset(kmer),
             kpx.posting_data_size() - kpx.pos_offset(kmer),
             ids);
-        CHECK_EQ(positions.size(), static_cast<size_t>(cnt));
+        CHECK_EQ(positions.size(),
+                 static_cast<size_t>(kpx_position_count(kpx, kmer)));
 
         kmers_checked++;
     }
@@ -228,7 +242,7 @@ static void test_build_k9_uint32() {
     for (uint32_t i = 0; i < kix.table_size(); i++) {
         sum += counts_k9[i];
     }
-    CHECK_EQ(sum, kix.total_postings());
+    CHECK_EQ(sum, kix.total_distinct_postings());
 
     kix.close();
 }
@@ -265,7 +279,7 @@ static void test_build_with_max_freq_build() {
     CHECK(kix1.open(prefix1 + ".kix"));
     CHECK(kix2.open(prefix2 + ".kix"));
 
-    CHECK(kix2.total_postings() <= kix1.total_postings());
+    CHECK(kix2.total_distinct_postings() <= kix1.total_distinct_postings());
 
     // Verify that high-frequency kmers in kix2 have been zeroed
     auto counts1 = kix1.bulk_count_postings();
@@ -299,7 +313,7 @@ static void test_build_with_max_freq_build() {
 
     KixReader kix3;
     CHECK(kix3.open(prefix3 + ".kix"));
-    CHECK(kix3.total_postings() <= kix1.total_postings());
+    CHECK(kix3.total_distinct_postings() <= kix1.total_distinct_postings());
 
     auto counts1b = kix1.bulk_count_postings();
     auto counts3 = kix3.bulk_count_postings();
@@ -340,7 +354,7 @@ static void test_build_with_memory_limits() {
     CHECK(kix1.open(prefix1 + ".kix"));
     CHECK(kix4.open(prefix4 + ".kix"));
 
-    CHECK_EQ(kix1.total_postings(), kix4.total_postings());
+    CHECK_EQ(kix1.total_distinct_postings(), kix4.total_distinct_postings());
 
     auto counts_m1 = kix1.bulk_count_postings();
     auto counts_m4 = kix4.bulk_count_postings();
@@ -411,7 +425,7 @@ static void test_build_parallel_scan() {
     CHECK(kix_mt.open(g_output_dir + "/parscan_mt.00.07mer.kix"));
 
     CHECK_EQ(kix_st.table_size(), kix_mt.table_size());
-    CHECK_EQ(kix_st.total_postings(), kix_mt.total_postings());
+    CHECK_EQ(kix_st.total_distinct_postings(), kix_mt.total_distinct_postings());
 
     // Compare counts
     auto counts_st = kix_st.bulk_count_postings();
@@ -455,7 +469,7 @@ static void test_build_parallel_scan() {
     CHECK(kpx_st.open(g_output_dir + "/parscan_st.00.07mer.kpx"));
     CHECK(kpx_mt.open(g_output_dir + "/parscan_mt.00.07mer.kpx"));
 
-    CHECK_EQ(kpx_st.total_postings(), kpx_mt.total_postings());
+    CHECK_EQ(kpx_st.total_position_count(), kpx_mt.total_position_count());
 
     for (uint32_t kmer = 0; kmer < kix_st.table_size(); kmer++) {
         uint32_t cnt = counts_st[kmer];

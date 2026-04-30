@@ -6,10 +6,11 @@
 
 namespace ikafssn {
 
-// Writes a .kix file (format version 3):
+// Writes a .kix file (format version 7):
 // 1. Header
 // 2. offsets[table_size + 1]  (sentinel at end = total posting data bytes)
-// 3. Delta-compressed ID postings
+// 3. Per-kmer payload: [u32 distinct_count][u32 payload_words][u32 payload[N]]
+//    over the distinct seq_id delta stream encoded with FastPFor.
 class KixWriter {
 public:
     KixWriter(int k, uint8_t kmer_type);
@@ -20,9 +21,10 @@ public:
     void set_num_sequences(uint32_t n);
     void set_flags(uint32_t flags);
 
-    // Add a posting list for a k-mer. postings must be sorted by seq_id.
-    // Caller must call this for k-mers in ascending order (0, 1, 2, ..., 4^k-1).
-    // Empty posting lists should be added with count=0 / empty vector.
+    // Add a posting list for a k-mer.  In v7 `seq_ids` must be **sorted
+    // and distinct** (the on-disk payload stores distinct seq_ids only;
+    // intra-sequence k-mer duplicates are removed at build time).
+    // Caller must call this for k-mers in ascending order.
     void add_posting_list(uint32_t kmer_value, const std::vector<uint32_t>& seq_ids);
 
     // Finalize and write to file. Returns true on success.
@@ -42,7 +44,7 @@ private:
     // Accumulated data: offsets has table_size_ + 1 entries
     std::vector<uint64_t> offsets_;
     std::vector<uint8_t> posting_data_; // all delta-compressed postings concatenated
-    uint64_t total_postings_ = 0;
+    uint64_t total_distinct_postings_ = 0;
 };
 
 } // namespace ikafssn

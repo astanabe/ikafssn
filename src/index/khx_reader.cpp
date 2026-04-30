@@ -28,7 +28,10 @@ bool KhxReader::open(const std::string& path) {
     }
 
     if (hdr->format_version != KHX_FORMAT_VERSION) {
-        std::fprintf(stderr, "KhxReader: unsupported format version %u\n", hdr->format_version);
+        std::fprintf(stderr,
+            "KhxReader: index format version mismatch (got %u, expected %u). "
+            "Please rebuild with the current ikafssnindex.\n",
+            hdr->format_version, KHX_FORMAT_VERSION);
         close();
         return false;
     }

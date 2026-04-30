@@ -41,7 +41,7 @@ static bool write_filtered_kix(
     const std::vector<uint64_t>& kix_sizes,
     int k,
     uint32_t tbl_size,
-    uint64_t new_total_postings,
+    uint64_t new_total_distinct_postings,
     const Logger& logger) {
     const uint8_t* kix_posting_in = kix_in.posting_data();
 
@@ -77,7 +77,7 @@ static bool write_filtered_kix(
     kix_hdr.k = static_cast<uint8_t>(k);
     kix_hdr.kmer_type = kmer_type_for(k, kix_in.header().t);
     kix_hdr.num_sequences = kix_in.num_sequences();
-    kix_hdr.total_postings = new_total_postings;
+    kix_hdr.total_distinct_postings = new_total_distinct_postings;
     kix_hdr.flags = kix_in.header().flags | (use_offset32 ? KIX_FLAG_OFFSET32 : 0);
     kix_hdr.volume_index = kix_in.header().volume_index;
     kix_hdr.total_volumes = kix_in.header().total_volumes;
@@ -124,7 +124,7 @@ static bool write_filtered_kpx(
     const std::vector<uint64_t>& kix_sizes,
     int k,
     uint32_t tbl_size,
-    uint64_t new_total_postings,
+    uint64_t new_total_position_count,
     const Logger& logger) {
     const uint8_t* kpx_posting_in = kpx_in.posting_data();
 
@@ -157,7 +157,7 @@ static bool write_filtered_kpx(
     kpx_hdr.k = static_cast<uint8_t>(k);
     kpx_hdr.t = kpx_in.header().t;
     kpx_hdr.template_type = kpx_in.header().template_type;
-    kpx_hdr.total_postings = new_total_postings;
+    kpx_hdr.total_position_count = new_total_position_count;
     kpx_hdr.offset_type = use_offset32 ? 0 : 1;
 
     // Reserved codec-extension area (zero in v5).
@@ -244,12 +244,29 @@ static bool filter_one_volume(
         }
     }
 
-    // Compute new totals
+    // Compute new totals.  v7: .kix tracks distinct seq_id postings;
+    // .kpx tracks the total position count (sum of intra-sequence
+    // occurrences).  The .kpx position count per k-mer lives at byte
+    // offset 4 of each posting blob (u32 right after distinct_count).
     auto counts = kix_in.bulk_count_postings();
-    uint64_t new_total_postings = 0;
+    uint64_t new_total_distinct_postings = 0;
     for (uint32_t i = 0; i < tbl_size; i++) {
         if (!excluded[i]) {
-            new_total_postings += counts[i];
+            new_total_distinct_postings += counts[i];
+        }
+    }
+
+    uint64_t new_total_position_count = 0;
+    if (has_kpx_tmp) {
+        const uint8_t* kpx_posting_in = kpx_in.posting_data();
+        for (uint32_t i = 0; i < tbl_size; i++) {
+            if (kix_sizes[i] > 0 && !excluded[i] && kpx_sizes[i] >= 8) {
+                uint32_t pos_cnt;
+                std::memcpy(&pos_cnt,
+                            kpx_posting_in + kpx_in.pos_offset(i) + sizeof(uint32_t),
+                            sizeof(uint32_t));
+                new_total_position_count += pos_cnt;
+            }
         }
     }
 
@@ -261,13 +278,13 @@ static bool filter_one_volume(
         kpx_thread = std::thread([&]() {
             kpx_ok = write_filtered_kpx(
                 kpx_in, kpx_final, excluded, kpx_sizes, kix_sizes,
-                k, tbl_size, new_total_postings, logger);
+                k, tbl_size, new_total_position_count, logger);
         });
     }
 
     kix_ok = write_filtered_kix(
         kix_in, kix_final, excluded, kix_sizes,
-        k, tbl_size, new_total_postings, logger);
+        k, tbl_size, new_total_distinct_postings, logger);
 
     if (has_kpx_tmp) kpx_thread.join();
 
@@ -288,8 +305,10 @@ static bool filter_one_volume(
     std::remove(kix_tmp.c_str());
     if (has_kpx_tmp) std::remove(kpx_tmp.c_str());
 
-    logger.info("Filtered volume: %s (total_postings: %lu)",
-                vol_prefix.c_str(), static_cast<unsigned long>(new_total_postings));
+    logger.info("Filtered volume: %s (distinct_postings=%lu, position_count=%lu)",
+                vol_prefix.c_str(),
+                static_cast<unsigned long>(new_total_distinct_postings),
+                static_cast<unsigned long>(new_total_position_count));
     return true;
 }
 

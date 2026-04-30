@@ -1,25 +1,23 @@
-// Phase 5a — dump v3 .kix/.kpx postings to TSV for compression analysis.
+// Phase 5a / 5i — dump v7 .kix/.kpx postings to TSV for compression analysis.
 //
-// Throwaway tool: reads existing v3 (.kix v3 sentinel-offset + LEB128 deltas,
-// .kpx v3 with within-seq position deltas) and emits TSV lines:
+// Throwaway tool: reads the current index files via the public codec API
+// and emits TSV lines:
 //
 //     kmer_value \t count \t seq_id_csv \t pos_csv
 //
-// with absolute seq_id (no delta) and absolute position (no delta), one row
-// per non-empty k-mer. The output feeds tools/analyze_postings.py which
-// estimates v4 (FastPFOR* + Simple-8b) compressed size.
+// where count = distinct seq_id count for the k-mer, seq_id_csv is the
+// distinct seq_id list, and pos_csv concatenates per-seq position lists in
+// the same order (empty when --kpx is omitted).
 //
 // Usage:
 //     dump_postings --kix <path> [--kpx <path>] [--max-kmers N] [--min-count N]
 //                   [--out <path>]
-//
-// If --kpx is omitted, only the .kix portion is dumped (pos column = empty).
-// --max-kmers / --min-count gate the output to keep TSVs manageable.
 
 #include "core/varint.hpp"
 #include "core/config.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
+#include "index/pfd_codec.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -112,9 +110,9 @@ int main(int argc, char** argv) {
     }
 
     // TSV header (commented so awk users can skip with grep -v '^#')
-    std::fprintf(out, "# k=%d t=%d num_seqs=%u total_postings=%lu\n",
+    std::fprintf(out, "# k=%d t=%d num_seqs=%u total_distinct_postings=%lu\n",
                  kix.k(), (int)kix.t(), kix.num_sequences(),
-                 (unsigned long)kix.total_postings());
+                 (unsigned long)kix.total_distinct_postings());
     std::fprintf(out, "# kmer\tcount\tseq_ids\tpositions\n");
 
     const uint8_t* kix_data = kix.posting_data();
@@ -124,10 +122,8 @@ int main(int argc, char** argv) {
     uint64_t emitted = 0;
     uint64_t non_empty_seen = 0;
 
-    std::vector<uint32_t> seq_ids;
-    std::vector<uint32_t> positions;
-    seq_ids.reserve(1024);
-    positions.reserve(1024);
+    pfd::StreamCtx kix_ctx;
+    std::vector<std::vector<uint32_t>> per_cand_pos;
 
     for (uint32_t kmer = 0; kmer < tbl; kmer++) {
         if (args.max_kmers > 0 && emitted >= args.max_kmers) break;
@@ -139,54 +135,39 @@ int main(int argc, char** argv) {
         // Stride-based uniform sampling over non-empty k-mers.
         if ((non_empty_seen++ % args.stride) != 0) continue;
 
-        // Decode seq_ids (delta).
-        seq_ids.clear();
-        {
-            const uint8_t* p = kix_data + kix_off;
-            const uint8_t* e = p + kix_len;
-            uint32_t prev = 0;
-            bool first = true;
-            while (p < e) {
-                uint32_t d;
-                p += varint_decode(p, d);
-                uint32_t sid = first ? d : prev + d;
-                seq_ids.push_back(sid);
-                prev = sid;
-                first = false;
-            }
+        // Decode distinct seq_ids via the v7 codec.
+        if (!pfd::open_stream_kix(kix_data + kix_off, kix_len, kix_ctx)) {
+            std::fprintf(stderr, "kmer %u: kix decode failed\n", kmer);
+            continue;
         }
-        uint32_t cnt = static_cast<uint32_t>(seq_ids.size());
+        const uint32_t cnt = kix_ctx.count;
         if (cnt < args.min_count) continue;
 
-        // Decode positions (delta within seq, reset on new seq).
-        positions.clear();
+        // Decode positions (per distinct seq_id, in seq_id order).
         if (have_kpx) {
-            uint64_t kpx_off_lo = kpx.pos_offset(kmer);
-            // .kpx v3 has no sentinel; derive next offset by scanning forward.
-            // We already know the count, decode exactly cnt varints.
-            const uint8_t* p = kpx_data + kpx_off_lo;
-            // Compute the delta-reset bitmask from seq_id deltas (first is reset).
-            uint32_t prev_sid = 0;
-            uint32_t prev_pos = 0;
-            for (uint32_t i = 0; i < cnt; i++) {
-                uint32_t v;
-                p += varint_decode(p, v);
-                bool new_seq = (i == 0) || (seq_ids[i] != prev_sid);
-                uint32_t abs_pos = new_seq ? v : prev_pos + v;
-                positions.push_back(abs_pos);
-                prev_sid = seq_ids[i];
-                prev_pos = abs_pos;
+            uint64_t kpx_off = kpx.pos_offset(kmer);
+            uint64_t kpx_end = kpx.posting_data_size();
+            if (!pfd::open_stream_kpx_for_candidates(
+                    kpx_data + kpx_off, kpx_end - kpx_off,
+                    kix_ctx.decoded.data(), cnt,
+                    per_cand_pos)) {
+                std::fprintf(stderr, "kmer %u: kpx decode failed\n", kmer);
+                continue;
             }
         }
 
         // Emit row.
         std::fprintf(out, "%u\t%u\t", kmer, cnt);
         for (uint32_t i = 0; i < cnt; i++) {
-            std::fprintf(out, "%u%s", seq_ids[i], (i + 1 == cnt ? "\t" : ","));
+            std::fprintf(out, "%u%s", kix_ctx.decoded[i], (i + 1 == cnt ? "\t" : ","));
         }
         if (have_kpx) {
+            bool first_p = true;
             for (uint32_t i = 0; i < cnt; i++) {
-                std::fprintf(out, "%u%s", positions[i], (i + 1 == cnt ? "" : ","));
+                for (uint32_t p : per_cand_pos[i]) {
+                    std::fprintf(out, "%s%u", first_p ? "" : ",", p);
+                    first_p = false;
+                }
             }
         }
         std::fputc('\n', out);

@@ -80,7 +80,7 @@ Options:
                           0: not allowed (error)
                           Counts are aggregated across all volumes before filtering
   -freq_threshold_part <int>
-                          .kpx v6 per-(kmer, seq_id) partition threshold (default: 8)
+                          .kpx v7 per-(kmer, seq_id) partition threshold (default: 8, max: 255)
                           A (k-mer, seq_id) cluster with occurrence count > threshold
                           gets its own partition group; lower-multiplicity clusters
                           merge into a shared short bucket (improves chromosome-class
@@ -1161,12 +1161,12 @@ Examples:
 - Spaced seed with k=12, t=21, coding: `nt.00.12mer.21mer.cod.kix`
 - Manifest: `nt.11mer.16mer.cod.kvx`
 
-**Index format version:** The current index format is version 6 for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`). Key changes from earlier versions:
+**Index format version:** The current index format is version 7 for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`). Key changes from earlier versions:
 
-- **`.kix` v6 (Phase 5g-1, wire-compatible with v5):** Per-posting payload is FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the `[abs_first, d1, d2, ...]` seq_id stream. The leading `[u32 count][u32 payload_words]` per-posting header makes `count` an O(1) read. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, offsets are stored as `uint32_t` instead of `uint64_t` (applicable when posting data < 4 GiB).
-- **`.kpx` v6 (Phase 5g-2):** Per-(kmer, seq_id) partitioned layout. Each (k-mer, seq_id) cluster whose occurrence count exceeds the build-time `-freq_threshold_part` (default 8) becomes its own partition group; the rest of the occurrences merge into a shared short bucket. Both partition groups and the short bucket use the FOR-within-block stream from Phase 5e (per-128-element block stores its min, then bitpacks the spread). The decoder takes the .kix-decoded seq_id stream as input and walks lock-step against it. The header `offset_type` field (byte 0x11) indicates offset width: 0 = `uint32_t`, 1 = `uint64_t`.
+- **`.kix` v7 (Phase 5i):** Per-posting payload is FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the **distinct seq_id** delta stream `[abs_first, d1, d2, ...]` with `d_i >= 1`. Intra-sequence k-mer duplicates are removed at build time by a SIMD dedup kernel. The leading `[u32 distinct_count][u32 payload_words]` per-posting header makes `distinct_count` an O(1) read. As a result, `-max_freq_build` and `-stage1_max_freq` now threshold by **the number of containing sequences** (matching the original design intent), not by total occurrences. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, offsets are stored as `uint32_t` instead of `uint64_t` (applicable when posting data < 4 GiB).
+- **`.kpx` v7 (Phase 5i):** Per-(kmer, seq_id) partitioned layout with a self-describing short bucket. Each (k-mer, seq_id) cluster whose occurrence count exceeds the build-time `-freq_threshold_part` (default 8, max 255) becomes its own partition group; remaining low-multiplicity occurrences merge into a short bucket that carries its own delta-encoded seq_id list and per-seq_id u8 occurrence counts. Both partition groups and the short bucket use the FOR-within-block stream from Phase 5e (per-128-element block stores its min, then bitpacks the spread). Decoding is candidate-set-driven (the caller passes a sorted candidate seq_id array; the decoder returns per-candidate position vectors), eliminating the v6 lock-step dependency on the .kix stream. The header `offset_type` field (byte 0x11) indicates offset width: 0 = `uint32_t`, 1 = `uint64_t`.
 
-Indexes built before Phase 5g-2 (format_version <= 5) are rejected at open with a clear "rebuild your index" message. Rebuild indexes after upgrading.
+Indexes built before Phase 5i (format_version <= 6) are rejected at open with a clear "rebuild your index" message. Rebuild indexes after upgrading.
 
 ## Installation
 

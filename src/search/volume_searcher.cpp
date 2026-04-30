@@ -92,54 +92,39 @@ search_one_strand_preprocessed(
         return stage1_only_results(candidates, is_reverse, effective_min_score);
     }
 
-    // Build candidate set for fast lookup and score map
-    std::unordered_set<SeqId> candidate_set;
+    // Build sorted candidate seq_id array for the candidate-set-driven
+    // .kpx decoder, plus a score map used by the chaining loop below.
+    std::vector<SeqId> candidate_sids;
+    candidate_sids.reserve(candidates.size());
     std::unordered_map<SeqId, uint32_t> stage1_scores;
-    candidate_set.reserve(candidates.size());
     stage1_scores.reserve(candidates.size());
     for (const auto& c : candidates) {
-        candidate_set.insert(c.id);
+        candidate_sids.push_back(c.id);
         stage1_scores[c.id] = c.score;
     }
+    std::sort(candidate_sids.begin(), candidate_sids.end());
 
     // Stage 2: collect hits for candidates
     std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
 
-    const uint8_t* id_data = kix.posting_data();
     const uint8_t* pos_data = kpx.posting_data();
-
-    constexpr int kStage2Batch = SeqIdDecoder::kMaxBatch;
-    SeqId    sid_buf[kStage2Batch];
-    uint8_t  was_new_buf[kStage2Batch];
-    uint32_t pos_buf[kStage2Batch];
 
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
-        auto off = kix.posting_offset(kmer_idx);
-        auto end_off = kix.posting_offset(kmer_idx + 1);
-        if (off == end_off) continue;
 
-        SeqIdDecoder id_decoder(id_data + off, id_data + end_off);
-        // Phase 5g-2: PosDecoder needs the .kix decoded seq_id array up
-        // front so its partition+short merge can walk lock-step.
-        id_decoder.ensure_decoded();
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
                                pos_data + kpx.posting_data_size(),
-                               id_decoder.decoded_data(),
-                               id_decoder.decoded_count());
-
-        while (id_decoder.has_more()) {
-            int n_id = id_decoder.next_batch(sid_buf, was_new_buf, kStage2Batch);
-            if (n_id == 0) break;
-            int n_pos = pos_decoder.next_batch(pos_buf, n_id);
-            int n = (n_pos < n_id) ? n_pos : n_id;
-            for (int i = 0; i < n; i++) {
-                if (candidate_set.count(sid_buf[i])) {
-                    hits_per_seq[sid_buf[i]].push_back({q_pos, pos_buf[i]});
+                               candidate_sids.data(),
+                               candidate_sids.size());
+        pos_decoder.for_each_candidate(
+            [&](uint32_t sid, const std::vector<uint32_t>& positions_v) {
+                auto& bucket = hits_per_seq[sid];
+                bucket.reserve(bucket.size() + positions_v.size());
+                for (uint32_t spos : positions_v) {
+                    bucket.push_back({q_pos, spos});
                 }
-            }
-        }
+            });
     }
 
     // Chain hits for each candidate, using effective_min_score
@@ -226,45 +211,28 @@ SearchResult search_volume(
 template <typename KmerInt>
 static void collect_position_hits(
     const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
-    const KixReader& kix, const KpxReader& kpx,
-    const std::unordered_set<SeqId>& candidate_set,
+    const KixReader& /*kix*/, const KpxReader& kpx,
+    const std::vector<SeqId>& candidate_sids,
     std::unordered_map<SeqId, std::vector<Hit>>& hits_per_seq) {
 
-    const uint8_t* id_data = kix.posting_data();
     const uint8_t* pos_data = kpx.posting_data();
-
-    constexpr int kStage2Batch = SeqIdDecoder::kMaxBatch;
-    SeqId    sid_buf[kStage2Batch];
-    uint8_t  was_new_buf[kStage2Batch];
-    uint32_t pos_buf[kStage2Batch];
 
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
-        auto off = kix.posting_offset(kmer_idx);
-        auto end_off = kix.posting_offset(kmer_idx + 1);
-        if (off == end_off) continue;
 
-        SeqIdDecoder id_decoder(id_data + off, id_data + end_off);
-        // Phase 5g-2: PosDecoder needs the .kix decoded seq_id array up
-        // front so its partition+short merge can walk lock-step.
-        id_decoder.ensure_decoded();
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
                                pos_data + kpx.posting_data_size(),
-                               id_decoder.decoded_data(),
-                               id_decoder.decoded_count());
-
-        while (id_decoder.has_more()) {
-            int n_id = id_decoder.next_batch(sid_buf, was_new_buf, kStage2Batch);
-            if (n_id == 0) break;
-            int n_pos = pos_decoder.next_batch(pos_buf, n_id);
-            int n = (n_pos < n_id) ? n_pos : n_id;
-            for (int i = 0; i < n; i++) {
-                if (candidate_set.count(sid_buf[i])) {
-                    hits_per_seq[sid_buf[i]].push_back({q_pos, pos_buf[i]});
+                               candidate_sids.data(),
+                               candidate_sids.size());
+        pos_decoder.for_each_candidate(
+            [&](uint32_t sid, const std::vector<uint32_t>& positions_v) {
+                auto& bucket = hits_per_seq[sid];
+                bucket.reserve(bucket.size() + positions_v.size());
+                for (uint32_t spos : positions_v) {
+                    bucket.push_back({q_pos, spos});
                 }
-            }
-        }
+            });
     }
 }
 
@@ -327,22 +295,20 @@ search_one_strand_both(
     }
 
     // Filter candidates
-    std::unordered_set<SeqId> candidate_set;
     std::unordered_map<SeqId, uint32_t> stage1_scores;
     for (const auto& [sid, score] : merged_scores) {
         if (score >= combined_threshold) {
-            candidate_set.insert(sid);
             stage1_scores[sid] = score;
         }
     }
-    if (candidate_set.empty()) return {};
+    if (stage1_scores.empty()) return {};
 
     // Apply stage1_topn if set
-    if (config.stage1.stage1_topn > 0 && candidate_set.size() > config.stage1.stage1_topn) {
+    if (config.stage1.stage1_topn > 0 && stage1_scores.size() > config.stage1.stage1_topn) {
         std::vector<Stage1Candidate> sorted_cands;
-        sorted_cands.reserve(candidate_set.size());
-        for (auto sid : candidate_set) {
-            sorted_cands.push_back({sid, stage1_scores[sid]});
+        sorted_cands.reserve(stage1_scores.size());
+        for (const auto& [sid, score] : stage1_scores) {
+            sorted_cands.push_back({sid, score});
         }
         auto cmp = [](const Stage1Candidate& a, const Stage1Candidate& b) {
             return a.score > b.score;
@@ -351,24 +317,32 @@ search_one_strand_both(
                          sorted_cands.begin() + config.stage1.stage1_topn,
                          sorted_cands.end(), cmp);
         sorted_cands.resize(config.stage1.stage1_topn);
-        candidate_set.clear();
-        for (const auto& c : sorted_cands) candidate_set.insert(c.id);
+        std::unordered_map<SeqId, uint32_t> filtered;
+        filtered.reserve(sorted_cands.size());
+        for (const auto& c : sorted_cands) filtered[c.id] = c.score;
+        stage1_scores = std::move(filtered);
     }
+
+    // Build sorted candidate seq_id array for the candidate-set-driven decoder.
+    std::vector<SeqId> candidate_sids;
+    candidate_sids.reserve(stage1_scores.size());
+    for (const auto& [sid, score] : stage1_scores) candidate_sids.push_back(sid);
+    std::sort(candidate_sids.begin(), candidate_sids.end());
 
     // Stage 2: collect position hits from both indexes
     std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
 
     collect_position_hits(pos_cod, kmers_cod, n_cod, kix_cod, kpx_cod,
-                          candidate_set, hits_per_seq);
+                          candidate_sids, hits_per_seq);
     collect_position_hits(pos_opt, kmers_opt, n_opt, kix_opt, kpx_opt,
-                          candidate_set, hits_per_seq);
+                          candidate_sids, hits_per_seq);
 
     // Chain hits
     Stage2Config stage2_config = config.stage2;
     stage2_config.min_score = effective_min_score;
 
     std::vector<ChainResult> results;
-    for (auto sid : candidate_set) {
+    for (auto sid : candidate_sids) {
         auto it = hits_per_seq.find(sid);
         if (it == hits_per_seq.end()) continue;
 

@@ -17,7 +17,7 @@ public:
     int k() const { return header_->k; }
     uint8_t kmer_type() const { return header_->kmer_type; }
     uint32_t num_sequences() const { return header_->num_sequences; }
-    uint64_t total_postings() const { return header_->total_postings; }
+    uint64_t total_distinct_postings() const { return header_->total_distinct_postings; }
     uint8_t t() const { return header_->t; }
     uint8_t template_type() const { return header_->template_type; }
     uint32_t table_size() const { return table_size_; }
@@ -42,10 +42,14 @@ public:
         return posting_offset(kmer + 1) - posting_offset(kmer);
     }
 
-    // Count postings for a k-mer (on-demand varint decode).
+    // Count distinct seq_ids for a k-mer (O(1) read of the leading u32 of
+    // the per-kmer payload).  In v7 this is the number of distinct
+    // sequences containing the k-mer (intra-sequence duplicates are
+    // removed at build time), realigning -max_freq_build /
+    // -stage1_max_freq with the original "matched-entry-count" semantic.
     uint32_t count_postings(uint32_t kmer) const;
 
-    // Bulk count all postings. Returns counts[table_size].
+    // Bulk count all postings (distinct seq_ids per k-mer in v7).
     std::vector<uint32_t> bulk_count_postings() const;
 
 private:

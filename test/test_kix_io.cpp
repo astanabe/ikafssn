@@ -29,11 +29,14 @@ static void test_k7_uint16() {
     uint8_t kmer_type = 0; // uint16_t
     uint32_t ts = table_size(k); // 4^7 = 16384
 
-    // Create synthetic posting data for a few k-mers
+    // Create synthetic posting data for a few k-mers.  v7 .kix stores
+    // distinct seq_ids only — duplicates are not allowed at the writer
+    // boundary (intra-sequence k-mer duplicates are removed by the
+    // builder's SIMD dedup kernel).
     std::vector<std::vector<uint32_t>> postings(ts);
     postings[0] = {0, 1, 2, 5, 10};           // k-mer 0
     postings[1] = {3, 7};                       // k-mer 1
-    postings[100] = {0, 0, 0, 1, 1, 2};         // repeated IDs (delta=0)
+    postings[100] = {0, 1, 2, 3, 4, 5};          // 6 distinct seq_ids
     postings[ts - 1] = {999};                    // last k-mer
 
     {
@@ -98,11 +101,11 @@ static void test_k7_uint16() {
             reader.posting_byte_length(100));
         CHECK_EQ(decoded100.size(), 6u);
         CHECK_EQ(decoded100[0], 0u);
-        CHECK_EQ(decoded100[1], 0u);
-        CHECK_EQ(decoded100[2], 0u);
-        CHECK_EQ(decoded100[3], 1u);
-        CHECK_EQ(decoded100[4], 1u);
-        CHECK_EQ(decoded100[5], 2u);
+        CHECK_EQ(decoded100[1], 1u);
+        CHECK_EQ(decoded100[2], 2u);
+        CHECK_EQ(decoded100[3], 3u);
+        CHECK_EQ(decoded100[4], 4u);
+        CHECK_EQ(decoded100[5], 5u);
 
         auto decoded_last = decode_id_postings(
             reader.posting_data() + reader.posting_offset(ts - 1),
@@ -110,8 +113,8 @@ static void test_k7_uint16() {
         CHECK_EQ(decoded_last.size(), 1u);
         CHECK_EQ(decoded_last[0], 999u);
 
-        // Check total postings
-        CHECK_EQ(reader.total_postings(), 5u + 2u + 6u + 1u);
+        // Check total distinct postings
+        CHECK_EQ(reader.total_distinct_postings(), 5u + 2u + 6u + 1u);
 
         reader.close();
     }
@@ -196,7 +199,7 @@ static void test_empty_postings() {
     {
         KixReader reader;
         CHECK(reader.open(TEST_FILE));
-        CHECK_EQ(reader.total_postings(), 0u);
+        CHECK_EQ(reader.total_distinct_postings(), 0u);
         for (uint32_t i = 0; i < ts; i++) {
             CHECK_EQ(reader.posting_byte_length(i), 0u);
         }

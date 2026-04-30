@@ -80,7 +80,7 @@ ikafssnindex [options]
                           0: エラー (使用不可)
                           カウントは全ボリュームで合算後にフィルタリング
   -freq_threshold_part <int>
-                          .kpx v6 の (k-mer, seq_id) 単位パーティション閾値 (デフォルト: 8)
+                          .kpx v7 の (k-mer, seq_id) 単位パーティション閾値 (デフォルト: 8、上限: 255)
                           1 つの (k-mer, seq_id) クラスタの出現回数がこの値を超えると
                           独立パーティションとして切り出し、それ以下のクラスタは共有
                           short bucket にまとめる (染色体級配列のブロック幅が絶対位置の
@@ -1156,12 +1156,12 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 - スペースドシード (k=12, t=21, coding): `nt.00.12mer.21mer.cod.kix`
 - マニフェスト: `nt.11mer.16mer.cod.kvx`
 
-**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`) でバージョン 6 です。主な変更点:
+**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`) でバージョン 7 です。主な変更点:
 
-- **`.kix` v6 (Phase 5g-1、wire 互換性は v5 と同じ):** ポスティングごとのペイロードは FastPFor の `CompositeCodec<SIMDFastPFor<4>, VariableByte>`（PForDelta + VByte 例外ストリーム）で、`[abs_first, d1, d2, ...]` の seq_id 列をエンコードします。各ポスティングの先頭 `[u32 count][u32 payload_words]` ヘッダにより `count` は O(1) 取得可能。`KIX_FLAG_OFFSET32` フラグ (0x04) が設定されている場合、オフセットは `uint32_t` で格納されます（ポスティングデータが 4 GiB 未満時に適用）。
-- **`.kpx` v6 (Phase 5g-2):** (k-mer, seq_id) 単位パーティションレイアウト。1 つの (k-mer, seq_id) クラスタの出現回数が構築時の `-freq_threshold_part`（デフォルト 8）を超えると独立パーティショングループとして切り出され、それ以下の出現は共有 short bucket にまとめられます。パーティショングループも short bucket も Phase 5e の FOR-within-block ストリーム（128 要素ブロックごとに min を引いてビットパック）で格納されます。デコーダは `.kix` の decoded seq_id 列を入力として受け取り lock-step で merge します。ヘッダの `offset_type` フィールド（バイト 0x11）がオフセット幅を示します: 0 = `uint32_t`、1 = `uint64_t`。
+- **`.kix` v7 (Phase 5i):** ポスティングごとのペイロードは FastPFor の `CompositeCodec<SIMDFastPFor<4>, VariableByte>`（PForDelta + VByte 例外ストリーム）で、**distinct seq_id** delta 列 `[abs_first, d1, d2, ...]`（`d_i >= 1` 保証）をエンコードします。同一シーケンス内での k-mer 重複は構築時の SIMD dedup カーネルで除去されます。各ポスティングの先頭 `[u32 distinct_count][u32 payload_words]` ヘッダにより `distinct_count` は O(1) 取得可能。これにより `-max_freq_build` および `-stage1_max_freq` は **当該 k-mer を含むシーケンス数** を閾値として高頻度 k-mer を除外する本来の設計意図に整合しました（v6 までは総出現数を閾値としていた）。`KIX_FLAG_OFFSET32` フラグ (0x04) が設定されている場合、オフセットは `uint32_t` で格納されます（ポスティングデータが 4 GiB 未満時に適用）。
+- **`.kpx` v7 (Phase 5i):** (k-mer, seq_id) 単位パーティション + 自己記述 short bucket レイアウト。1 つの (k-mer, seq_id) クラスタの出現回数が構築時の `-freq_threshold_part`（デフォルト 8、上限 255）を超えると独立パーティショングループとして切り出され、それ以下の出現は short bucket にまとめられます。short bucket は自身の delta 圧縮された seq_id リストと per-seq_id u8 出現数を持ちます。パーティショングループも short bucket も Phase 5e の FOR-within-block ストリーム（128 要素ブロックごとに min を引いてビットパック）で格納されます。デコードは candidate-set 駆動（呼び出し側がソート済み candidate seq_id 配列を渡し、各 candidate の position 配列を受け取る）になり、v6 の `.kix` ストリームとの lock-step 依存が解消されました。ヘッダの `offset_type` フィールド（バイト 0x11）がオフセット幅を示します: 0 = `uint32_t`、1 = `uint64_t`。
 
-Phase 5g-2 以前 (format_version <= 5) のインデックスは open 時に明確な「rebuild」エラーで拒否されます。アップグレード後にインデックスを再構築してください。
+Phase 5i 以前 (format_version <= 6) のインデックスは open 時に明確な「rebuild」エラーで拒否されます。アップグレード後にインデックスを再構築してください。
 
 ## インストール
 

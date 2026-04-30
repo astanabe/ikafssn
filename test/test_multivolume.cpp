@@ -413,7 +413,7 @@ static void test_parallel_counting_pass() {
     CHECK(kix_mt.open(g_test_dir + "/pcnt_mt.00.07mer.kix"));
 
     CHECK_EQ(kix_st.table_size(), kix_mt.table_size());
-    CHECK_EQ(kix_st.total_postings(), kix_mt.total_postings());
+    CHECK_EQ(kix_st.total_distinct_postings(), kix_mt.total_distinct_postings());
 
     // Compare posting byte lengths (replaces counts comparison)
     bool counts_match = true;

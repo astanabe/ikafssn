@@ -65,11 +65,12 @@ static uint32_t compute_global_max_freq(
     const std::vector<const KixReader*>& all_kix) {
     if (config_max_freq > 0) return config_max_freq;
 
-    // Auto mode: aggregate total_postings and table_size across all volumes
+    // Auto mode: aggregate distinct postings and table_size across all volumes
+    // (v7: total_distinct_postings is the sum of distinct seq_id counts).
     uint64_t total_postings = 0;
     uint64_t tbl_size = 0;
     for (const auto* kix : all_kix) {
-        total_postings += kix->total_postings();
+        total_postings += kix->total_distinct_postings();
         tbl_size = kix->table_size(); // same for all volumes
     }
     return compute_effective_max_freq(0, total_postings, tbl_size);
@@ -168,7 +169,10 @@ QueryKmerData<KmerInt> preprocess_query(
                 highfreq_set.insert(kmer_idx);
                 continue;
             }
-            // Sum counts across all volumes
+            // Sum distinct seq_id counts across all volumes (v7: count_postings
+            // returns the distinct sequence count per k-mer, so the threshold
+            // -stage1_max_freq selects the high-frequency k-mers by the number
+            // of containing sequences — matching the original design intent).
             uint64_t total_count = 0;
             for (const auto* kix : all_kix) {
                 total_count += kix->count_postings(kmer_idx);

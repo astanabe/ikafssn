@@ -26,16 +26,24 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t
 // Format versions — all index files share a single major version so users
 // only have to track one number. Phase 5c established this convention at
 // v4. Phase 5g-1 bumped to v5 (.kix codec replaced with FastPFor's
-// CompositeCodec<SIMDFastPFor<4>, VariableByte>). Phase 5g-2 bumps to v6:
-// .kpx now stores per-(kmer, seq_id) partition groups + a short bucket
-// (see src/index/pfd_codec.hpp); .kix data layout is unchanged from v5
-// but its magic / format_version bump along with the rest of the family
-// (Phase 5c policy).  .ksx / .khx / .kvx data layouts are unchanged but
-// their format_version field bumps too.
-inline constexpr uint16_t KIX_FORMAT_VERSION = 6;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 6;
-inline constexpr uint16_t KSX_FORMAT_VERSION = 6;
-inline constexpr uint16_t KHX_FORMAT_VERSION = 6;
+// CompositeCodec<SIMDFastPFor<4>, VariableByte>). Phase 5g-2 bumped to v6
+// (.kpx partition + short bucket layout). Phase 5i bumps to v7:
+//   - .kix stores **distinct seq_ids only** (intra-sequence k-mer
+//     duplicates are removed by a SIMD dedup kernel at build time), so
+//     `count_postings()` and `bulk_count_postings()` now report the
+//     number of distinct sequences containing the k-mer.  This realigns
+//     `-max_freq_build` and `-stage1_max_freq` with their original
+//     "matched-entry-count" semantics.
+//   - .kpx short bucket is self-describing per distinct seq_id (carries
+//     its own seq_id list + per-seq_id occurrence counts), so the .kpx
+//     decoder no longer requires lock-step alignment with the .kix
+//     stream — callers pass a candidate seq_id set instead.
+//   - .ksx / .khx / .kvx data layouts unchanged; format_version bumps
+//     for family-wide alignment (Phase 5c policy).
+inline constexpr uint16_t KIX_FORMAT_VERSION = 7;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 7;
+inline constexpr uint16_t KSX_FORMAT_VERSION = 7;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 7;
 
 // Direct-address table size for k-mer value k: 4^k
 // Max supported: 2 * 4^12 = 33,554,432 (fits uint32_t).

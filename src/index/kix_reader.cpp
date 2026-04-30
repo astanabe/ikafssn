@@ -30,9 +30,8 @@ bool KixReader::open(const std::string& path) {
 
     if (header_->format_version != KIX_FORMAT_VERSION) {
         std::fprintf(stderr,
-            "KixReader: unsupported format version %u (expected %u).\n"
-            "           Indexes built before Phase 5g-2 use format_version<=5 "
-            "and must be rebuilt with the current ikafssnindex.\n",
+            "KixReader: index format version mismatch (got %u, expected %u). "
+            "Please rebuild with the current ikafssnindex.\n",
             header_->format_version, KIX_FORMAT_VERSION);
         close();
         return false;
@@ -85,7 +84,8 @@ void KixReader::apply_madvise(bool willneed) {
 uint32_t KixReader::count_postings(uint32_t kmer) const {
     uint64_t byte_len = posting_byte_length(kmer);
     if (byte_len == 0) return 0;
-    // v4: count is the leading u32 of the per-kmer posting blob.
+    // v7: distinct_count is the leading u32 of the per-kmer payload
+    // (number of distinct sequences containing the k-mer).
     return pfd::posting_count(posting_data_ + posting_offset(kmer), byte_len);
 }
 

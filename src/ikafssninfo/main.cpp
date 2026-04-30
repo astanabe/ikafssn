@@ -328,7 +328,7 @@ int main(int argc, char* argv[]) {
         VolumeStats vs;
         vs.volume_index = vf.volume_index;
         vs.num_sequences = kix.num_sequences();
-        vs.total_postings = kix.total_postings();
+        vs.total_postings = kix.total_distinct_postings();
         vs.kix_size = file_size(vf.kix_path);
         vs.kpx_size = vf.has_kpx ? file_size(vf.kpx_path) : 0;
         vs.ksx_size = file_size(vf.ksx_path);

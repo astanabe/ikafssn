@@ -165,7 +165,7 @@ static void test_consistency_with_reader() {
             CHECK(kix.open(entry.path().string()));
             CHECK_EQ(kix.k(), 7);
             found_seqs += kix.num_sequences();
-            found_postings += kix.total_postings();
+            found_postings += kix.total_distinct_postings();
             kix.close();
         }
     }

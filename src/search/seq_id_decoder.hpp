@@ -6,23 +6,18 @@
 
 namespace ikafssn {
 
-// Streaming decoder for v6 .kix postings.
+// Streaming decoder for v7 .kix postings.
 //
-// As of Phase 5e the on-disk format is custom (v5/v6: PForDelta on .kix,
-// v6: per-(kmer, seq_id) partition + short bucket on .kpx).  The codec
-// already returns absolute seq_ids in StreamCtx::decoded.  This decoder is
-// therefore a thin "absolute id iterator" — it does not re-accumulate
-// deltas.
+// In v7 the .kix posting stream contains **distinct** seq_ids only
+// (intra-sequence k-mer duplicates are removed by a SIMD dedup kernel
+// at build time).  The codec returns absolute distinct seq_ids in
+// StreamCtx::decoded; this class is a thin "absolute id iterator" over
+// that buffer.
 //
-// `was_new_seq()` reflects whether the last emitted id differs from the
-// previous emitted id (a sequence boundary in the posting stream); it is
-// preserved here for source compatibility with callers that still consume
-// it, even though Phase 5c removed PosDecoder's dependence on it.
-//
-// Phase 5g-2: PosDecoder needs the decoded seq_id array up front so its
-// .kpx merge can walk lock-step with the .kix stream.  ensure_decoded()
-// is therefore exposed and decoded_data() / decoded_count() return the
-// already-materialised buffer (zero copy).
+// `was_new_seq()` reports whether the last emitted id differs from the
+// previous emitted id.  In v7 it is **always true** after the first
+// emission because all stored ids are distinct; the field is preserved
+// for source compatibility with callers that still consume it.
 class SeqIdDecoder {
 public:
     static constexpr int kMaxBatch = 16;
@@ -33,9 +28,6 @@ public:
         : data_(data),
           bytes_(end && end >= data ? static_cast<std::size_t>(end - data) : 0) {}
 
-    // Force the underlying posting blob to be decoded into ctx_.decoded.
-    // Idempotent; safe to call before any of the iterator methods or
-    // before invoking decoded_data() / decoded_count().
     void ensure_decoded() {
         if (decoded_) return;
         decoded_ = true;
@@ -49,7 +41,6 @@ public:
         return ctx_.pos < ctx_.count;
     }
 
-    // Decode next absolute seq_id.
     uint32_t next() {
         ensure_decoded();
         uint32_t id = 0;
@@ -69,18 +60,12 @@ public:
 
     bool was_new_seq() const { return was_new_seq_; }
 
-    // For v4+, ptr() is no longer meaningful (data is pre-decoded).
-    // Retained as a stub for source compatibility.
     const uint8_t* ptr() const { return data_; }
 
-    // Phase 5g-2 accessors: zero-copy view of the decoded seq_id array.
-    // Caller must invoke ensure_decoded() (or any iterator method) first.
+    // Zero-copy view of the decoded distinct seq_id array.
     const uint32_t* decoded_data() const { return ctx_.decoded.data(); }
     std::size_t decoded_count() const { return ctx_.count; }
 
-    // Decode up to max_count absolute seq_ids.  out_was_new[i] = 1 if the
-    // emitted id differs from the previous emitted id (or this is the
-    // first id overall).
     int next_batch(uint32_t* out_sids, uint8_t* out_was_new, int max_count) {
         ensure_decoded();
         if (max_count <= 0 || ctx_.pos >= ctx_.count) return 0;

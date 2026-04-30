@@ -18,19 +18,52 @@ KpxWriter::KpxWriter(int k, uint32_t freq_threshold_part)
 void KpxWriter::add_posting_list(uint32_t kmer_value,
                                   const std::vector<PostingEntry>& entries) {
     pos_offsets_[kmer_value] = posting_data_.size();
-    total_postings_ += entries.size();
+    total_position_count_ += entries.size();
 
-    if (entries.empty()) return;
-
-    // v6: hand both seq_ids and absolute positions to the codec; entries
-    // are already grouped by seq_id (caller contract).
-    std::vector<uint32_t> sids(entries.size());
-    std::vector<uint32_t> abs_positions(entries.size());
-    for (size_t i = 0; i < entries.size(); i++) {
-        sids[i]          = entries[i].seq_id;
-        abs_positions[i] = entries[i].pos;
+    if (entries.empty()) {
+        // Even an empty posting needs a valid header so the decoder can be
+        // invoked with a nonzero byte length.  Emit the all-zero blob.
+        pfd::encode_posting_kpx(nullptr, nullptr, 0,
+                                nullptr, 0,
+                                freq_threshold_part_,
+                                posting_data_);
+        return;
     }
-    pfd::encode_posting_kpx(sids.data(), abs_positions.data(),
+
+    // v7: hand the encoder pre-deduplicated distinct_sid + occ_count
+    // arrays alongside the sorted abs_pos array.  Entries are sorted by
+    // (seq_id, pos) — see header contract.
+    std::vector<uint32_t> distinct_sid;
+    std::vector<uint8_t>  occ_count;
+    std::vector<uint32_t> abs_positions;
+    distinct_sid.reserve(entries.size());
+    occ_count.reserve(entries.size());
+    abs_positions.reserve(entries.size());
+
+    uint32_t i = 0;
+    while (i < entries.size()) {
+        uint32_t j = i + 1;
+        while (j < entries.size() && entries[j].seq_id == entries[i].seq_id) j++;
+        distinct_sid.push_back(entries[i].seq_id);
+        // occ_count is u8; the upper layer must enforce per-seq run length
+        // <= 255 by capping freq_threshold_part at 255 and ensuring
+        // partition groups absorb anything above that.  KpxWriter is only
+        // a test helper, but assert on overflow so misuse is caught.
+        uint32_t run = j - i;
+        if (run > 255) {
+            std::fprintf(stderr,
+                "KpxWriter: per-seq_id occurrence run %u exceeds u8 limit. "
+                "freq_threshold_part must be <= 255.\n", run);
+            std::abort();
+        }
+        occ_count.push_back(static_cast<uint8_t>(run));
+        for (uint32_t e = i; e < j; e++) abs_positions.push_back(entries[e].pos);
+        i = j;
+    }
+
+    pfd::encode_posting_kpx(distinct_sid.data(), occ_count.data(),
+                            static_cast<uint32_t>(distinct_sid.size()),
+                            abs_positions.data(),
                             static_cast<uint32_t>(abs_positions.size()),
                             freq_threshold_part_,
                             posting_data_);
@@ -50,7 +83,7 @@ bool KpxWriter::write(const std::string& path) const {
     std::memcpy(hdr.magic, KPX_MAGIC, 4);
     hdr.format_version = KPX_FORMAT_VERSION;
     hdr.k = static_cast<uint8_t>(k_);
-    hdr.total_postings = total_postings_;
+    hdr.total_position_count = total_position_count_;
     hdr.offset_type = use_offset32 ? 0 : 1;
 
     // Reserved codec-extension area (codec selection follows

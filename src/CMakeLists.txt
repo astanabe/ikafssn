@@ -28,6 +28,7 @@ add_library(ikafssn_index STATIC
     index/index_filter.cpp
     index/parallel_sort_dispatch.cpp
     index/pfd_codec.cpp
+    index/seq_id_dedup.cpp
 )
 # x86_64: four FastPFor tier objects (SSE4.2 / AVX2 / AVX-512BW / VBMI2).
 # aarch64: a single ikafssn_pfd_neon tier object that compiles the same
@@ -40,11 +41,16 @@ if(IKAFSSN_HAS_X86_PFD)
         $<TARGET_OBJECTS:ikafssn_pfd_avx2>
         $<TARGET_OBJECTS:ikafssn_pfd_avx512bw>
         $<TARGET_OBJECTS:ikafssn_pfd_avx512vbmi2>
+        $<TARGET_OBJECTS:ikafssn_dedup_sse42>
+        $<TARGET_OBJECTS:ikafssn_dedup_avx2>
+        $<TARGET_OBJECTS:ikafssn_dedup_avx512bw>
+        $<TARGET_OBJECTS:ikafssn_dedup_avx512vbmi2>
     )
 endif()
 if(IKAFSSN_HAS_ARM_PFD)
     target_sources(ikafssn_index PRIVATE
         $<TARGET_OBJECTS:ikafssn_pfd_neon>
+        $<TARGET_OBJECTS:ikafssn_dedup_neon>
     )
 endif()
 target_link_libraries(ikafssn_index PUBLIC ikafssn_core ikafssn_io TBB::tbb)

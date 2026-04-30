@@ -70,6 +70,12 @@ add_ikafssn_test(test_kpx_io test_kpx_io.cpp)
 add_ikafssn_test(test_khx_io test_khx_io.cpp)
 target_link_libraries(test_khx_io PRIVATE ikafssn_util)
 
+# Phase 5i: SIMD dedup kernel unit test
+add_ikafssn_test(test_seq_id_dedup test_seq_id_dedup.cpp)
+target_link_libraries(test_seq_id_dedup PRIVATE ikafssn_util)
+target_compile_definitions(test_seq_id_dedup PRIVATE IKAFSSN_TESTING)
+add_ikafssn_simd_test(test_seq_id_dedup)
+
 # Builder integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_builder test_builder.cpp)
 target_link_libraries(test_builder PRIVATE

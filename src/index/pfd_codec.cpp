@@ -1,4 +1,4 @@
-// Phase 5d/5f/5h — runtime dispatcher for the per-tier FastPFor wrappers.
+// Phase 5d/5f/5h/5i — runtime dispatcher for the per-tier FastPFor wrappers.
 //
 // pfd_codec_tier.cpp is compiled once per ISA tier under the
 // ikafssn::pfd::ikafssn_pfd_<tier> namespaces.  Here we expose forward
@@ -50,13 +50,17 @@ namespace ikafssn::pfd {
         std::size_t encode_posting_kix(const std::uint32_t*, std::uint32_t,   \
                                        std::vector<std::uint8_t>&);           \
         std::size_t encode_posting_kpx(const std::uint32_t*,                  \
+                                       const std::uint8_t*,                   \
+                                       std::uint32_t,                         \
                                        const std::uint32_t*,                  \
-                                       std::uint32_t, std::uint32_t,          \
+                                       std::uint32_t,                         \
+                                       std::uint32_t,                         \
                                        std::vector<std::uint8_t>&);           \
         bool open_stream_kix(const std::uint8_t*, std::size_t, StreamCtx&);   \
-        bool open_stream_kpx(const std::uint8_t*, std::size_t,                \
-                             const std::uint32_t*, std::size_t,               \
-                             StreamCtx&);                                     \
+        bool open_stream_kpx_for_candidates(                                  \
+            const std::uint8_t*, std::size_t,                                 \
+            const std::uint32_t*, std::size_t,                                \
+            std::vector<std::vector<std::uint32_t>>&);                        \
     }
 
 #if IKAFSSN_PFD_HAS_X86
@@ -77,42 +81,31 @@ namespace {
 struct VTable {
     std::size_t (*encode_kix)(const std::uint32_t*, std::uint32_t,
                               std::vector<std::uint8_t>&);
-    std::size_t (*encode_kpx)(const std::uint32_t*, const std::uint32_t*,
-                              std::uint32_t, std::uint32_t,
+    std::size_t (*encode_kpx)(const std::uint32_t*, const std::uint8_t*,
+                              std::uint32_t,
+                              const std::uint32_t*, std::uint32_t,
+                              std::uint32_t,
                               std::vector<std::uint8_t>&);
     bool (*open_kix)(const std::uint8_t*, std::size_t, StreamCtx&);
     bool (*open_kpx)(const std::uint8_t*, std::size_t,
                      const std::uint32_t*, std::size_t,
-                     StreamCtx&);
+                     std::vector<std::vector<std::uint32_t>>&);
     const char* tier_name;
 };
 
-// Resolve the active tier exactly once.  C++11+ guarantees the first
-// invocation initialises the local static under a thread-safe one-shot;
-// subsequent calls are a single relaxed load.
 const VTable& active_vtable() {
     static const VTable instance = []() -> VTable {
-        // init_simd_dispatch is idempotent (std::call_once internally) so
-        // it is safe to invoke here even when main() has already done so.
-        // This makes the codec usable from test binaries that forget to
-        // initialise SIMD dispatch explicitly.
         init_simd_dispatch(nullptr);
         const SimdCap cap = current_simd_cap();
         (void)cap;
 
 #if IKAFSSN_PFD_HAS_X86
-        // AVX-512 VBMI2 implies VBMI implies BW implies F.  We merge VBMI
-        // and VBMI2 into a single top tier here because FastPFor's source
-        // contains no byte-level shuffle/permute that VBMI/VBMI2 could
-        // exploit; the only difference between the two is compiler auto-
-        // vectorization quirks.  Phase 5f removed the standalone VBMI tier
-        // from SimdCap, so the highest tier we encounter is AVX512VBMI2.
         if (cap >= SimdCap::AVX512VBMI2) {
             return {
                 ikafssn_pfd_avx512vbmi2::encode_posting_kix,
                 ikafssn_pfd_avx512vbmi2::encode_posting_kpx,
                 ikafssn_pfd_avx512vbmi2::open_stream_kix,
-                ikafssn_pfd_avx512vbmi2::open_stream_kpx,
+                ikafssn_pfd_avx512vbmi2::open_stream_kpx_for_candidates,
                 "avx512vbmi2",
             };
         }
@@ -121,7 +114,7 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx512bw::encode_posting_kix,
                 ikafssn_pfd_avx512bw::encode_posting_kpx,
                 ikafssn_pfd_avx512bw::open_stream_kix,
-                ikafssn_pfd_avx512bw::open_stream_kpx,
+                ikafssn_pfd_avx512bw::open_stream_kpx_for_candidates,
                 "avx512bw",
             };
         }
@@ -130,7 +123,7 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx2::encode_posting_kix,
                 ikafssn_pfd_avx2::encode_posting_kpx,
                 ikafssn_pfd_avx2::open_stream_kix,
-                ikafssn_pfd_avx2::open_stream_kpx,
+                ikafssn_pfd_avx2::open_stream_kpx_for_candidates,
                 "avx2",
             };
         }
@@ -139,16 +132,10 @@ const VTable& active_vtable() {
                 ikafssn_pfd_sse42::encode_posting_kix,
                 ikafssn_pfd_sse42::encode_posting_kpx,
                 ikafssn_pfd_sse42::open_stream_kix,
-                ikafssn_pfd_sse42::open_stream_kpx,
+                ikafssn_pfd_sse42::open_stream_kpx_for_candidates,
                 "sse42",
             };
         }
-
-        // SSE4.2 is the x86_64 floor (Phase 5f).  init_simd_dispatch()
-        // already rejects pre-SSE4.2 CPUs at startup with exit(2), so the
-        // only way to reach this branch is a programmer bug — for example
-        // calling the codec on a build_disabled (IKAFSSN_ENABLE_SIMD=0)
-        // configuration that bypassed the normal init path.  Abort hard.
         std::fprintf(stderr,
             "ikafssn: pfd codec requires SSE4.2; current CPU tier is below SSE4.2.\n"
             "         (Phase 5f treats SSE4.2 as the x86_64 baseline.)\n");
@@ -156,22 +143,15 @@ const VTable& active_vtable() {
 #endif // IKAFSSN_PFD_HAS_X86
 
 #if IKAFSSN_PFD_HAS_NEON
-        // AArch64 single tier: NEON via SIMDe.  Any SimdCap >= NEON
-        // (NEON / SVE / SVE2) routes to the same OBJECT library — see
-        // header comment for rationale.
         if (cap >= SimdCap::NEON) {
             return {
                 ikafssn_pfd_neon::encode_posting_kix,
                 ikafssn_pfd_neon::encode_posting_kpx,
                 ikafssn_pfd_neon::open_stream_kix,
-                ikafssn_pfd_neon::open_stream_kpx,
+                ikafssn_pfd_neon::open_stream_kpx_for_candidates,
                 "neon",
             };
         }
-        // init_simd_dispatch() rejects sub-NEON aarch64 startups with
-        // exit(2) the same way it rejects sub-SSE4.2 x86_64.  Reaching
-        // this branch implies a build_disabled (IKAFSSN_ENABLE_SIMD=0)
-        // path bypassed the normal init.
         std::fprintf(stderr,
             "ikafssn: pfd codec requires NEON; current CPU tier is below NEON.\n"
             "         (Phase 5h treats NEON as the aarch64 baseline.)\n");
@@ -179,10 +159,6 @@ const VTable& active_vtable() {
 #endif // IKAFSSN_PFD_HAS_NEON
 
 #if !IKAFSSN_PFD_HAS_X86 && !IKAFSSN_PFD_HAS_NEON
-        // Unknown architecture: no FastPFor tier object was built.  The
-        // SIMD-kernel test suite still runs (this lambda only fires on
-        // first .kix/.kpx encode/open), but real index build / search
-        // aborts here.
         std::fprintf(stderr,
             "ikafssn: pfd codec is not implemented for this architecture.\n"
             "         (Only x86_64 and aarch64 are supported.)\n");
@@ -204,12 +180,15 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
     return active_vtable().encode_kix(delta_array, count, out);
 }
 
-std::size_t encode_posting_kpx(const std::uint32_t* sid_array,
+std::size_t encode_posting_kpx(const std::uint32_t* distinct_sid,
+                               const std::uint8_t*  occ_count,
+                               std::uint32_t distinct_count,
                                const std::uint32_t* abs_pos_array,
-                               std::uint32_t count,
+                               std::uint32_t position_count,
                                std::uint32_t freq_threshold_part,
                                std::vector<std::uint8_t>& out) {
-    return active_vtable().encode_kpx(sid_array, abs_pos_array, count,
+    return active_vtable().encode_kpx(distinct_sid, occ_count, distinct_count,
+                                       abs_pos_array, position_count,
                                        freq_threshold_part, out);
 }
 
@@ -218,10 +197,10 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
     return active_vtable().open_kix(posting, bytes, ctx);
 }
 
-bool open_stream_kpx(const std::uint8_t* posting, std::size_t bytes,
-                     const std::uint32_t* sid_stream, std::size_t n_sids,
-                     StreamCtx& ctx) {
-    return active_vtable().open_kpx(posting, bytes, sid_stream, n_sids, ctx);
+bool open_stream_kpx_for_candidates(const std::uint8_t* posting, std::size_t bytes,
+                                    const std::uint32_t* candidates, std::size_t n_candidates,
+                                    std::vector<std::vector<std::uint32_t>>& out) {
+    return active_vtable().open_kpx(posting, bytes, candidates, n_candidates, out);
 }
 
 } // namespace ikafssn::pfd

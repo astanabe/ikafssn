@@ -1,13 +1,13 @@
-// Phase 5g-2 — per-tier custom block codec.
+// Phase 5i — per-tier custom block codec.
 //
-// This translation unit is compiled FOUR TIMES (once per ISA tier) via
-// the ikafssn_pfd_{sse42,avx2,avx512bw,avx512vbmi2} OBJECT libraries
+// This translation unit is compiled FOUR TIMES on x86_64 (once per ISA
+// tier) and once on aarch64 via the ikafssn_pfd_<tier> OBJECT libraries
 // declared in the top-level CMakeLists.txt.  Each compilation is given:
 //
 //   -DFastPForLib=FastPForLib_<tier>     (renames FastPFor's namespace
 //                                          at preprocessor time so the
-//                                          four sets of symbols do not
-//                                          collide at link time)
+//                                          per-tier sets of symbols do
+//                                          not collide at link time)
 //   -DIKAFSSN_PFD_TIER_NAME=<tier>       (used here to name the
 //                                          tier-specific ikafssn::pfd
 //                                          inner namespace)
@@ -16,18 +16,16 @@
 //                                          surrounding scalar code in
 //                                          this file are allowed to use)
 //
-// For .kix postings (sorted seq_id delta stream) we drive FastPFor's
-// CompositeCodec<SIMDFastPFor<4>, VariableByte> directly — that's the
-// classical PForDelta layout (per-block bit-width with an out-of-line
-// VByte exception stream for the few values that exceed it), which gives
-// us back the patched-PFor advantage that Phase 5e accidentally lost.
+// For .kix postings (sorted distinct seq_id delta stream — v7) we drive
+// FastPFor's CompositeCodec<SIMDFastPFor<4>, VariableByte> directly.
 //
 // For .kpx postings (absolute position stream) Phase 5g-2 splits each
 // posting into per-(kmer, seq_id) partition groups (when the within-
 // sequence occurrence count exceeds a build-time threshold) plus one
-// short bucket for the remaining low-multiplicity occurrences.  Each
-// stream uses the Phase 5e FOR-within-block layout — encode_block_for /
-// decode_block_for here are unchanged from v5.
+// short bucket for the remaining low-multiplicity occurrences.  Phase 5i
+// makes the short bucket self-describing (its own delta-encoded seq_id
+// list + per-seq_id u8 occurrence counts) so decoding is candidate-set-
+// driven and independent of the .kix stream.
 
 #include "index/pfd_codec.hpp"
 
@@ -60,11 +58,6 @@ namespace pfor_ns = FastPForLib;
 constexpr int kBlockSize = 128;
 constexpr int kBlockAlign = 16; // __m128i
 
-// FastPFor codec used for .kix postings (PForDelta + VByte exception
-// stream).  Stateless aside from a small per-codec scratch buffer, but
-// the encoder/decoder methods are not const, so we keep a thread_local
-// instance to avoid contention without paying construction overhead on
-// every posting.
 using KixCodec = pfor_ns::CompositeCodec<
     pfor_ns::SIMDFastPFor<4>,
     pfor_ns::VariableByte>;
@@ -74,7 +67,6 @@ KixCodec& kix_codec() {
     return codec;
 }
 
-// LEB128 varint helpers (used by the .kpx tail stream).
 inline std::size_t varint_encode(std::uint32_t v, std::uint8_t* dst) {
     std::size_t n = 0;
     do {
@@ -99,16 +91,10 @@ inline std::size_t varint_decode(const std::uint8_t* src, std::uint32_t& out) {
     return n;
 }
 
-// Number of bits required to represent v.  Returns 0 for v == 0.
 inline std::uint8_t bits_required(std::uint32_t v) {
     return v == 0 ? std::uint8_t(0) : std::uint8_t(32 - __builtin_clz(v));
 }
 
-// Encode one block of 128 uint32 values with FOR-within-block (used by
-// .kpx).  Subtracts the block's min before bitpacking; stores min as a
-// 4-byte field so the per-block bit width depends on the spread within
-// the block, not on absolute value magnitude.  Writes 5 + 16*b bytes
-// and returns the byte count.
 std::size_t encode_block_for(const std::uint32_t* in_128,
                              std::vector<std::uint8_t>& out) {
     std::uint32_t mn = in_128[0];
@@ -138,7 +124,6 @@ std::size_t encode_block_for(const std::uint32_t* in_128,
     return 5 + body_bytes;
 }
 
-// Decode one FOR block; returns bytes consumed.
 std::size_t decode_block_for(const std::uint8_t* in, std::uint32_t* out_128) {
     const std::uint8_t b = in[0];
     std::uint32_t mn;
@@ -155,10 +140,6 @@ std::size_t decode_block_for(const std::uint8_t* in, std::uint32_t* out_128) {
     return 5 + body_bytes;
 }
 
-// Encode `count` absolute positions through the FOR-block stream
-// (count/128 full blocks followed by an optional tail).  Identical to the
-// Phase 5e payload that encode_posting_kpx used to emit, factored out
-// here so v6 can reuse it for both partition groups and the short bucket.
 void encode_for_stream(const std::uint32_t* abs_pos_array,
                        std::uint32_t count,
                        std::vector<std::uint8_t>& out) {
@@ -188,9 +169,6 @@ void encode_for_stream(const std::uint32_t* abs_pos_array,
     }
 }
 
-// Decode a FOR-block stream of `count` positions into `out`.  Returns
-// false if the byte cursor `p` would run past `end` (corrupt index);
-// `p` is advanced to the first byte after the stream on success.
 bool decode_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
                        std::uint32_t count, std::uint32_t* out) {
     const std::uint32_t num_blocks = count / kBlockSize;
@@ -228,16 +206,10 @@ bool decode_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
 
 } // anonymous namespace
 
-// ===== .kix encode (delta stream → SIMDFastPFor + VByte tail) =======
-//
-// The builder passes `[abs_first, d1, d2, ..., d_{count-1}]`, i.e. the
-// first absolute seq_id followed by consecutive deltas.  SIMDFastPFor's
-// PForDelta layout handles the abs_first wide-value case via its
-// VByte exception stream, so we feed the array straight in.  open_stream
-// reconstructs absolutes by cumulative sum at decode time.
+// ===== .kix v7 encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
 //
 // On-disk per-posting blob:
-//   [u32 count]           — number of seq_id values represented
+//   [u32 distinct_count]  — number of distinct seq_ids represented
 //   [u32 payload_words]   — number of u32 words written by the codec
 //   [u32 payload[N]]      — codec output, byte-unaligned
 
@@ -253,10 +225,6 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
         return 8;
     }
 
-    // FastPFor's encode interface is "give me a uint32_t* output buffer
-    // big enough for the worst case".  Worst case = original size plus a
-    // small constant for the VByte tail.  Reserve len*2 + 1024 to be
-    // safe; the codec will report the actual nvalue used.
     const std::size_t worst_words = std::size_t(count) * 2 + 1024;
     std::vector<std::uint32_t> codec_out(worst_words);
     std::size_t nvalue = codec_out.size();
@@ -272,103 +240,126 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
     return out.size() - before;
 }
 
-// ===== .kpx encode (v6: per-(kmer, seq_id) partitioning + short bucket) =====
+// ===== .kpx v7 encode (per-(kmer, seq_id) partitioning + self-describing short bucket) =====
 
-std::size_t encode_posting_kpx(const std::uint32_t* sid_array,
+std::size_t encode_posting_kpx(const std::uint32_t* distinct_sid,
+                               const std::uint8_t*  occ_count,
+                               std::uint32_t distinct_count,
                                const std::uint32_t* abs_pos_array,
-                               std::uint32_t count,
+                               std::uint32_t position_count,
                                std::uint32_t freq_threshold_part,
                                std::vector<std::uint8_t>& out) {
     const std::size_t before = out.size();
 
-    // Header placeholders: total_count, partition_count.
-    out.resize(before + 2 * sizeof(std::uint32_t));
-    std::memcpy(out.data() + before, &count, sizeof(std::uint32_t));
+    // Header placeholders: distinct_count, position_count, partition_count.
+    out.resize(before + 3 * sizeof(std::uint32_t));
+    std::memcpy(out.data() + before, &distinct_count, sizeof(std::uint32_t));
+    std::memcpy(out.data() + before + sizeof(std::uint32_t),
+                &position_count, sizeof(std::uint32_t));
 
-    if (count == 0) {
+    if (distinct_count == 0) {
         std::uint32_t zero = 0;
-        std::memcpy(out.data() + before + sizeof(std::uint32_t),
+        std::memcpy(out.data() + before + 2 * sizeof(std::uint32_t),
                     &zero, sizeof(std::uint32_t));
-        // short_bucket_count = 0
-        out.resize(out.size() + sizeof(std::uint32_t));
+        // short_seq_count = 0, short_position_count = 0
+        out.resize(out.size() + 2 * sizeof(std::uint32_t));
+        std::memcpy(out.data() + out.size() - 2 * sizeof(std::uint32_t),
+                    &zero, sizeof(std::uint32_t));
         std::memcpy(out.data() + out.size() - sizeof(std::uint32_t),
                     &zero, sizeof(std::uint32_t));
         return out.size() - before;
     }
 
-    // Pass 1: identify partition-group runs in sid_array (sorted, may
-    // contain duplicates).  A run with length > freq_threshold_part
-    // becomes a partition group; the rest go into the short bucket.
-    struct RunInfo {
-        std::uint32_t seq_id;
-        std::uint32_t start;   // index into sid_array / abs_pos_array
-        std::uint32_t length;
-    };
-    std::vector<RunInfo> runs;
-    runs.reserve(64);
-    {
-        std::uint32_t i = 0;
-        while (i < count) {
-            std::uint32_t j = i + 1;
-            while (j < count && sid_array[j] == sid_array[i]) j++;
-            runs.push_back({sid_array[i], i, j - i});
-            i = j;
-        }
-    }
-
+    // Pass 1: classify each distinct seq_id into partition vs short bucket
+    // based on occ_count[k] > freq_threshold_part.
     std::uint32_t partition_count = 0;
-    std::uint32_t short_count = 0;
-    for (const auto& r : runs) {
-        if (r.length > freq_threshold_part) {
+    std::uint32_t short_seq_count = 0;
+    std::uint32_t short_position_count = 0;
+    for (std::uint32_t k = 0; k < distinct_count; k++) {
+        if (occ_count[k] > freq_threshold_part) {
             partition_count++;
         } else {
-            short_count += r.length;
+            short_seq_count++;
+            short_position_count += occ_count[k];
         }
     }
 
-    std::memcpy(out.data() + before + sizeof(std::uint32_t),
+    std::memcpy(out.data() + before + 2 * sizeof(std::uint32_t),
                 &partition_count, sizeof(std::uint32_t));
 
-    // Pass 2: emit partition groups in seq_id order (runs are already
-    // ordered because sid_array is sorted).
-    for (const auto& r : runs) {
-        if (r.length <= freq_threshold_part) continue;
-
-        const std::size_t hdr_off = out.size();
-        out.resize(hdr_off + 2 * sizeof(std::uint32_t));
-        std::memcpy(out.data() + hdr_off,
-                    &r.seq_id, sizeof(std::uint32_t));
-        std::memcpy(out.data() + hdr_off + sizeof(std::uint32_t),
-                    &r.length, sizeof(std::uint32_t));
-        encode_for_stream(abs_pos_array + r.start, r.length, out);
+    // Pass 2: emit partition groups in seq_id order.
+    std::uint32_t pos_cursor = 0;
+    for (std::uint32_t k = 0; k < distinct_count; k++) {
+        const std::uint32_t cnt = occ_count[k];
+        if (occ_count[k] > freq_threshold_part) {
+            const std::size_t hdr_off = out.size();
+            out.resize(hdr_off + 2 * sizeof(std::uint32_t));
+            std::memcpy(out.data() + hdr_off,
+                        &distinct_sid[k], sizeof(std::uint32_t));
+            std::memcpy(out.data() + hdr_off + sizeof(std::uint32_t),
+                        &cnt, sizeof(std::uint32_t));
+            encode_for_stream(abs_pos_array + pos_cursor, cnt, out);
+        }
+        pos_cursor += cnt;
     }
 
-    // Pass 3: emit short bucket — concat all sub-threshold runs in input
-    // order (which is the seq_id-sorted order, identical to the order the
-    // builder is going to encounter them at decode time when scanning
-    // sid_stream).
+    // Pass 3: emit short bucket header + delta seq_ids + occ_counts + positions.
     {
         const std::size_t cnt_off = out.size();
-        out.resize(cnt_off + sizeof(std::uint32_t));
-        std::memcpy(out.data() + cnt_off, &short_count, sizeof(std::uint32_t));
+        out.resize(cnt_off + 2 * sizeof(std::uint32_t));
+        std::memcpy(out.data() + cnt_off,
+                    &short_seq_count, sizeof(std::uint32_t));
+        std::memcpy(out.data() + cnt_off + sizeof(std::uint32_t),
+                    &short_position_count, sizeof(std::uint32_t));
     }
 
-    if (short_count > 0) {
-        std::vector<std::uint32_t> short_buf;
-        short_buf.reserve(short_count);
-        for (const auto& r : runs) {
-            if (r.length > freq_threshold_part) continue;
-            short_buf.insert(short_buf.end(),
-                             abs_pos_array + r.start,
-                             abs_pos_array + r.start + r.length);
+    if (short_seq_count > 0) {
+        // Delta-encoded seq_id list: first absolute, then varint deltas.
+        bool first = true;
+        std::uint32_t prev_sid = 0;
+        std::uint8_t tmp[5];
+        for (std::uint32_t k = 0; k < distinct_count; k++) {
+            if (occ_count[k] > freq_threshold_part) continue;
+            const std::uint32_t sid = distinct_sid[k];
+            if (first) {
+                out.resize(out.size() + sizeof(std::uint32_t));
+                std::memcpy(out.data() + out.size() - sizeof(std::uint32_t),
+                            &sid, sizeof(std::uint32_t));
+                first = false;
+            } else {
+                const std::uint32_t d = sid - prev_sid;
+                const std::size_t n = varint_encode(d, tmp);
+                out.insert(out.end(), tmp, tmp + n);
+            }
+            prev_sid = sid;
         }
-        encode_for_stream(short_buf.data(), short_count, out);
+
+        // Per-seq_id u8 occ_count list (in the same order as the seq_id list).
+        for (std::uint32_t k = 0; k < distinct_count; k++) {
+            if (occ_count[k] > freq_threshold_part) continue;
+            out.push_back(occ_count[k]);
+        }
+
+        // Concatenated positions (intra-seq ordering preserved).
+        std::vector<std::uint32_t> short_buf;
+        short_buf.reserve(short_position_count);
+        std::uint32_t cursor2 = 0;
+        for (std::uint32_t k = 0; k < distinct_count; k++) {
+            const std::uint32_t cnt = occ_count[k];
+            if (occ_count[k] <= freq_threshold_part) {
+                short_buf.insert(short_buf.end(),
+                                 abs_pos_array + cursor2,
+                                 abs_pos_array + cursor2 + cnt);
+            }
+            cursor2 += cnt;
+        }
+        encode_for_stream(short_buf.data(), short_position_count, out);
     }
 
     return out.size() - before;
 }
 
-// ===== open_stream: decode the entire posting into the StreamCtx ====
+// ===== open_stream_kix: decode the entire .kix posting into the StreamCtx =====
 
 bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
                      ikafssn::pfd::StreamCtx& ctx) {
@@ -387,9 +378,6 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
     const std::size_t payload_bytes = std::size_t(payload_words) * sizeof(std::uint32_t);
     if (bytes < 8 + payload_bytes) return false;
 
-    // FastPFor's decoder reads uint32_t-aligned input; the on-wire
-    // payload is byte-aligned (offsets[i] is byte-granular), so copy it
-    // into an aligned scratch buffer first.
     std::vector<std::uint32_t> codec_in(payload_words);
     std::memcpy(codec_in.data(), posting + 8, payload_bytes);
 
@@ -399,10 +387,8 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
                             ctx.decoded.data(), nvalue);
     if (nvalue != count) return false;
 
-    // Builder writes the array as [abs_first, d1, d2, ...]; reconstruct
-    // absolute seq_ids via cumulative sum so SeqIdDecoder consumers see
-    // absolutes (the field name `delta_array` and the cumsum convention
-    // are preserved from the v3/v4 layout).
+    // v7: encoder writes [abs_first, d1, d2, ...] over the **distinct**
+    // seq_id stream; cumulative sum reconstructs absolute distinct seq_ids.
     for (std::uint32_t i = 1; i < count; i++) {
         ctx.decoded[i] += ctx.decoded[i - 1];
     }
@@ -412,103 +398,126 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
     return true;
 }
 
-bool open_stream_kpx(const std::uint8_t* posting, std::size_t bytes,
-                     const std::uint32_t* sid_stream, std::size_t n_sids,
-                     ikafssn::pfd::StreamCtx& ctx) {
-    ctx.decoded.clear();
-    ctx.count = 0;
-    ctx.pos = 0;
+// ===== open_stream_kpx_for_candidates: candidate-set-driven decode =====
+
+bool open_stream_kpx_for_candidates(
+        const std::uint8_t* posting, std::size_t bytes,
+        const std::uint32_t* candidates, std::size_t n_candidates,
+        std::vector<std::vector<std::uint32_t>>& out) {
+
+    out.assign(n_candidates, std::vector<std::uint32_t>{});
+
+    if (n_candidates == 0) return true;
     if (bytes == 0) return true;
-    if (bytes < 3 * sizeof(std::uint32_t)) return false;
+    if (bytes < 5 * sizeof(std::uint32_t)) return false;
 
     const std::uint8_t* p = posting;
     const std::uint8_t* end = posting + bytes;
 
-    std::uint32_t total_count;
+    std::uint32_t distinct_count;
+    std::uint32_t position_count;
     std::uint32_t partition_count;
-    std::memcpy(&total_count,     p, sizeof(std::uint32_t));
-    p += sizeof(std::uint32_t);
-    std::memcpy(&partition_count, p, sizeof(std::uint32_t));
-    p += sizeof(std::uint32_t);
+    std::memcpy(&distinct_count,  p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+    std::memcpy(&position_count,  p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+    std::memcpy(&partition_count, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+    (void)position_count;
 
-    if (total_count == 0) {
-        // Expect short_bucket_count = 0 trailer.
-        if (p + sizeof(std::uint32_t) > end) return false;
-        std::uint32_t sbc;
-        std::memcpy(&sbc, p, sizeof(std::uint32_t));
-        if (sbc != 0) return false;
+    if (distinct_count == 0) {
+        // Expect short_seq_count = 0 + short_position_count = 0 trailer.
+        if (p + 2 * sizeof(std::uint32_t) > end) return false;
+        std::uint32_t a, b;
+        std::memcpy(&a, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+        std::memcpy(&b, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+        if (a != 0 || b != 0) return false;
         return true;
     }
 
-    if (sid_stream == nullptr || n_sids != total_count) return false;
-
-    // Decode each partition group into a temporary buffer; remember the
-    // per-group seq_id and length so the lock-step merge below can index
-    // into it without re-scanning the byte stream.
-    struct GroupView {
-        std::uint32_t seq_id;
-        std::uint32_t count;
-        std::uint32_t buf_start; // index into all_partition_buf
+    // Helper: locate candidate index for seq_id sid via binary search.
+    // Returns size_t(-1) when sid is not in the candidate list.  The two
+    // streams (partition groups and short bucket) are each sorted, but
+    // their union interleaves arbitrarily against the candidate list, so
+    // a shared monotonic cursor is not sufficient — binary search keeps
+    // both passes correct without extra bookkeeping.
+    auto find_candidate = [&](std::uint32_t sid) -> std::size_t {
+        std::size_t lo = 0;
+        std::size_t hi = n_candidates;
+        while (lo < hi) {
+            std::size_t mid = lo + (hi - lo) / 2;
+            if (candidates[mid] < sid)      lo = mid + 1;
+            else if (candidates[mid] > sid) hi = mid;
+            else return mid;
+        }
+        return static_cast<std::size_t>(-1);
     };
-    std::vector<GroupView> groups;
-    groups.reserve(partition_count);
-    std::vector<std::uint32_t> all_partition_buf;
 
+    // Pass 1: partition groups.
     for (std::uint32_t g = 0; g < partition_count; g++) {
         if (p + 2 * sizeof(std::uint32_t) > end) return false;
         std::uint32_t gsid, gcnt;
-        std::memcpy(&gsid, p, sizeof(std::uint32_t));
-        p += sizeof(std::uint32_t);
-        std::memcpy(&gcnt, p, sizeof(std::uint32_t));
-        p += sizeof(std::uint32_t);
-        if (gcnt == 0) return false; // partition groups are non-empty
+        std::memcpy(&gsid, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+        std::memcpy(&gcnt, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+        if (gcnt == 0) return false;
 
-        const std::size_t buf_start = all_partition_buf.size();
-        all_partition_buf.resize(buf_start + gcnt);
-        if (!decode_for_stream(p, end, gcnt, all_partition_buf.data() + buf_start)) {
-            return false;
+        const std::size_t cidx = find_candidate(gsid);
+        if (cidx != static_cast<std::size_t>(-1)) {
+            std::vector<std::uint32_t> buf(gcnt);
+            if (!decode_for_stream(p, end, gcnt, buf.data())) return false;
+            out[cidx] = std::move(buf);
+        } else {
+            std::vector<std::uint32_t> scratch(gcnt);
+            if (!decode_for_stream(p, end, gcnt, scratch.data())) return false;
         }
-        groups.push_back({gsid, gcnt, static_cast<std::uint32_t>(buf_start)});
+    }
+
+    // Pass 2: short bucket.
+    if (p + 2 * sizeof(std::uint32_t) > end) return false;
+    std::uint32_t short_seq_count;
+    std::uint32_t short_position_count;
+    std::memcpy(&short_seq_count,      p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+    std::memcpy(&short_position_count, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+
+    if (short_seq_count == 0) {
+        if (short_position_count != 0) return false;
+        return true;
     }
 
     if (p + sizeof(std::uint32_t) > end) return false;
-    std::uint32_t short_count;
-    std::memcpy(&short_count, p, sizeof(std::uint32_t));
+    std::vector<std::uint32_t> short_sid(short_seq_count);
+    std::memcpy(&short_sid[0], p, sizeof(std::uint32_t));
     p += sizeof(std::uint32_t);
+    for (std::uint32_t i = 1; i < short_seq_count; i++) {
+        if (p >= end) return false;
+        std::uint32_t d;
+        const std::size_t n = varint_decode(p, d);
+        if (p + n > end) return false;
+        p += n;
+        short_sid[i] = short_sid[i - 1] + d;
+    }
 
-    std::vector<std::uint32_t> short_buf(short_count);
-    if (short_count > 0) {
-        if (!decode_for_stream(p, end, short_count, short_buf.data())) {
+    if (p + short_seq_count > end) return false;
+    const std::uint8_t* short_occ = p;
+    p += short_seq_count;
+
+    std::vector<std::uint32_t> short_positions(short_position_count);
+    if (short_position_count > 0) {
+        if (!decode_for_stream(p, end, short_position_count, short_positions.data())) {
             return false;
         }
     }
 
-    // Merge into ctx.decoded[i] aligned with sid_stream[i].
-    ctx.decoded.resize(total_count);
-
-    std::uint32_t pi = 0;
-    std::uint32_t group_cursor = 0;
-    std::uint32_t short_cursor = 0;
-    for (std::uint32_t k = 0; k < total_count; k++) {
-        const std::uint32_t sid = sid_stream[k];
-        if (pi < partition_count && groups[pi].seq_id == sid) {
-            ctx.decoded[k] = all_partition_buf[groups[pi].buf_start + group_cursor];
-            group_cursor++;
-            if (group_cursor == groups[pi].count) {
-                pi++;
-                group_cursor = 0;
-            }
-        } else {
-            if (short_cursor >= short_count) return false;
-            ctx.decoded[k] = short_buf[short_cursor++];
+    std::size_t pos_cursor = 0;
+    for (std::uint32_t k = 0; k < short_seq_count; k++) {
+        const std::uint32_t sid = short_sid[k];
+        const std::uint32_t cnt = short_occ[k];
+        const std::size_t cidx = find_candidate(sid);
+        if (cidx != static_cast<std::size_t>(-1)) {
+            out[cidx].assign(short_positions.begin() + pos_cursor,
+                             short_positions.begin() + pos_cursor + cnt);
         }
+        pos_cursor += cnt;
     }
 
-    if (pi != partition_count) return false;
-    if (short_cursor != short_count) return false;
-
-    ctx.count = total_count;
-    ctx.pos = 0;
+    if (pos_cursor != short_position_count) return false;
     return true;
 }
 

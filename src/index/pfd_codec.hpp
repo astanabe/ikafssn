@@ -1,47 +1,56 @@
 #pragma once
 
-// Phase 5g-2 — split codec for .kix v6 and .kpx v6.
+// Phase 5i — split codec for .kix v7 and .kpx v7.
 //
-//   .kix v6: FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
-//            (PForDelta + VByte tail).  Unchanged on the wire from the
-//            Phase 5g-1 v5 layout; bumped to v6 because the rest of the
-//            index family (Phase 5g-2 .kpx layout change) bumps too.
+//   .kix v7: FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
+//            (PForDelta + VByte tail) over the **distinct seq_id**
+//            delta stream.  Intra-sequence k-mer duplicates are
+//            removed by a SIMD dedup kernel (src/index/seq_id_dedup.*)
+//            at build time, so the input stream to the codec is
+//            [abs_first, d1, d2, ...] with d_i >= 1 strictly.
 //            Posting layout on disk:
-//              [u32 count]                  — number of seq_id deltas
+//              [u32 distinct_count]         — distinct seq_ids in this k-mer
 //              [u32 payload_words]          — payload size in u32 words
 //              [u32 payload[payload_words]] — codec output, byte-unaligned
 //                                             on the wire (use memcpy)
 //
-//   .kpx v6: per-(kmer, seq_id) partitioned FOR-within-block layout.
-//            Each (k-mer, seq_id) cluster whose occurrence count exceeds
-//            the build-time `freq_threshold_part` is split out into its
-//            own partition group; remaining occurrences are merged into a
-//            single short-bucket FOR-block stream that absorbs the long
-//            tail of low-multiplicity (k-mer, seq_id) cells.  This breaks
-//            the coupling between absolute position magnitude and the
-//            per-block bit-width that hurt the Phase 5e v5 layout on
-//            chromosome-class subjects.  Posting layout on disk:
-//              [u32 total_count]
+//   .kpx v7: per-(kmer, seq_id) partitioned position posting with a
+//            **self-describing short bucket**.  A (k-mer, seq_id) cluster
+//            whose occurrence count exceeds the build-time
+//            `freq_threshold_part` (max 255) is split out into its own
+//            partition group; remaining occurrences are merged into a
+//            short bucket carrying its own delta-encoded seq_id list and
+//            per-seq_id u8 occurrence counts.  The decoder no longer
+//            needs to walk lock-step against the .kix stream — callers
+//            pass a sorted candidate seq_id set instead.
+//            Posting layout on disk:
+//              [u32 distinct_count]         — distinct seq_ids (matches .kix)
+//              [u32 position_count]         — total position count
 //              [u32 partition_count]
 //              repeated partition_count times (sorted by seq_id):
 //                [u32 seq_id]
 //                [u32 occurrence_count]
 //                [FOR-block stream over occurrence_count positions]
-//              [u32 short_bucket_count]
-//              [FOR-block stream over short_bucket_count positions]
+//              [u32 short_seq_count]        — distinct seq_ids in short bucket
+//              [u32 short_position_count]   — total positions in short bucket
+//              if short_seq_count > 0:
+//                [u32 abs_first_seq_id]
+//                [varint  delta_seq_id[short_seq_count - 1]]
+//                [u8      occ_count[short_seq_count]]
+//                [FOR-block stream over short_position_count positions]
 //            Each FOR-block stream is the same encode_block_for + tail
 //            FOR layout used since Phase 5e:
 //                repeated count/128 times:
 //                  [u8 b][u32 min][128*b/8 bytes bitpacked (value-min)]
-//                [u8 tail_count][u32 tail_min][varint stream of tail-min]
-//            (tail_min/varint are emitted only when tail_count > 0.)
+//                [u8 tail_count]
+//                if tail_count > 0:
+//                  [u32 tail_min][varint stream of (value - tail_min)]
 //
 // .kix open_stream materialises the entire decoded posting (absolute
-// seq_ids) into StreamCtx::decoded.  .kpx open_stream takes the caller-
-// provided sid_stream (typically the .kix decoded array for the same
-// k-mer) and emits positions in lock-step with that stream — the partition
-// groups are scanned monotonically with a per-group cursor and the short
-// bucket fills the gaps.
+// distinct seq_ids) into StreamCtx::decoded.  .kpx decoding is now
+// candidate-set-driven (open_stream_kpx_for_candidates): the caller
+// hands a sorted candidate seq_id list and receives per-candidate
+// position vectors.
 
 #include <cstdint>
 #include <cstddef>
@@ -56,41 +65,44 @@ namespace ikafssn::pfd {
 // 128, matching the plan).
 inline constexpr int kPfdBlockSize = 128;
 
-// Per-posting byte-stream header for .kix (count + payload_words). The
-// .kpx layout uses its own variable-length header (see the file-level
+// Per-posting byte-stream header for .kix (distinct_count + payload_words).
+// The .kpx layout uses its own variable-length header (see the file-level
 // comment above) so this constant only describes the .kix posting blob.
 inline constexpr size_t kPostingHeaderBytes = 8;
 
 // === posting-level encode wrappers ===
 
-// Encode the seq_id-delta stream for a .kix posting. Writes count +
-// payload_words + payload into `out` (appended).  Returns the number of
-// bytes written.
+// Encode the distinct seq_id-delta stream for a .kix posting (v7).  Writes
+// distinct_count + payload_words + payload into `out` (appended).  Returns
+// the number of bytes written.
 size_t encode_posting_kix(const uint32_t* delta_array, uint32_t count,
                           std::vector<uint8_t>& out);
 
-// Encode the absolute-position stream for a .kpx posting (v6).
-//   sid_array:               length = count, sorted (may have duplicates)
-//   abs_pos_array:           length = count, parallel to sid_array
-//   freq_threshold_part:   per-(kmer, seq_id) count > threshold => the
-//                            cluster becomes its own partition group;
-//                            otherwise its positions go into the short
-//                            bucket
-// The sid_array merely partitions the positions on the encode side; only
-// the position stream is stored (the merge against sid_array happens at
-// decode time, driven by the caller-provided .kix seq_id stream).
-size_t encode_posting_kpx(const uint32_t* sid_array,
+// Encode the absolute-position stream for a .kpx posting (v7).
+//   distinct_sid          length = distinct_count, sorted ascending, no dups
+//   occ_count             length = distinct_count, occurrence per distinct_sid
+//                         (must be <= freq_threshold_part for short-bucket
+//                         entries; long entries are spilled into partition
+//                         groups based on the threshold)
+//   distinct_count        number of distinct seq_ids
+//   abs_pos_array         length = position_count; positions are grouped by
+//                         seq_id (matching distinct_sid order) and sorted
+//                         ascending within each group
+//   position_count        sum of occ_count
+//   freq_threshold_part   max 255; per-(kmer, seq_id) occurrence count
+//                         strictly greater becomes a partition group
+size_t encode_posting_kpx(const uint32_t* distinct_sid,
+                          const uint8_t*  occ_count,
+                          uint32_t distinct_count,
                           const uint32_t* abs_pos_array,
-                          uint32_t count,
+                          uint32_t position_count,
                           uint32_t freq_threshold_part,
                           std::vector<uint8_t>& out);
 
-// === streaming decode context ===
+// === streaming decode context (for .kix only since v7) ===
 //
-// open_stream_kix/_kpx materialises the entire decoded posting into
-// `decoded`.  refill() is a no-op for the wrapper backend (the data is
-// already fully decoded) — it's retained for API symmetry with future
-// per-block streaming codecs.
+// open_stream_kix materialises the entire decoded posting into `decoded`.
+// .kpx decoding moved to a candidate-set-driven API (see below).
 struct StreamCtx {
     std::vector<uint32_t> decoded;
     uint32_t count = 0;     // total elements in `decoded`
@@ -103,16 +115,6 @@ struct StreamCtx {
 //
 // Returns false on header / payload size mismatch (corrupt index).
 bool open_stream_kix(const uint8_t* posting, size_t bytes, StreamCtx& ctx);
-
-// Initialise a StreamCtx for a .kpx posting (v6).  The decoded stream is
-// merged in lock-step with the caller-supplied `sid_stream` (typically the
-// .kix-decoded seq_id array for the same k-mer): on return,
-// ctx.decoded[i] is the position corresponding to sid_stream[i].  Returns
-// false on header/size mismatch or if the partition-group seq_ids do not
-// align with `sid_stream` (corrupt index).
-bool open_stream_kpx(const uint8_t* posting, size_t bytes,
-                     const uint32_t* sid_stream, size_t n_sids,
-                     StreamCtx& ctx);
 
 // Read up to `max_count` decoded elements from the stream into `out`.
 // Returns the number of elements actually written (0 once exhausted).
@@ -129,10 +131,21 @@ inline bool stream_has_more(const StreamCtx& ctx) {
     return ctx.pos < ctx.count;
 }
 
+// === .kpx candidate-set-driven decode (v7) ===
+//
+// Given a sorted candidate seq_id array, decode the .kpx posting and return
+// the position vector for each candidate.  out is resized to candidates.size();
+// out[i] holds the positions of candidates[i] (empty if the candidate is not
+// present in the posting).  Returns false on corrupt input.
+bool open_stream_kpx_for_candidates(
+    const uint8_t* posting, size_t bytes,
+    const uint32_t* candidates, size_t n_candidates,
+    std::vector<std::vector<uint32_t>>& out);
+
 // === posting blob inspection (no decode) ===
 
-// Read the count u32 at the start of a posting blob.  Returns 0 if the
-// blob is shorter than the 8-byte header.
+// Read the distinct_count u32 at the start of a .kix posting blob.  Returns
+// 0 if the blob is shorter than the 8-byte header.
 inline uint32_t posting_count(const uint8_t* posting, size_t bytes) {
     if (bytes < kPostingHeaderBytes) return 0;
     uint32_t cnt;

@@ -10,6 +10,7 @@
 #include "index/kix_format.hpp"
 #include "index/kpx_format.hpp"
 #include "index/pfd_codec.hpp"
+#include "index/seq_id_dedup.hpp"
 #include "index/parallel_sort_dispatch.hpp"
 #include "util/logger.hpp"
 #include "util/progress.hpp"
@@ -162,7 +163,7 @@ bool build_index(BlastDbReader& db,
 
     // Convert uint64 -> uint32 with overflow check
     std::vector<uint32_t> counts(tbl_size);
-    uint64_t total_postings = 0;
+    uint64_t total_occurrences = 0;
     for (uint32_t i = 0; i < tbl_size; i++) {
         if (counts64[i] > UINT32_MAX) {
             logger.error("k-mer %u has count %lu which exceeds uint32_t. "
@@ -171,21 +172,22 @@ bool build_index(BlastDbReader& db,
             return false;
         }
         counts[i] = static_cast<uint32_t>(counts64[i]);
-        total_postings += counts64[i];
+        total_occurrences += counts64[i];
     }
     counts64.clear();
     counts64.shrink_to_fit();
 
-    logger.info("Phase 1: total postings = %lu", static_cast<unsigned long>(total_postings));
+    logger.info("Phase 1: total k-mer occurrences = %lu",
+                static_cast<unsigned long>(total_occurrences));
 
     // =========== Determine partition count from memory_limit ===========
     // Per-entry overhead depends on the active sort path: the SIMD path needs
     // a parallel uint64_t key + uint32_t val array on top of the TempEntry
     // buffer (Strategy E in parallel_sort_dispatch.cpp).
     int num_partitions = 1;
-    if (total_postings > 0) {
+    if (total_occurrences > 0) {
         uint64_t entries_limit = config.memory_limit / parallel_sort_entry_overhead();
-        while (static_cast<uint64_t>((total_postings + num_partitions - 1) / num_partitions)
+        while (static_cast<uint64_t>((total_occurrences + num_partitions - 1) / num_partitions)
                > entries_limit) {
             num_partitions *= 2;
         }
@@ -248,15 +250,23 @@ bool build_index(BlastDbReader& db,
     uint64_t kix_data_pos = 0;
     uint64_t kpx_data_pos = 0;
 
-    uint64_t est_partition_postings = (total_postings + num_partitions - 1) / num_partitions;
+    uint64_t est_partition_postings = (total_occurrences + num_partitions - 1) / num_partitions;
     uint64_t reserve_entries = config.memory_limit / parallel_sort_entry_overhead();
 
     // Process each partition (sequentially to respect memory constraints)
-    // Buffers reused per k-mer for delta/abs encoding into the v6 PFor codec.
-    std::vector<uint32_t> seq_delta_buf;  seq_delta_buf.reserve(64 * 1024);
-    std::vector<uint32_t> sid_buf;        sid_buf.reserve(64 * 1024);
-    std::vector<uint32_t> abs_pos_buf;    abs_pos_buf.reserve(64 * 1024);
-    std::vector<uint8_t>  pfd_out_buf;    pfd_out_buf.reserve(256 * 1024);
+    // Buffers reused per k-mer for v7 dedup + encoder pipeline.
+    std::vector<uint32_t> sid_buf;          sid_buf.reserve(64 * 1024);
+    std::vector<uint32_t> abs_pos_buf;      abs_pos_buf.reserve(64 * 1024);
+    std::vector<uint32_t> distinct_sid_buf; distinct_sid_buf.reserve(64 * 1024);
+    std::vector<uint8_t>  occ_count_buf;    occ_count_buf.reserve(64 * 1024);
+    std::vector<uint32_t> seq_delta_buf;    seq_delta_buf.reserve(64 * 1024);
+    std::vector<uint8_t>  pfd_out_buf;      pfd_out_buf.reserve(256 * 1024);
+
+    // Track v7 totals for the .kix and .kpx headers separately:
+    //   total_distinct_postings — sum of distinct seq_ids across all k-mers (.kix)
+    //   total_position_count    — sum of intra-sequence position counts (.kpx)
+    uint64_t total_distinct_postings = 0;
+    uint64_t total_position_count = 0;
 
     for (int p = 0; p < num_partitions; p++) {
         logger.info("  Partition %d/%d...", p + 1, num_partitions);
@@ -359,33 +369,52 @@ bool build_index(BlastDbReader& db,
             kix_offsets[cur_kmer] = kix_data_pos;
             if (!config.skip_kpx) kpx_offsets[cur_kmer] = kpx_data_pos;
 
-            const uint32_t cnt = static_cast<uint32_t>(j - i);
+            const uint32_t position_count = static_cast<uint32_t>(j - i);
 
-            // .kix: build seq_id delta then PFor encode (first abs, then deltas).
-            seq_delta_buf.resize(cnt);
-            seq_delta_buf[0] = buffer[i].seq_id;
-            for (size_t e = 1; e < cnt; e++) {
-                seq_delta_buf[e] = buffer[i + e].seq_id - buffer[i + e - 1].seq_id;
+            // Materialise sid_buf / abs_pos_buf for this k-mer (sorted by
+            // (seq_id, pos)).  Both are needed for the v7 dedup + encode
+            // pipeline below.
+            sid_buf.resize(position_count);
+            abs_pos_buf.resize(position_count);
+            for (size_t e = 0; e < position_count; e++) {
+                sid_buf[e]     = buffer[i + e].seq_id;
+                abs_pos_buf[e] = buffer[i + e].pos;
+            }
+
+            // SIMD dedup → distinct_sid + per-seq_id occurrence count.
+            distinct_sid_buf.resize(position_count);
+            occ_count_buf.resize(position_count);
+            const uint32_t distinct_count = seq_id_dedup::dedup_seq_ids(
+                sid_buf.data(), position_count,
+                distinct_sid_buf.data(), occ_count_buf.data());
+            distinct_sid_buf.resize(distinct_count);
+            occ_count_buf.resize(distinct_count);
+            total_distinct_postings += distinct_count;
+            total_position_count    += position_count;
+
+            // .kix: distinct seq_id delta-stream → FastPFor.
+            seq_delta_buf.resize(distinct_count);
+            if (distinct_count > 0) {
+                seq_delta_buf[0] = distinct_sid_buf[0];
+                for (uint32_t e = 1; e < distinct_count; e++) {
+                    seq_delta_buf[e] = distinct_sid_buf[e] - distinct_sid_buf[e - 1];
+                }
             }
             pfd_out_buf.clear();
-            pfd::encode_posting_kix(seq_delta_buf.data(), cnt, pfd_out_buf);
+            pfd::encode_posting_kix(seq_delta_buf.data(), distinct_count, pfd_out_buf);
             std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kix_fp);
             kix_data_pos += pfd_out_buf.size();
 
-            // .kpx: encode absolute positions via PFor (skip if mode 1).
-            // v6 splits per-(kmer, seq_id) clusters > freq_threshold_part
-            // into partition groups, so we hand both sids and positions to
-            // the codec.
+            // .kpx (skip if mode 1).  v7: hand the encoder distinct_sid +
+            // occ_count + abs_pos_array.
             if (!config.skip_kpx) {
-                sid_buf.resize(cnt);
-                abs_pos_buf.resize(cnt);
-                for (size_t e = 0; e < cnt; e++) {
-                    sid_buf[e]    = buffer[i + e].seq_id;
-                    abs_pos_buf[e] = buffer[i + e].pos;
-                }
                 pfd_out_buf.clear();
-                pfd::encode_posting_kpx(sid_buf.data(), abs_pos_buf.data(),
-                                        cnt, config.freq_threshold_part,
+                pfd::encode_posting_kpx(distinct_sid_buf.data(),
+                                        occ_count_buf.data(),
+                                        distinct_count,
+                                        abs_pos_buf.data(),
+                                        position_count,
+                                        config.freq_threshold_part,
                                         pfd_out_buf);
                 std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kpx_fp);
                 kpx_data_pos += pfd_out_buf.size();
@@ -413,7 +442,9 @@ bool build_index(BlastDbReader& db,
     }
 
     // =========== Phase 4: Finalize ===========
-    logger.info("Phase 4: finalizing...");
+    logger.info("Phase 4: finalizing (distinct_postings=%lu, position_count=%lu)...",
+                static_cast<unsigned long>(total_distinct_postings),
+                static_cast<unsigned long>(total_position_count));
 
     // Set sentinel offset
     kix_offsets[tbl_size] = kix_data_pos;
@@ -448,7 +479,7 @@ bool build_index(BlastDbReader& db,
         kix_hdr.k = static_cast<uint8_t>(k);
         kix_hdr.kmer_type = kmer_type_for(k, config.t);
         kix_hdr.num_sequences = num_seqs;
-        kix_hdr.total_postings = total_postings;
+        kix_hdr.total_distinct_postings = total_distinct_postings;
         kix_hdr.flags = KIX_FLAG_HAS_KSX | (kix_offset32 ? KIX_FLAG_OFFSET32 : 0);
         kix_hdr.volume_index = volume_index;
         kix_hdr.total_volumes = total_volumes;
@@ -501,7 +532,7 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.k = static_cast<uint8_t>(k);
         kpx_hdr.t = config.t;
         kpx_hdr.template_type = config.template_type;
-        kpx_hdr.total_postings = total_postings;
+        kpx_hdr.total_position_count = total_position_count;
         kpx_hdr.offset_type = kpx_offset32 ? 0 : 1;
         // Reserved codec-extension area (zero in v5).
         kpx_hdr.codec_id      = 0;

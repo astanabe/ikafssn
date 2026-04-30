@@ -4,6 +4,7 @@
 #include "core/config.hpp"
 #include "search/posting_decoder.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <vector>
 #include <string>
@@ -12,18 +13,24 @@ using namespace ikafssn;
 
 static const char* TEST_FILE = "/tmp/test_ikafssn.kpx";
 
-// Decode position postings from a v6 .kpx posting blob.  v6 needs the
-// caller-side seq_id stream so that the partition+short merge can walk
-// lock-step with it; tests pass the per-(kmer) seq_id list explicitly.
+// Decode position postings from a v7 .kpx posting blob via the
+// candidate-set API.  Returns a flat vector of positions ordered by the
+// candidate seq_id list (positions for candidates[0] first, then [1], etc.).
 static std::vector<uint32_t> decode_pos_postings(
     const uint8_t* data, const uint8_t* end,
-    const std::vector<uint32_t>& seq_ids,
-    uint32_t expected_count) {
+    const std::vector<uint32_t>& candidates) {
+    std::vector<uint32_t> distinct_sorted = candidates;
+    std::sort(distinct_sorted.begin(), distinct_sorted.end());
+    distinct_sorted.erase(std::unique(distinct_sorted.begin(),
+                                       distinct_sorted.end()),
+                          distinct_sorted.end());
 
+    PosDecoder decoder(data, end,
+                       distinct_sorted.data(), distinct_sorted.size());
     std::vector<uint32_t> result;
-    PosDecoder decoder(data, end, seq_ids.data(), seq_ids.size());
-    while (decoder.has_more() && result.size() < expected_count) {
-        result.push_back(decoder.next());
+    for (size_t i = 0; i < distinct_sorted.size(); i++) {
+        const auto& v = decoder.positions_for(i);
+        result.insert(result.end(), v.begin(), v.end());
     }
     return result;
 }
@@ -36,7 +43,7 @@ static void test_single_seq() {
     std::vector<KpxWriter::PostingEntry> entries = {
         {5, 10}, {5, 20}, {5, 30}, {5, 100}
     };
-    std::vector<uint32_t> seq_ids = {5, 5, 5, 5};
+    std::vector<uint32_t> candidates = {5};
 
     {
         KpxWriter writer(k);
@@ -54,13 +61,12 @@ static void test_single_seq() {
         KpxReader reader;
         CHECK(reader.open(TEST_FILE));
         CHECK_EQ(reader.k(), k);
-        CHECK_EQ(reader.total_postings(), 4u);
+        CHECK_EQ(reader.total_position_count(), 4u);
 
         auto positions = decode_pos_postings(
             reader.posting_data() + reader.pos_offset(42),
             reader.posting_data() + reader.posting_data_size(),
-            seq_ids,
-            4);
+            candidates);
 
         CHECK_EQ(positions.size(), 4u);
         CHECK_EQ(positions[0], 10u);
@@ -85,7 +91,7 @@ static void test_multiple_seqs() {
         {1, 5},  {1, 15}, {1, 25},
         {3, 100},
     };
-    std::vector<uint32_t> seq_ids = {0, 0, 1, 1, 1, 3};
+    std::vector<uint32_t> candidates = {0, 1, 3};
 
     {
         KpxWriter writer(k);
@@ -102,13 +108,12 @@ static void test_multiple_seqs() {
     {
         KpxReader reader;
         CHECK(reader.open(TEST_FILE));
-        CHECK_EQ(reader.total_postings(), 6u);
+        CHECK_EQ(reader.total_position_count(), 6u);
 
         auto positions = decode_pos_postings(
             reader.posting_data() + reader.pos_offset(7),
             reader.posting_data() + reader.posting_data_size(),
-            seq_ids,
-            6);
+            candidates);
 
         CHECK_EQ(positions.size(), 6u);
         CHECK_EQ(positions[0], 10u);
@@ -128,16 +133,15 @@ static void test_multiple_kmers() {
     int k = 5;
     uint32_t ts = table_size(k);
 
-    // Two k-mers with different posting patterns
     std::vector<KpxWriter::PostingEntry> entries_a = {
         {0, 100}, {0, 200}, {1, 50},
     };
-    std::vector<uint32_t> sids_a = {0, 0, 1};
+    std::vector<uint32_t> cand_a = {0, 1};
 
     std::vector<KpxWriter::PostingEntry> entries_b = {
         {2, 0}, {2, 1000},
     };
-    std::vector<uint32_t> sids_b = {2, 2};
+    std::vector<uint32_t> cand_b = {2};
 
     {
         KpxWriter writer(k);
@@ -156,25 +160,21 @@ static void test_multiple_kmers() {
     {
         KpxReader reader;
         CHECK(reader.open(TEST_FILE));
-        CHECK_EQ(reader.total_postings(), 5u);
+        CHECK_EQ(reader.total_position_count(), 5u);
 
-        // k-mer 0
         auto pos_a = decode_pos_postings(
             reader.posting_data() + reader.pos_offset(0),
             reader.posting_data() + reader.posting_data_size(),
-            sids_a,
-            3);
+            cand_a);
         CHECK_EQ(pos_a.size(), 3u);
         CHECK_EQ(pos_a[0], 100u);
         CHECK_EQ(pos_a[1], 200u);
         CHECK_EQ(pos_a[2], 50u);
 
-        // k-mer 10
         auto pos_b = decode_pos_postings(
             reader.posting_data() + reader.pos_offset(10),
             reader.posting_data() + reader.posting_data_size(),
-            sids_b,
-            2);
+            cand_b);
         CHECK_EQ(pos_b.size(), 2u);
         CHECK_EQ(pos_b[0], 0u);
         CHECK_EQ(pos_b[1], 1000u);
@@ -185,8 +185,8 @@ static void test_multiple_kmers() {
     std::remove(TEST_FILE);
 }
 
-// Phase 5g-2: exercise the partition / short-bucket boundary across a
-// few thresholds.  We build a single k-mer with a 20-occurrence run on
+// Phase 5g-2 / 5i: exercise the partition / short-bucket boundary across
+// a few thresholds.  We build a single k-mer with a 20-occurrence run on
 // seq_id=10 plus 1 occurrence each on seq_id={11, 12, 13}.
 //   threshold = 8   -> seq_id=10 partitioned, others short
 //   threshold = 16  -> seq_id=10 partitioned (20 > 16), others short
@@ -196,16 +196,14 @@ static void test_partition_group_threshold() {
     uint32_t ts = table_size(k);
 
     std::vector<KpxWriter::PostingEntry> entries;
-    std::vector<uint32_t> seq_ids;
     for (uint32_t pos = 0; pos < 20; pos++) {
         entries.push_back({10, 1000 + pos});
-        seq_ids.push_back(10);
     }
     for (uint32_t sid : {11u, 12u, 13u}) {
         entries.push_back({sid, 7});
-        seq_ids.push_back(sid);
     }
     const uint32_t expected_count = static_cast<uint32_t>(entries.size());
+    std::vector<uint32_t> candidates = {10, 11, 12, 13};
 
     auto run_threshold = [&](uint32_t threshold) {
         KpxWriter writer(k, threshold);
@@ -217,13 +215,12 @@ static void test_partition_group_threshold() {
 
         KpxReader reader;
         CHECK(reader.open(TEST_FILE));
-        CHECK_EQ(reader.total_postings(), expected_count);
+        CHECK_EQ(reader.total_position_count(), expected_count);
 
         auto positions = decode_pos_postings(
             reader.posting_data() + reader.pos_offset(33),
             reader.posting_data() + reader.posting_data_size(),
-            seq_ids,
-            expected_count);
+            candidates);
 
         CHECK_EQ(positions.size(), static_cast<size_t>(expected_count));
         for (size_t j = 0; j < entries.size(); j++) {

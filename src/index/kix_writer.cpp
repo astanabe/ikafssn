@@ -32,11 +32,13 @@ void KixWriter::set_flags(uint32_t flags) {
 
 void KixWriter::add_posting_list(uint32_t kmer_value, const std::vector<uint32_t>& seq_ids) {
     offsets_[kmer_value] = posting_data_.size();
-    total_postings_ += seq_ids.size();
+    total_distinct_postings_ += seq_ids.size();
 
     if (seq_ids.empty()) return;
 
-    // v4: encode delta-stream (first absolute, then differences) via FastPFor.
+    // v7: encode the distinct seq_id delta-stream (first absolute, then
+    // strictly-positive differences) via FastPFor.  Caller contract: seq_ids
+    // are sorted and contain no duplicates.
     std::vector<uint32_t> deltas(seq_ids.size());
     deltas[0] = seq_ids[0];
     for (size_t i = 1; i < seq_ids.size(); i++) {
@@ -66,7 +68,7 @@ bool KixWriter::write(const std::string& path) {
     hdr.k = static_cast<uint8_t>(k_);
     hdr.kmer_type = kmer_type_;
     hdr.num_sequences = num_sequences_;
-    hdr.total_postings = total_postings_;
+    hdr.total_distinct_postings = total_distinct_postings_;
     hdr.flags = flags_ | (use_offset32 ? KIX_FLAG_OFFSET32 : 0);
     hdr.volume_index = volume_index_;
     hdr.total_volumes = total_volumes_;

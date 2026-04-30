@@ -692,7 +692,7 @@ static void test_ambig_db_index_build() {
     KixReader kix;
     CHECK(kix.open(prefix + ".kix"));
     CHECK_EQ(kix.k(), 5);
-    CHECK(kix.total_postings() > 0);
+    CHECK(kix.total_distinct_postings() > 0);
 
     // Verify counts sum matches total_postings
     auto counts = kix.bulk_count_postings();
@@ -700,7 +700,7 @@ static void test_ambig_db_index_build() {
     for (uint32_t i = 0; i < kix.table_size(); i++) {
         sum += counts[i];
     }
-    CHECK_EQ(sum, kix.total_postings());
+    CHECK_EQ(sum, kix.total_distinct_postings());
 
     kix.close();
 }
@@ -1140,14 +1140,14 @@ static void test_ambig_db_odd_length() {
 
     KixReader kix;
     CHECK(kix.open(prefix + ".kix"));
-    CHECK(kix.total_postings() > 0);
+    CHECK(kix.total_distinct_postings() > 0);
 
     auto counts = kix.bulk_count_postings();
     uint64_t sum = 0;
     for (uint32_t i = 0; i < kix.table_size(); i++) {
         sum += counts[i];
     }
-    CHECK_EQ(sum, kix.total_postings());
+    CHECK_EQ(sum, kix.total_distinct_postings());
 
     kix.close();
 }

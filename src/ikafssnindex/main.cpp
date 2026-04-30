@@ -195,7 +195,7 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         0: not allowed (error)\n"
         "                         Counts are aggregated across all volumes before filtering\n"
         "  -freq_threshold_part <int>\n"
-        "                         .kpx v6 per-(kmer, seq_id) partition threshold (default: 8)\n"
+        "                         .kpx v7 per-(kmer, seq_id) partition threshold (default: 8, max: 255)\n"
         "                         A (k-mer, seq_id) cluster with occurrence count > threshold\n"
         "                         is split into its own partition group; lower-multiplicity\n"
         "                         clusters merge into a shared short bucket\n"
@@ -350,6 +350,12 @@ int main(int argc, char* argv[]) {
     int freq_threshold_part = cli.get_int("-freq_threshold_part", 8);
     if (freq_threshold_part < 0) {
         std::fprintf(stderr, "Error: -freq_threshold_part must be >= 0\n");
+        return 1;
+    }
+    if (freq_threshold_part > 255) {
+        std::fprintf(stderr,
+            "Error: -freq_threshold_part must be <= 255 "
+            "(short-bucket occurrence counts are u8 in the v7 .kpx layout)\n");
         return 1;
     }
 
@@ -666,7 +672,7 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
-            std::fprintf(fp, "FORMAT_VERSION 6\n");
+            std::fprintf(fp, "FORMAT_VERSION 7\n");
             std::fprintf(fp, "TITLE %s\n", db_base.c_str());
             std::fprintf(fp, "DBLIST");
             for (const auto& bn : vol_basenames) {

@@ -5,11 +5,16 @@
 
 namespace ikafssn {
 
-// .kix v6 (Phase 5g-2): FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
-// per-posting payload (PForDelta with exception VByte).  Wire format is
-// unchanged from v5; the magic / format_version bump alongside the .kpx
-// v6 partition+short layout for family-wide version alignment.
-inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '6'};
+// .kix v7 (Phase 5i): per-posting payload is FastPFor's
+// CompositeCodec<SIMDFastPFor<4>, VariableByte> (PForDelta + VByte
+// exception stream) — same codec as v6 — but the input stream is now the
+// **distinct seq_id delta list** for the k-mer, i.e.
+//   [abs_first, d1, d2, ...]   with d_i >= 1
+// (intra-sequence k-mer duplicates are removed by a SIMD dedup kernel at
+// build time).  As a result the leading u32 of every posting blob is the
+// distinct seq_id count (renamed from `count` to `distinct_count`), and
+// the header carries `total_distinct_postings` instead of `total_postings`.
+inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '7'};
 
 // Flag bits
 inline constexpr uint32_t KIX_FLAG_SEQ_ID_WIDTH = 0x01; // 0=uint32, 1=uint64 (future)
@@ -22,12 +27,12 @@ inline constexpr uint32_t KIX_FLAG_OFFSET32     = 0x04; // 0=uint64 offsets, 1=u
 
 #pragma pack(push, 1)
 struct KixHeader {
-    char     magic[4];                   // 0x00: "KIX6"
-    uint16_t format_version;             // 0x04: 6
+    char     magic[4];                   // 0x00: "KIX7"
+    uint16_t format_version;             // 0x04: 7
     uint8_t  k;                          // 0x06
     uint8_t  kmer_type;                  // 0x07: 0=uint16, 1=uint32
     uint32_t num_sequences;              // 0x08
-    uint64_t total_postings;             // 0x0C
+    uint64_t total_distinct_postings;    // 0x0C: sum of distinct seq_id counts across all k-mers
     uint32_t flags;                      // 0x14
     uint16_t volume_index;               // 0x18
     uint16_t total_volumes;              // 0x1A
@@ -51,6 +56,6 @@ struct KixHeader {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(KixHeader) == 96, "KixHeader v6 must be 96 bytes");
+static_assert(sizeof(KixHeader) == 96, "KixHeader v7 must be 96 bytes");
 
 } // namespace ikafssn
