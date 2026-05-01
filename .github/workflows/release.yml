@@ -155,6 +155,11 @@ jobs:
         run: |
           echo "NPROC=$(nproc 2>/dev/null || sysctl -n hw.ncpu)" >> "$GITHUB_ENV"
           version=$(grep 'set(IKAFSSN_VERSION' CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
+          input_version="${{ inputs.version }}"
+          if [ "${version}" != "${input_version}" ]; then
+            echo "::error::Version mismatch: CMakeLists.txt has '${version}' but workflow input is '${input_version}'. Bump IKAFSSN_VERSION in CMakeLists.txt to match the release tag, or re-dispatch from a commit that contains the bump."
+            exit 1
+          fi
           echo "IKAFSSN_VERSION=${version}" >> "$GITHUB_ENV"
 
       # ---- Skip if the asset for this target already exists in the release ----
@@ -526,6 +531,7 @@ jobs:
           done
           if [ ${#missing[@]} -gt 0 ]; then
             printf '::error::Missing release assets: %s\n' "${missing[*]}"
+            echo "::error::If the build matrix all succeeded, the build job likely skipped because CMakeLists.txt's IKAFSSN_VERSION did not match inputs.version (=${{ steps.version.outputs.version }}). Verify both agree and re-dispatch."
             exit 1
           fi
 
@@ -649,6 +655,7 @@ jobs:
           if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
                 --json assets --jq '.assets[].name' | grep -Fxq "${bottle}"; then
             echo "::error::Missing bottle asset: ${bottle}"
+            echo "::error::If the build matrix all succeeded, the build job likely skipped because CMakeLists.txt's IKAFSSN_VERSION did not match inputs.version (=${{ steps.version.outputs.version }}). Verify both agree and re-dispatch."
             exit 1
           fi
 
