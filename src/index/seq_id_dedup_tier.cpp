@@ -35,7 +35,7 @@ namespace ikafssn::seq_id_dedup::IKAFSSN_DEDUP_TIER_NS(IKAFSSN_DEDUP_TIER_NAME) 
 
 std::uint32_t dedup_seq_ids(const std::uint32_t* sid, std::uint32_t n,
                             std::uint32_t* distinct_sid_out,
-                            std::uint8_t*  occ_count_out) {
+                            std::uint32_t* occ_count_out) {
     if (n == 0) return 0;
 
     std::uint32_t d = 0;
@@ -43,25 +43,24 @@ std::uint32_t dedup_seq_ids(const std::uint32_t* sid, std::uint32_t n,
     std::uint32_t run_len = 1;
 
     // Scalar pass with the surrounding ISA flags letting the compiler
-    // auto-vectorise the run-length loop where it can.  Run-length
-    // accumulator is bounded by freq_threshold_part (<= 255) at the
-    // call site, so the u8 cast does not lose information in practice.
+    // auto-vectorise the run-length loop where it can.  occ_count is
+    // u32 in v8 — large genomic contigs can have > 255 occurrences of
+    // the same k-mer in a single sequence, and the prior u8 saturation
+    // silently dropped positions in the encoder's pos_cursor walk.
     for (std::uint32_t i = 1; i < n; i++) {
         const std::uint32_t v = sid[i];
         if (v == cur_sid) {
             run_len++;
         } else {
             distinct_sid_out[d] = cur_sid;
-            occ_count_out[d]    = static_cast<std::uint8_t>(
-                run_len > 255 ? 255 : run_len);
+            occ_count_out[d]    = run_len;
             d++;
             cur_sid = v;
             run_len = 1;
         }
     }
     distinct_sid_out[d] = cur_sid;
-    occ_count_out[d]    = static_cast<std::uint8_t>(
-        run_len > 255 ? 255 : run_len);
+    occ_count_out[d]    = run_len;
     d++;
 
     return d;

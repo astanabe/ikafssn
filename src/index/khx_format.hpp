@@ -4,12 +4,12 @@
 
 namespace ikafssn {
 
-// .khx v7 (Phase 5i): data layout is unchanged from v3; the
+// .khx v8 (Phase 6): data layout is unchanged from v3; the
 // format_version field bumps along with the rest of the index family
 // for alignment (Phase 5c policy).  Magic stays "KMHX".  The semantic
-// of the bitset is now "k-mer i was excluded because its **distinct
-// seq_id count** exceeded the build-time threshold", matching the
-// realigned .kix posting count semantic introduced in v7.
+// of the bitset is "k-mer i was excluded because its **distinct
+// seq_id count** exceeded the build-time threshold" (matching the
+// .kix distinct-seq_id semantic established in v7).
 inline constexpr char KHX_MAGIC[4] = {'K', 'M', 'H', 'X'};
 
 #pragma pack(push, 1)

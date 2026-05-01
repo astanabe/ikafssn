@@ -1,4 +1,4 @@
-// Phase 5i — per-tier custom block codec.
+// Phase 6 — per-tier custom block codec.
 //
 // This translation unit is compiled FOUR TIMES on x86_64 (once per ISA
 // tier) and once on aarch64 via the ikafssn_pfd_<tier> OBJECT libraries
@@ -16,16 +16,17 @@
 //                                          surrounding scalar code in
 //                                          this file are allowed to use)
 //
-// For .kix postings (sorted distinct seq_id delta stream — v7) we drive
-// FastPFor's CompositeCodec<SIMDFastPFor<4>, VariableByte> directly.
+// For .kix postings (sorted distinct seq_id delta stream — wire format
+// unchanged from v7) we drive FastPFor's CompositeCodec<SIMDFastPFor<4>,
+// VariableByte> directly.
 //
-// For .kpx postings (absolute position stream) Phase 5g-2 splits each
-// posting into per-(kmer, seq_id) partition groups (when the within-
-// sequence occurrence count exceeds a build-time threshold) plus one
-// short bucket for the remaining low-multiplicity occurrences.  Phase 5i
-// makes the short bucket self-describing (its own delta-encoded seq_id
-// list + per-seq_id u8 occurrence counts) so decoding is candidate-set-
-// driven and independent of the .kix stream.
+// For .kpx postings (absolute position stream) Phase 6 keeps the per-
+// (kmer, seq_id) partition grouping but classifies every distinct
+// seq_id via a 2-bit kind map instead of carrying redundant seq_id
+// bytes.  The short bucket is also split into occ=1 and occ>=2 sub-
+// buckets so single-position clusters drop the u8 occ_count entirely.
+// FOR-block headers are widened to 8 B (proposal F) and stream tails
+// switch from a varint stream to a packed bit-width stream (proposal D).
 
 #include "index/pfd_codec.hpp"
 
@@ -67,36 +68,74 @@ KixCodec& kix_codec() {
     return codec;
 }
 
-inline std::size_t varint_encode(std::uint32_t v, std::uint8_t* dst) {
-    std::size_t n = 0;
-    do {
-        std::uint8_t byte = v & 0x7F;
-        v >>= 7;
-        if (v != 0) byte |= 0x80;
-        dst[n++] = byte;
-    } while (v != 0);
-    return n;
-}
-
-inline std::size_t varint_decode(const std::uint8_t* src, std::uint32_t& out) {
-    out = 0;
-    unsigned shift = 0;
-    std::size_t n = 0;
-    std::uint8_t byte;
-    do {
-        byte = src[n++];
-        out |= std::uint32_t(byte & 0x7F) << shift;
-        shift += 7;
-    } while (byte & 0x80);
-    return n;
-}
-
 inline std::uint8_t bits_required(std::uint32_t v) {
     return v == 0 ? std::uint8_t(0) : std::uint8_t(32 - __builtin_clz(v));
 }
 
-std::size_t encode_block_for(const std::uint32_t* in_128,
-                             std::vector<std::uint8_t>& out) {
+// LSB-first variable bit-width packing for FOR-stream tails.  Each value
+// is written into `bw` consecutive bits starting at the next bitpos in
+// the output byte stream.  Total output: ceil(count*bw/8) bytes.
+void pack_bits_lsb(const std::uint32_t* in, std::uint32_t count,
+                   std::uint8_t bw, std::uint8_t* out) {
+    if (bw == 0 || count == 0) return;
+    const std::size_t total_bits  = std::size_t(count) * bw;
+    const std::size_t total_bytes = (total_bits + 7) / 8;
+    std::memset(out, 0, total_bytes);
+    std::uint64_t bitpos = 0;
+    for (std::uint32_t i = 0; i < count; i++) {
+        std::uint64_t v = in[i];
+        std::uint64_t bp = bitpos;
+        std::uint8_t  bits_left = bw;
+        while (bits_left > 0) {
+            std::uint64_t byte_idx = bp >> 3;
+            std::uint8_t  bit_idx  = std::uint8_t(bp & 7);
+            std::uint8_t  bits_in_byte = std::uint8_t(8 - bit_idx);
+            std::uint8_t  take = bits_left < bits_in_byte ? bits_left : bits_in_byte;
+            std::uint64_t chunk_mask = (std::uint64_t(1) << take) - 1;
+            std::uint8_t  chunk = std::uint8_t(v & chunk_mask);
+            out[byte_idx] |= std::uint8_t(chunk << bit_idx);
+            v >>= take;
+            bp += take;
+            bits_left = std::uint8_t(bits_left - take);
+        }
+        bitpos += bw;
+    }
+}
+
+void unpack_bits_lsb(const std::uint8_t* in, std::uint32_t count,
+                     std::uint8_t bw, std::uint32_t* out) {
+    if (count == 0) return;
+    if (bw == 0) {
+        for (std::uint32_t i = 0; i < count; i++) out[i] = 0;
+        return;
+    }
+    std::uint64_t bitpos = 0;
+    for (std::uint32_t i = 0; i < count; i++) {
+        std::uint64_t bp = bitpos;
+        std::uint8_t  bits_left = bw;
+        std::uint64_t v = 0;
+        std::uint8_t  out_shift = 0;
+        while (bits_left > 0) {
+            std::uint64_t byte_idx = bp >> 3;
+            std::uint8_t  bit_idx  = std::uint8_t(bp & 7);
+            std::uint8_t  bits_in_byte = std::uint8_t(8 - bit_idx);
+            std::uint8_t  take = bits_left < bits_in_byte ? bits_left : bits_in_byte;
+            std::uint64_t chunk_mask = (std::uint64_t(1) << take) - 1;
+            std::uint8_t  chunk = std::uint8_t((in[byte_idx] >> bit_idx) & std::uint8_t(chunk_mask));
+            v |= std::uint64_t(chunk) << out_shift;
+            out_shift = std::uint8_t(out_shift + take);
+            bp += take;
+            bits_left = std::uint8_t(bits_left - take);
+        }
+        out[i] = std::uint32_t(v);
+        bitpos += bw;
+    }
+}
+
+// v8 FOR block: [u32 min][u8 b][3 B pad][16*b bytes bitpacked (value-min)].
+// Total = 8 + 16*b bytes, body 8 B aligned within the block.
+void encode_block_for_v8(const std::uint32_t* in_128,
+                         std::vector<std::uint8_t>& out) {
     std::uint32_t mn = in_128[0];
     std::uint32_t mx = in_128[0];
     for (int i = 1; i < kBlockSize; i++) {
@@ -107,108 +146,126 @@ std::size_t encode_block_for(const std::uint32_t* in_128,
     const std::uint8_t b = bits_required(spread);
     const std::size_t before = out.size();
 
-    out.resize(before + 5);
-    out[before] = b;
-    std::memcpy(out.data() + before + 1, &mn, sizeof(std::uint32_t));
-    if (b == 0) return 5;
+    out.resize(before + 8);
+    std::memcpy(out.data() + before, &mn, sizeof(std::uint32_t));
+    out[before + 4] = b;
+    out[before + 5] = 0;
+    out[before + 6] = 0;
+    out[before + 7] = 0;
+    if (b == 0) return;
 
     alignas(kBlockAlign) std::uint32_t shifted[kBlockSize];
     for (int i = 0; i < kBlockSize; i++) shifted[i] = in_128[i] - mn;
 
     const std::size_t body_bytes = std::size_t(16) * b;
-    out.resize(before + 5 + body_bytes);
+    out.resize(before + 8 + body_bytes);
 
     alignas(kBlockAlign) __m128i tmp[32];
     pfor_ns::simdpackwithoutmask(shifted, tmp, b);
-    std::memcpy(out.data() + before + 5, tmp, body_bytes);
-    return 5 + body_bytes;
+    std::memcpy(out.data() + before + 8, tmp, body_bytes);
 }
 
-std::size_t decode_block_for(const std::uint8_t* in, std::uint32_t* out_128) {
-    const std::uint8_t b = in[0];
+bool decode_block_for_v8(const std::uint8_t*& p, const std::uint8_t* end,
+                         std::uint32_t* out_128) {
+    if (std::size_t(end - p) < 8) return false;
     std::uint32_t mn;
-    std::memcpy(&mn, in + 1, sizeof(std::uint32_t));
+    std::memcpy(&mn, p, sizeof(std::uint32_t));
+    const std::uint8_t b = p[4];
+    if (b > 32) return false;
+    const std::size_t body_bytes = std::size_t(16) * b;
+    if (std::size_t(end - p) < 8 + body_bytes) return false;
     if (b == 0) {
         for (int i = 0; i < kBlockSize; i++) out_128[i] = mn;
-        return 5;
+        p += 8;
+        return true;
     }
-    const std::size_t body_bytes = std::size_t(16) * b;
     alignas(kBlockAlign) __m128i tmp[32];
-    std::memcpy(tmp, in + 1 + 4, body_bytes);
+    std::memcpy(tmp, p + 8, body_bytes);
     pfor_ns::simdunpack(tmp, out_128, b);
     for (int i = 0; i < kBlockSize; i++) out_128[i] += mn;
-    return 5 + body_bytes;
+    p += 8 + body_bytes;
+    return true;
 }
 
-void encode_for_stream(const std::uint32_t* abs_pos_array,
-                       std::uint32_t count,
-                       std::vector<std::uint8_t>& out) {
+void encode_for_stream_v8(const std::uint32_t* abs_pos_array,
+                          std::uint32_t count,
+                          std::vector<std::uint8_t>& out) {
     const std::uint32_t num_blocks = count / kBlockSize;
     const std::uint32_t tail_count = count % kBlockSize;
 
     for (std::uint32_t b = 0; b < num_blocks; b++) {
-        encode_block_for(abs_pos_array + b * kBlockSize, out);
+        encode_block_for_v8(abs_pos_array + b * kBlockSize, out);
     }
 
     out.push_back(static_cast<std::uint8_t>(tail_count));
-    if (tail_count > 0) {
-        const std::uint32_t* tail = abs_pos_array + num_blocks * kBlockSize;
-        std::uint32_t mn = tail[0];
-        for (std::uint32_t i = 1; i < tail_count; i++) {
-            if (tail[i] < mn) mn = tail[i];
-        }
-        out.resize(out.size() + sizeof(std::uint32_t));
-        std::memcpy(out.data() + out.size() - sizeof(std::uint32_t),
-                    &mn, sizeof(std::uint32_t));
+    if (tail_count == 0) return;
 
-        std::uint8_t tmp[5];
-        for (std::uint32_t i = 0; i < tail_count; i++) {
-            const std::size_t n = varint_encode(tail[i] - mn, tmp);
-            out.insert(out.end(), tmp, tmp + n);
-        }
+    const std::uint32_t* tail = abs_pos_array + num_blocks * kBlockSize;
+    std::uint32_t mn = tail[0];
+    std::uint32_t mx = tail[0];
+    for (std::uint32_t i = 1; i < tail_count; i++) {
+        if (tail[i] < mn) mn = tail[i];
+        if (tail[i] > mx) mx = tail[i];
+    }
+    const std::uint8_t  tail_b     = bits_required(mx - mn);
+    const std::size_t   body_bits  = std::size_t(tail_count) * tail_b;
+    const std::size_t   body_bytes = (body_bits + 7) / 8;
+    const std::size_t   before     = out.size();
+    out.resize(before + 4 + 1 + body_bytes);
+    std::memcpy(out.data() + before, &mn, sizeof(std::uint32_t));
+    out[before + 4] = tail_b;
+    if (body_bytes > 0) {
+        // Pack (tail[i] - mn) values.
+        std::uint32_t shifted[kBlockSize];
+        for (std::uint32_t i = 0; i < tail_count; i++) shifted[i] = tail[i] - mn;
+        pack_bits_lsb(shifted, tail_count, tail_b, out.data() + before + 5);
     }
 }
 
-bool decode_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
-                       std::uint32_t count, std::uint32_t* out) {
+bool decode_for_stream_v8(const std::uint8_t*& p, const std::uint8_t* end,
+                          std::uint32_t count, std::uint32_t* out) {
     const std::uint32_t num_blocks = count / kBlockSize;
     const std::uint32_t tail_count = count % kBlockSize;
 
     for (std::uint32_t b = 0; b < num_blocks; b++) {
-        if (p >= end) return false;
-        const std::size_t n = decode_block_for(p, out + b * kBlockSize);
-        if (p + n > end) return false;
-        p += n;
+        if (!decode_block_for_v8(p, end, out + b * kBlockSize)) return false;
     }
 
     if (p >= end) return false;
     const std::uint8_t got_tail = *p++;
     if (got_tail != tail_count) return false;
+    if (tail_count == 0) return true;
 
-    if (tail_count > 0) {
-        if (p + sizeof(std::uint32_t) > end) return false;
-        std::uint32_t tail_min;
-        std::memcpy(&tail_min, p, sizeof(std::uint32_t));
-        p += sizeof(std::uint32_t);
+    if (std::size_t(end - p) < 5) return false;
+    std::uint32_t tail_min;
+    std::memcpy(&tail_min, p, sizeof(std::uint32_t));
+    p += sizeof(std::uint32_t);
+    const std::uint8_t tail_b = *p++;
+    if (tail_b > 32) return false;
+    const std::size_t body_bits  = std::size_t(tail_count) * tail_b;
+    const std::size_t body_bytes = (body_bits + 7) / 8;
+    if (std::size_t(end - p) < body_bytes) return false;
 
-        std::uint32_t* tail_out = out + num_blocks * kBlockSize;
-        for (std::uint32_t i = 0; i < tail_count; i++) {
-            if (p >= end) return false;
-            std::uint32_t d;
-            const std::size_t n = varint_decode(p, d);
-            if (p + n > end) return false;
-            p += n;
-            tail_out[i] = tail_min + d;
-        }
-    }
+    std::uint32_t* tail_out = out + num_blocks * kBlockSize;
+    unpack_bits_lsb(p, tail_count, tail_b, tail_out);
+    for (std::uint32_t i = 0; i < tail_count; i++) tail_out[i] += tail_min;
+    p += body_bytes;
     return true;
+}
+
+inline void set_kind_bits(std::uint8_t* kind_map, std::uint32_t i, std::uint8_t kind) {
+    kind_map[i >> 2] |= std::uint8_t((kind & 0x03) << ((i & 3) * 2));
+}
+
+inline std::uint8_t get_kind_bits(const std::uint8_t* kind_map, std::uint32_t i) {
+    return std::uint8_t((kind_map[i >> 2] >> ((i & 3) * 2)) & 0x03);
 }
 
 } // anonymous namespace
 
-// ===== .kix v7 encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
+// ===== .kix v8 encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
 //
-// On-disk per-posting blob:
+// Wire-compatible with v7.  On-disk per-posting blob:
 //   [u32 distinct_count]  — number of distinct seq_ids represented
 //   [u32 payload_words]   — number of u32 words written by the codec
 //   [u32 payload[N]]      — codec output, byte-unaligned
@@ -240,120 +297,121 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
     return out.size() - before;
 }
 
-// ===== .kpx v7 encode (per-(kmer, seq_id) partitioning + self-describing short bucket) =====
+// ===== .kpx v8 encode =====
+//
+// Top header (5 u32) + 2-bit kind map + partition groups (no per-group
+// sid) + short_occ1 sub-bucket + u8 occ_count[short2] + short_occ_ge2
+// sub-bucket.  See src/index/pfd_codec.hpp for the wire format.
 
-std::size_t encode_posting_kpx(const std::uint32_t* distinct_sid,
-                               const std::uint8_t*  occ_count,
+std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
+                               const std::uint32_t* occ_count,
                                std::uint32_t distinct_count,
                                const std::uint32_t* abs_pos_array,
-                               std::uint32_t position_count,
+                               std::uint32_t /*position_count*/,
                                std::uint32_t freq_threshold_part,
                                std::vector<std::uint8_t>& out) {
     const std::size_t before = out.size();
 
-    // Header placeholders: distinct_count, position_count, partition_count.
-    out.resize(before + 3 * sizeof(std::uint32_t));
-    std::memcpy(out.data() + before, &distinct_count, sizeof(std::uint32_t));
-    std::memcpy(out.data() + before + sizeof(std::uint32_t),
-                &position_count, sizeof(std::uint32_t));
+    // Top header placeholders.
+    out.resize(before + 5 * sizeof(std::uint32_t));
 
     if (distinct_count == 0) {
-        std::uint32_t zero = 0;
-        std::memcpy(out.data() + before + 2 * sizeof(std::uint32_t),
-                    &zero, sizeof(std::uint32_t));
-        // short_seq_count = 0, short_position_count = 0
-        out.resize(out.size() + 2 * sizeof(std::uint32_t));
-        std::memcpy(out.data() + out.size() - 2 * sizeof(std::uint32_t),
-                    &zero, sizeof(std::uint32_t));
-        std::memcpy(out.data() + out.size() - sizeof(std::uint32_t),
-                    &zero, sizeof(std::uint32_t));
+        std::memset(out.data() + before, 0, 5 * sizeof(std::uint32_t));
         return out.size() - before;
     }
 
-    // Pass 1: classify each distinct seq_id into partition vs short bucket
-    // based on occ_count[k] > freq_threshold_part.
-    std::uint32_t partition_count = 0;
-    std::uint32_t short_seq_count = 0;
-    std::uint32_t short_position_count = 0;
+    // Pass 1: classify each distinct sid by occ_count.
+    std::vector<std::uint8_t> kinds(distinct_count);
+    std::uint32_t partition_count = 0, short1_count = 0, short2_count = 0;
+    std::uint32_t short2_position_count = 0;
     for (std::uint32_t k = 0; k < distinct_count; k++) {
-        if (occ_count[k] > freq_threshold_part) {
+        const std::uint32_t occ = occ_count[k];
+        std::uint8_t kind;
+        if (occ > freq_threshold_part) {
+            kind = 2;  // partition
             partition_count++;
+        } else if (occ == 1) {
+            kind = 0;  // short_occ1
+            short1_count++;
         } else {
-            short_seq_count++;
-            short_position_count += occ_count[k];
+            kind = 1;  // short_occ_ge2
+            short2_count++;
+            short2_position_count += occ;
         }
+        kinds[k] = kind;
     }
 
-    std::memcpy(out.data() + before + 2 * sizeof(std::uint32_t),
-                &partition_count, sizeof(std::uint32_t));
+    // Top header.
+    {
+        std::uint8_t* hdr = out.data() + before;
+        std::memcpy(hdr +  0, &distinct_count,        sizeof(std::uint32_t));
+        std::memcpy(hdr +  4, &partition_count,       sizeof(std::uint32_t));
+        std::memcpy(hdr +  8, &short1_count,          sizeof(std::uint32_t));
+        std::memcpy(hdr + 12, &short2_count,          sizeof(std::uint32_t));
+        std::memcpy(hdr + 16, &short2_position_count, sizeof(std::uint32_t));
+    }
 
-    // Pass 2: emit partition groups in seq_id order.
+    // 2-bit kind map.
+    const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;
+    const std::size_t kind_map_off = out.size();
+    out.resize(out.size() + kind_map_bytes);
+    std::memset(out.data() + kind_map_off, 0, kind_map_bytes);
+    for (std::uint32_t k = 0; k < distinct_count; k++) {
+        set_kind_bits(out.data() + kind_map_off, k, kinds[k]);
+    }
+
+    // Pass 2: emit partition groups in distinct_sid order.
     std::uint32_t pos_cursor = 0;
     for (std::uint32_t k = 0; k < distinct_count; k++) {
         const std::uint32_t cnt = occ_count[k];
-        if (occ_count[k] > freq_threshold_part) {
-            const std::size_t hdr_off = out.size();
-            out.resize(hdr_off + 2 * sizeof(std::uint32_t));
-            std::memcpy(out.data() + hdr_off,
-                        &distinct_sid[k], sizeof(std::uint32_t));
-            std::memcpy(out.data() + hdr_off + sizeof(std::uint32_t),
-                        &cnt, sizeof(std::uint32_t));
-            encode_for_stream(abs_pos_array + pos_cursor, cnt, out);
+        if (kinds[k] == 2) {
+            const std::size_t off = out.size();
+            out.resize(off + sizeof(std::uint32_t));
+            std::memcpy(out.data() + off, &cnt, sizeof(std::uint32_t));
+            encode_for_stream_v8(abs_pos_array + pos_cursor, cnt, out);
         }
         pos_cursor += cnt;
     }
 
-    // Pass 3: emit short bucket header + delta seq_ids + occ_counts + positions.
-    {
-        const std::size_t cnt_off = out.size();
-        out.resize(cnt_off + 2 * sizeof(std::uint32_t));
-        std::memcpy(out.data() + cnt_off,
-                    &short_seq_count, sizeof(std::uint32_t));
-        std::memcpy(out.data() + cnt_off + sizeof(std::uint32_t),
-                    &short_position_count, sizeof(std::uint32_t));
+    // Pass 3: short_occ1 — concatenated 1-position-per-cluster FOR stream.
+    if (short1_count > 0) {
+        std::vector<std::uint32_t> short1_buf;
+        short1_buf.reserve(short1_count);
+        std::uint32_t cursor = 0;
+        for (std::uint32_t k = 0; k < distinct_count; k++) {
+            if (kinds[k] == 0) {
+                short1_buf.push_back(abs_pos_array[cursor]);
+            }
+            cursor += occ_count[k];
+        }
+        encode_for_stream_v8(short1_buf.data(), short1_count, out);
     }
 
-    if (short_seq_count > 0) {
-        // Delta-encoded seq_id list: first absolute, then varint deltas.
-        bool first = true;
-        std::uint32_t prev_sid = 0;
-        std::uint8_t tmp[5];
+    // Pass 4: short_occ_ge2 — u8 occ_count[] + concatenated FOR stream.
+    // occ_count[k] is in [2, freq_threshold_part] (<= 255) for short_occ_ge2
+    // entries, so the static_cast<uint8_t> never loses information.
+    if (short2_count > 0) {
+        const std::size_t occ_off = out.size();
+        out.resize(occ_off + short2_count);
+        std::uint32_t out_idx = 0;
         for (std::uint32_t k = 0; k < distinct_count; k++) {
-            if (occ_count[k] > freq_threshold_part) continue;
-            const std::uint32_t sid = distinct_sid[k];
-            if (first) {
-                out.resize(out.size() + sizeof(std::uint32_t));
-                std::memcpy(out.data() + out.size() - sizeof(std::uint32_t),
-                            &sid, sizeof(std::uint32_t));
-                first = false;
-            } else {
-                const std::uint32_t d = sid - prev_sid;
-                const std::size_t n = varint_encode(d, tmp);
-                out.insert(out.end(), tmp, tmp + n);
+            if (kinds[k] == 1) {
+                out[occ_off + out_idx++] = static_cast<std::uint8_t>(occ_count[k]);
             }
-            prev_sid = sid;
         }
 
-        // Per-seq_id u8 occ_count list (in the same order as the seq_id list).
+        std::vector<std::uint32_t> short2_buf;
+        short2_buf.reserve(short2_position_count);
+        std::uint32_t cursor = 0;
         for (std::uint32_t k = 0; k < distinct_count; k++) {
-            if (occ_count[k] > freq_threshold_part) continue;
-            out.push_back(occ_count[k]);
-        }
-
-        // Concatenated positions (intra-seq ordering preserved).
-        std::vector<std::uint32_t> short_buf;
-        short_buf.reserve(short_position_count);
-        std::uint32_t cursor2 = 0;
-        for (std::uint32_t k = 0; k < distinct_count; k++) {
-            const std::uint32_t cnt = occ_count[k];
-            if (occ_count[k] <= freq_threshold_part) {
-                short_buf.insert(short_buf.end(),
-                                 abs_pos_array + cursor2,
-                                 abs_pos_array + cursor2 + cnt);
+            if (kinds[k] == 1) {
+                for (std::uint32_t e = 0; e < occ_count[k]; e++) {
+                    short2_buf.push_back(abs_pos_array[cursor + e]);
+                }
             }
-            cursor2 += cnt;
+            cursor += occ_count[k];
         }
-        encode_for_stream(short_buf.data(), short_position_count, out);
+        encode_for_stream_v8(short2_buf.data(), short2_position_count, out);
     }
 
     return out.size() - before;
@@ -387,7 +445,7 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
                             ctx.decoded.data(), nvalue);
     if (nvalue != count) return false;
 
-    // v7: encoder writes [abs_first, d1, d2, ...] over the **distinct**
+    // Encoder writes [abs_first, d1, d2, ...] over the **distinct**
     // seq_id stream; cumulative sum reconstructs absolute distinct seq_ids.
     for (std::uint32_t i = 1; i < count; i++) {
         ctx.decoded[i] += ctx.decoded[i - 1];
@@ -398,11 +456,13 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
     return true;
 }
 
-// ===== open_stream_kpx_for_candidates: candidate-set-driven decode =====
+// ===== open_stream_kpx_for_candidates: candidate-set-driven decode (v8) =====
 
 bool open_stream_kpx_for_candidates(
         const std::uint8_t* posting, std::size_t bytes,
+        const std::uint32_t* kix_decoded, std::size_t kix_count,
         const std::uint32_t* candidates, std::size_t n_candidates,
+        ikafssn::pfd::PosDecodeScratch& scratch,
         std::vector<std::vector<std::uint32_t>>& out) {
 
     out.assign(n_candidates, std::vector<std::uint32_t>{});
@@ -414,110 +474,113 @@ bool open_stream_kpx_for_candidates(
     const std::uint8_t* p = posting;
     const std::uint8_t* end = posting + bytes;
 
-    std::uint32_t distinct_count;
-    std::uint32_t position_count;
-    std::uint32_t partition_count;
-    std::memcpy(&distinct_count,  p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
-    std::memcpy(&position_count,  p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
-    std::memcpy(&partition_count, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
-    (void)position_count;
+    std::uint32_t distinct_count, partition_count, short1_count, short2_count, short2_position_count;
+    std::memcpy(&distinct_count,        p, 4); p += 4;
+    std::memcpy(&partition_count,       p, 4); p += 4;
+    std::memcpy(&short1_count,          p, 4); p += 4;
+    std::memcpy(&short2_count,          p, 4); p += 4;
+    std::memcpy(&short2_position_count, p, 4); p += 4;
 
     if (distinct_count == 0) {
-        // Expect short_seq_count = 0 + short_position_count = 0 trailer.
-        if (p + 2 * sizeof(std::uint32_t) > end) return false;
-        std::uint32_t a, b;
-        std::memcpy(&a, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
-        std::memcpy(&b, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
-        if (a != 0 || b != 0) return false;
+        if (partition_count != 0 || short1_count != 0 ||
+            short2_count != 0 || short2_position_count != 0) return false;
         return true;
     }
+    if (distinct_count != kix_count) return false;
+    if (distinct_count != partition_count + short1_count + short2_count) return false;
 
-    // Helper: locate candidate index for seq_id sid via binary search.
-    // Returns size_t(-1) when sid is not in the candidate list.  The two
-    // streams (partition groups and short bucket) are each sorted, but
-    // their union interleaves arbitrarily against the candidate list, so
-    // a shared monotonic cursor is not sufficient — binary search keeps
-    // both passes correct without extra bookkeeping.
-    auto find_candidate = [&](std::uint32_t sid) -> std::size_t {
-        std::size_t lo = 0;
-        std::size_t hi = n_candidates;
-        while (lo < hi) {
-            std::size_t mid = lo + (hi - lo) / 2;
-            if (candidates[mid] < sid)      lo = mid + 1;
-            else if (candidates[mid] > sid) hi = mid;
-            else return mid;
-        }
-        return static_cast<std::size_t>(-1);
-    };
+    const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;
+    if (std::size_t(end - p) < kind_map_bytes) return false;
+    const std::uint8_t* kind_map = p;
+    p += kind_map_bytes;
 
-    // Pass 1: partition groups.
+    // Decode partition groups into scratch.partition_positions, building
+    // partition_offsets[] alongside.
+    auto& part_pos = scratch.partition_positions;
+    auto& part_off = scratch.partition_offsets;
+    part_pos.clear();
+    part_off.assign(std::size_t(partition_count) + 1, 0);
     for (std::uint32_t g = 0; g < partition_count; g++) {
-        if (p + 2 * sizeof(std::uint32_t) > end) return false;
-        std::uint32_t gsid, gcnt;
-        std::memcpy(&gsid, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
-        std::memcpy(&gcnt, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
+        if (std::size_t(end - p) < sizeof(std::uint32_t)) return false;
+        std::uint32_t gcnt;
+        std::memcpy(&gcnt, p, sizeof(std::uint32_t));
+        p += sizeof(std::uint32_t);
         if (gcnt == 0) return false;
+        part_off[g] = static_cast<std::uint32_t>(part_pos.size());
+        const std::size_t base = part_pos.size();
+        part_pos.resize(base + gcnt);
+        if (!decode_for_stream_v8(p, end, gcnt, part_pos.data() + base)) return false;
+    }
+    part_off[partition_count] = static_cast<std::uint32_t>(part_pos.size());
 
-        const std::size_t cidx = find_candidate(gsid);
-        if (cidx != static_cast<std::size_t>(-1)) {
-            std::vector<std::uint32_t> buf(gcnt);
-            if (!decode_for_stream(p, end, gcnt, buf.data())) return false;
-            out[cidx] = std::move(buf);
-        } else {
-            std::vector<std::uint32_t> scratch(gcnt);
-            if (!decode_for_stream(p, end, gcnt, scratch.data())) return false;
+    // Decode short_occ1 sub-bucket.
+    auto& short1_pos = scratch.short1_positions;
+    short1_pos.assign(short1_count, 0);
+    if (short1_count > 0) {
+        if (!decode_for_stream_v8(p, end, short1_count, short1_pos.data())) return false;
+    }
+
+    // Decode short_occ_ge2 sub-bucket: u8 occ_count[] then FOR stream.
+    auto& short2_occ = scratch.short2_occ;
+    auto& short2_off = scratch.short2_offsets;
+    auto& short2_pos = scratch.short2_positions;
+    short2_occ.assign(short2_count, 0);
+    short2_off.assign(std::size_t(short2_count) + 1, 0);
+    short2_pos.assign(short2_position_count, 0);
+    if (short2_count > 0) {
+        if (std::size_t(end - p) < short2_count) return false;
+        std::memcpy(short2_occ.data(), p, short2_count);
+        p += short2_count;
+        std::uint32_t cum = 0;
+        for (std::uint32_t i = 0; i < short2_count; i++) {
+            if (short2_occ[i] < 2) return false;
+            short2_off[i] = cum;
+            cum += short2_occ[i];
+        }
+        short2_off[short2_count] = cum;
+        if (cum != short2_position_count) return false;
+        if (short2_position_count > 0) {
+            if (!decode_for_stream_v8(p, end, short2_position_count, short2_pos.data())) {
+                return false;
+            }
         }
     }
 
-    // Pass 2: short bucket.
-    if (p + 2 * sizeof(std::uint32_t) > end) return false;
-    std::uint32_t short_seq_count;
-    std::uint32_t short_position_count;
-    std::memcpy(&short_seq_count,      p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
-    std::memcpy(&short_position_count, p, sizeof(std::uint32_t)); p += sizeof(std::uint32_t);
-
-    if (short_seq_count == 0) {
-        if (short_position_count != 0) return false;
-        return true;
-    }
-
-    if (p + sizeof(std::uint32_t) > end) return false;
-    std::vector<std::uint32_t> short_sid(short_seq_count);
-    std::memcpy(&short_sid[0], p, sizeof(std::uint32_t));
-    p += sizeof(std::uint32_t);
-    for (std::uint32_t i = 1; i < short_seq_count; i++) {
-        if (p >= end) return false;
-        std::uint32_t d;
-        const std::size_t n = varint_decode(p, d);
-        if (p + n > end) return false;
-        p += n;
-        short_sid[i] = short_sid[i - 1] + d;
-    }
-
-    if (p + short_seq_count > end) return false;
-    const std::uint8_t* short_occ = p;
-    p += short_seq_count;
-
-    std::vector<std::uint32_t> short_positions(short_position_count);
-    if (short_position_count > 0) {
-        if (!decode_for_stream(p, end, short_position_count, short_positions.data())) {
-            return false;
+    // 2-pointer merge walk over kix_decoded × candidates, ranking each
+    // distinct sid by its kind to pull positions out of the per-kind
+    // decoded buffers.
+    std::size_t ci = 0;
+    std::uint32_t r_part = 0, r_short1 = 0, r_short2 = 0;
+    for (std::uint32_t i = 0; i < distinct_count; i++) {
+        const std::uint8_t kind = get_kind_bits(kind_map, i);
+        if (kind == 3) return false;  // reserved
+        const std::uint32_t sid = kix_decoded[i];
+        while (ci < n_candidates && candidates[ci] < sid) ci++;
+        const bool match = (ci < n_candidates && candidates[ci] == sid);
+        if (kind == 2) {
+            if (match) {
+                const std::uint32_t lo = part_off[r_part];
+                const std::uint32_t hi = part_off[r_part + 1];
+                out[ci].assign(part_pos.begin() + lo, part_pos.begin() + hi);
+            }
+            r_part++;
+        } else if (kind == 0) {
+            if (match) {
+                out[ci].assign(1, short1_pos[r_short1]);
+            }
+            r_short1++;
+        } else { // kind == 1
+            if (match) {
+                const std::uint32_t lo = short2_off[r_short2];
+                const std::uint32_t hi = short2_off[r_short2 + 1];
+                out[ci].assign(short2_pos.begin() + lo, short2_pos.begin() + hi);
+            }
+            r_short2++;
         }
     }
-
-    std::size_t pos_cursor = 0;
-    for (std::uint32_t k = 0; k < short_seq_count; k++) {
-        const std::uint32_t sid = short_sid[k];
-        const std::uint32_t cnt = short_occ[k];
-        const std::size_t cidx = find_candidate(sid);
-        if (cidx != static_cast<std::size_t>(-1)) {
-            out[cidx].assign(short_positions.begin() + pos_cursor,
-                             short_positions.begin() + pos_cursor + cnt);
-        }
-        pos_cursor += cnt;
-    }
-
-    if (pos_cursor != short_position_count) return false;
+    if (r_part   != partition_count) return false;
+    if (r_short1 != short1_count)    return false;
+    if (r_short2 != short2_count)    return false;
     return true;
 }
 

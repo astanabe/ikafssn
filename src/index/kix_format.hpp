@@ -5,16 +5,15 @@
 
 namespace ikafssn {
 
-// .kix v7 (Phase 5i): per-posting payload is FastPFor's
-// CompositeCodec<SIMDFastPFor<4>, VariableByte> (PForDelta + VByte
-// exception stream) — same codec as v6 — but the input stream is now the
-// **distinct seq_id delta list** for the k-mer, i.e.
-//   [abs_first, d1, d2, ...]   with d_i >= 1
-// (intra-sequence k-mer duplicates are removed by a SIMD dedup kernel at
-// build time).  As a result the leading u32 of every posting blob is the
-// distinct seq_id count (renamed from `count` to `distinct_count`), and
-// the header carries `total_distinct_postings` instead of `total_postings`.
-inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '7'};
+// .kix v8 (Phase 6): on-wire payload layout is identical to v7 (per-posting
+// FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte> over the
+// distinct seq_id delta stream [abs_first, d1, d2, ...] with d_i >= 1).
+// The format_version + magic bump aligns .kix with the v8 .kpx codec
+// rewrite that occurs in the same phase (see src/index/kpx_format.hpp);
+// the .kix decoded distinct_seq_id array is now part of the .kpx
+// candidate-resolution contract and must always be available alongside
+// the .kpx posting.
+inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '8'};
 
 // Flag bits
 inline constexpr uint32_t KIX_FLAG_SEQ_ID_WIDTH = 0x01; // 0=uint32, 1=uint64 (future)
@@ -27,8 +26,8 @@ inline constexpr uint32_t KIX_FLAG_OFFSET32     = 0x04; // 0=uint64 offsets, 1=u
 
 #pragma pack(push, 1)
 struct KixHeader {
-    char     magic[4];                   // 0x00: "KIX7"
-    uint16_t format_version;             // 0x04: 7
+    char     magic[4];                   // 0x00: "KIX8"
+    uint16_t format_version;             // 0x04: 8
     uint8_t  k;                          // 0x06
     uint8_t  kmer_type;                  // 0x07: 0=uint16, 1=uint32
     uint32_t num_sequences;              // 0x08
@@ -56,6 +55,6 @@ struct KixHeader {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(KixHeader) == 96, "KixHeader v7 must be 96 bytes");
+static_assert(sizeof(KixHeader) == 96, "KixHeader v8 must be 96 bytes");
 
 } // namespace ikafssn

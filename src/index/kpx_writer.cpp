@@ -30,11 +30,14 @@ void KpxWriter::add_posting_list(uint32_t kmer_value,
         return;
     }
 
-    // v7: hand the encoder pre-deduplicated distinct_sid + occ_count
-    // arrays alongside the sorted abs_pos array.  Entries are sorted by
-    // (seq_id, pos) — see header contract.
+    // v8: hand the encoder pre-deduplicated distinct_sid + occ_count
+    // arrays alongside the sorted abs_pos array.  occ_count is u32 so a
+    // single (k-mer, seq_id) cluster may exceed 255 occurrences (this
+    // routinely happens in nt-class BLAST DBs with large genomic
+    // contigs).  Entries are sorted by (seq_id, pos) — see header
+    // contract.
     std::vector<uint32_t> distinct_sid;
-    std::vector<uint8_t>  occ_count;
+    std::vector<uint32_t> occ_count;
     std::vector<uint32_t> abs_positions;
     distinct_sid.reserve(entries.size());
     occ_count.reserve(entries.size());
@@ -45,18 +48,7 @@ void KpxWriter::add_posting_list(uint32_t kmer_value,
         uint32_t j = i + 1;
         while (j < entries.size() && entries[j].seq_id == entries[i].seq_id) j++;
         distinct_sid.push_back(entries[i].seq_id);
-        // occ_count is u8; the upper layer must enforce per-seq run length
-        // <= 255 by capping freq_threshold_part at 255 and ensuring
-        // partition groups absorb anything above that.  KpxWriter is only
-        // a test helper, but assert on overflow so misuse is caught.
-        uint32_t run = j - i;
-        if (run > 255) {
-            std::fprintf(stderr,
-                "KpxWriter: per-seq_id occurrence run %u exceeds u8 limit. "
-                "freq_threshold_part must be <= 255.\n", run);
-            std::abort();
-        }
-        occ_count.push_back(static_cast<uint8_t>(run));
+        occ_count.push_back(j - i);
         for (uint32_t e = i; e < j; e++) abs_positions.push_back(entries[e].pos);
         i = j;
     }

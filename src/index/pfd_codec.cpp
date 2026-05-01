@@ -50,7 +50,7 @@ namespace ikafssn::pfd {
         std::size_t encode_posting_kix(const std::uint32_t*, std::uint32_t,   \
                                        std::vector<std::uint8_t>&);           \
         std::size_t encode_posting_kpx(const std::uint32_t*,                  \
-                                       const std::uint8_t*,                   \
+                                       const std::uint32_t*,                  \
                                        std::uint32_t,                         \
                                        const std::uint32_t*,                  \
                                        std::uint32_t,                         \
@@ -60,6 +60,8 @@ namespace ikafssn::pfd {
         bool open_stream_kpx_for_candidates(                                  \
             const std::uint8_t*, std::size_t,                                 \
             const std::uint32_t*, std::size_t,                                \
+            const std::uint32_t*, std::size_t,                                \
+            PosDecodeScratch&,                                                \
             std::vector<std::vector<std::uint32_t>>&);                        \
     }
 
@@ -81,7 +83,7 @@ namespace {
 struct VTable {
     std::size_t (*encode_kix)(const std::uint32_t*, std::uint32_t,
                               std::vector<std::uint8_t>&);
-    std::size_t (*encode_kpx)(const std::uint32_t*, const std::uint8_t*,
+    std::size_t (*encode_kpx)(const std::uint32_t*, const std::uint32_t*,
                               std::uint32_t,
                               const std::uint32_t*, std::uint32_t,
                               std::uint32_t,
@@ -89,6 +91,8 @@ struct VTable {
     bool (*open_kix)(const std::uint8_t*, std::size_t, StreamCtx&);
     bool (*open_kpx)(const std::uint8_t*, std::size_t,
                      const std::uint32_t*, std::size_t,
+                     const std::uint32_t*, std::size_t,
+                     PosDecodeScratch&,
                      std::vector<std::vector<std::uint32_t>>&);
     const char* tier_name;
 };
@@ -181,7 +185,7 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
 }
 
 std::size_t encode_posting_kpx(const std::uint32_t* distinct_sid,
-                               const std::uint8_t*  occ_count,
+                               const std::uint32_t* occ_count,
                                std::uint32_t distinct_count,
                                const std::uint32_t* abs_pos_array,
                                std::uint32_t position_count,
@@ -198,9 +202,14 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
 }
 
 bool open_stream_kpx_for_candidates(const std::uint8_t* posting, std::size_t bytes,
+                                    const std::uint32_t* kix_decoded, std::size_t kix_count,
                                     const std::uint32_t* candidates, std::size_t n_candidates,
+                                    PosDecodeScratch& scratch,
                                     std::vector<std::vector<std::uint32_t>>& out) {
-    return active_vtable().open_kpx(posting, bytes, candidates, n_candidates, out);
+    return active_vtable().open_kpx(posting, bytes,
+                                    kix_decoded, kix_count,
+                                    candidates, n_candidates,
+                                    scratch, out);
 }
 
 } // namespace ikafssn::pfd

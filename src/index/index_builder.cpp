@@ -254,11 +254,11 @@ bool build_index(BlastDbReader& db,
     uint64_t reserve_entries = config.memory_limit / parallel_sort_entry_overhead();
 
     // Process each partition (sequentially to respect memory constraints)
-    // Buffers reused per k-mer for v7 dedup + encoder pipeline.
+    // Buffers reused per k-mer for the v8 dedup + encoder pipeline.
     std::vector<uint32_t> sid_buf;          sid_buf.reserve(64 * 1024);
     std::vector<uint32_t> abs_pos_buf;      abs_pos_buf.reserve(64 * 1024);
     std::vector<uint32_t> distinct_sid_buf; distinct_sid_buf.reserve(64 * 1024);
-    std::vector<uint8_t>  occ_count_buf;    occ_count_buf.reserve(64 * 1024);
+    std::vector<uint32_t> occ_count_buf;    occ_count_buf.reserve(64 * 1024);
     std::vector<uint32_t> seq_delta_buf;    seq_delta_buf.reserve(64 * 1024);
     std::vector<uint8_t>  pfd_out_buf;      pfd_out_buf.reserve(256 * 1024);
 

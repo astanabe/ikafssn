@@ -38,7 +38,7 @@ namespace ikafssn::seq_id_dedup {
 #define DECLARE_DEDUP_TIER_NS(ns)                                       \
     namespace ns {                                                      \
         std::uint32_t dedup_seq_ids(const std::uint32_t*, std::uint32_t,\
-                                    std::uint32_t*, std::uint8_t*);     \
+                                    std::uint32_t*, std::uint32_t*);     \
     }
 
 #if IKAFSSN_DEDUP_HAS_X86
@@ -58,7 +58,7 @@ namespace {
 
 struct VTable {
     std::uint32_t (*dedup)(const std::uint32_t*, std::uint32_t,
-                           std::uint32_t*, std::uint8_t*);
+                           std::uint32_t*, std::uint32_t*);
     const char* tier_name;
 };
 
@@ -108,7 +108,7 @@ const VTable& active_vtable() {
 
 std::uint32_t dedup_seq_ids(const std::uint32_t* sid, std::uint32_t n,
                             std::uint32_t* distinct_sid_out,
-                            std::uint8_t*  occ_count_out) {
+                            std::uint32_t* occ_count_out) {
     return active_vtable().dedup(sid, n, distinct_sid_out, occ_count_out);
 }
 

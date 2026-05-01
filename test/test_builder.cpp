@@ -37,16 +37,21 @@ static std::vector<uint32_t> decode_id_postings(
     return result;
 }
 
-// Decode pos posting list via the v7 PosDecoder.  Candidate-set-driven:
-// pass a sorted distinct seq_id list and concatenate the per-candidate
-// position vectors in candidate order.
+// Decode pos posting list via the v8 PosDecoder.  Candidate-set-driven:
+// pass a sorted distinct seq_id list (which equals the .kix decoded
+// distinct seq_id array for this k-mer) as both the kix_decoded view
+// and the candidate set, and concatenate the per-candidate position
+// vectors in candidate order.
 static std::vector<uint32_t> decode_pos_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len,
     const std::vector<uint32_t>& distinct_sids) {
     std::vector<uint32_t> result;
     if (byte_len == 0 || distinct_sids.empty()) return result;
+    pfd::PosDecodeScratch scratch;
     PosDecoder dec(data + offset, data + offset + byte_len,
-                   distinct_sids.data(), distinct_sids.size());
+                   distinct_sids.data(), distinct_sids.size(),
+                   distinct_sids.data(), distinct_sids.size(),
+                   &scratch);
     for (size_t i = 0; i < distinct_sids.size(); i++) {
         const auto& v = dec.positions_for(i);
         result.insert(result.end(), v.begin(), v.end());
@@ -54,13 +59,42 @@ static std::vector<uint32_t> decode_pos_postings(
     return result;
 }
 
-// Read the v7 .kpx position_count field for a k-mer (u32 at offset 4 of
-// the per-kmer payload).
+// Compute the .kpx per-kmer position count by summing partition occ_counts
+// + short1_count + short2_position_count from the v8 top header.
 static uint32_t kpx_position_count(const KpxReader& kpx, uint32_t kmer) {
     const uint8_t* p = kpx.posting_data() + kpx.pos_offset(kmer);
-    uint32_t pos_cnt;
-    std::memcpy(&pos_cnt, p + sizeof(uint32_t), sizeof(uint32_t));
-    return pos_cnt;
+    uint32_t distinct_count, partition_count, short1_count, short2_count, short2_pos;
+    std::memcpy(&distinct_count, p +  0, sizeof(uint32_t));
+    std::memcpy(&partition_count,p +  4, sizeof(uint32_t));
+    std::memcpy(&short1_count,   p +  8, sizeof(uint32_t));
+    std::memcpy(&short2_count,   p + 12, sizeof(uint32_t));
+    std::memcpy(&short2_pos,     p + 16, sizeof(uint32_t));
+    if (distinct_count == 0) return 0;
+    const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;
+    const uint8_t* gp = p + 5 * sizeof(uint32_t) + kind_map_bytes;
+    uint32_t partition_pos = 0;
+    for (uint32_t g = 0; g < partition_count; g++) {
+        uint32_t gcnt;
+        std::memcpy(&gcnt, gp, sizeof(uint32_t));
+        gp += sizeof(uint32_t);
+        partition_pos += gcnt;
+        // Skip the FOR-block stream: full blocks (8 + 16*b each) + tail.
+        const uint32_t num_blocks = gcnt / 128u;
+        const uint32_t tail_count = gcnt % 128u;
+        for (uint32_t b = 0; b < num_blocks; b++) {
+            uint8_t bw = gp[4];
+            gp += 8 + std::size_t(16) * bw;
+        }
+        const uint8_t got_tail = *gp++;
+        (void)got_tail;
+        if (tail_count > 0) {
+            gp += sizeof(uint32_t);          // tail_min
+            uint8_t tail_b = *gp++;
+            const std::size_t body_bits = std::size_t(tail_count) * tail_b;
+            gp += (body_bits + 7) / 8;
+        }
+    }
+    return partition_pos + short1_count + short2_pos;
 }
 
 static void test_build_and_verify_ksx() {

@@ -1,4 +1,4 @@
-// Phase 5a / 5i — dump v7 .kix/.kpx postings to TSV for compression analysis.
+// Phase 6 — dump v8 .kix/.kpx postings to TSV for compression analysis.
 //
 // Throwaway tool: reads the current index files via the public codec API
 // and emits TSV lines:
@@ -123,6 +123,7 @@ int main(int argc, char** argv) {
     uint64_t non_empty_seen = 0;
 
     pfd::StreamCtx kix_ctx;
+    pfd::PosDecodeScratch pos_scratch;
     std::vector<std::vector<uint32_t>> per_cand_pos;
 
     for (uint32_t kmer = 0; kmer < tbl; kmer++) {
@@ -143,13 +144,18 @@ int main(int argc, char** argv) {
         const uint32_t cnt = kix_ctx.count;
         if (cnt < args.min_count) continue;
 
-        // Decode positions (per distinct seq_id, in seq_id order).
+        // Decode positions (per distinct seq_id, in seq_id order).  In v8
+        // the candidate set is the full distinct seq_id list itself, so
+        // we feed kix_ctx.decoded both as the .kix decoded array and as
+        // the candidate array.
         if (have_kpx) {
             uint64_t kpx_off = kpx.pos_offset(kmer);
             uint64_t kpx_end = kpx.posting_data_size();
             if (!pfd::open_stream_kpx_for_candidates(
                     kpx_data + kpx_off, kpx_end - kpx_off,
                     kix_ctx.decoded.data(), cnt,
+                    kix_ctx.decoded.data(), cnt,
+                    pos_scratch,
                     per_cand_pos)) {
                 std::fprintf(stderr, "kmer %u: kpx decode failed\n", kmer);
                 continue;

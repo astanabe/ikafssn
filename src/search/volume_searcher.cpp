@@ -9,6 +9,7 @@
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
 #include "index/khx_reader.hpp"
+#include "index/pfd_codec.hpp"
 #include "core/kmer_encoding.hpp"
 #include "core/spaced_seed.hpp"
 
@@ -19,6 +20,14 @@
 #include <unordered_set>
 
 namespace ikafssn {
+
+// Per-thread scratch for the v8 .kpx candidate-set decoder.  The buffers
+// inside grow monotonically across calls so the search hot path avoids
+// per-k-mer allocation.  Each TBB worker holds its own instance.
+static inline pfd::PosDecodeScratch& tls_pos_scratch() {
+    thread_local pfd::PosDecodeScratch scratch;
+    return scratch;
+}
 
 template <typename KmerInt>
 static std::vector<std::pair<uint32_t, KmerInt>>
@@ -107,16 +116,36 @@ search_one_strand_preprocessed(
     // Stage 2: collect hits for candidates
     std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
 
+    const uint8_t* kix_data = kix.posting_data();
     const uint8_t* pos_data = kpx.posting_data();
+    pfd::PosDecodeScratch& scratch = tls_pos_scratch();
 
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
 
+        // Skip k-mers with no .kix posting (excluded by .khx, or rare
+        // k-mers that did not appear in this volume).  Their .kpx
+        // pos_offset may alias the first non-empty k-mer's posting.
+        const uint64_t kix_len = kix.posting_byte_length(kmer_idx);
+        if (kix_len == 0) continue;
+
+        // v8 requires the .kix decoded distinct seq_id array as the
+        // resolution table for the .kpx kind map.  Stage 1 has already
+        // walked these postings, but Stage 2 re-decodes per-k-mer so the
+        // .kix decoded buffer can be passed directly into PosDecoder.
+        const uint64_t kix_off = kix.posting_offset(kmer_idx);
+        SeqIdDecoder kix_dec(kix_data + kix_off,
+                             kix_data + kix_off + kix_len);
+        kix_dec.ensure_decoded();
+
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
                                pos_data + kpx.posting_data_size(),
+                               kix_dec.decoded_data(),
+                               kix_dec.decoded_count(),
                                candidate_sids.data(),
-                               candidate_sids.size());
+                               candidate_sids.size(),
+                               &scratch);
         pos_decoder.for_each_candidate(
             [&](uint32_t sid, const std::vector<uint32_t>& positions_v) {
                 auto& bucket = hits_per_seq[sid];
@@ -211,20 +240,33 @@ SearchResult search_volume(
 template <typename KmerInt>
 static void collect_position_hits(
     const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
-    const KixReader& /*kix*/, const KpxReader& kpx,
+    const KixReader& kix, const KpxReader& kpx,
     const std::vector<SeqId>& candidate_sids,
     std::unordered_map<SeqId, std::vector<Hit>>& hits_per_seq) {
 
+    const uint8_t* kix_data = kix.posting_data();
     const uint8_t* pos_data = kpx.posting_data();
+    pfd::PosDecodeScratch& scratch = tls_pos_scratch();
 
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
 
+        const uint64_t kix_len = kix.posting_byte_length(kmer_idx);
+        if (kix_len == 0) continue;
+
+        const uint64_t kix_off = kix.posting_offset(kmer_idx);
+        SeqIdDecoder kix_dec(kix_data + kix_off,
+                             kix_data + kix_off + kix_len);
+        kix_dec.ensure_decoded();
+
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
                                pos_data + kpx.posting_data_size(),
+                               kix_dec.decoded_data(),
+                               kix_dec.decoded_count(),
                                candidate_sids.data(),
-                               candidate_sids.size());
+                               candidate_sids.size(),
+                               &scratch);
         pos_decoder.for_each_candidate(
             [&](uint32_t sid, const std::vector<uint32_t>& positions_v) {
                 auto& bucket = hits_per_seq[sid];

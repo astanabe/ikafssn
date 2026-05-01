@@ -27,22 +27,24 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t
 // only have to track one number. Phase 5c established this convention at
 // v4. Phase 5g-1 bumped to v5 (.kix codec replaced with FastPFor's
 // CompositeCodec<SIMDFastPFor<4>, VariableByte>). Phase 5g-2 bumped to v6
-// (.kpx partition + short bucket layout). Phase 5i bumps to v7:
-//   - .kix stores **distinct seq_ids only** (intra-sequence k-mer
-//     duplicates are removed by a SIMD dedup kernel at build time), so
-//     `bulk_count_postings()` now reports the number of distinct
-//     sequences containing the k-mer.  This realigns `-max_freq_build`
-//     with its original "matched-entry-count" semantics.
-//   - .kpx short bucket is self-describing per distinct seq_id (carries
-//     its own seq_id list + per-seq_id occurrence counts), so the .kpx
-//     decoder no longer requires lock-step alignment with the .kix
-//     stream — callers pass a candidate seq_id set instead.
-//   - .ksx / .khx / .kvx data layouts unchanged; format_version bumps
-//     for family-wide alignment (Phase 5c policy).
-inline constexpr uint16_t KIX_FORMAT_VERSION = 7;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 7;
-inline constexpr uint16_t KSX_FORMAT_VERSION = 7;
-inline constexpr uint16_t KHX_FORMAT_VERSION = 7;
+// (.kpx partition + short bucket layout). Phase 5i bumped to v7 (distinct
+// seq_id semantic + self-describing short bucket). Phase 6 bumps to v8:
+//   - .kpx short bucket is split into occ=1 (positions only, no
+//     occ_count) and occ>=2 (u8 occ_count + positions) sub-buckets.
+//   - .kpx classifies each distinct seq_id via a 2-bit kind map indexed
+//     by the .kix decoded distinct_seq_id array; the per-cluster seq_id
+//     duplicate is dropped from both partition groups and the short
+//     buckets (only the .kix posting carries seq_ids).
+//   - FOR-block header layout becomes [u32 min][u8 b][3 B pad] (8 B,
+//     body 8 B aligned).
+//   - FOR-block tail switches from a varint stream to a packed bit-width
+//     stream: [u8 tail_count][u32 tail_min][u8 tail_b][bitpacked body].
+//   - .kix / .ksx / .khx / .kvx data layouts unchanged; format_version
+//     bumps for family-wide alignment (Phase 5c policy).
+inline constexpr uint16_t KIX_FORMAT_VERSION = 8;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 8;
+inline constexpr uint16_t KSX_FORMAT_VERSION = 8;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 8;
 
 // Direct-address table size for k-mer value k: 4^k
 // Max supported: 2 * 4^12 = 33,554,432 (fits uint32_t).
