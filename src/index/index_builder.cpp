@@ -369,7 +369,28 @@ bool build_index(BlastDbReader& db,
             kix_offsets[cur_kmer] = kix_data_pos;
             if (!config.skip_kpx) kpx_offsets[cur_kmer] = kpx_data_pos;
 
-            const uint32_t position_count = static_cast<uint32_t>(j - i);
+            // The .kix / .kpx encoder APIs take position_count as u32, so a
+            // single (k-mer, partition) slice cannot exceed 2^32 - 1.  In
+            // practice this only matters for hypothetical mega-volumes
+            // (NCBI BLAST splits at ~4 GB of sequence data, where the
+            // dominant k-mer typically has < 100 M occurrences).  Detect
+            // the overflow and abort with a clear error rather than
+            // silently truncating and corrupting downstream buffers.
+            const std::size_t run_len_64 = j - i;
+            if (run_len_64 > UINT32_MAX) {
+                logger.error("k-mer %u has %zu positions in this partition, "
+                             "exceeding uint32_t.  Reduce -memory_limit to "
+                             "force more partitions, or split the BLAST DB "
+                             "into smaller volumes.",
+                             cur_kmer, run_len_64);
+                std::fclose(kix_fp);
+                if (kpx_fp) std::fclose(kpx_fp);
+                std::remove(ksx_tmp.c_str());
+                std::remove(kix_tmp.c_str());
+                if (!config.skip_kpx) std::remove(kpx_tmp.c_str());
+                return false;
+            }
+            const uint32_t position_count = static_cast<uint32_t>(run_len_64);
 
             // Materialise sid_buf / abs_pos_buf for this k-mer (sorted by
             // (seq_id, pos)).  Both are needed for the v7 dedup + encode
