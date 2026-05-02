@@ -127,14 +127,16 @@ search_one_strand_preprocessed(
         // Skip k-mers with no .kix posting list (excluded by .khx, or rare
         // k-mers that did not appear in this volume).  Their .kpx
         // pos_offset may alias the first non-empty k-mer's posting list.
-        const uint64_t kix_len = kix.posting_list_byte_length(kmer_idx);
+        // Phase 7d hot-path: one EF access_pair fan-out via
+        // posting_list_range instead of paired offset / byte_length calls.
+        uint64_t kix_off, kix_len;
+        kix.posting_list_range(kmer_idx, kix_off, kix_len);
         if (kix_len == 0) continue;
 
         // v8 requires the .kix decoded distinct seq_id array as the
         // resolution table for the .kpx kind map.  Stage 1 has already
         // walked these postings, but Stage 2 re-decodes per-k-mer so the
         // .kix decoded buffer can be passed directly into PosDecoder.
-        const uint64_t kix_off = kix.posting_list_offset(kmer_idx);
         SeqIdDecoder kix_dec(kix_data + kix_off,
                              kix_data + kix_off + kix_len);
         kix_dec.ensure_decoded();
@@ -252,10 +254,11 @@ static void collect_position_hits(
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
 
-        const uint64_t kix_len = kix.posting_list_byte_length(kmer_idx);
+        // Phase 7d hot-path: one EF access_pair fan-out via posting_list_range.
+        uint64_t kix_off, kix_len;
+        kix.posting_list_range(kmer_idx, kix_off, kix_len);
         if (kix_len == 0) continue;
 
-        const uint64_t kix_off = kix.posting_list_offset(kmer_idx);
         SeqIdDecoder kix_dec(kix_data + kix_off,
                              kix_data + kix_off + kix_len);
         kix_dec.ensure_decoded();

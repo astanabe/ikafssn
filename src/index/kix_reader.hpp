@@ -49,6 +49,19 @@ public:
         return e - s;
     }
 
+    // Phase 7d hot-path helper: fetch (offset, byte_length) for a k-mer
+    // in one EF access_pair, halving the dispatcher round-trips that
+    // Stage 1 / Stage 2 paid by calling posting_list_offset(kmer) +
+    // posting_list_offset(kmer+1) (or _byte_length + _offset).
+    void posting_list_range(uint32_t kmer,
+                            uint64_t& offset,
+                            uint64_t& byte_length) const {
+        uint64_t s, e;
+        dict_.access_pair(kmer, s, e);
+        offset = s;
+        byte_length = e - s;
+    }
+
     // Bulk count all postings: for each k-mer, returns the number of
     // distinct sequences containing it (v7: intra-sequence duplicates are
     // removed at build time).  Used by ikafssninfo and index_filter for

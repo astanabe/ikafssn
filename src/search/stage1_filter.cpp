@@ -114,11 +114,12 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     for (size_t qi = 0; qi < n; qi++) {
         auto q_pos = static_cast<PosT>(positions[qi]);
         auto kmer_idx = kmers[qi];
-        auto off = kix.posting_list_offset(kmer_idx);
-        auto end_off = kix.posting_list_offset(kmer_idx + 1);
-        if (off == end_off) continue;
+        // Phase 7d hot-path: one EF access_pair instead of two access calls.
+        uint64_t off, byte_len;
+        kix.posting_list_range(kmer_idx, off, byte_len);
+        if (byte_len == 0) continue;
 
-        SeqIdDecoder decoder(posting_file + off, posting_file + end_off);
+        SeqIdDecoder decoder(posting_file + off, posting_file + off + byte_len);
         while (decoder.has_more()) {
             int n_dec = decoder.next_batch(raw_sids, was_new, kDecBatch);
             if (n_dec == 0) break;
