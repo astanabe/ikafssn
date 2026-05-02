@@ -8,6 +8,7 @@
 #include "core/spaced_seed.hpp"
 #include "index/ksx_writer.hpp"
 #include "index/kix_format.hpp"
+#include "index/kix_dictionary_io.hpp"
 #include "index/kpx_format.hpp"
 #include "index/pfd_codec.hpp"
 #include "index/seq_id_dedup.hpp"
@@ -470,8 +471,8 @@ bool build_index(BlastDbReader& db,
     // Set sentinel offset
     kix_offsets[tbl_size] = kix_data_pos;
 
-    // Determine offset types based on posting file sizes
-    const bool kix_offset32 = (kix_data_pos <= UINT32_MAX);
+    // Phase 7a: .kix uses Elias-Fano; .kpx still picks u32/u64 by data
+    // size (EF integration deferred to Phase 7e per plan).
     const bool kpx_offset32 = (!config.skip_kpx && kpx_data_pos <= UINT32_MAX);
 
     // Close the in-progress kix/kpx files; we'll rewrite them below with the
@@ -501,7 +502,8 @@ bool build_index(BlastDbReader& db,
         kix_hdr.kmer_type = kmer_type_for(k, config.t);
         kix_hdr.num_sequences = num_seqs;
         kix_hdr.total_distinct_postings = total_distinct_postings;
-        kix_hdr.flags = KIX_FLAG_HAS_KSX | (kix_offset32 ? KIX_FLAG_OFFSET32 : 0);
+        // Phase 7a: KIX_FLAG_OFFSET32 reserved (Elias-Fano dictionary follows).
+        kix_hdr.flags = KIX_FLAG_HAS_KSX;
         kix_hdr.volume_index = volume_index;
         kix_hdr.total_volumes = total_volumes;
         size_t name_len = std::min(db_name.size(), size_t(32));
@@ -518,13 +520,11 @@ bool build_index(BlastDbReader& db,
         kix_hdr.exception_codec_flags = 0;
         std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, wr);
 
-        if (kix_offset32) {
-            std::vector<uint32_t> off32(tbl_size + 1);
-            for (uint32_t i = 0; i <= tbl_size; i++)
-                off32[i] = static_cast<uint32_t>(kix_offsets[i]);
-            std::fwrite(off32.data(), sizeof(uint32_t), tbl_size + 1, wr);
-        } else {
-            std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, wr);
+        if (!write_kix_dictionary_ef(wr, kix_offsets.data(), tbl_size,
+                                     kix_data_pos)) {
+            logger.error("Failed to write EF dictionary to %s", kix_tmp.c_str());
+            std::fclose(wr);
+            return false;
         }
 
         if (!posting_blob.empty()) {

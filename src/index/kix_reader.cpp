@@ -39,19 +39,24 @@ bool KixReader::open(const std::string& path) {
 
     table_size_ = ikafssn::table_size(header_->k);
 
-    offset32_ = (header_->flags & KIX_FLAG_OFFSET32) != 0;
-
-    const uint8_t* ptr = mmap_.data() + sizeof(KixHeader);
-
-    // offsets has table_size_ + 1 entries (sentinel at end)
-    if (offset32_) {
-        offsets32_ = reinterpret_cast<const uint32_t*>(ptr);
-        ptr += sizeof(uint32_t) * (table_size_ + 1);
-    } else {
-        offsets64_ = reinterpret_cast<const uint64_t*>(ptr);
-        ptr += sizeof(uint64_t) * (table_size_ + 1);
+    // Phase 7a: Elias-Fano dictionary follows the header.  The legacy
+    // KIX_FLAG_OFFSET32 bit is ignored at read time.
+    const uint8_t* dict_ptr = mmap_.data() + sizeof(KixHeader);
+    const size_t   remaining = mmap_.size() - sizeof(KixHeader);
+    if (!dict_.open(dict_ptr, remaining)) {
+        std::fprintf(stderr, "KixReader: invalid Elias-Fano dictionary\n");
+        close();
+        return false;
+    }
+    if (dict_.size() != static_cast<size_t>(table_size_) + 1) {
+        std::fprintf(stderr,
+            "KixReader: dictionary entry count %zu does not match expected %zu\n",
+            dict_.size(), static_cast<size_t>(table_size_) + 1);
+        close();
+        return false;
     }
 
+    const uint8_t* ptr = dict_ptr + dict_.blob_bytes();
     posting_file_ = ptr;
     posting_file_size_ = mmap_.size() - (ptr - mmap_.data());
 
@@ -61,9 +66,7 @@ bool KixReader::open(const std::string& path) {
 void KixReader::close() {
     mmap_.close();
     header_ = nullptr;
-    offsets64_ = nullptr;
-    offsets32_ = nullptr;
-    offset32_ = false;
+    dict_ = ef::EFDictionary{};
     posting_file_ = nullptr;
     posting_file_size_ = 0;
     table_size_ = 0;
@@ -71,10 +74,7 @@ void KixReader::close() {
 
 size_t KixReader::willneed_size() const {
     if (!mmap_.is_open()) return 0;
-    size_t offset_bytes = offset32_
-        ? sizeof(uint32_t) * (table_size_ + 1)
-        : sizeof(uint64_t) * (table_size_ + 1);
-    return sizeof(KixHeader) + offset_bytes;
+    return sizeof(KixHeader) + dict_.willneed_size();
 }
 
 void KixReader::apply_madvise(bool willneed) {
@@ -83,12 +83,19 @@ void KixReader::apply_madvise(bool willneed) {
 
 std::vector<uint32_t> KixReader::bulk_count_postings() const {
     std::vector<uint32_t> counts(table_size_, 0);
+    // Walk the dictionary once with sequential access_pair calls so the
+    // EF select1 sample lookup is amortised across consecutive k-mers.
+    // (7b SIMD will turn this into a streaming decode; for the 7a scalar
+    // PoC the per-call cost is acceptable since this path runs only at
+    // ikafssnindex finalize / ikafssninfo time.)
+    uint64_t s = dict_.access(0);
     for (uint32_t i = 0; i < table_size_; i++) {
-        uint64_t byte_len = posting_list_byte_length(i);
-        if (byte_len == 0) continue;
-        // v7: distinct_count is the leading u32 of each posting list
-        // (number of distinct sequences containing the k-mer).
-        counts[i] = pfd::posting_count(posting_file_ + posting_list_offset(i), byte_len);
+        uint64_t e = dict_.access(i + 1);
+        uint64_t byte_len = e - s;
+        if (byte_len > 0) {
+            counts[i] = pfd::posting_count(posting_file_ + s, byte_len);
+        }
+        s = e;
     }
     return counts;
 }

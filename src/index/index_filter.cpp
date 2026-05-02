@@ -2,6 +2,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/kix_format.hpp"
+#include "index/kix_dictionary_io.hpp"
 #include "index/kpx_format.hpp"
 #include "index/khx_writer.hpp"
 #include "index/pfd_codec.hpp"
@@ -68,9 +69,9 @@ static bool write_filtered_kix(
     }
     new_kix_offsets[tbl_size] = kix_data_pos;
 
-    bool use_offset32 = (kix_data_pos <= UINT32_MAX);
-
-    // Write header
+    // Write header.  Phase 7a: dictionary is Elias-Fano; the legacy
+    // KIX_FLAG_OFFSET32 bit is forced to 0 (preserved as reserved on
+    // the header for byte-stability per Phase 7 design decision #6).
     KixHeader kix_hdr{};
     std::memcpy(kix_hdr.magic, KIX_MAGIC, 4);
     kix_hdr.format_version = KIX_FORMAT_VERSION;
@@ -78,7 +79,7 @@ static bool write_filtered_kix(
     kix_hdr.kmer_type = kmer_type_for(k, kix_in.header().t);
     kix_hdr.num_sequences = kix_in.num_sequences();
     kix_hdr.total_distinct_postings = new_total_distinct_postings;
-    kix_hdr.flags = kix_in.header().flags | (use_offset32 ? KIX_FLAG_OFFSET32 : 0);
+    kix_hdr.flags = kix_in.header().flags & ~KIX_FLAG_OFFSET32;
     kix_hdr.volume_index = kix_in.header().volume_index;
     kix_hdr.total_volumes = kix_in.header().total_volumes;
     kix_hdr.db_len = kix_in.header().db_len;
@@ -95,15 +96,11 @@ static bool write_filtered_kix(
 
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
 
-    // Write offsets
-    if (use_offset32) {
-        std::vector<uint32_t> off32(tbl_size + 1);
-        for (uint32_t i = 0; i <= tbl_size; i++) {
-            off32[i] = static_cast<uint32_t>(new_kix_offsets[i]);
-        }
-        std::fwrite(off32.data(), sizeof(uint32_t), tbl_size + 1, kix_fp);
-    } else {
-        std::fwrite(new_kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, kix_fp);
+    if (!write_kix_dictionary_ef(kix_fp, new_kix_offsets.data(), tbl_size,
+                                 kix_data_pos)) {
+        logger.error("filter: failed to write EF dictionary to %s", kix_final.c_str());
+        std::fclose(kix_fp);
+        return false;
     }
 
     // Write posting file
