@@ -1,5 +1,6 @@
 #include "index/kpx_writer.hpp"
 #include "index/kpx_format.hpp"
+#include "index/dictionary_io.hpp"
 #include "index/pfd_codec.hpp"
 #include "core/config.hpp"
 
@@ -7,6 +8,11 @@
 #include <cstring>
 
 namespace ikafssn {
+
+// Phase 7e: KpxHeader.offset_type sentinel value when the dictionary is
+// stored as an Elias-Fano blob.  The byte stays on the header for layout
+// stability per Phase 7 design decision #6.
+inline constexpr uint8_t KPX_OFFSET_TYPE_EF = 0xFF;
 
 KpxWriter::KpxWriter(int k, uint32_t freq_threshold_part)
     : k_(k),
@@ -62,21 +68,21 @@ void KpxWriter::add_posting_list(uint32_t kmer_value,
 }
 
 bool KpxWriter::write(const std::string& path) const {
-    bool use_offset32 = (posting_file_.size() <= UINT32_MAX);
-
     FILE* fp = std::fopen(path.c_str(), "wb");
     if (!fp) {
         std::fprintf(stderr, "KpxWriter: cannot open '%s' for writing\n", path.c_str());
         return false;
     }
 
-    // Write header
+    // Write header.  Phase 7e: pos_offsets dictionary is Elias-Fano;
+    // the legacy offset_type byte takes the EF sentinel value and the
+    // reader ignores it at decode time.
     KpxHeader hdr{};
     std::memcpy(hdr.magic, KPX_MAGIC, 4);
     hdr.format_version = KPX_FORMAT_VERSION;
     hdr.k = static_cast<uint8_t>(k_);
     hdr.total_position_count = total_position_count_;
-    hdr.offset_type = use_offset32 ? 0 : 1;
+    hdr.offset_type = KPX_OFFSET_TYPE_EF;
 
     // Reserved codec-extension area (codec selection follows
     // format_version since Phase 5g-1).
@@ -87,15 +93,13 @@ bool KpxWriter::write(const std::string& path) const {
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
-    // Write pos_offsets table
-    if (use_offset32) {
-        std::vector<uint32_t> offsets32(table_size_);
-        for (uint32_t i = 0; i < table_size_; i++) {
-            offsets32[i] = static_cast<uint32_t>(pos_offsets_[i]);
-        }
-        std::fwrite(offsets32.data(), sizeof(uint32_t), table_size_, fp);
-    } else {
-        std::fwrite(pos_offsets_.data(), sizeof(uint64_t), table_size_, fp);
+    // Write Elias-Fano dictionary in place of the raw u32/u64 pos_offsets.
+    if (!write_kpx_dictionary_ef(fp, pos_offsets_.data(), table_size_,
+                                 posting_file_.size())) {
+        std::fprintf(stderr, "KpxWriter: failed to write EF dictionary to '%s'\n",
+                     path.c_str());
+        std::fclose(fp);
+        return false;
     }
 
     // Write position posting file

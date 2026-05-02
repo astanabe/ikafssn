@@ -2,7 +2,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/kix_format.hpp"
-#include "index/kix_dictionary_io.hpp"
+#include "index/dictionary_io.hpp"
 #include "index/kpx_format.hpp"
 #include "index/khx_writer.hpp"
 #include "index/pfd_codec.hpp"
@@ -145,9 +145,8 @@ static bool write_filtered_kpx(
         }
     }
 
-    bool use_offset32 = (kpx_data_pos <= UINT32_MAX);
-
-    // Write header
+    // Write header.  Phase 7e: pos_offsets dictionary is Elias-Fano;
+    // offset_type takes the EF sentinel byte (0xFF).
     KpxHeader kpx_hdr{};
     std::memcpy(kpx_hdr.magic, KPX_MAGIC, 4);
     kpx_hdr.format_version = KPX_FORMAT_VERSION;
@@ -155,7 +154,7 @@ static bool write_filtered_kpx(
     kpx_hdr.t = kpx_in.header().t;
     kpx_hdr.template_type = kpx_in.header().template_type;
     kpx_hdr.total_position_count = new_total_position_count;
-    kpx_hdr.offset_type = use_offset32 ? 0 : 1;
+    kpx_hdr.offset_type = 0xFF;  // EF sentinel
 
     // Reserved codec-extension area (zero in v5).
     kpx_hdr.codec_id      = 0;
@@ -165,15 +164,11 @@ static bool write_filtered_kpx(
 
     std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
 
-    // Write offsets
-    if (use_offset32) {
-        std::vector<uint32_t> off32(tbl_size);
-        for (uint32_t i = 0; i < tbl_size; i++) {
-            off32[i] = static_cast<uint32_t>(new_kpx_offsets[i]);
-        }
-        std::fwrite(off32.data(), sizeof(uint32_t), tbl_size, kpx_fp);
-    } else {
-        std::fwrite(new_kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
+    if (!write_kpx_dictionary_ef(kpx_fp, new_kpx_offsets.data(), tbl_size,
+                                 kpx_data_pos)) {
+        logger.error("filter: failed to write EF dictionary to %s", kpx_final.c_str());
+        std::fclose(kpx_fp);
+        return false;
     }
 
     // Write posting file
