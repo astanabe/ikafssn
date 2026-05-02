@@ -36,6 +36,14 @@ target_include_directories(bench_parallel_sort PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}")
 
+# Phase 7b — Elias-Fano dictionary codec
+add_executable(bench_ef_codec bench_ef_codec.cpp)
+target_link_libraries(bench_ef_codec PRIVATE
+    ikafssn_index ikafssn_io ikafssn_util benchmark::benchmark)
+target_include_directories(bench_ef_codec PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}")
+
 # Phase 3b — k-mer revcomp batch SIMD
 add_executable(bench_kmer_revcomp bench_kmer_revcomp.cpp)
 target_link_libraries(bench_kmer_revcomp PRIVATE
