@@ -9,17 +9,17 @@
 //            kernel (src/index/seq_id_dedup.*) at build time, so the
 //            input stream to the codec is
 //            [abs_first, d1, d2, ...] with d_i >= 1 strictly.
-//            Posting layout on disk:
+//            Posting list layout on disk:
 //              [u32 distinct_count]         — distinct seq_ids in this k-mer
-//              [u32 payload_words]          — payload size in u32 words
-//              [u32 payload[payload_words]] — codec output, byte-unaligned
+//              [u32 body_words]             — posting list body size in u32 words
+//              [u32 body[body_words]]       — codec output, byte-unaligned
 //                                             on the wire (use memcpy)
 //
-//   .kpx v8: per-(kmer, seq_id) partitioned position posting whose
+//   .kpx v8: per-(kmer, seq_id) partitioned position posting list whose
 //            **decoder is driven by the .kix distinct seq_id array**.
 //            Each distinct seq_id is classified into one of three
 //            kinds via a 2-bit kind map; the seq_id itself is not
-//            stored in the .kpx posting (the .kix decoded array
+//            stored in the .kpx posting list (the .kix decoded array
 //            supplies the resolution between rank and seq_id).
 //
 //                00 = short_occ1     — exactly 1 position
@@ -27,7 +27,7 @@
 //                10 = partition      — strictly more than freq_threshold_part
 //                11 = reserved
 //
-//            Posting layout on disk (top header is 5 u32 = 20 B):
+//            Posting list layout on disk (top header is 5 u32 = 20 B):
 //              [u32 distinct_count]                  — must match .kix
 //              [u32 partition_count]
 //              [u32 short1_count]                    — # occ=1 clusters
@@ -69,20 +69,20 @@ namespace ikafssn::pfd {
 // 128, matching the plan).
 inline constexpr int kPfdBlockSize = 128;
 
-// Per-posting byte-stream header for .kix (distinct_count + payload_words).
+// Posting list header byte size for .kix (distinct_count + body_words).
 // The .kpx layout uses its own variable-length header (see the file-level
-// comment above) so this constant only describes the .kix posting blob.
-inline constexpr size_t kPostingHeaderBytes = 8;
+// comment above) so this constant only describes the .kix posting list.
+inline constexpr size_t kPostingListHeaderBytes = 8;
 
-// === posting-level encode wrappers ===
+// === posting-list-level encode wrappers ===
 
-// Encode the distinct seq_id-delta stream for a .kix posting (v8 wire-
-// compatible with v7).  Writes distinct_count + payload_words + payload
+// Encode the distinct seq_id-delta stream for a .kix posting list (v8 wire-
+// compatible with v7).  Writes distinct_count + body_words + body
 // into `out` (appended).  Returns the number of bytes written.
 size_t encode_posting_kix(const uint32_t* delta_array, uint32_t count,
                           std::vector<uint8_t>& out);
 
-// Encode the absolute-position stream for a .kpx posting (v8).
+// Encode the absolute-position stream for a .kpx posting list (v8).
 //   distinct_sid          length = distinct_count, sorted ascending, no dups
 //   occ_count             length = distinct_count, occurrence per distinct_sid
 //                         (u32 — large genomic contigs may have > 255
@@ -109,7 +109,7 @@ size_t encode_posting_kpx(const uint32_t* distinct_sid,
 
 // === streaming decode context (for .kix only since v7) ===
 //
-// open_stream_kix materialises the entire decoded posting into `decoded`.
+// open_stream_kix materialises the entire decoded posting list into `decoded`.
 // .kpx decoding moved to a candidate-set-driven API (see below).
 struct StreamCtx {
     std::vector<uint32_t> decoded;
@@ -117,12 +117,12 @@ struct StreamCtx {
     uint32_t pos   = 0;     // next read index
 };
 
-// Initialise a StreamCtx for a .kix posting starting at `posting`.
-//   posting:    pointer to first byte of the per-kmer posting blob
-//   bytes:      total byte length of the posting blob
+// Initialise a StreamCtx for a .kix posting list starting at `posting_list`.
+//   posting_list:  pointer to first byte of the per-k-mer posting list
+//   bytes:         total byte length of the posting list
 //
-// Returns false on header / payload size mismatch (corrupt index).
-bool open_stream_kix(const uint8_t* posting, size_t bytes, StreamCtx& ctx);
+// Returns false on header / body size mismatch (corrupt index).
+bool open_stream_kix(const uint8_t* posting_list, size_t bytes, StreamCtx& ctx);
 
 // Read up to `max_count` decoded elements from the stream into `out`.
 // Returns the number of elements actually written (0 once exhausted).
@@ -156,26 +156,26 @@ struct PosDecodeScratch {
 
 // Given the .kix decoded distinct_seq_id array (kix_decoded[0..kix_count),
 // strictly increasing) and a sorted candidate seq_id array, decode the
-// .kpx posting and return the position vector for each candidate.  out is
-// resized to n_candidates; out[i] holds the positions of candidates[i]
-// (empty if the candidate is not present in the posting).  scratch is a
-// per-thread reusable buffer (see PosDecodeScratch).  Returns false on
-// corrupt input.
+// .kpx posting list and return the position vector for each candidate.
+// out is resized to n_candidates; out[i] holds the positions of
+// candidates[i] (empty if the candidate is not present in the posting
+// list).  scratch is a per-thread reusable buffer (see PosDecodeScratch).
+// Returns false on corrupt input.
 bool open_stream_kpx_for_candidates(
-    const uint8_t* posting, size_t bytes,
+    const uint8_t* posting_list, size_t bytes,
     const uint32_t* kix_decoded, size_t kix_count,
     const uint32_t* candidates, size_t n_candidates,
     PosDecodeScratch& scratch,
     std::vector<std::vector<uint32_t>>& out);
 
-// === posting blob inspection (no decode) ===
+// === posting list inspection (no decode) ===
 
-// Read the distinct_count u32 at the start of a .kix posting blob.  Returns
-// 0 if the blob is shorter than the 8-byte header.
-inline uint32_t posting_count(const uint8_t* posting, size_t bytes) {
-    if (bytes < kPostingHeaderBytes) return 0;
+// Read the distinct_count u32 at the start of a .kix posting list.  Returns
+// 0 if the posting list is shorter than the 8-byte header.
+inline uint32_t posting_count(const uint8_t* posting_list, size_t bytes) {
+    if (bytes < kPostingListHeaderBytes) return 0;
     uint32_t cnt;
-    std::memcpy(&cnt, posting, sizeof(uint32_t));
+    std::memcpy(&cnt, posting_list, sizeof(uint32_t));
     return cnt;
 }
 

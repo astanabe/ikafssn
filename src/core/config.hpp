@@ -34,7 +34,7 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t
 //   - .kpx classifies each distinct seq_id via a 2-bit kind map indexed
 //     by the .kix decoded distinct_seq_id array; the per-cluster seq_id
 //     duplicate is dropped from both partition groups and the short
-//     buckets (only the .kix posting carries seq_ids).
+//     buckets (only the .kix posting list carries seq_ids).
 //   - FOR-block header layout becomes [u32 min][u8 b][3 B pad] (8 B,
 //     body 8 B aligned).
 //   - FOR-block tail switches from a varint stream to a packed bit-width

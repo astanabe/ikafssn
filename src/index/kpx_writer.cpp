@@ -17,16 +17,16 @@ KpxWriter::KpxWriter(int k, uint32_t freq_threshold_part)
 
 void KpxWriter::add_posting_list(uint32_t kmer_value,
                                   const std::vector<PostingEntry>& entries) {
-    pos_offsets_[kmer_value] = posting_data_.size();
+    pos_offsets_[kmer_value] = posting_file_.size();
     total_position_count_ += entries.size();
 
     if (entries.empty()) {
-        // Even an empty posting needs a valid header so the decoder can be
+        // Even an empty posting list needs a valid header so the decoder can be
         // invoked with a nonzero byte length.  Emit the all-zero blob.
         pfd::encode_posting_kpx(nullptr, nullptr, 0,
                                 nullptr, 0,
                                 freq_threshold_part_,
-                                posting_data_);
+                                posting_file_);
         return;
     }
 
@@ -58,11 +58,11 @@ void KpxWriter::add_posting_list(uint32_t kmer_value,
                             abs_positions.data(),
                             static_cast<uint32_t>(abs_positions.size()),
                             freq_threshold_part_,
-                            posting_data_);
+                            posting_file_);
 }
 
 bool KpxWriter::write(const std::string& path) const {
-    bool use_offset32 = (posting_data_.size() <= UINT32_MAX);
+    bool use_offset32 = (posting_file_.size() <= UINT32_MAX);
 
     FILE* fp = std::fopen(path.c_str(), "wb");
     if (!fp) {
@@ -98,9 +98,9 @@ bool KpxWriter::write(const std::string& path) const {
         std::fwrite(pos_offsets_.data(), sizeof(uint64_t), table_size_, fp);
     }
 
-    // Write position posting data
-    if (!posting_data_.empty()) {
-        std::fwrite(posting_data_.data(), 1, posting_data_.size(), fp);
+    // Write position posting file
+    if (!posting_file_.empty()) {
+        std::fwrite(posting_file_.data(), 1, posting_file_.size(), fp);
     }
 
     std::fclose(fp);

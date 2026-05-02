@@ -1,7 +1,7 @@
 // Phase 4a — degenerate-base scan SIMD micro-benchmark.
 //
 // Measures has_degenerate_base() at each available SIMD tier, plus a scalar
-// baseline that mirrors the pre-Phase-4a inline body. The "clean" payload
+// baseline that mirrors the pre-Phase-4a inline body. The "clean" input
 // (pure ACGT) exercises the chunk loop to completion; "head_hit" / "tail_hit"
 // exercise the early-exit branches.
 
@@ -20,27 +20,27 @@
 
 using namespace ikafssn;
 
-enum Payload {
-    kPayloadClean    = 0,
-    kPayloadHeadHit  = 1,
-    kPayloadTailHit  = 2,
+enum Input {
+    kInputClean    = 0,
+    kInputHeadHit  = 1,
+    kInputTailHit  = 2,
 };
 
-static std::string make_payload(std::size_t n, Payload kind, std::mt19937& rng) {
+static std::string make_input(std::size_t n, Input kind, std::mt19937& rng) {
     std::string s(n, 'A');
     const char ab[4] = {'A', 'C', 'G', 'T'};
     for (std::size_t i = 0; i < n; i++) s[i] = ab[rng() & 3];
-    if (kind == kPayloadHeadHit && n > 0) s[0] = 'N';
-    if (kind == kPayloadTailHit && n > 0) s[n - 1] = 'R';
+    if (kind == kInputHeadHit && n > 0) s[0] = 'N';
+    if (kind == kInputTailHit && n > 0) s[n - 1] = 'R';
     return s;
 }
 
 // Scalar baseline: per-byte LUT lookup (pre-Phase-4a behavior).
 static void BM_DegenerateScanScalarLoop(benchmark::State& state) {
     std::size_t n = static_cast<std::size_t>(state.range(0));
-    Payload kind  = static_cast<Payload>(state.range(1));
+    Input kind   = static_cast<Input>(state.range(1));
     std::mt19937 rng(42);
-    std::string s = make_payload(n, kind, rng);
+    std::string s = make_input(n, kind, rng);
     const bool* tbl = degenerate_base_table();
     for (auto _ : state) {
         bool hit = false;
@@ -54,17 +54,17 @@ static void BM_DegenerateScanScalarLoop(benchmark::State& state) {
 }
 BENCHMARK(BM_DegenerateScanScalarLoop)
     ->ArgsProduct({{32, 256, 1024, 4096, 16384},
-                   {kPayloadClean, kPayloadHeadHit, kPayloadTailHit}});
+                   {kInputClean, kInputHeadHit, kInputTailHit}});
 
 static void BM_DegenerateScan(benchmark::State& state) {
     SimdCap tier  = static_cast<SimdCap>(state.range(0));
     std::size_t n = static_cast<std::size_t>(state.range(1));
-    Payload kind  = static_cast<Payload>(state.range(2));
+    Input kind   = static_cast<Input>(state.range(2));
     bench::apply_force_tier(state, tier);
     bench::label_tier(state, tier);
 
     std::mt19937 rng(42);
-    std::string s = make_payload(n, kind, rng);
+    std::string s = make_input(n, kind, rng);
     for (auto _ : state) {
         bool hit = has_degenerate_base(s.data(), s.size());
         benchmark::DoNotOptimize(hit);
@@ -79,7 +79,7 @@ BENCHMARK(BM_DegenerateScan)
         (int64_t)SimdCap::AVX512BW,
         (int64_t)SimdCap::AVX512VBMI2,
     }, {32, 256, 1024, 4096, 16384},
-       {kPayloadClean, kPayloadHeadHit, kPayloadTailHit}});
+       {kInputClean, kInputHeadHit, kInputTailHit}});
 
 int main(int argc, char** argv) {
     init_simd_dispatch(nullptr);

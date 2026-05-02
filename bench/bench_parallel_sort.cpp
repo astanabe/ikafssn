@@ -1,4 +1,4 @@
-// bench_parallel_sort — measure index_builder's posting-buffer sort per tier.
+// bench_parallel_sort — measure index_builder's posting list buffer sort per tier.
 //
 // Compares scalar (tbb::parallel_sort) against the SIMD path (x86-simd-sort
 // keyvalue_qsort + local pos sort). Each tier is forced via force_simd_cap()

@@ -28,9 +28,9 @@ of Phase 5a).
 
 ## 2. v3 size baseline (actual on-disk)
 
-Per-volume v3 file sizes and posting-byte sizes (file − header − offset table):
+Per-volume v3 file sizes and posting file sizes (file − header − dictionary):
 
-| volume | `.kix` file | `.kix` posting | `.kpx` file | `.kpx` posting |
+| volume | `.kix` file | `.kix` posting file | `.kpx` file | `.kpx` posting file |
 |---|---:|---:|---:|---:|
 | 00 | 7,531,831,047 | 7,498,276,543 | 7,087,588,288 | 7,054,033,824 |
 | 01 | 6,723,026,248 | 6,689,471,744 | 6,571,981,378 | 6,538,426,914 |

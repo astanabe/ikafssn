@@ -801,8 +801,8 @@ static void test_ssu_db_kmer_check() {
     }
 
     auto ids = decode_id_postings(
-        kix.posting_data(), kix.posting_offset(target_kmer),
-        kix.posting_byte_length(target_kmer));
+        kix.posting_file(), kix.posting_list_offset(target_kmer),
+        kix.posting_list_byte_length(target_kmer));
     bool has_target = false;
     for (uint32_t id : ids) {
         if (id == target_oid) has_target = true;

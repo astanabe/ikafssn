@@ -8,7 +8,7 @@ namespace ikafssn {
 
 // Writes a .kpx file (v7 layout).
 // Position postings are stored as absolute values; the codec partitions
-// each per-kmer posting on (seq_id) so that high-multiplicity clusters
+// each per-posting-list grouping on (seq_id) so that high-multiplicity clusters
 // get their own partition group while the rest go into a self-describing
 // short bucket (see src/index/pfd_codec.hpp).
 class KpxWriter {
@@ -39,7 +39,7 @@ private:
     uint32_t table_size_;
     uint32_t freq_threshold_part_;
     std::vector<uint64_t> pos_offsets_;
-    std::vector<uint8_t> posting_data_;
+    std::vector<uint8_t> posting_file_;
     uint64_t total_position_count_ = 0;
 };
 

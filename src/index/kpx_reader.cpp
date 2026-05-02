@@ -50,8 +50,8 @@ bool KpxReader::open(const std::string& path) {
         ptr += sizeof(uint64_t) * table_size_;
     }
 
-    posting_data_ = ptr;
-    posting_data_size_ = mmap_.size() - (ptr - mmap_.data());
+    posting_file_ = ptr;
+    posting_file_size_ = mmap_.size() - (ptr - mmap_.data());
 
     return true;
 }
@@ -62,8 +62,8 @@ void KpxReader::close() {
     pos_offsets64_ = nullptr;
     pos_offsets32_ = nullptr;
     offset32_ = false;
-    posting_data_ = nullptr;
-    posting_data_size_ = 0;
+    posting_file_ = nullptr;
+    posting_file_size_ = 0;
     table_size_ = 0;
 }
 

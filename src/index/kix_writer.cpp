@@ -31,7 +31,7 @@ void KixWriter::set_flags(uint32_t flags) {
 }
 
 void KixWriter::add_posting_list(uint32_t kmer_value, const std::vector<uint32_t>& seq_ids) {
-    offsets_[kmer_value] = posting_data_.size();
+    offsets_[kmer_value] = posting_file_.size();
     total_distinct_postings_ += seq_ids.size();
 
     if (seq_ids.empty()) return;
@@ -46,14 +46,14 @@ void KixWriter::add_posting_list(uint32_t kmer_value, const std::vector<uint32_t
     }
     pfd::encode_posting_kix(deltas.data(),
                             static_cast<uint32_t>(deltas.size()),
-                            posting_data_);
+                            posting_file_);
 }
 
 bool KixWriter::write(const std::string& path) {
-    // Set sentinel: offset after all posting data
-    offsets_[table_size_] = posting_data_.size();
+    // Set sentinel: offset after all posting file bytes
+    offsets_[table_size_] = posting_file_.size();
 
-    bool use_offset32 = (posting_data_.size() <= UINT32_MAX);
+    bool use_offset32 = (posting_file_.size() <= UINT32_MAX);
 
     FILE* fp = std::fopen(path.c_str(), "wb");
     if (!fp) {
@@ -98,9 +98,9 @@ bool KixWriter::write(const std::string& path) {
         std::fwrite(offsets_.data(), sizeof(uint64_t), table_size_ + 1, fp);
     }
 
-    // Write posting data
-    if (!posting_data_.empty()) {
-        std::fwrite(posting_data_.data(), 1, posting_data_.size(), fp);
+    // Write posting file
+    if (!posting_file_.empty()) {
+        std::fwrite(posting_file_.data(), 1, posting_file_.size(), fp);
     }
 
     std::fclose(fp);

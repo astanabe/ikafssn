@@ -8,11 +8,11 @@
 
 namespace ikafssn {
 
-// Streaming decoder for v8 .kpx postings (candidate-set-driven).
+// Streaming decoder for v8 .kpx posting lists (candidate-set-driven).
 //
 // .kpx v8 stores absolute positions partitioned per-(kmer, seq_id) above
 // a build-time threshold and splits the short bucket into occ=1 and
-// occ>=2 sub-buckets.  No seq_ids are stored in the .kpx posting itself —
+// occ>=2 sub-buckets.  No seq_ids are stored in the .kpx posting list itself —
 // the .kix decoded distinct seq_id array supplies the resolution between
 // position rank and seq_id.  The decoder therefore needs:
 //
@@ -43,11 +43,11 @@ public:
     void ensure_decoded() {
         if (decoded_) return;
         decoded_ = true;
-        // kix_count_ == 0 means the k-mer has no .kix posting, so its
-        // .kpx posting cannot be addressed at all (its pos_offset may be
-        // 0 — aliasing the first k-mer's payload — because the builder
-        // does not write placeholders for empty k-mers).  Bail out
-        // before touching the .kpx data.
+        // kix_count_ == 0 means the k-mer has no .kix posting list, so its
+        // .kpx posting list cannot be addressed at all (its pos_offset may
+        // be 0 — aliasing the first k-mer's posting list — because the
+        // builder does not write placeholders for empty k-mers).  Bail
+        // out before touching the .kpx data.
         if (data_ && bytes_ > 0 && n_candidates_ > 0 && kix_count_ > 0 && scratch_) {
             pfd::open_stream_kpx_for_candidates(data_, bytes_,
                                                 kix_decoded_, kix_count_,

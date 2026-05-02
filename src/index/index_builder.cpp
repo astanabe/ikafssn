@@ -232,7 +232,7 @@ bool build_index(BlastDbReader& db,
     std::vector<uint64_t> kix_offsets(tbl_size + 1, 0);
     std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, kix_fp);
 
-    // kix posting data starts here (no counts table in format v3)
+    // posting file starts here (no counts table in format v3)
     const uint64_t kix_posting_start = kix_offsets_pos + sizeof(uint64_t) * (tbl_size + 1);
 
     // Write kpx header placeholder (skip if mode 1)
@@ -246,7 +246,7 @@ bool build_index(BlastDbReader& db,
         std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
     }
 
-    // Current write positions in posting data (relative to posting start)
+    // Current write positions in the posting file (relative to posting file start)
     uint64_t kix_data_pos = 0;
     uint64_t kpx_data_pos = 0;
 
@@ -470,7 +470,7 @@ bool build_index(BlastDbReader& db,
     // Set sentinel offset
     kix_offsets[tbl_size] = kix_data_pos;
 
-    // Determine offset types based on posting data sizes
+    // Determine offset types based on posting file sizes
     const bool kix_offset32 = (kix_data_pos <= UINT32_MAX);
     const bool kpx_offset32 = (!config.skip_kpx && kpx_data_pos <= UINT32_MAX);
 
@@ -483,7 +483,7 @@ bool build_index(BlastDbReader& db,
 
     // Rewrite .kix with correct offset width
     {
-        // Read the posting data from the temp file (skip header + uint64 offsets)
+        // Read the posting file from the temp file (skip header + uint64 offsets)
         FILE* rd = std::fopen(kix_tmp.c_str(), "rb");
         std::fseek(rd, static_cast<long>(kix_posting_start), SEEK_SET);
         std::vector<uint8_t> posting_blob(kix_data_pos);
@@ -535,7 +535,7 @@ bool build_index(BlastDbReader& db,
 
     // Rewrite .kpx with correct offset width (skip if mode 1)
     if (!config.skip_kpx) {
-        // kpx posting start: header + uint64 offsets
+        // kpx posting file start: header + uint64 offsets
         const uint64_t kpx_posting_start_pos = sizeof(KpxHeader) + sizeof(uint64_t) * tbl_size;
 
         FILE* rd = std::fopen(kpx_tmp.c_str(), "rb");

@@ -410,14 +410,14 @@ static void test_parallel_counting_pass() {
     CHECK_EQ(kix_st.table_size(), kix_mt.table_size());
     CHECK_EQ(kix_st.total_distinct_postings(), kix_mt.total_distinct_postings());
 
-    // Compare posting byte lengths (replaces counts comparison)
+    // Compare posting list byte lengths (replaces counts comparison)
     bool counts_match = true;
     for (uint32_t i = 0; i < kix_st.table_size(); i++) {
-        if (kix_st.posting_byte_length(i) != kix_mt.posting_byte_length(i)) {
+        if (kix_st.posting_list_byte_length(i) != kix_mt.posting_list_byte_length(i)) {
             counts_match = false;
             std::fprintf(stderr, "  byte_length mismatch at kmer %u: st=%lu mt=%lu\n",
-                         i, (unsigned long)kix_st.posting_byte_length(i),
-                         (unsigned long)kix_mt.posting_byte_length(i));
+                         i, (unsigned long)kix_st.posting_list_byte_length(i),
+                         (unsigned long)kix_mt.posting_list_byte_length(i));
             break;
         }
     }

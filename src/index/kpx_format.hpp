@@ -4,17 +4,17 @@
 
 namespace ikafssn {
 
-// .kpx v8 (Phase 6): per-(kmer, seq_id) partitioned position posting.
+// .kpx v8 (Phase 6): per-(kmer, seq_id) partitioned position posting file.
 // Each distinct seq_id is classified into one of three kinds via a 2-bit
 // kind map indexed by the .kix decoded distinct_seq_id array (the seq_id
-// is therefore not stored in the .kpx posting at all):
+// is therefore not stored in the .kpx posting list at all):
 //
 //   00 = short_occ1     — exactly 1 position
 //   01 = short_occ_ge2  — between 2 and freq_threshold_part positions
 //   10 = partition      — strictly more than freq_threshold_part positions
 //   11 = reserved
 //
-// Per-kmer posting layout (top header is 5 u32 = 20 B):
+// Per-posting-list layout (top header is 5 u32 = 20 B):
 //   [u32 distinct_count]                  // matches .kix distinct_count
 //   [u32 partition_count]
 //   [u32 short1_count]                    // # occ=1 clusters

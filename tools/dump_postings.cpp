@@ -1,4 +1,4 @@
-// Phase 6 — dump v8 .kix/.kpx postings to TSV for compression analysis.
+// Phase 6 — dump v8 .kix/.kpx posting lists to TSV for compression analysis.
 //
 // Throwaway tool: reads the current index files via the public codec API
 // and emits TSV lines:
@@ -115,8 +115,8 @@ int main(int argc, char** argv) {
                  (unsigned long)kix.total_distinct_postings());
     std::fprintf(out, "# kmer\tcount\tseq_ids\tpositions\n");
 
-    const uint8_t* kix_data = kix.posting_data();
-    const uint8_t* kpx_data = have_kpx ? kpx.posting_data() : nullptr;
+    const uint8_t* kix_data = kix.posting_file();
+    const uint8_t* kpx_data = have_kpx ? kpx.posting_file() : nullptr;
 
     const uint32_t tbl = kix.table_size();
     uint64_t emitted = 0;
@@ -129,8 +129,8 @@ int main(int argc, char** argv) {
     for (uint32_t kmer = 0; kmer < tbl; kmer++) {
         if (args.max_kmers > 0 && emitted >= args.max_kmers) break;
 
-        uint64_t kix_off  = kix.posting_offset(kmer);
-        uint64_t kix_len  = kix.posting_byte_length(kmer);
+        uint64_t kix_off  = kix.posting_list_offset(kmer);
+        uint64_t kix_len  = kix.posting_list_byte_length(kmer);
         if (kix_len == 0) continue;
 
         // Stride-based uniform sampling over non-empty k-mers.
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
         // the candidate array.
         if (have_kpx) {
             uint64_t kpx_off = kpx.pos_offset(kmer);
-            uint64_t kpx_end = kpx.posting_data_size();
+            uint64_t kpx_end = kpx.posting_file_size();
             if (!pfd::open_stream_kpx_for_candidates(
                     kpx_data + kpx_off, kpx_end - kpx_off,
                     kix_ctx.decoded.data(), cnt,

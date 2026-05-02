@@ -5,14 +5,14 @@
 
 namespace ikafssn {
 
-// .kix v8 (Phase 6): on-wire payload layout is identical to v7 (per-posting
-// FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte> over the
-// distinct seq_id delta stream [abs_first, d1, d2, ...] with d_i >= 1).
+// .kix v8 (Phase 6): on-wire posting list layout is identical to v7
+// (per-posting-list FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
+// over the distinct seq_id delta stream [abs_first, d1, d2, ...] with d_i >= 1).
 // The format_version + magic bump aligns .kix with the v8 .kpx codec
 // rewrite that occurs in the same phase (see src/index/kpx_format.hpp);
 // the .kix decoded distinct_seq_id array is now part of the .kpx
 // candidate-resolution contract and must always be available alongside
-// the .kpx posting.
+// the .kpx posting list.
 inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '8'};
 
 // Flag bits

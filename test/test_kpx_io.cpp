@@ -13,7 +13,7 @@ using namespace ikafssn;
 
 static const char* TEST_FILE = "/tmp/test_ikafssn.kpx";
 
-// Decode position postings from a v8 .kpx posting blob via the
+// Decode position posting lists from a v8 .kpx posting list via the
 // candidate-set API.  Builds the kix_decoded array as the sorted union
 // of `candidates` (treating it as the full distinct seq_id list for the
 // k-mer — for these tests the writer adds postings only for those sids,
@@ -71,8 +71,8 @@ static void test_single_seq() {
         CHECK_EQ(reader.total_position_count(), 4u);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(42),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(42),
+            reader.posting_file() + reader.posting_file_size(),
             candidates);
 
         CHECK_EQ(positions.size(), 4u);
@@ -87,7 +87,7 @@ static void test_single_seq() {
     std::remove(TEST_FILE);
 }
 
-// All occ=1 clusters → entire posting goes through the short_occ1
+// All occ=1 clusters → entire posting list goes through the short_occ1
 // sub-bucket (no u8 occ_count[] bytes, no partition groups).
 static void test_all_occ1() {
     int k = 5;
@@ -115,8 +115,8 @@ static void test_all_occ1() {
         CHECK_EQ(reader.total_position_count(), 50u);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(17),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(17),
+            reader.posting_file() + reader.posting_file_size(),
             candidates);
         CHECK_EQ(positions.size(), 50u);
         for (uint32_t i = 0; i < 50; i++) {
@@ -157,8 +157,8 @@ static void test_mixed_short_buckets() {
         CHECK_EQ(reader.total_position_count(), 8u);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(5),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(5),
+            reader.posting_file() + reader.posting_file_size(),
             candidates);
 
         CHECK_EQ(positions.size(), 8u);
@@ -205,8 +205,8 @@ static void test_partition_only() {
         CHECK_EQ(reader.total_position_count(), 36u);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(21),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(21),
+            reader.posting_file() + reader.posting_file_size(),
             candidates);
 
         CHECK_EQ(positions.size(), 36u);
@@ -247,8 +247,8 @@ static void test_partition_tail_sizes() {
         CHECK_EQ(reader.total_position_count(), total_count);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(9),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(9),
+            reader.posting_file() + reader.posting_file_size(),
             candidates);
         CHECK_EQ(positions.size(), static_cast<size_t>(total_count));
         for (uint32_t i = 0; i < total_count; i++) {
@@ -294,8 +294,8 @@ static void test_partition_above_255() {
         CHECK_EQ(reader.total_position_count(), occ);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(19),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(19),
+            reader.posting_file() + reader.posting_file_size(),
             candidates);
         CHECK_EQ(positions.size(), static_cast<size_t>(occ));
         for (uint32_t i = 0; i < occ; i++) {
@@ -338,8 +338,8 @@ static void test_short1_full_blocks() {
         CHECK_EQ(reader.total_position_count(), n);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(11),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(11),
+            reader.posting_file() + reader.posting_file_size(),
             candidates);
         CHECK_EQ(positions.size(), static_cast<size_t>(n));
         for (uint32_t i = 0; i < n; i++) {
@@ -350,7 +350,7 @@ static void test_short1_full_blocks() {
     std::remove(TEST_FILE);
 }
 
-// distinct_count == 0 empty posting (no k-mer matched, but writer still
+// distinct_count == 0 empty posting list (no k-mer matched, but writer still
 // emits the all-zero blob so offsets stay valid).
 static void test_empty_posting() {
     int k = 5;
@@ -370,8 +370,8 @@ static void test_empty_posting() {
         CHECK_EQ(reader.total_position_count(), 0u);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(0),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(0),
+            reader.posting_file() + reader.posting_file_size(),
             {0});
         CHECK_EQ(positions.size(), 0u);
         reader.close();
@@ -379,7 +379,7 @@ static void test_empty_posting() {
     std::remove(TEST_FILE);
 }
 
-// All candidates miss: posting has data, but caller-supplied candidate
+// All candidates miss: posting list has data, but caller-supplied candidate
 // set does not include any of its sids → every per-candidate bucket
 // must come back empty.
 static void test_all_candidates_miss() {
@@ -403,14 +403,14 @@ static void test_all_candidates_miss() {
         KpxReader reader;
         CHECK(reader.open(TEST_FILE));
 
-        // The actual distinct sids in the posting are {1, 2, 3}; the
+        // The actual distinct sids in the posting list are {1, 2, 3}; the
         // .kix decoded array must reflect that.  Candidates {7, 8, 9}
         // intentionally have no overlap.
         std::vector<uint32_t> kix_decoded = {1, 2, 3};
         std::vector<uint32_t> candidates  = {7, 8, 9};
         pfd::PosDecodeScratch scratch;
-        PosDecoder decoder(reader.posting_data() + reader.pos_offset(99),
-                           reader.posting_data() + reader.posting_data_size(),
+        PosDecoder decoder(reader.posting_file() + reader.pos_offset(99),
+                           reader.posting_file() + reader.posting_file_size(),
                            kix_decoded.data(), kix_decoded.size(),
                            candidates.data(), candidates.size(),
                            &scratch);
@@ -456,8 +456,8 @@ static void test_multiple_kmers() {
         CHECK_EQ(reader.total_position_count(), 5u);
 
         auto pos_a = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(0),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(0),
+            reader.posting_file() + reader.posting_file_size(),
             cand_a);
         CHECK_EQ(pos_a.size(), 3u);
         CHECK_EQ(pos_a[0], 100u);
@@ -465,8 +465,8 @@ static void test_multiple_kmers() {
         CHECK_EQ(pos_a[2], 50u);
 
         auto pos_b = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(10),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(10),
+            reader.posting_file() + reader.posting_file_size(),
             cand_b);
         CHECK_EQ(pos_b.size(), 2u);
         CHECK_EQ(pos_b[0], 0u);
@@ -511,8 +511,8 @@ static void test_partition_group_threshold() {
         CHECK_EQ(reader.total_position_count(), expected_count);
 
         auto positions = decode_pos_postings(
-            reader.posting_data() + reader.pos_offset(33),
-            reader.posting_data() + reader.posting_data_size(),
+            reader.posting_file() + reader.pos_offset(33),
+            reader.posting_file() + reader.posting_file_size(),
             candidates);
 
         CHECK_EQ(positions.size(), static_cast<size_t>(expected_count));

@@ -87,7 +87,7 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     uint32_t num_seqs = kix.num_sequences();
     if (num_seqs == 0 || n == 0) return {};
 
-    const uint8_t* posting_data = kix.posting_data();
+    const uint8_t* posting_file = kix.posting_file();
     const bool use_coverscore = (config.stage1_score_type == 1);
 
     buf.ensure_capacity(num_seqs);
@@ -114,11 +114,11 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     for (size_t qi = 0; qi < n; qi++) {
         auto q_pos = static_cast<PosT>(positions[qi]);
         auto kmer_idx = kmers[qi];
-        auto off = kix.posting_offset(kmer_idx);
-        auto end_off = kix.posting_offset(kmer_idx + 1);
+        auto off = kix.posting_list_offset(kmer_idx);
+        auto end_off = kix.posting_list_offset(kmer_idx + 1);
         if (off == end_off) continue;
 
-        SeqIdDecoder decoder(posting_data + off, posting_data + end_off);
+        SeqIdDecoder decoder(posting_file + off, posting_file + end_off);
         while (decoder.has_more()) {
             int n_dec = decoder.next_batch(raw_sids, was_new, kDecBatch);
             if (n_dec == 0) break;

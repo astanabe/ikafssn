@@ -29,7 +29,7 @@ static void test_k7_uint16() {
     uint8_t kmer_type = 0; // uint16_t
     uint32_t ts = table_size(k); // 4^7 = 16384
 
-    // Create synthetic posting data for a few k-mers.  v7 .kix stores
+    // Create synthetic posting list bytes for a few k-mers.  v7 .kix stores
     // distinct seq_ids only — duplicates are not allowed at the writer
     // boundary (intra-sequence k-mer duplicates are removed by the
     // builder's SIMD dedup kernel).
@@ -65,11 +65,11 @@ static void test_k7_uint16() {
         CHECK(std::string(reader.header().db, reader.header().db_len) == "testdb");
 
         // Check byte-lengths (non-empty k-mers have > 0 byte length)
-        CHECK(reader.posting_byte_length(0) > 0);
-        CHECK(reader.posting_byte_length(1) > 0);
-        CHECK_EQ(reader.posting_byte_length(2), 0u);
-        CHECK(reader.posting_byte_length(100) > 0);
-        CHECK(reader.posting_byte_length(ts - 1) > 0);
+        CHECK(reader.posting_list_byte_length(0) > 0);
+        CHECK(reader.posting_list_byte_length(1) > 0);
+        CHECK_EQ(reader.posting_list_byte_length(2), 0u);
+        CHECK(reader.posting_list_byte_length(100) > 0);
+        CHECK(reader.posting_list_byte_length(ts - 1) > 0);
 
         // Check counts via bulk_count_postings
         auto counts = reader.bulk_count_postings();
@@ -81,8 +81,8 @@ static void test_k7_uint16() {
 
         // Decode and verify postings using byte-limit decoder
         auto decoded0 = decode_id_postings(
-            reader.posting_data() + reader.posting_offset(0),
-            reader.posting_byte_length(0));
+            reader.posting_file() + reader.posting_list_offset(0),
+            reader.posting_list_byte_length(0));
         CHECK_EQ(decoded0.size(), 5u);
         CHECK_EQ(decoded0[0], 0u);
         CHECK_EQ(decoded0[1], 1u);
@@ -91,15 +91,15 @@ static void test_k7_uint16() {
         CHECK_EQ(decoded0[4], 10u);
 
         auto decoded1 = decode_id_postings(
-            reader.posting_data() + reader.posting_offset(1),
-            reader.posting_byte_length(1));
+            reader.posting_file() + reader.posting_list_offset(1),
+            reader.posting_list_byte_length(1));
         CHECK_EQ(decoded1.size(), 2u);
         CHECK_EQ(decoded1[0], 3u);
         CHECK_EQ(decoded1[1], 7u);
 
         auto decoded100 = decode_id_postings(
-            reader.posting_data() + reader.posting_offset(100),
-            reader.posting_byte_length(100));
+            reader.posting_file() + reader.posting_list_offset(100),
+            reader.posting_list_byte_length(100));
         CHECK_EQ(decoded100.size(), 6u);
         CHECK_EQ(decoded100[0], 0u);
         CHECK_EQ(decoded100[1], 1u);
@@ -109,8 +109,8 @@ static void test_k7_uint16() {
         CHECK_EQ(decoded100[5], 5u);
 
         auto decoded_last = decode_id_postings(
-            reader.posting_data() + reader.posting_offset(ts - 1),
-            reader.posting_byte_length(ts - 1));
+            reader.posting_file() + reader.posting_list_offset(ts - 1),
+            reader.posting_list_byte_length(ts - 1));
         CHECK_EQ(decoded_last.size(), 1u);
         CHECK_EQ(decoded_last[0], 999u);
 
@@ -169,8 +169,8 @@ static void test_k9_uint32() {
 
         // Decode k-mer 1000
         auto decoded = decode_id_postings(
-            reader.posting_data() + reader.posting_offset(1000),
-            reader.posting_byte_length(1000));
+            reader.posting_file() + reader.posting_list_offset(1000),
+            reader.posting_list_byte_length(1000));
         CHECK_EQ(decoded.size(), 4u);
         CHECK_EQ(decoded[0], 5u);
         CHECK_EQ(decoded[1], 10u);
@@ -203,7 +203,7 @@ static void test_empty_postings() {
         CHECK(reader.open(TEST_FILE));
         CHECK_EQ(reader.total_distinct_postings(), 0u);
         for (uint32_t i = 0; i < ts; i++) {
-            CHECK_EQ(reader.posting_byte_length(i), 0u);
+            CHECK_EQ(reader.posting_list_byte_length(i), 0u);
         }
         reader.close();
     }

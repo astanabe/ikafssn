@@ -196,17 +196,17 @@ std::size_t encode_posting_kpx(const std::uint32_t* distinct_sid,
                                        freq_threshold_part, out);
 }
 
-bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
+bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
                      StreamCtx& ctx) {
-    return active_vtable().open_kix(posting, bytes, ctx);
+    return active_vtable().open_kix(posting_list, bytes, ctx);
 }
 
-bool open_stream_kpx_for_candidates(const std::uint8_t* posting, std::size_t bytes,
+bool open_stream_kpx_for_candidates(const std::uint8_t* posting_list, std::size_t bytes,
                                     const std::uint32_t* kix_decoded, std::size_t kix_count,
                                     const std::uint32_t* candidates, std::size_t n_candidates,
                                     PosDecodeScratch& scratch,
                                     std::vector<std::vector<std::uint32_t>>& out) {
-    return active_vtable().open_kpx(posting, bytes,
+    return active_vtable().open_kpx(posting_list, bytes,
                                     kix_decoded, kix_count,
                                     candidates, n_candidates,
                                     scratch, out);

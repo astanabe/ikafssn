@@ -116,31 +116,31 @@ search_one_strand_preprocessed(
     // Stage 2: collect hits for candidates
     std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
 
-    const uint8_t* kix_data = kix.posting_data();
-    const uint8_t* pos_data = kpx.posting_data();
+    const uint8_t* kix_data = kix.posting_file();
+    const uint8_t* pos_data = kpx.posting_file();
     pfd::PosDecodeScratch& scratch = tls_pos_scratch();
 
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
 
-        // Skip k-mers with no .kix posting (excluded by .khx, or rare
+        // Skip k-mers with no .kix posting list (excluded by .khx, or rare
         // k-mers that did not appear in this volume).  Their .kpx
-        // pos_offset may alias the first non-empty k-mer's posting.
-        const uint64_t kix_len = kix.posting_byte_length(kmer_idx);
+        // pos_offset may alias the first non-empty k-mer's posting list.
+        const uint64_t kix_len = kix.posting_list_byte_length(kmer_idx);
         if (kix_len == 0) continue;
 
         // v8 requires the .kix decoded distinct seq_id array as the
         // resolution table for the .kpx kind map.  Stage 1 has already
         // walked these postings, but Stage 2 re-decodes per-k-mer so the
         // .kix decoded buffer can be passed directly into PosDecoder.
-        const uint64_t kix_off = kix.posting_offset(kmer_idx);
+        const uint64_t kix_off = kix.posting_list_offset(kmer_idx);
         SeqIdDecoder kix_dec(kix_data + kix_off,
                              kix_data + kix_off + kix_len);
         kix_dec.ensure_decoded();
 
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
-                               pos_data + kpx.posting_data_size(),
+                               pos_data + kpx.posting_file_size(),
                                kix_dec.decoded_data(),
                                kix_dec.decoded_count(),
                                candidate_sids.data(),
@@ -244,24 +244,24 @@ static void collect_position_hits(
     const std::vector<SeqId>& candidate_sids,
     std::unordered_map<SeqId, std::vector<Hit>>& hits_per_seq) {
 
-    const uint8_t* kix_data = kix.posting_data();
-    const uint8_t* pos_data = kpx.posting_data();
+    const uint8_t* kix_data = kix.posting_file();
+    const uint8_t* pos_data = kpx.posting_file();
     pfd::PosDecodeScratch& scratch = tls_pos_scratch();
 
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
 
-        const uint64_t kix_len = kix.posting_byte_length(kmer_idx);
+        const uint64_t kix_len = kix.posting_list_byte_length(kmer_idx);
         if (kix_len == 0) continue;
 
-        const uint64_t kix_off = kix.posting_offset(kmer_idx);
+        const uint64_t kix_off = kix.posting_list_offset(kmer_idx);
         SeqIdDecoder kix_dec(kix_data + kix_off,
                              kix_data + kix_off + kix_len);
         kix_dec.ensure_decoded();
 
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
-                               pos_data + kpx.posting_data_size(),
+                               pos_data + kpx.posting_file_size(),
                                kix_dec.decoded_data(),
                                kix_dec.decoded_count(),
                                candidate_sids.data(),

@@ -6,9 +6,9 @@
 
 namespace ikafssn {
 
-// Streaming decoder for v7 .kix postings.
+// Streaming decoder for v7 .kix posting lists.
 //
-// In v7 the .kix posting stream contains **distinct** seq_ids only
+// In v7 the .kix posting list stream contains **distinct** seq_ids only
 // (intra-sequence k-mer duplicates are removed by a SIMD dedup kernel
 // at build time).  The codec returns absolute distinct seq_ids in
 // StreamCtx::decoded; this class is a thin "absolute id iterator" over

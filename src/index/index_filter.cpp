@@ -22,13 +22,13 @@
 
 namespace ikafssn {
 
-// Compute the byte size of each k-mer's posting data from sentinel-based offsets.
+// Compute the byte length of each k-mer.s posting list from sentinel-based offsets.
 static std::vector<uint64_t> compute_posting_sizes(
     const KixReader& kix, uint32_t tbl_size) {
 
     std::vector<uint64_t> sizes(tbl_size);
     for (uint32_t i = 0; i < tbl_size; i++) {
-        sizes[i] = kix.posting_byte_length(i);
+        sizes[i] = kix.posting_list_byte_length(i);
     }
     return sizes;
 }
@@ -43,7 +43,7 @@ static bool write_filtered_kix(
     uint32_t tbl_size,
     uint64_t new_total_distinct_postings,
     const Logger& logger) {
-    const uint8_t* kix_posting_in = kix_in.posting_data();
+    const uint8_t* kix_posting_in = kix_in.posting_file();
 
     FILE* kix_fp = std::fopen(kix_final.c_str(), "wb");
     if (!kix_fp) {
@@ -54,15 +54,15 @@ static bool write_filtered_kix(
     // Build new offsets (tbl_size + 1 entries)
     std::vector<uint64_t> new_kix_offsets(tbl_size + 1, 0);
 
-    // Collect posting data into buffer to determine final size
+    // Collect posting list bytes into buffer to determine final size
     std::vector<uint8_t> posting_buf;
     uint64_t kix_data_pos = 0;
     for (uint32_t i = 0; i < tbl_size; i++) {
         new_kix_offsets[i] = kix_data_pos;
         if (kix_sizes[i] > 0 && !excluded[i]) {
             posting_buf.insert(posting_buf.end(),
-                kix_posting_in + kix_in.posting_offset(i),
-                kix_posting_in + kix_in.posting_offset(i) + kix_sizes[i]);
+                kix_posting_in + kix_in.posting_list_offset(i),
+                kix_posting_in + kix_in.posting_list_offset(i) + kix_sizes[i]);
             kix_data_pos += kix_sizes[i];
         }
     }
@@ -106,7 +106,7 @@ static bool write_filtered_kix(
         std::fwrite(new_kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, kix_fp);
     }
 
-    // Write posting data
+    // Write posting file
     if (!posting_buf.empty()) {
         std::fwrite(posting_buf.data(), 1, posting_buf.size(), kix_fp);
     }
@@ -126,7 +126,7 @@ static bool write_filtered_kpx(
     uint32_t tbl_size,
     uint64_t new_total_position_count,
     const Logger& logger) {
-    const uint8_t* kpx_posting_in = kpx_in.posting_data();
+    const uint8_t* kpx_posting_in = kpx_in.posting_file();
 
     FILE* kpx_fp = std::fopen(kpx_final.c_str(), "wb");
     if (!kpx_fp) {
@@ -179,7 +179,7 @@ static bool write_filtered_kpx(
         std::fwrite(new_kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
     }
 
-    // Write posting data
+    // Write posting file
     if (!posting_buf.empty()) {
         std::fwrite(posting_buf.data(), 1, posting_buf.size(), kpx_fp);
     }
@@ -224,8 +224,8 @@ static bool filter_one_volume(
 
     std::vector<uint64_t> kpx_sizes;
     if (has_kpx_tmp) {
-        const uint8_t* kpx_posting = kpx_in.posting_data();
-        uint64_t kpx_total_data = kpx_in.posting_data_size();
+        const uint8_t* kpx_posting = kpx_in.posting_file();
+        uint64_t kpx_total_data = kpx_in.posting_file_size();
         kpx_sizes.resize(tbl_size, 0);
 
         uint32_t prev_kmer = UINT32_MAX;
@@ -247,7 +247,7 @@ static bool filter_one_volume(
     // Compute new totals.  v7: .kix tracks distinct seq_id postings;
     // .kpx tracks the total position count (sum of intra-sequence
     // occurrences).  The .kpx position count per k-mer lives at byte
-    // offset 4 of each posting blob (u32 right after distinct_count).
+    // offset 4 of each posting list (u32 right after distinct_count).
     auto counts = kix_in.bulk_count_postings();
     uint64_t new_total_distinct_postings = 0;
     for (uint32_t i = 0; i < tbl_size; i++) {
@@ -258,7 +258,7 @@ static bool filter_one_volume(
 
     uint64_t new_total_position_count = 0;
     if (has_kpx_tmp) {
-        const uint8_t* kpx_posting_in = kpx_in.posting_data();
+        const uint8_t* kpx_posting_in = kpx_in.posting_file();
         for (uint32_t i = 0; i < tbl_size; i++) {
             if (kix_sizes[i] > 0 && !excluded[i] && kpx_sizes[i] >= 8) {
                 uint32_t pos_cnt;

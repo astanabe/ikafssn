@@ -62,7 +62,7 @@ static std::vector<uint32_t> decode_pos_postings(
 // Compute the .kpx per-kmer position count by summing partition occ_counts
 // + short1_count + short2_position_count from the v8 top header.
 static uint32_t kpx_position_count(const KpxReader& kpx, uint32_t kmer) {
-    const uint8_t* p = kpx.posting_data() + kpx.pos_offset(kmer);
+    const uint8_t* p = kpx.posting_file() + kpx.pos_offset(kmer);
     uint32_t distinct_count, partition_count, short1_count, short2_count, short2_pos;
     std::memcpy(&distinct_count, p +  0, sizeof(uint32_t));
     std::memcpy(&partition_count,p +  4, sizeof(uint32_t));
@@ -173,8 +173,8 @@ static void test_build_and_verify_kix_kpx() {
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids = decode_id_postings(
-            kix.posting_data(), kix.posting_offset(kmer),
-            kix.posting_byte_length(kmer));
+            kix.posting_file(), kix.posting_list_offset(kmer),
+            kix.posting_list_byte_length(kmer));
         CHECK_EQ(ids.size(), static_cast<size_t>(cnt));
 
         // IDs must be non-decreasing
@@ -191,8 +191,8 @@ static void test_build_and_verify_kix_kpx() {
         // sorted distinct seq_id list (decoded from .kix v7).  Total
         // positions returned equal the .kpx per-kmer position_count.
         std::vector<uint32_t> positions = decode_pos_postings(
-            kpx.posting_data(), kpx.pos_offset(kmer),
-            kpx.posting_data_size() - kpx.pos_offset(kmer),
+            kpx.posting_file(), kpx.pos_offset(kmer),
+            kpx.posting_file_size() - kpx.pos_offset(kmer),
             ids);
         CHECK_EQ(positions.size(),
                  static_cast<size_t>(kpx_position_count(kpx, kmer)));
@@ -237,8 +237,8 @@ static void test_known_kmer_in_index() {
     CHECK(cnt > 0);
 
     std::vector<uint32_t> ids = decode_id_postings(
-        kix.posting_data(), kix.posting_offset(target_kmer),
-        kix.posting_byte_length(target_kmer));
+        kix.posting_file(), kix.posting_list_offset(target_kmer),
+        kix.posting_list_byte_length(target_kmer));
 
     // FJ876973.1 OID should be in the posting list
     bool has_target = false;
@@ -397,17 +397,17 @@ static void test_build_with_memory_limits() {
         CHECK_EQ(counts_m1[kmer], counts_m4[kmer]);
     }
 
-    // Verify posting data matches for each kmer
+    // Verify posting list bytes match for each kmer
     for (uint32_t kmer = 0; kmer < kix1.table_size(); kmer++) {
         uint32_t cnt = counts_m1[kmer];
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids1 = decode_id_postings(
-            kix1.posting_data(), kix1.posting_offset(kmer),
-            kix1.posting_byte_length(kmer));
+            kix1.posting_file(), kix1.posting_list_offset(kmer),
+            kix1.posting_list_byte_length(kmer));
         std::vector<uint32_t> ids4 = decode_id_postings(
-            kix4.posting_data(), kix4.posting_offset(kmer),
-            kix4.posting_byte_length(kmer));
+            kix4.posting_file(), kix4.posting_list_offset(kmer),
+            kix4.posting_list_byte_length(kmer));
 
         CHECK_EQ(ids1.size(), ids4.size());
         for (size_t j = 0; j < ids1.size(); j++) {
@@ -476,22 +476,22 @@ static void test_build_parallel_scan() {
     }
     CHECK(counts_match);
 
-    // Compare posting data for each kmer
+    // Compare posting list bytes for each kmer
     for (uint32_t kmer = 0; kmer < kix_st.table_size(); kmer++) {
         uint32_t cnt = counts_st[kmer];
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids_st = decode_id_postings(
-            kix_st.posting_data(), kix_st.posting_offset(kmer),
-            kix_st.posting_byte_length(kmer));
+            kix_st.posting_file(), kix_st.posting_list_offset(kmer),
+            kix_st.posting_list_byte_length(kmer));
         std::vector<uint32_t> ids_mt = decode_id_postings(
-            kix_mt.posting_data(), kix_mt.posting_offset(kmer),
-            kix_mt.posting_byte_length(kmer));
+            kix_mt.posting_file(), kix_mt.posting_list_offset(kmer),
+            kix_mt.posting_list_byte_length(kmer));
 
         CHECK_EQ(ids_st.size(), ids_mt.size());
         for (size_t j = 0; j < ids_st.size(); j++) {
             if (ids_st[j] != ids_mt[j]) {
-                std::fprintf(stderr, "  posting mismatch at kmer %lu, idx %zu\n",
+                std::fprintf(stderr, "  posting list mismatch at kmer %lu, idx %zu\n",
                              (unsigned long)kmer, j);
                 CHECK_EQ(ids_st[j], ids_mt[j]);
                 break;
@@ -511,15 +511,15 @@ static void test_build_parallel_scan() {
         if (cnt == 0) continue;
 
         std::vector<uint32_t> ids = decode_id_postings(
-            kix_st.posting_data(), kix_st.posting_offset(kmer),
-            kix_st.posting_byte_length(kmer));
+            kix_st.posting_file(), kix_st.posting_list_offset(kmer),
+            kix_st.posting_list_byte_length(kmer));
         std::vector<uint32_t> pos_st = decode_pos_postings(
-            kpx_st.posting_data(), kpx_st.pos_offset(kmer),
-            kpx_st.posting_data_size() - kpx_st.pos_offset(kmer),
+            kpx_st.posting_file(), kpx_st.pos_offset(kmer),
+            kpx_st.posting_file_size() - kpx_st.pos_offset(kmer),
             ids);
         std::vector<uint32_t> pos_mt = decode_pos_postings(
-            kpx_mt.posting_data(), kpx_mt.pos_offset(kmer),
-            kpx_mt.posting_data_size() - kpx_mt.pos_offset(kmer),
+            kpx_mt.posting_file(), kpx_mt.pos_offset(kmer),
+            kpx_mt.posting_file_size() - kpx_mt.pos_offset(kmer),
             ids);
 
         CHECK_EQ(pos_st.size(), pos_mt.size());

@@ -23,23 +23,23 @@ public:
     uint32_t table_size() const { return table_size_; }
     bool is_offset32() const { return offset32_; }
 
-    // Raw pointer to the start of ID posting section
-    const uint8_t* posting_data() const { return posting_data_; }
-    size_t posting_data_size() const { return posting_data_size_; }
+    // Raw pointer to the start of the ID posting file
+    const uint8_t* posting_file() const { return posting_file_; }
+    size_t posting_file_size() const { return posting_file_size_; }
 
     // madvise budget API
     size_t willneed_size() const;
     void apply_madvise(bool willneed);
 
-    // Get posting byte offset for a k-mer
-    uint64_t posting_offset(uint32_t kmer) const {
+    // Get posting list byte offset for a k-mer
+    uint64_t posting_list_offset(uint32_t kmer) const {
         if (offset32_) return offsets32_[kmer];
         return offsets64_[kmer];
     }
 
-    // Byte length of posting data for a k-mer
-    uint64_t posting_byte_length(uint32_t kmer) const {
-        return posting_offset(kmer + 1) - posting_offset(kmer);
+    // Byte length of posting list for a k-mer
+    uint64_t posting_list_byte_length(uint32_t kmer) const {
+        return posting_list_offset(kmer + 1) - posting_list_offset(kmer);
     }
 
     // Bulk count all postings: for each k-mer, returns the number of
@@ -54,8 +54,8 @@ private:
     const uint64_t* offsets64_ = nullptr;
     const uint32_t* offsets32_ = nullptr;
     bool offset32_ = false;
-    const uint8_t* posting_data_ = nullptr;
-    size_t posting_data_size_ = 0;
+    const uint8_t* posting_file_ = nullptr;
+    size_t posting_file_size_ = 0;
     uint32_t table_size_ = 0;
 };
 

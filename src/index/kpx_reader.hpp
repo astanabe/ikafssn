@@ -21,9 +21,9 @@ public:
     uint32_t table_size() const { return table_size_; }
     bool is_offset32() const { return offset32_; }
 
-    // Raw pointer to position posting data
-    const uint8_t* posting_data() const { return posting_data_; }
-    size_t posting_data_size() const { return posting_data_size_; }
+    // Raw pointer to the start of the position posting file
+    const uint8_t* posting_file() const { return posting_file_; }
+    size_t posting_file_size() const { return posting_file_size_; }
 
     uint64_t pos_offset(uint32_t kmer) const {
         if (offset32_) return pos_offsets32_[kmer];
@@ -40,8 +40,8 @@ private:
     const uint64_t* pos_offsets64_ = nullptr;
     const uint32_t* pos_offsets32_ = nullptr;
     bool offset32_ = false;
-    const uint8_t* posting_data_ = nullptr;
-    size_t posting_data_size_ = 0;
+    const uint8_t* posting_file_ = nullptr;
+    size_t posting_file_size_ = 0;
     uint32_t table_size_ = 0;
 };
 

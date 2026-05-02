@@ -434,7 +434,7 @@ int main(int argc, char* argv[]) {
         std::printf("  .khx:            %s\n", format_size_human(khx_size).c_str());
     }
 
-    // Compression ratio: compare delta-compressed posting size vs uncompressed
+    // Compression ratio: compare delta-compressed posting file size vs uncompressed
     // Uncompressed ID posting: total_postings * sizeof(uint32_t) = 4 bytes each
     // Uncompressed pos posting: total_postings * sizeof(uint32_t) = 4 bytes each
     // Total uncompressed posting data: total_postings * (4 or 8) depending on .kpx presence
@@ -442,9 +442,9 @@ int main(int argc, char* argv[]) {
     uint64_t bytes_per_posting = has_any_kpx ? 8 : 4;  // id + pos, or id only
     uint64_t uncompressed_posting_size = total_postings * bytes_per_posting;
     if (uncompressed_posting_size > 0) {
-        // Approximate compressed posting size: file sizes minus table overhead per volume
-        // Per volume: kix header (64) + offsets (8*(4^k+1)) + posting data
-        //             kpx (if present): header (32) + pos_offsets (8*4^k) + posting data
+        // Approximate compressed posting file size: file sizes minus table overhead per volume
+        // Per volume: kix header (64) + offsets (8*(4^k+1)) + posting file
+        //             kpx (if present): header (32) + pos_offsets (8*4^k) + posting file
         uint64_t table_overhead_per_vol = 64 + (static_cast<uint64_t>(tbl_size) + 1) * 8; // kix
         if (has_any_kpx) {
             table_overhead_per_vol += 32 + tbl_size * 8;                     // kpx
@@ -456,9 +456,9 @@ int main(int argc, char* argv[]) {
         double ratio = static_cast<double>(compressed_posting_size)
                      / static_cast<double>(uncompressed_posting_size);
         std::printf("\nCompression:\n");
-        std::printf("  Uncompressed posting size: %s\n",
+        std::printf("  Uncompressed posting file size: %s\n",
                     format_size_human(uncompressed_posting_size).c_str());
-        std::printf("  Compressed posting size:   %s\n",
+        std::printf("  Compressed posting file size:   %s\n",
                     format_size_human(compressed_posting_size).c_str());
         std::printf("  Compression ratio:         %.3f (%.1f%% of original)\n",
                     ratio, ratio * 100.0);

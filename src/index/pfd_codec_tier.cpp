@@ -16,11 +16,11 @@
 //                                          surrounding scalar code in
 //                                          this file are allowed to use)
 //
-// For .kix postings (sorted distinct seq_id delta stream — wire format
+// For .kix posting lists (sorted distinct seq_id delta stream — wire format
 // unchanged from v7) we drive FastPFor's CompositeCodec<SIMDFastPFor<4>,
 // VariableByte> directly.
 //
-// For .kpx postings (absolute position stream) Phase 6 keeps the per-
+// For .kpx posting lists (absolute position stream) Phase 6 keeps the per-
 // (kmer, seq_id) partition grouping but classifies every distinct
 // seq_id via a 2-bit kind map instead of carrying redundant seq_id
 // bytes.  The short bucket is also split into occ=1 and occ>=2 sub-
@@ -265,10 +265,10 @@ inline std::uint8_t get_kind_bits(const std::uint8_t* kind_map, std::uint32_t i)
 
 // ===== .kix v8 encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
 //
-// Wire-compatible with v7.  On-disk per-posting blob:
+// Wire-compatible with v7.  On-disk per-posting-list layout:
 //   [u32 distinct_count]  — number of distinct seq_ids represented
-//   [u32 payload_words]   — number of u32 words written by the codec
-//   [u32 payload[N]]      — codec output, byte-unaligned
+//   [u32 body_words]      — number of u32 words written by the codec
+//   [u32 body[N]]         — codec output, byte-unaligned
 
 std::size_t encode_posting_kix(const std::uint32_t* delta_array,
                                std::uint32_t count,
@@ -287,12 +287,12 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
     std::size_t nvalue = codec_out.size();
     kix_codec().encodeArray(delta_array, count, codec_out.data(), nvalue);
 
-    const std::uint32_t payload_words = static_cast<std::uint32_t>(nvalue);
-    std::memcpy(out.data() + before + 4, &payload_words, sizeof(std::uint32_t));
+    const std::uint32_t body_words = static_cast<std::uint32_t>(nvalue);
+    std::memcpy(out.data() + before + 4, &body_words, sizeof(std::uint32_t));
 
-    const std::size_t payload_bytes = std::size_t(payload_words) * sizeof(std::uint32_t);
-    out.resize(out.size() + payload_bytes);
-    std::memcpy(out.data() + before + 8, codec_out.data(), payload_bytes);
+    const std::size_t body_bytes = std::size_t(body_words) * sizeof(std::uint32_t);
+    out.resize(out.size() + body_bytes);
+    std::memcpy(out.data() + before + 8, codec_out.data(), body_bytes);
 
     return out.size() - before;
 }
@@ -417,9 +417,9 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
     return out.size() - before;
 }
 
-// ===== open_stream_kix: decode the entire .kix posting into the StreamCtx =====
+// ===== open_stream_kix: decode the entire .kix posting list list into the StreamCtx =====
 
-bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
+bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
                      ikafssn::pfd::StreamCtx& ctx) {
     ctx.decoded.clear();
     ctx.count = 0;
@@ -428,20 +428,20 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
     if (bytes < 8) return false;
 
     std::uint32_t count;
-    std::uint32_t payload_words;
-    std::memcpy(&count,         posting,     sizeof(std::uint32_t));
-    std::memcpy(&payload_words, posting + 4, sizeof(std::uint32_t));
+    std::uint32_t body_words;
+    std::memcpy(&count,      posting_list,     sizeof(std::uint32_t));
+    std::memcpy(&body_words, posting_list + 4, sizeof(std::uint32_t));
     if (count == 0) return true;
 
-    const std::size_t payload_bytes = std::size_t(payload_words) * sizeof(std::uint32_t);
-    if (bytes < 8 + payload_bytes) return false;
+    const std::size_t body_bytes = std::size_t(body_words) * sizeof(std::uint32_t);
+    if (bytes < 8 + body_bytes) return false;
 
-    std::vector<std::uint32_t> codec_in(payload_words);
-    std::memcpy(codec_in.data(), posting + 8, payload_bytes);
+    std::vector<std::uint32_t> codec_in(body_words);
+    std::memcpy(codec_in.data(), posting_list + 8, body_bytes);
 
     ctx.decoded.resize(count);
     std::size_t nvalue = ctx.decoded.size();
-    kix_codec().decodeArray(codec_in.data(), payload_words,
+    kix_codec().decodeArray(codec_in.data(), body_words,
                             ctx.decoded.data(), nvalue);
     if (nvalue != count) return false;
 
@@ -459,7 +459,7 @@ bool open_stream_kix(const std::uint8_t* posting, std::size_t bytes,
 // ===== open_stream_kpx_for_candidates: candidate-set-driven decode (v8) =====
 
 bool open_stream_kpx_for_candidates(
-        const std::uint8_t* posting, std::size_t bytes,
+        const std::uint8_t* posting_list, std::size_t bytes,
         const std::uint32_t* kix_decoded, std::size_t kix_count,
         const std::uint32_t* candidates, std::size_t n_candidates,
         ikafssn::pfd::PosDecodeScratch& scratch,
@@ -471,8 +471,8 @@ bool open_stream_kpx_for_candidates(
     if (bytes == 0) return true;
     if (bytes < 5 * sizeof(std::uint32_t)) return false;
 
-    const std::uint8_t* p = posting;
-    const std::uint8_t* end = posting + bytes;
+    const std::uint8_t* p = posting_list;
+    const std::uint8_t* end = posting_list + bytes;
 
     std::uint32_t distinct_count, partition_count, short1_count, short2_count, short2_position_count;
     std::memcpy(&distinct_count,        p, 4); p += 4;

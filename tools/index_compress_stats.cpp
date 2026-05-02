@@ -1,11 +1,11 @@
-// Compression analyzer for v8 .kix and .kpx postings.
+// Compression analyzer for v8 .kix and .kpx posting lists.
 //
 // Walks the binary directly (no decode into vectors) and reports:
 //
 //   - Bytes attributed to: top headers, kind map bytes, partition group
 //     headers, short_occ1 / short_occ_ge2 sub-bucket bytes, FOR block
 //     headers, bitpacked block bodies, packed-bit tail bodies, .kix
-//     payload bytes.
+//     posting list body bytes.
 //   - Per-block bit-width 'b' histogram, split by partition / short_occ1
 //     / short_occ_ge2.
 //   - Per-(partition / short_occ1 / short_occ_ge2 / .kix) bytes-per-element.
@@ -16,9 +16,9 @@
 //   index_compress_stats --kpx <path>            # .kpx only
 //   index_compress_stats --kix <p> --kpx <p>     # both
 //
-// The tool does not parse .kix payload words; it only sums them so we can
-// measure bytes-per-distinct-seq_id.  Intra-block 'b' for .kpx is read
-// directly from the on-disk byte stream.
+// The tool does not parse the body words of `.kix` posting lists; it only
+// sums them so we can measure bytes-per-distinct-seq_id.  Intra-block 'b'
+// for .kpx is read directly from the on-disk byte stream.
 
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
@@ -61,9 +61,9 @@ struct KpxStats {
     uint64_t total_position_count = 0;
     uint64_t total_distinct_count = 0;
 
-    // Top-level posting headers: 5 u32 = 20 B per non-empty kmer.
+    // Top-level posting list headers: 5 u32 = 20 B per non-empty kmer.
     uint64_t bytes_top_header = 0;
-    // 2-bit kind map bytes per posting.
+    // 2-bit kind map bytes per posting list.
     uint64_t bytes_kind_map = 0;
 
     // Partition groups.
@@ -89,9 +89,9 @@ struct KpxStats {
 struct KixStats {
     uint64_t n_kmers_nonempty = 0;
     uint64_t total_distinct_count = 0;
-    // Per-posting blob: 8 B header (count + payload_words) + payload_words*4.
-    uint64_t bytes_post_header = 0;
-    uint64_t bytes_payload = 0;
+    // Per posting list: 8 B header (count + body_words) + body_words*4.
+    uint64_t bytes_posting_list_header = 0;
+    uint64_t bytes_posting_list_body = 0;
 };
 
 // Walk a v8 FOR block stream of `count` elements, accumulating stats.
@@ -250,7 +250,7 @@ void print_kpx_report(const KpxStats& st, uint64_t total_bytes) {
     std::printf("non-empty kmers              : %lu\n", st.n_kmers_nonempty);
     std::printf("total positions              : %lu\n", st.total_position_count);
     std::printf("total distinct seq_ids       : %lu\n", st.total_distinct_count);
-    std::printf("on-disk posting bytes        : %lu (%.3f bytes/pos, %.2f bits/pos)\n",
+    std::printf("on-disk posting file bytes        : %lu (%.3f bytes/pos, %.2f bits/pos)\n",
                 total_bytes,
                 st.total_position_count ? double(total_bytes) / double(st.total_position_count) : 0.0,
                 st.total_position_count ? double(total_bytes) * 8.0 / double(st.total_position_count) : 0.0);
@@ -327,54 +327,54 @@ void print_kix_report(const KixStats& st, uint64_t total_bytes) {
     std::printf("\n=== .kix compression breakdown ===\n");
     std::printf("non-empty kmers              : %lu\n", st.n_kmers_nonempty);
     std::printf("total distinct seq_ids       : %lu\n", st.total_distinct_count);
-    std::printf("on-disk posting bytes        : %lu\n", total_bytes);
+    std::printf("on-disk posting list bytes   : %lu\n", total_bytes);
     if (st.total_distinct_count > 0) {
         std::printf("  bytes/distinct_seq_id      : %.3f (%.2f bits/sid)\n",
                     double(total_bytes) / double(st.total_distinct_count),
                     double(total_bytes) * 8.0 / double(st.total_distinct_count));
     }
-    std::printf("  posting header bytes       : %lu (%.2f%%)\n",
-                st.bytes_post_header,
-                100.0 * double(st.bytes_post_header) / double(total_bytes));
-    std::printf("  payload bytes              : %lu (%.2f%%)\n",
-                st.bytes_payload,
-                100.0 * double(st.bytes_payload) / double(total_bytes));
+    std::printf("  posting list header bytes  : %lu (%.2f%%)\n",
+                st.bytes_posting_list_header,
+                100.0 * double(st.bytes_posting_list_header) / double(total_bytes));
+    std::printf("  posting list body bytes    : %lu (%.2f%%)\n",
+                st.bytes_posting_list_body,
+                100.0 * double(st.bytes_posting_list_body) / double(total_bytes));
 }
 
 bool walk_kix(const KixReader& kix, KixStats& st, uint64_t& total_bytes) {
-    const uint8_t* base = kix.posting_data();
+    const uint8_t* base = kix.posting_file();
     const uint32_t tbl = kix.table_size();
-    total_bytes = kix.posting_data_size();
+    total_bytes = kix.posting_file_size();
     for (uint32_t kmer = 0; kmer < tbl; kmer++) {
-        uint64_t off = kix.posting_offset(kmer);
-        uint64_t len = kix.posting_byte_length(kmer);
+        uint64_t off = kix.posting_list_offset(kmer);
+        uint64_t len = kix.posting_list_byte_length(kmer);
         if (len == 0) continue;
         if (len < 8) return false;
-        uint32_t count, payload_words;
-        std::memcpy(&count,         base + off,     4);
-        std::memcpy(&payload_words, base + off + 4, 4);
+        uint32_t count, body_words;
+        std::memcpy(&count,      base + off,     4);
+        std::memcpy(&body_words, base + off + 4, 4);
         st.n_kmers_nonempty++;
         st.total_distinct_count += count;
-        st.bytes_post_header += 8;
-        st.bytes_payload += uint64_t(payload_words) * 4;
+        st.bytes_posting_list_header += 8;
+        st.bytes_posting_list_body += uint64_t(body_words) * 4;
     }
     return true;
 }
 
-// Walk .kpx skipping k-mers whose .kix posting is empty.  Empty k-mers
-// in a production index have pos_offset == 0 (the builder does not
-// emit a placeholder for them), which aliases the first non-empty
-// k-mer's payload — so we MUST consult the .kix to know which slots
-// actually carry data.
+// Walk .kpx skipping k-mers whose .kix posting list is empty.  Empty
+// k-mers in a production index have pos_offset == 0 (the builder does
+// not emit a placeholder for them), which aliases the first non-empty
+// k-mer's posting list — so we MUST consult the .kix to know which
+// slots actually carry data.
 bool walk_kpx(const KixReader& kix, const KpxReader& kpx,
               KpxStats& st, uint64_t& total_bytes) {
-    const uint8_t* base = kpx.posting_data();
-    total_bytes = kpx.posting_data_size();
+    const uint8_t* base = kpx.posting_file();
+    total_bytes = kpx.posting_file_size();
     const uint32_t tbl = kpx.table_size();
     const uint8_t* end = base + total_bytes;
     uint64_t skipped_empty = 0;
     for (uint32_t kmer = 0; kmer < tbl; kmer++) {
-        if (kix.posting_byte_length(kmer) == 0) {
+        if (kix.posting_list_byte_length(kmer) == 0) {
             skipped_empty++;
             continue;
         }
@@ -401,7 +401,7 @@ void usage() {
     std::fprintf(stderr,
         "Usage: index_compress_stats --kix <path> [--kpx <path>]\n"
         "  .kix is always required.  When --kpx is given the .kix is used to\n"
-        "  identify and skip empty-posting k-mers (which alias to offset 0\n"
+        "  identify and skip empty-posting-list k-mers (which alias to offset 0\n"
         "  in the .kpx because the builder writes no placeholder).\n");
 }
 

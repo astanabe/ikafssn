@@ -52,8 +52,8 @@ bool KixReader::open(const std::string& path) {
         ptr += sizeof(uint64_t) * (table_size_ + 1);
     }
 
-    posting_data_ = ptr;
-    posting_data_size_ = mmap_.size() - (ptr - mmap_.data());
+    posting_file_ = ptr;
+    posting_file_size_ = mmap_.size() - (ptr - mmap_.data());
 
     return true;
 }
@@ -64,8 +64,8 @@ void KixReader::close() {
     offsets64_ = nullptr;
     offsets32_ = nullptr;
     offset32_ = false;
-    posting_data_ = nullptr;
-    posting_data_size_ = 0;
+    posting_file_ = nullptr;
+    posting_file_size_ = 0;
     table_size_ = 0;
 }
 
@@ -84,11 +84,11 @@ void KixReader::apply_madvise(bool willneed) {
 std::vector<uint32_t> KixReader::bulk_count_postings() const {
     std::vector<uint32_t> counts(table_size_, 0);
     for (uint32_t i = 0; i < table_size_; i++) {
-        uint64_t byte_len = posting_byte_length(i);
+        uint64_t byte_len = posting_list_byte_length(i);
         if (byte_len == 0) continue;
-        // v7: distinct_count is the leading u32 of the per-kmer payload
+        // v7: distinct_count is the leading u32 of each posting list
         // (number of distinct sequences containing the k-mer).
-        counts[i] = pfd::posting_count(posting_data_ + posting_offset(i), byte_len);
+        counts[i] = pfd::posting_count(posting_file_ + posting_list_offset(i), byte_len);
     }
     return counts;
 }
