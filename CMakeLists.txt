@@ -461,6 +461,54 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
     ikafssn_add_dedup_tier_object(neon)
 endif()
 
+# --- Phase 7b: per-tier Elias-Fano dictionary codec ---
+#
+# src/index/ef_codec_tier.cpp is compiled once per ISA tier into the
+# ikafssn_ef_<tier> OBJECT libraries.  Each compilation gets its own
+# IKAFSSN_EF_TIER_NAME so the per-tier symbols land in disjoint
+# namespaces (ikafssn_ef_sse42 / ikafssn_ef_avx2 / ...).  The
+# AVX2-and-above builds enable BMI2 (-mbmi2) so the EF select1
+# inner-word loop uses PDEP+TZCNT.  No FastPFor / SIMDe dependency
+# (the codec is self-contained).
+function(ikafssn_add_ef_tier_object TIER)
+    set(_options)
+    set(_one)
+    set(_multi MARCH_FLAGS)
+    cmake_parse_arguments(ARG "${_options}" "${_one}" "${_multi}" ${ARGN})
+
+    set(_target ikafssn_ef_${TIER})
+    add_library(${_target} OBJECT
+        ${CMAKE_SOURCE_DIR}/src/index/ef_codec_tier.cpp
+    )
+    target_include_directories(${_target} PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_BINARY_DIR}/generated
+    )
+    target_compile_options(${_target} PRIVATE ${ARG_MARCH_FLAGS})
+    target_compile_definitions(${_target} PRIVATE
+        IKAFSSN_EF_TIER_NAME=${TIER}
+    )
+    set_property(TARGET ${_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
+endfunction()
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+    ikafssn_add_ef_tier_object(sse42
+        MARCH_FLAGS -msse4.2 -mpopcnt)
+    ikafssn_add_ef_tier_object(avx2
+        MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2)
+    ikafssn_add_ef_tier_object(avx512bw
+        MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2
+                    -mavx512f -mavx512bw -mavx512vl -mavx512cd -mavx512dq)
+    ikafssn_add_ef_tier_object(avx512vbmi2
+        MARCH_FLAGS -mavx2 -mfma -mbmi -mbmi2
+                    -mavx512f -mavx512bw -mavx512vl -mavx512cd -mavx512dq
+                    -mavx512vbmi -mavx512vbmi2)
+endif()
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
+    ikafssn_add_ef_tier_object(neon)
+endif()
+
 # --- Subdirectories ---
 add_subdirectory(src)
 

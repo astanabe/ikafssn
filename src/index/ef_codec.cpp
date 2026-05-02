@@ -1,38 +1,63 @@
-// Phase 7a — Elias-Fano dictionary codec runtime dispatcher.
+// Phase 7b — Elias-Fano dictionary codec runtime dispatcher.
 //
-// In 7a only a single tier exists ("scalar"); all calls route to
-// ikafssn::ef::ikafssn_ef_scalar.  Phase 7b will add per-ISA tier
-// objects (sse42 / avx2 / avx512bw / avx512vbmi2 / neon) and turn
-// this dispatcher into the same SimdCap-cascade pattern as
-// pfd_codec.cpp.
+// Mirrors the FastPFor / dedup ladder in pfd_codec.cpp:
+//   x86_64 : sse42 / avx2 / avx512bw / avx512vbmi2  (SSE4.2 floor)
+//   aarch64: neon                                    (NEON floor)
+//
+// CPUs below SSE4.2 (x86) or NEON (aarch64) are rejected at startup
+// with exit(2), matching the rest of the codebase's policy.
 
 #include "index/ef_codec.hpp"
 #include "index/ef_format.hpp"
+#include "util/simd_dispatch.hpp"
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #if defined(__unix__) || defined(__APPLE__)
   #include <sys/mman.h>
 #endif
 
+#if defined(__x86_64__) || defined(__i386__)
+  #define IKAFSSN_EF_HAS_X86  1
+#else
+  #define IKAFSSN_EF_HAS_X86  0
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+  #define IKAFSSN_EF_HAS_NEON 1
+#else
+  #define IKAFSSN_EF_HAS_NEON 0
+#endif
+
 namespace ikafssn::ef {
 
-// === Forward declarations of the scalar tier (Phase 7a single tier) ===
-namespace ikafssn_ef_scalar {
+#define DECLARE_EF_TIER_NS(ns)                                                 \
+    namespace ns {                                                             \
+        std::size_t encode_dictionary_ef(const std::uint64_t*,                 \
+                                         std::size_t,                          \
+                                         std::uint64_t,                        \
+                                         std::vector<std::uint8_t>&);          \
+        std::uint64_t access_dictionary_ef(const EFHeader&,                    \
+                                           const std::uint64_t*,               \
+                                           const std::uint64_t*,               \
+                                           const std::uint64_t*,               \
+                                           std::uint32_t) noexcept;            \
+    }
 
-std::size_t encode_dictionary_ef(const std::uint64_t* offsets,
-                                 std::size_t D,
-                                 std::uint64_t U_raw,
-                                 std::vector<std::uint8_t>& out);
+#if IKAFSSN_EF_HAS_X86
+DECLARE_EF_TIER_NS(ikafssn_ef_sse42)
+DECLARE_EF_TIER_NS(ikafssn_ef_avx2)
+DECLARE_EF_TIER_NS(ikafssn_ef_avx512bw)
+DECLARE_EF_TIER_NS(ikafssn_ef_avx512vbmi2)
+#endif
+#if IKAFSSN_EF_HAS_NEON
+DECLARE_EF_TIER_NS(ikafssn_ef_neon)
+#endif
 
-std::uint64_t access_dictionary_ef(const EFHeader& hdr,
-                                   const std::uint64_t* lower,
-                                   const std::uint64_t* upper,
-                                   const std::uint64_t* select,
-                                   std::uint32_t i) noexcept;
-
-} // namespace ikafssn_ef_scalar
+#undef DECLARE_EF_TIER_NS
 
 namespace {
 
@@ -46,14 +71,66 @@ struct VTable {
 };
 
 const VTable& active_vtable() {
-    // Phase 7a: single scalar tier; no SimdCap cascade yet.  7b
-    // expands this to mirror pfd_codec.cpp.
     static const VTable instance = []() -> VTable {
-        return VTable{
-            ikafssn_ef_scalar::encode_dictionary_ef,
-            ikafssn_ef_scalar::access_dictionary_ef,
-            "scalar",
-        };
+        init_simd_dispatch(nullptr);
+        const SimdCap cap = current_simd_cap();
+        (void)cap;
+
+#if IKAFSSN_EF_HAS_X86
+        if (cap >= SimdCap::AVX512VBMI2) {
+            return {
+                ikafssn_ef_avx512vbmi2::encode_dictionary_ef,
+                ikafssn_ef_avx512vbmi2::access_dictionary_ef,
+                "avx512vbmi2",
+            };
+        }
+        if (cap >= SimdCap::AVX512BW) {
+            return {
+                ikafssn_ef_avx512bw::encode_dictionary_ef,
+                ikafssn_ef_avx512bw::access_dictionary_ef,
+                "avx512bw",
+            };
+        }
+        if (cap >= SimdCap::AVX2) {
+            return {
+                ikafssn_ef_avx2::encode_dictionary_ef,
+                ikafssn_ef_avx2::access_dictionary_ef,
+                "avx2",
+            };
+        }
+        if (cap >= SimdCap::SSE42) {
+            return {
+                ikafssn_ef_sse42::encode_dictionary_ef,
+                ikafssn_ef_sse42::access_dictionary_ef,
+                "sse42",
+            };
+        }
+        std::fprintf(stderr,
+            "ikafssn: ef codec requires SSE4.2; current CPU tier is below SSE4.2.\n"
+            "         (Phase 5f treats SSE4.2 as the x86_64 baseline.)\n");
+        std::exit(2);
+#endif
+
+#if IKAFSSN_EF_HAS_NEON
+        if (cap >= SimdCap::NEON) {
+            return {
+                ikafssn_ef_neon::encode_dictionary_ef,
+                ikafssn_ef_neon::access_dictionary_ef,
+                "neon",
+            };
+        }
+        std::fprintf(stderr,
+            "ikafssn: ef codec requires NEON; current CPU tier is below NEON.\n"
+            "         (Phase 5h treats NEON as the aarch64 baseline.)\n");
+        std::exit(2);
+#endif
+
+#if !IKAFSSN_EF_HAS_X86 && !IKAFSSN_EF_HAS_NEON
+        std::fprintf(stderr,
+            "ikafssn: ef codec is not implemented for this architecture.\n"
+            "         (Only x86_64 and aarch64 are supported.)\n");
+        std::exit(2);
+#endif
     }();
     return instance;
 }

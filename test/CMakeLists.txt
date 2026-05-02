@@ -76,9 +76,20 @@ target_link_libraries(test_seq_id_dedup PRIVATE ikafssn_util)
 target_compile_definitions(test_seq_id_dedup PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_seq_id_dedup)
 
-# Phase 7a: Elias-Fano dictionary codec round-trip test (scalar tier).
-# 7b will add per-tier SIMD variants and wire add_ikafssn_simd_test().
+# Phase 7a/7b: Elias-Fano dictionary codec round-trip test, exercised
+# via every per-ISA tier object (sse42 / avx2 / avx512bw / avx512vbmi2
+# / neon) by add_ikafssn_simd_test.
 add_ikafssn_test(test_ef_codec test_ef_codec.cpp)
+target_link_libraries(test_ef_codec PRIVATE ikafssn_util)
+target_compile_definitions(test_ef_codec PRIVATE IKAFSSN_TESTING)
+add_ikafssn_simd_test(test_ef_codec)
+
+# Phase 7b: confirm the EF dispatcher selects the tier requested via
+# IKAFSSN_FORCE_SIMD (mirrors test_simd_dispatch's approach).
+add_ikafssn_test(test_ef_simd_dispatch test_ef_simd_dispatch.cpp)
+target_link_libraries(test_ef_simd_dispatch PRIVATE ikafssn_util)
+target_compile_definitions(test_ef_simd_dispatch PRIVATE IKAFSSN_TESTING)
+add_ikafssn_simd_test(test_ef_simd_dispatch)
 
 # Builder integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_builder test_builder.cpp)

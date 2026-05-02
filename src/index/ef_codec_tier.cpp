@@ -1,29 +1,47 @@
-// Phase 7a — Elias-Fano codec, scalar reference body.
+// Phase 7b — Elias-Fano dictionary codec, per-tier SIMD body.
 //
-// Phase 7b will add per-ISA tier specialisations under
-// ikafssn_ef_{sse42,avx2,avx512bw,avx512vbmi2,neon} following the
-// FastPFor / dedup ladder pattern.  For 7a this TU compiles once
-// under default flags (no -m... pinning) and exposes the body in
-// the ikafssn::ef::ikafssn_ef_scalar namespace, which the dispatcher
-// in ef_codec.cpp routes to unconditionally.
+// This translation unit is compiled once per ISA tier via the
+// ikafssn_ef_<tier> OBJECT libraries declared in the top-level
+// CMakeLists.txt.  Each compilation receives:
+//
+//   -DIKAFSSN_EF_TIER_NAME=<tier>   names the per-tier inner namespace
+//                                    (ikafssn_ef_sse42 / ikafssn_ef_avx2 /
+//                                     ikafssn_ef_avx512bw /
+//                                     ikafssn_ef_avx512vbmi2 / ikafssn_ef_neon)
+//   -m<arch> ...                     controls the instructions the
+//                                    compiler may emit
+//
+// The hot path is the EF random-access ``access(i)``: locate the i-th
+// set bit in the upper-bits unary stream via ``select1_after``, then
+// concatenate the corresponding low-l bits.  When the build sees BMI2
+// (AVX2 tier and above on x86; not present on SSE4.2 or NEON) the
+// inner-word select uses ``PDEP`` + ``TZCNT`` for an O(1) per-word
+// answer; otherwise we fall back to ``__builtin_popcountll`` +
+// ``__builtin_ctzll`` with a tight bit-stripping loop.
 
 #include "index/ef_codec.hpp"
 #include "index/ef_format.hpp"
 
-#include <algorithm>
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
-  #include <sys/mman.h>
+#ifndef IKAFSSN_EF_TIER_NAME
+#error "IKAFSSN_EF_TIER_NAME must be set per tier"
 #endif
 
-namespace ikafssn::ef::ikafssn_ef_scalar {
+#if defined(__BMI2__)
+  #include <immintrin.h>
+#endif
+
+#define IKAFSSN_EF_TIER_NS_(x) ikafssn_ef_##x
+#define IKAFSSN_EF_TIER_NS(x)  IKAFSSN_EF_TIER_NS_(x)
+
+namespace ikafssn::ef::IKAFSSN_EF_TIER_NS(IKAFSSN_EF_TIER_NAME) {
 
 namespace {
 
-// floor(log2(n)) for n >= 1.  Returns 0 when n == 0.
 inline std::uint8_t floor_log2_u64(std::uint64_t n) noexcept {
     if (n == 0) return 0;
     return static_cast<std::uint8_t>(63 - __builtin_clzll(n));
@@ -34,9 +52,6 @@ inline std::uint64_t mask_for_bits(std::uint8_t l) noexcept {
                      : ((std::uint64_t{1} << l) - std::uint64_t{1});
 }
 
-// Write `l` bits of `value` into `lower` starting at bit position
-// `bit_pos`.  Caller guarantees `lower` has room for one possible
-// spill word past the high end.
 inline void write_lower_bits(std::uint64_t* lower,
                              std::uint64_t bit_pos,
                              std::uint64_t value,
@@ -65,10 +80,25 @@ inline std::uint64_t read_lower_bits(const std::uint64_t* lower,
     return lo;
 }
 
+// Inner-word select: position (0..63) of the i-th set bit in `w`.  i is
+// 0-indexed; the caller guarantees __builtin_popcountll(w) > i.  On
+// AVX2-and-above tiers BMI2's PDEP+TZCNT collapses to two cycles; the
+// SSE4.2 / NEON fallback strips i low bits then ctz.
+inline std::uint64_t select_in_word(std::uint64_t w, std::uint32_t i) noexcept {
+#if defined(__BMI2__)
+    return static_cast<std::uint64_t>(
+        _tzcnt_u64(_pdep_u64(std::uint64_t{1} << i, w)));
+#else
+    for (std::uint32_t k = 0; k < i; ++k) {
+        w &= w - 1;
+    }
+    return static_cast<std::uint64_t>(__builtin_ctzll(w));
+#endif
+}
+
 // Locate the bit position of the j-th (0-indexed) set bit AT OR AFTER
-// upper-bit position `start_bit_pos`, with `j == 0` returning the
-// first set bit at or after `start_bit_pos`.  Scalar word-by-word
-// scan with __builtin_popcountll + __builtin_ctzll.
+// upper-bit position `start_bit_pos`.  Word-by-word popcount + select
+// in-word.
 inline std::uint64_t select1_after(const std::uint64_t* upper,
                                    std::uint64_t upper_bits_total,
                                    std::uint64_t start_bit_pos,
@@ -81,15 +111,11 @@ inline std::uint64_t select1_after(const std::uint64_t* upper,
         std::uint64_t w = upper[word_idx] >> bit_in_word;
         std::uint64_t cnt = static_cast<std::uint64_t>(__builtin_popcountll(w));
         if (found + cnt > j) {
-            std::uint64_t need = j - found;  // 0-indexed bit within w
-            // Pop low bits until we reach the (need)-th set bit.
-            for (std::uint64_t k = 0; k < need; ++k) {
-                w &= w - 1;
-            }
-            return pos + static_cast<std::uint64_t>(__builtin_ctzll(w));
+            std::uint32_t need = static_cast<std::uint32_t>(j - found);
+            return pos + select_in_word(w, need);
         }
         found += cnt;
-        pos = (word_idx + 1) << 6;  // advance to next word boundary
+        pos = (word_idx + 1) << 6;
     }
     return upper_bits_total;  // not found (caller error)
 }
@@ -116,7 +142,6 @@ std::size_t encode_dictionary_ef(const std::uint64_t* offsets,
         return sizeof(EFHeader);
     }
 
-    // Strict-monotonic universe: ef[i] = offsets[i] + i ∈ [0, U_raw + D)
     std::uint64_t U_ef = U_raw + static_cast<std::uint64_t>(D);
     std::uint8_t l = (U_ef > static_cast<std::uint64_t>(D))
                          ? floor_log2_u64(U_ef / D)
@@ -129,7 +154,6 @@ std::size_t encode_dictionary_ef(const std::uint64_t* offsets,
     std::uint64_t upper_bits_total = static_cast<std::uint64_t>(D) + max_high + 1;
 
     std::uint64_t lower_bits_total = static_cast<std::uint64_t>(D) * l;
-    // Pad to whole u64 words; write_lower_bits's spill needs one extra.
     std::size_t lower_words = static_cast<std::size_t>((lower_bits_total + 63) / 64);
     std::size_t upper_words = static_cast<std::size_t>((upper_bits_total + 63) / 64);
 
@@ -172,42 +196,6 @@ std::size_t encode_dictionary_ef(const std::uint64_t* offsets,
     return blob_bytes;
 }
 
-bool open_dictionary_ef(EFDictionary& self,
-                        const std::uint8_t* data,
-                        std::size_t bytes,
-                        std::size_t& blob_bytes_out,
-                        const std::uint64_t*& lower_out,
-                        const std::uint64_t*& upper_out,
-                        const std::uint64_t*& select_out) noexcept {
-    if (bytes < sizeof(EFHeader)) return false;
-    EFHeader hdr;
-    std::memcpy(&hdr, data, sizeof(EFHeader));
-    if (std::memcmp(hdr.magic, EF_MAGIC, 4) != 0) return false;
-    if (hdr.l > 63) return false;
-
-    std::size_t lower_words = static_cast<std::size_t>(
-        (hdr.D * static_cast<std::uint64_t>(hdr.l) + 63) / 64);
-    std::size_t upper_words = static_cast<std::size_t>(
-        (static_cast<std::uint64_t>(hdr.upper_bits) + 63) / 64);
-    std::size_t blob_bytes = sizeof(EFHeader)
-                           + lower_words * 8
-                           + upper_words * 8
-                           + static_cast<std::size_t>(hdr.select_count) * 8;
-    if (bytes < blob_bytes) return false;
-
-    blob_bytes_out = blob_bytes;
-    const std::uint8_t* p = data + sizeof(EFHeader);
-    lower_out  = reinterpret_cast<const std::uint64_t*>(p);
-    p += lower_words * 8;
-    upper_out  = reinterpret_cast<const std::uint64_t*>(p);
-    p += upper_words * 8;
-    select_out = reinterpret_cast<const std::uint64_t*>(p);
-
-    self = EFDictionary{};  // re-init; caller populates remaining members
-    (void)hdr;
-    return true;
-}
-
 std::uint64_t access_dictionary_ef(const EFHeader& hdr,
                                    const std::uint64_t* lower,
                                    const std::uint64_t* upper,
@@ -238,4 +226,4 @@ std::uint64_t access_dictionary_ef(const EFHeader& hdr,
     return ef_value - static_cast<std::uint64_t>(i);
 }
 
-} // namespace ikafssn::ef::ikafssn_ef_scalar
+} // namespace ikafssn::ef::ikafssn_ef_<tier>
