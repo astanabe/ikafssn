@@ -11,6 +11,7 @@
 #include "util/logger.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -19,6 +20,7 @@
 
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
+#include <tbb/combinable.h>
 #include <tbb/task_arena.h>
 
 namespace ikafssn {
@@ -169,59 +171,77 @@ bool validate_volume(const std::string& kix_path,
     const std::uint8_t* kpx_data = has_kpx ? kpx.posting_file() : nullptr;
     const std::size_t   kpx_size = has_kpx ? kpx.posting_file_size() : 0;
     const auto kix_counts = kix.bulk_count_postings();
-    std::uint64_t total_position_count = 0;
+    (void)kpx_size;
 
-    for (std::uint32_t i = 0; i < tbl_size; i++) {
-        const std::uint32_t kix_count = kix_counts[i];
-
-        if (!has_kpx) continue;
-
-        std::uint64_t lo, hi;
-        kpx.pos_offset_range(i, lo, hi);
-        if (hi < lo) {
-            logger.error("validate_volume: kmer %u kpx offset regression (%lu -> %lu)",
-                         i,
-                         static_cast<unsigned long>(lo),
-                         static_cast<unsigned long>(hi));
-            return false;
-        }
-        (void)kpx_size;
-        const std::size_t available = static_cast<std::size_t>(hi - lo);
-
-        std::uint64_t per_kmer_pos = 0;
-        const std::size_t consumed = walk_kpx_posting(
-            kpx_data + lo, available, kix_count, &per_kmer_pos);
-
-        if (kix_count == 0) {
-            // Empty .kix posting => empty .kpx slice (consumed sentinel
-            // is 1 from walk_kpx_posting on the zero-bytes path).
-            if (available != 0) {
-                logger.error("validate_volume: kmer %u empty in .kix but .kpx slice is %zu B",
-                             i, available);
-                return false;
-            }
-            if (consumed == 0) {
-                logger.error("validate_volume: kmer %u kpx walk failed for empty kix posting",
-                             i);
-                return false;
-            }
-            continue;
-        }
-
-        if (consumed == 0) {
-            logger.error(
-                "validate_volume: kmer %u .kpx walk failed (kix_count=%u, slice=%zu B)",
-                i, kix_count, available);
-            return false;
-        }
-        if (consumed != available) {
-            logger.error(
-                "validate_volume: kmer %u byte length mismatch — consumed=%zu, slice=%zu",
-                i, consumed, available);
-            return false;
-        }
-        total_position_count += per_kmer_pos;
+    if (!has_kpx) {
+        if (total_position_count_out) *total_position_count_out = 0;
+        return true;
     }
+
+    // Phase 7d: parallel per-k-mer validation via TBB.  Each k-mer's
+    // walk is independent; per-thread accumulators feed into a final
+    // reduction.  The first error encountered is reported and the
+    // pass returns false.  At nt scale (k=12, D=16M) this drops the
+    // wall time from minutes per volume to seconds.
+    std::atomic<bool>     ok{true};
+    std::atomic<uint32_t> first_bad_kmer{UINT32_MAX};
+    tbb::combinable<std::uint64_t> local_pos{[]{ return std::uint64_t{0}; }};
+
+    const auto record_error = [&](std::uint32_t k) {
+        ok.store(false, std::memory_order_relaxed);
+        std::uint32_t expected = UINT32_MAX;
+        first_bad_kmer.compare_exchange_strong(expected, k);
+    };
+
+    tbb::parallel_for(
+        tbb::blocked_range<std::uint32_t>(0, tbl_size, 1u << 14),
+        [&](const tbb::blocked_range<std::uint32_t>& range) {
+            std::uint64_t local_sum = 0;
+            for (std::uint32_t i = range.begin(); i < range.end(); ++i) {
+                if (!ok.load(std::memory_order_relaxed)) break;
+
+                const std::uint32_t kix_count = kix_counts[i];
+                std::uint64_t lo, hi;
+                kpx.pos_offset_range(i, lo, hi);
+                if (hi < lo) { record_error(i); break; }
+                const std::size_t available = static_cast<std::size_t>(hi - lo);
+
+                std::uint64_t per_kmer_pos = 0;
+                const std::size_t consumed = walk_kpx_posting(
+                    kpx_data + lo, available, kix_count, &per_kmer_pos);
+
+                if (kix_count == 0) {
+                    if (available != 0 || consumed == 0) {
+                        record_error(i);
+                        break;
+                    }
+                    continue;
+                }
+
+                if (consumed == 0 || consumed != available) {
+                    record_error(i);
+                    break;
+                }
+                local_sum += per_kmer_pos;
+            }
+            local_pos.local() += local_sum;
+        });
+
+    if (!ok.load()) {
+        const std::uint32_t bad = first_bad_kmer.load();
+        const std::uint32_t kix_count = (bad < tbl_size) ? kix_counts[bad] : 0;
+        std::uint64_t lo = 0, hi = 0;
+        if (bad < tbl_size) {
+            kpx.pos_offset_range(bad, lo, hi);
+        }
+        logger.error(
+            "validate_volume: kmer %u .kpx walk failed (kix_count=%u, slice=%lu B)",
+            bad, kix_count, static_cast<unsigned long>(hi - lo));
+        return false;
+    }
+
+    std::uint64_t total_position_count = 0;
+    local_pos.combine_each([&](std::uint64_t v) { total_position_count += v; });
 
     if (total_position_count_out) {
         *total_position_count_out = total_position_count;
