@@ -355,9 +355,13 @@ static bool write_filtered_kpx(
     std::vector<uint8_t> posting_buf;
     uint64_t kpx_data_pos = 0;
 
+    // Phase 7e: the offsets array is Elias-Fano encoded and must be
+    // monotonically non-decreasing.  Empty / excluded k-mers therefore
+    // get the same offset as the next non-empty non-excluded k-mer
+    // (forward-fill) rather than retaining the zero-init value.
     for (uint32_t i = 0; i < tbl_size; i++) {
+        new_kpx_offsets[i] = kpx_data_pos;
         if (kix_sizes[i] > 0 && !excluded[i]) {
-            new_kpx_offsets[i] = kpx_data_pos;
             posting_buf.insert(posting_buf.end(),
                 kpx_posting_in + kpx_in.pos_offset(i),
                 kpx_posting_in + kpx_in.pos_offset(i) + kpx_sizes[i]);
@@ -467,19 +471,36 @@ static bool filter_one_volume(
         }
     }
 
-    // FIXME(phase 7d --validate): with dedup C+D in place, the .kpx
-    // posting list no longer carries a per-k-mer position-count u32;
-    // the previous read at byte offset 0/4 was already a pre-existing
-    // v8 bug (it returned partition_count, not position_count).  The
-    // correct value requires summing `short1_count + sum(partition
-    // occ_counts) + horizontal_sum_u8(short2_occ)` per k-mer, which is
-    // best done as part of the upcoming `--validate` decoder walk.
-    // Until then the filtered .kpx header reports 0 — the field is
-    // informational (consumed by ikafssninfo) and does not affect
-    // search correctness.
+    // Phase 7d: walk each non-excluded k-mer's .kpx posting list using
+    // the same logic the validator employs (anonymous-namespace
+    // walk_kpx_posting above).  This finally gets the filtered .kpx
+    // header's total_position_count right — the v8 path read
+    // partition_count and silently mis-reported, and the 7c shim was
+    // a stop-gap zero.
     uint64_t new_total_position_count = 0;
-    (void)has_kpx_tmp;
-    (void)kix_sizes;
+    if (has_kpx_tmp) {
+        const uint8_t* kpx_posting_in = kpx_in.posting_file();
+        const uint64_t kpx_total = kpx_in.posting_file_size();
+        for (uint32_t i = 0; i < tbl_size; i++) {
+            if (excluded[i]) continue;
+            if (counts[i] == 0) continue;
+            const uint64_t lo = kpx_in.pos_offset(i);
+            const uint64_t hi = (i + 1 < tbl_size)
+                ? kpx_in.pos_offset(i + 1) : kpx_total;
+            if (hi <= lo) continue;
+            uint64_t pos_per_kmer = 0;
+            const std::size_t consumed = walk_kpx_posting(
+                kpx_posting_in + lo,
+                static_cast<std::size_t>(hi - lo),
+                counts[i],
+                &pos_per_kmer);
+            if (consumed == 0) {
+                logger.warn("filter: kmer %u .kpx walk failed during recompute", i);
+                continue;
+            }
+            new_total_position_count += pos_per_kmer;
+        }
+    }
 
     bool kix_ok = false;
     bool kpx_ok = !has_kpx_tmp;
