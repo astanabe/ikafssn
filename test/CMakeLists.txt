@@ -76,6 +76,10 @@ target_link_libraries(test_seq_id_dedup PRIVATE ikafssn_util)
 target_compile_definitions(test_seq_id_dedup PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_seq_id_dedup)
 
+# Phase 7a: Elias-Fano dictionary codec round-trip test (scalar tier).
+# 7b will add per-tier SIMD variants and wire add_ikafssn_simd_test().
+add_ikafssn_test(test_ef_codec test_ef_codec.cpp)
+
 # Builder integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_builder test_builder.cpp)
 target_link_libraries(test_builder PRIVATE
