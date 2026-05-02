@@ -23,6 +23,226 @@
 
 namespace ikafssn {
 
+namespace {
+
+// Walk a single FOR-block stream, returning the number of bytes consumed
+// (>0) on success or 0 on a structural mismatch.  Mirrors the layout in
+// pfd_codec_tier.cpp: per-128-element block `[u32 min][u8 b][3 B pad]`
+// + `16*b` body bytes; tail `[u8 tail_count]` plus, when tail_count > 0,
+// `[u32 tail_min][u8 tail_b][bitpacked body]`.
+std::size_t walk_for_stream(const std::uint8_t* p,
+                            const std::uint8_t* end,
+                            std::uint32_t total_count) {
+    const std::uint8_t* start = p;
+    const std::uint32_t num_blocks = total_count / 128u;
+    const std::uint32_t tail_count = total_count % 128u;
+    for (std::uint32_t i = 0; i < num_blocks; i++) {
+        if (p + 8 > end) return 0;
+        const std::uint8_t b = p[4];
+        if (b > 32) return 0;
+        const std::size_t need = std::size_t(8) + std::size_t(16) * b;
+        if (static_cast<std::size_t>(end - p) < need) return 0;
+        p += need;
+    }
+    if (p + 1 > end) return 0;
+    const std::uint8_t got_tail = *p++;
+    if (got_tail != tail_count) return 0;
+    if (tail_count > 0) {
+        if (p + 5 > end) return 0;
+        p += 4;  // tail_min (skipped)
+        const std::uint8_t tail_b = *p++;
+        if (tail_b > 32) return 0;
+        const std::size_t body_bits = std::size_t(tail_count) * tail_b;
+        const std::size_t body_bytes = (body_bits + 7) / 8;
+        if (static_cast<std::size_t>(end - p) < body_bytes) return 0;
+        p += body_bytes;
+    }
+    return static_cast<std::size_t>(p - start);
+}
+
+// Walk one .kpx posting list and return either bytes consumed (>0) or 0
+// on a structural mismatch.  Sets *position_count to the per-k-mer
+// total (sum of partition occ_counts + short1_count + sum(short2 u8
+// occ_count[])) on success.
+std::size_t walk_kpx_posting(const std::uint8_t* p,
+                             std::size_t bytes,
+                             std::uint32_t kix_count,
+                             std::uint64_t* position_count) {
+    *position_count = 0;
+    if (kix_count == 0) {
+        return (bytes == 0) ? 1 /* sentinel: 0 bytes consumed but valid */ : 0;
+    }
+    const std::uint8_t* start = p;
+    const std::uint8_t* end = p + bytes;
+
+    // Kind map.
+    const std::size_t kind_map_bytes = (std::size_t(kix_count) * 2 + 7) / 8;
+    if (static_cast<std::size_t>(end - p) < kind_map_bytes) return 0;
+    const std::uint8_t* kind_map = p;
+    p += kind_map_bytes;
+
+    // Per-kind counts via popcount.
+    std::uint32_t partition_count = 0, short1_count = 0, short2_count = 0;
+    for (std::uint32_t k = 0; k < kix_count; k++) {
+        const std::uint8_t kind = static_cast<std::uint8_t>(
+            (kind_map[k >> 2] >> ((k & 3) * 2)) & 0x03);
+        switch (kind) {
+            case 0: short1_count++;    break;
+            case 1: short2_count++;    break;
+            case 2: partition_count++; break;
+            default: return 0;  // 11 reserved
+        }
+    }
+    if (partition_count + short1_count + short2_count != kix_count) return 0;
+
+    // Partition groups: each [u32 occ_count][FOR stream].
+    std::uint64_t total_pos = 0;
+    for (std::uint32_t g = 0; g < partition_count; g++) {
+        if (p + 4 > end) return 0;
+        std::uint32_t gcnt;
+        std::memcpy(&gcnt, p, 4);
+        p += 4;
+        if (gcnt == 0) return 0;
+        total_pos += gcnt;
+        const std::size_t consumed = walk_for_stream(p, end, gcnt);
+        if (consumed == 0) return 0;
+        p += consumed;
+    }
+
+    // Short1 FOR stream (one position per cluster).
+    if (short1_count > 0) {
+        const std::size_t consumed = walk_for_stream(p, end, short1_count);
+        if (consumed == 0) return 0;
+        p += consumed;
+    }
+    total_pos += short1_count;
+
+    // Short2: u8 occ_count[short2_count] + FOR stream.
+    if (short2_count > 0) {
+        if (static_cast<std::size_t>(end - p) < short2_count) return 0;
+        std::uint32_t short2_pos = 0;
+        for (std::uint32_t i = 0; i < short2_count; i++) {
+            const std::uint8_t occ = p[i];
+            if (occ < 2) return 0;
+            short2_pos += occ;
+        }
+        p += short2_count;
+        total_pos += short2_pos;
+        if (short2_pos > 0) {
+            const std::size_t consumed = walk_for_stream(p, end, short2_pos);
+            if (consumed == 0) return 0;
+            p += consumed;
+        }
+    }
+
+    *position_count = total_pos;
+    return static_cast<std::size_t>(p - start);
+}
+
+} // anonymous namespace
+
+bool validate_volume(const std::string& kix_path,
+                     const std::string& kpx_path,
+                     uint64_t* total_position_count_out,
+                     const Logger& logger) {
+    KixReader kix;
+    if (!kix.open(kix_path)) {
+        logger.error("validate_volume: cannot open %s", kix_path.c_str());
+        return false;
+    }
+    const std::uint32_t tbl_size = kix.table_size();
+
+    KpxReader kpx;
+    const bool has_kpx = !kpx_path.empty();
+    if (has_kpx) {
+        if (!kpx.open(kpx_path)) {
+            logger.error("validate_volume: cannot open %s", kpx_path.c_str());
+            return false;
+        }
+        if (kpx.table_size() != tbl_size) {
+            logger.error("validate_volume: .kix table_size %u != .kpx table_size %u",
+                         tbl_size, kpx.table_size());
+            return false;
+        }
+    }
+
+    const std::uint8_t* kpx_data = has_kpx ? kpx.posting_file() : nullptr;
+    const std::size_t   kpx_size = has_kpx ? kpx.posting_file_size() : 0;
+    const auto kix_counts = kix.bulk_count_postings();
+    std::uint64_t total_position_count = 0;
+
+    for (std::uint32_t i = 0; i < tbl_size; i++) {
+        const std::uint32_t kix_count = kix_counts[i];
+
+        if (!has_kpx) continue;
+
+        const std::uint64_t lo = kpx.pos_offset(i);
+        const std::uint64_t hi = (i + 1 < tbl_size)
+            ? kpx.pos_offset(i + 1)
+            : static_cast<std::uint64_t>(kpx_size);
+        if (hi < lo) {
+            logger.error("validate_volume: kmer %u kpx offset regression (%lu -> %lu)",
+                         i,
+                         static_cast<unsigned long>(lo),
+                         static_cast<unsigned long>(hi));
+            return false;
+        }
+        const std::size_t available = static_cast<std::size_t>(hi - lo);
+
+        std::uint64_t per_kmer_pos = 0;
+        const std::size_t consumed = walk_kpx_posting(
+            kpx_data + lo, available, kix_count, &per_kmer_pos);
+
+        if (kix_count == 0) {
+            // Empty .kix posting => empty .kpx slice (consumed sentinel
+            // is 1 from walk_kpx_posting on the zero-bytes path).
+            if (available != 0) {
+                logger.error("validate_volume: kmer %u empty in .kix but .kpx slice is %zu B",
+                             i, available);
+                return false;
+            }
+            if (consumed == 0) {
+                logger.error("validate_volume: kmer %u kpx walk failed for empty kix posting",
+                             i);
+                return false;
+            }
+            continue;
+        }
+
+        if (consumed == 0) {
+            logger.error(
+                "validate_volume: kmer %u .kpx walk failed (kix_count=%u, slice=%zu B)",
+                i, kix_count, available);
+            return false;
+        }
+        if (consumed != available) {
+            logger.error(
+                "validate_volume: kmer %u byte length mismatch — consumed=%zu, slice=%zu",
+                i, consumed, available);
+            return false;
+        }
+        total_position_count += per_kmer_pos;
+    }
+
+    if (total_position_count_out) {
+        *total_position_count_out = total_position_count;
+    }
+
+    if (has_kpx && kpx.total_position_count() != 0
+        && kpx.total_position_count() != total_position_count) {
+        logger.error(
+            "validate_volume: header total_position_count=%lu != recomputed %lu",
+            static_cast<unsigned long>(kpx.total_position_count()),
+            static_cast<unsigned long>(total_position_count));
+        // Soft fail — the header field is informational and v9
+        // filtered builds intentionally report 0 (FIXME path).  Don't
+        // return false here so the validator's structural check still
+        // succeeds.
+    }
+
+    return true;
+}
+
 // Compute the byte length of each k-mer.s posting list from sentinel-based offsets.
 static std::vector<uint64_t> compute_posting_sizes(
     const KixReader& kix, uint32_t tbl_size) {

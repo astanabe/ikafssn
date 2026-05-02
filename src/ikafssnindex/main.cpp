@@ -211,6 +211,10 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "  -openvol <int>         Max volumes processed simultaneously\n"
         "                         (default: 1)\n"
         "  -threads <int>         Number of threads (default: all cores)\n"
+        "  -no-validate           Skip the post-build structural validation pass\n"
+        "                         (Phase 7d default-on validation walks each\n"
+        "                         k-mer's .kpx posting list and checks the\n"
+        "                         byte length against the EF dictionary)\n"
         "  -v, --verbose          Verbose output\n",
         prog, MIN_K, MAX_K, default_mem.c_str());
 }
@@ -278,6 +282,10 @@ int main(int argc, char* argv[]) {
         memory_limit = default_mem;
         mem_limit_str = default_mem_str;
     }
+
+    // Phase 7d: post-build structural validation is on by default; -no-validate
+    // opts out (e.g. when building a known-good index for benchmarking).
+    const bool run_validate = !cli.has("-no-validate");
 
     double max_freq_build = 1.0; // default: disabled (no exclusion)
     if (cli.has("-max_freq_build")) {
@@ -692,6 +700,24 @@ int main(int argc, char* argv[]) {
                                              logger)) {
                 std::fprintf(stderr, "Error: cross-volume filtering failed\n");
                 return 1;
+            }
+        }
+
+        // Phase 7d: structural validation on the just-finalised .kix / .kpx
+        // pair (catches silent kind-map / FOR-stream corruption that the
+        // v9 dedup'd headers can no longer detect by redundancy).
+        if (run_validate && !build_skipped) {
+            for (size_t vi = 0; vi < vol_prefixes.size(); vi++) {
+                const std::string& prefix = vol_prefixes[vi];
+                std::string kix_path = prefix + ".kix";
+                std::string kpx_path = config.skip_kpx ? std::string{} : (prefix + ".kpx");
+                if (!validate_volume(kix_path, kpx_path, nullptr, logger)) {
+                    std::fprintf(stderr,
+                        "Error: post-build validation failed for volume %s\n",
+                        prefix.c_str());
+                    return 1;
+                }
+                logger.info("Validated volume: %s", prefix.c_str());
             }
         }
 

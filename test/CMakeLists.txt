@@ -91,6 +91,17 @@ target_link_libraries(test_ef_simd_dispatch PRIVATE ikafssn_util)
 target_compile_definitions(test_ef_simd_dispatch PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_ef_simd_dispatch)
 
+# Phase 7f: synthesize v8-magic index files and verify that v9 readers
+# reject them with the expected error message.
+add_ikafssn_test(test_v8_rejection test_v8_rejection.cpp)
+target_link_libraries(test_v8_rejection PRIVATE ikafssn_util)
+
+# Phase 7d: structural validation of (.kix, .kpx) volume pairs +
+# bit-flip injection regression.  Exercises validate_volume() against
+# both a clean build and a corrupted kind map.
+add_ikafssn_test(test_index_filter_validate test_index_filter_validate.cpp)
+target_link_libraries(test_index_filter_validate PRIVATE ikafssn_util)
+
 # Builder integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_builder test_builder.cpp)
 target_link_libraries(test_builder PRIVATE
