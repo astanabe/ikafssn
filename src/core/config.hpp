@@ -19,8 +19,22 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 #endif
 
 // k-mer length limits
+//
+// MAX_K = 15 (Phase 7-post): the previous nominal upper of 16 was
+// unreachable in practice because table_size(16) = 4^16 = 2^32
+// overflows the uint32_t return type and silently wraps to 0.  k=15
+// (table_size = 4^15 = 1,073,741,824) is the largest k that fits in
+// every uint32_t array index this codebase uses (kix dictionary
+// length, .khx bitset, EFHeader.D / upper_bits).  k > 15 is also
+// unattractive in practice — the resulting dictionary blob and
+// posting file blow up the per-volume RAM budget without commensurate
+// search-quality gain (use minimizer-style indexes for that regime).
+//
+// KmerScanner / packed_kmer_scanner internally hold MAX_K-sized
+// arrays (window_degen, AmbigInfo[]) so growing MAX_K back to 16
+// would also require widening those buffers.
 inline constexpr int MIN_K = 5;
-inline constexpr int MAX_K = 16;
+inline constexpr int MAX_K = 15;
 inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t=0 only; for spaced seeds use kmer_type_for(k, t))
 
 // Format versions — all index files share a single major version so users
@@ -51,8 +65,10 @@ inline constexpr uint16_t KPX_FORMAT_VERSION = 9;
 inline constexpr uint16_t KSX_FORMAT_VERSION = 9;
 inline constexpr uint16_t KHX_FORMAT_VERSION = 9;
 
-// Direct-address table size for k-mer value k: 4^k
-// Max supported: 2 * 4^12 = 33,554,432 (fits uint32_t).
+// Direct-address table size for k-mer value k: 4^k.
+// Max supported: 4^15 = 1,073,741,824 (fits uint32_t).  k=16 would
+// produce 4^16 = 2^32 which overflows the uint32_t return type and
+// wraps to 0 — see MAX_K above.
 inline constexpr uint32_t table_size(int k) {
     return static_cast<uint32_t>(uint64_t(1) << (2 * k));
 }
