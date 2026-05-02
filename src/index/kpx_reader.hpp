@@ -37,6 +37,20 @@ public:
         return pos_dict_.access(kmer);
     }
 
+    // Phase 7d hot-path helper: fan out (lo, hi) for a k-mer's .kpx
+    // posting list slice in one EF access_pair.  hi is set to
+    // posting_file_size() when kmer is the last entry (mirrors the
+    // implicit sentinel callers had to compute by hand).
+    void pos_offset_range(uint32_t kmer,
+                          uint64_t& lo, uint64_t& hi) const {
+        if (kmer + 1u < table_size_) {
+            pos_dict_.access_pair(kmer, lo, hi);
+        } else {
+            lo = pos_dict_.access(kmer);
+            hi = posting_file_size_;
+        }
+    }
+
     // madvise budget API
     size_t willneed_size() const;
     void apply_madvise(bool willneed);

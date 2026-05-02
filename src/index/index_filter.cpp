@@ -176,10 +176,8 @@ bool validate_volume(const std::string& kix_path,
 
         if (!has_kpx) continue;
 
-        const std::uint64_t lo = kpx.pos_offset(i);
-        const std::uint64_t hi = (i + 1 < tbl_size)
-            ? kpx.pos_offset(i + 1)
-            : static_cast<std::uint64_t>(kpx_size);
+        std::uint64_t lo, hi;
+        kpx.pos_offset_range(i, lo, hi);
         if (hi < lo) {
             logger.error("validate_volume: kmer %u kpx offset regression (%lu -> %lu)",
                          i,
@@ -187,6 +185,7 @@ bool validate_volume(const std::string& kix_path,
                          static_cast<unsigned long>(hi));
             return false;
         }
+        (void)kpx_size;
         const std::size_t available = static_cast<std::size_t>(hi - lo);
 
         std::uint64_t per_kmer_pos = 0;
@@ -480,13 +479,11 @@ static bool filter_one_volume(
     uint64_t new_total_position_count = 0;
     if (has_kpx_tmp) {
         const uint8_t* kpx_posting_in = kpx_in.posting_file();
-        const uint64_t kpx_total = kpx_in.posting_file_size();
         for (uint32_t i = 0; i < tbl_size; i++) {
             if (excluded[i]) continue;
             if (counts[i] == 0) continue;
-            const uint64_t lo = kpx_in.pos_offset(i);
-            const uint64_t hi = (i + 1 < tbl_size)
-                ? kpx_in.pos_offset(i + 1) : kpx_total;
+            uint64_t lo, hi;
+            kpx_in.pos_offset_range(i, lo, hi);
             if (hi <= lo) continue;
             uint64_t pos_per_kmer = 0;
             const std::size_t consumed = walk_kpx_posting(
