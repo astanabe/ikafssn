@@ -1133,12 +1133,30 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 
 **マルチアクセッション defline:** 元の BLAST DB が `makeblastdb -parse_seqids` で構築され、`\x01` (`^A`) 区切りの multi-defline レコード（同一塩基配列を複数アクセッションで登録する NCBI 慣習）を含んでいる場合、`ikafssnindex` は OID ごとに**全てのアクセッション**を保持します。`.ksx` のアクセッション文字列は OID ごとに全アクセッションを `\x01` で連結した形で格納され、検索出力 (`sseqid` カラム / SAM RNAME / FASTA defline / プロトコルの `sseqid` フィールド) も同じ `\x01` 連結形のまま emit されます。受け取り側で `\x01` を区切りとして分割してください。`-seqidlist` フィルタと `ikafssnretrieve` は `\x01` 連結形・個別アクセッションのいずれを指定しても解決できます。
 
-**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`) でバージョン 7 です。主な変更点:
+**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`) でバージョン 9 です。主な変更点:
 
-- **`.kix` v7 (Phase 5i):** ポスティングリスト本体は FastPFor の `CompositeCodec<SIMDFastPFor<4>, VariableByte>`（PForDelta + VByte 例外ストリーム）で、**distinct seq_id** delta 列 `[abs_first, d1, d2, ...]`（`d_i >= 1` 保証）をエンコードします。同一シーケンス内での k-mer 重複は構築時の SIMD dedup カーネルで除去されます。各ポスティングリストの先頭 `[u32 distinct_count][u32 body_words]` ヘッダにより `distinct_count` は O(1) 取得可能。これにより `-max_freq_build` は **当該 k-mer を含むシーケンス数** を閾値として高頻度 k-mer を除外する本来の設計意図に整合しました（v6 までは総出現数を閾値としていた）。`KIX_FLAG_OFFSET32` フラグ (0x04) が設定されている場合、辞書エントリは `uint32_t` で格納されます（ポスティングファイルが 4 GiB 未満時に適用）。
-- **`.kpx` v7 (Phase 5i):** (k-mer, seq_id) 単位パーティション + 自己記述 short bucket レイアウト。1 つの (k-mer, seq_id) クラスタの出現回数が構築時の `-freq_threshold_part`（デフォルト 8、上限 255）を超えると独立パーティショングループとして切り出され、それ以下の出現は short bucket にまとめられます。short bucket は自身の delta 圧縮された seq_id リストと per-seq_id u8 出現数を持ちます。パーティショングループも short bucket も Phase 5e の FOR-within-block ストリーム（128 要素ブロックごとに min を引いてビットパック）で格納されます。デコードは candidate-set 駆動（呼び出し側がソート済み candidate seq_id 配列を渡し、各 candidate の position 配列を受け取る）になり、v6 の `.kix` ストリームとの lock-step 依存が解消されました。ヘッダの `offset_type` フィールド（バイト 0x11）がオフセット幅を示します: 0 = `uint32_t`、1 = `uint64_t`。
+- **`.kix` v9 (Phase 7):** 辞書 (`offsets[]` 配列) が Elias-Fano blob で格納されるようになりました（NCBI nt_v4 全体平均で 4.6× 圧縮）。各ポスティングリストヘッダは `[u32 distinct_count]`（4 B）のみ — `body_words` は EF 辞書の `posting_byte_length` から導出されるため除去されました（Phase 7c dedup B）。ボディは v8 から変更なしで、FastPFor の `CompositeCodec<SIMDFastPFor<4>, VariableByte>`（PForDelta + VByte 例外ストリーム）が **distinct seq_id** delta 列 `[abs_first, d1, d2, ...]`（`d_i >= 1` 保証）をエンコードします。レガシーの `KIX_FLAG_OFFSET32` フラグ (0x04) は予約扱い（writer は常に 0、reader は無視）。
+- **`.kpx` v9 (Phase 7):** `pos_offsets` 辞書も Elias-Fano。ポスティングリストの 4 つの冗長 `u32` ヘッダフィールドは全て除去され、ボディは 2-bit kind map から始まります。`distinct_count` はデコーダの `kix_count` パラメータから取得（Phase 7c dedup A）。`partition_count` / `short1_count` / `short2_count` は kind map の SIMD popcount から導出（Phase 7d dedup C）。`short2_position_count` は u8 `occ_count[]` のオフセット表構築時の cum sum から導出（Phase 7d dedup D）。空 `.kpx` ポスティングリストはバイト数 0。`KpxHeader.offset_type` バイトは EF sentinel `0xFF` 固定（reader は無視）。
+- **`.ksx` / `.khx` v9 (Phase 7):** データレイアウトは v8 から変更なし。`format_version` のみ family-wide 整合のため bump（single-major-version policy）。マジック文字列は `KMSX` / `KMHX` のまま。
+- **`.kvx` v9 (Phase 7):** マニフェストテキストフォーマットは変更なし。`FORMAT_VERSION` 行が 9 に bump。
 
-Phase 5i 以前 (format_version <= 6) のインデックスは open 時に明確な「rebuild」エラーで拒否されます。アップグレード後にインデックスを再構築してください。
+### マイグレーション (v8 → v9)
+
+ikafssn 0.1.2026.05.03 以降は v9 インデックスを要求します。v8 インデックスは open 時に以下のメッセージで拒否されます:
+
+```
+KixReader: index format version mismatch (got 8, expected 9). Please rebuild with the current ikafssnindex.
+```
+
+(`.kpx` / `.ksx` / `.khx` も同様)。マイグレーションは BLAST DB から再インデックスしてください:
+
+```
+ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir>
+```
+
+NCBI nt 規模（~700 ボリューム、k=12 t=21）では 32 コアホストで数十時間程度の所要時間を想定してください。ディスク上の v9 インデックスサイズは v8 比で 25–35% 削減（辞書 EF blob で約 4.6× 圧縮、ポスティングリストヘッダで非空 k-mer あたり 4–24 B 削減）；RAM/page cache 上の節約は Stage 1 ホットパスに集中するため実効的にはより大きくなります。
+
+v8 より前のインデックスは引き続き同じ「rebuild」エラーで拒否されます。アップグレード後に再構築してください。
 
 ## インストール
 

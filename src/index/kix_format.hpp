@@ -5,15 +5,17 @@
 
 namespace ikafssn {
 
-// .kix v8 (Phase 6): on-wire posting list layout is identical to v7
-// (per-posting-list FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
-// over the distinct seq_id delta stream [abs_first, d1, d2, ...] with d_i >= 1).
-// The format_version + magic bump aligns .kix with the v8 .kpx codec
-// rewrite that occurs in the same phase (see src/index/kpx_format.hpp);
-// the .kix decoded distinct_seq_id array is now part of the .kpx
+// .kix v9 (Phase 7): the dictionary is stored as an Elias-Fano blob
+// (replacing the raw u32/u64 offsets[] array — see src/index/ef_codec.hpp)
+// and the per-posting-list header dropped [u32 body_words] (Phase 7c
+// dedup B; body_words is derived from the EF dictionary's
+// posting_byte_length).  The codec body itself is wire-compatible with
+// v8 — FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte> over the
+// distinct seq_id delta stream [abs_first, d1, d2, ...] with d_i >= 1.
+// The .kix decoded distinct_seq_id array remains part of the .kpx
 // candidate-resolution contract and must always be available alongside
 // the .kpx posting list.
-inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '8'};
+inline constexpr char KIX_MAGIC[4] = {'K', 'I', 'X', '9'};
 
 // Flag bits
 inline constexpr uint32_t KIX_FLAG_SEQ_ID_WIDTH = 0x01; // 0=uint32, 1=uint64 (future)
@@ -26,8 +28,8 @@ inline constexpr uint32_t KIX_FLAG_OFFSET32     = 0x04; // 0=uint64 offsets, 1=u
 
 #pragma pack(push, 1)
 struct KixHeader {
-    char     magic[4];                   // 0x00: "KIX8"
-    uint16_t format_version;             // 0x04: 8
+    char     magic[4];                   // 0x00: "KIX9"
+    uint16_t format_version;             // 0x04: 9
     uint8_t  k;                          // 0x06
     uint8_t  kmer_type;                  // 0x07: 0=uint16, 1=uint32
     uint32_t num_sequences;              // 0x08

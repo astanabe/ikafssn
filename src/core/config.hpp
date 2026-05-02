@@ -28,23 +28,28 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t
 // v4. Phase 5g-1 bumped to v5 (.kix codec replaced with FastPFor's
 // CompositeCodec<SIMDFastPFor<4>, VariableByte>). Phase 5g-2 bumped to v6
 // (.kpx partition + short bucket layout). Phase 5i bumped to v7 (distinct
-// seq_id semantic + self-describing short bucket). Phase 6 bumps to v8:
-//   - .kpx short bucket is split into occ=1 (positions only, no
-//     occ_count) and occ>=2 (u8 occ_count + positions) sub-buckets.
-//   - .kpx classifies each distinct seq_id via a 2-bit kind map indexed
-//     by the .kix decoded distinct_seq_id array; the per-cluster seq_id
-//     duplicate is dropped from both partition groups and the short
-//     buckets (only the .kix posting list carries seq_ids).
-//   - FOR-block header layout becomes [u32 min][u8 b][3 B pad] (8 B,
-//     body 8 B aligned).
-//   - FOR-block tail switches from a varint stream to a packed bit-width
-//     stream: [u8 tail_count][u32 tail_min][u8 tail_b][bitpacked body].
-//   - .kix / .ksx / .khx / .kvx data layouts unchanged; format_version
-//     bumps for family-wide alignment (Phase 5c policy).
-inline constexpr uint16_t KIX_FORMAT_VERSION = 8;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 8;
-inline constexpr uint16_t KSX_FORMAT_VERSION = 8;
-inline constexpr uint16_t KHX_FORMAT_VERSION = 8;
+// seq_id semantic + self-describing short bucket). Phase 6 bumped to v8
+// (kind-map .kpx layout). Phase 7 bumps to v9:
+//   - .kix and .kpx dictionaries replaced by Elias-Fano blobs (4.6× smaller
+//     on average across NCBI nt_v4).  Per-tier ladder mirrors the FastPFor
+//     PForDelta dispatcher: AVX2+ uses BMI2 PDEP+TZCNT for inner-word
+//     select1; SSE4.2 / NEON use the popcount + bit-stripping fallback.
+//     KIX_FLAG_OFFSET32 / KpxHeader.offset_type are reserved (writers force
+//     the EF sentinel; readers ignore the byte).
+//   - .kix posting list header dropped [u32 body_words] (Phase 7c dedup B);
+//     body_words is derived from the EF dictionary's posting_byte_length.
+//   - .kpx posting list header dropped all four redundant u32 fields
+//     ([u32 distinct_count] (dedup A — comes from kix_count), the three
+//     per-kind counts (dedup C — popcount of the 2-bit kind map), and
+//     [u32 short2_position_count] (dedup D — horizontal sum of the u8
+//     occ_count[] array)).  The posting list now starts directly at the
+//     2-bit kind map; empty .kpx posting lists emit 0 bytes.
+//   - .ksx / .khx data layouts unchanged; format_version bumps for
+//     family-wide alignment.  .kvx FORMAT_VERSION line bumps to 9.
+inline constexpr uint16_t KIX_FORMAT_VERSION = 9;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 9;
+inline constexpr uint16_t KSX_FORMAT_VERSION = 9;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 9;
 
 // Direct-address table size for k-mer value k: 4^k
 // Max supported: 2 * 4^12 = 33,554,432 (fits uint32_t).
