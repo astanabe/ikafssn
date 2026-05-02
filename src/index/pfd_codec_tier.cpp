@@ -261,6 +261,8 @@ inline std::uint8_t get_kind_bits(const std::uint8_t* kind_map, std::uint32_t i)
     return std::uint8_t((kind_map[i >> 2] >> ((i & 3) * 2)) & 0x03);
 }
 
+} // anonymous namespace (TU-private helpers)
+
 // Phase 7d dedup C: count partition / short1 / short2 entries directly
 // from the 2-bit kind map.  Replaces the redundant
 // [u32 partition_count][u32 short1_count][u32 short2_count] header
@@ -277,11 +279,11 @@ inline std::uint8_t get_kind_bits(const std::uint8_t* kind_map, std::uint32_t i)
 // -mavx512bw the compiler auto-vectorises the AND/POPCNT chain into
 // vpshufb-based byte popcount where applicable; on SSE4.2 the
 // per-tier -mpopcnt produces hardware POPCNT for the inner u64.
-inline void popcount_kinds(const std::uint8_t* km,
-                           std::uint32_t distinct_count,
-                           std::uint32_t* p_partition,
-                           std::uint32_t* p_short1,
-                           std::uint32_t* p_short2) noexcept {
+void popcount_kinds(const std::uint8_t* km,
+                    std::uint32_t distinct_count,
+                    std::uint32_t* p_partition,
+                    std::uint32_t* p_short1,
+                    std::uint32_t* p_short2) noexcept {
     constexpr std::uint64_t kLow  = 0x5555555555555555ULL;
     std::uint32_t partition_count = 0;
     std::uint32_t short1_count    = 0;
@@ -326,15 +328,14 @@ inline void popcount_kinds(const std::uint8_t* km,
 
 // Phase 7d dedup D: sum a u8 array — replaces the redundant
 // [u32 short2_position_count] header field.  Compiler auto-vectorises
-// to vpsadbw under AVX2 / AVX512BW.
-inline std::uint32_t horizontal_sum_u8(const std::uint8_t* arr,
-                                       std::uint32_t n) noexcept {
+// to vpsadbw under AVX2 / AVX512BW.  Tier-namespaced (not anonymous)
+// for the same VTable-dispatch reason as popcount_kinds.
+std::uint32_t horizontal_sum_u8(const std::uint8_t* arr,
+                                std::uint32_t n) noexcept {
     std::uint32_t sum = 0;
     for (std::uint32_t i = 0; i < n; ++i) sum += arr[i];
     return sum;
 }
-
-} // anonymous namespace
 
 // ===== .kix encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
 //

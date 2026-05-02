@@ -102,6 +102,14 @@ target_link_libraries(test_v8_rejection PRIVATE ikafssn_util)
 add_ikafssn_test(test_index_filter_validate test_index_filter_validate.cpp)
 target_link_libraries(test_index_filter_validate PRIVATE ikafssn_util)
 
+# Phase 7d: per-tier popcount_kinds + horizontal_sum_u8 unit test.
+# Run across every ISA tier via add_ikafssn_simd_test so AVX2 / AVX-512
+# auto-vectorisation paths get the same coverage as SSE4.2 / NEON.
+add_ikafssn_test(test_kind_map_popcount test_kind_map_popcount.cpp)
+target_link_libraries(test_kind_map_popcount PRIVATE ikafssn_util)
+target_compile_definitions(test_kind_map_popcount PRIVATE IKAFSSN_TESTING)
+add_ikafssn_simd_test(test_kind_map_popcount)
+
 # Builder integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_builder test_builder.cpp)
 target_link_libraries(test_builder PRIVATE

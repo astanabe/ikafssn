@@ -63,6 +63,13 @@ namespace ikafssn::pfd {
             const std::uint32_t*, std::size_t,                                \
             PosDecodeScratch&,                                                \
             std::vector<std::vector<std::uint32_t>>&);                        \
+        void popcount_kinds(const std::uint8_t*,                              \
+                            std::uint32_t,                                    \
+                            std::uint32_t*,                                   \
+                            std::uint32_t*,                                   \
+                            std::uint32_t*) noexcept;                         \
+        std::uint32_t horizontal_sum_u8(const std::uint8_t*,                  \
+                                        std::uint32_t) noexcept;              \
     }
 
 #if IKAFSSN_PFD_HAS_X86
@@ -94,6 +101,9 @@ struct VTable {
                      const std::uint32_t*, std::size_t,
                      PosDecodeScratch&,
                      std::vector<std::vector<std::uint32_t>>&);
+    void (*popcount)(const std::uint8_t*, std::uint32_t,
+                     std::uint32_t*, std::uint32_t*, std::uint32_t*) noexcept;
+    std::uint32_t (*hsum_u8)(const std::uint8_t*, std::uint32_t) noexcept;
     const char* tier_name;
 };
 
@@ -110,6 +120,8 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx512vbmi2::encode_posting_kpx,
                 ikafssn_pfd_avx512vbmi2::open_stream_kix,
                 ikafssn_pfd_avx512vbmi2::open_stream_kpx_for_candidates,
+                ikafssn_pfd_avx512vbmi2::popcount_kinds,
+                ikafssn_pfd_avx512vbmi2::horizontal_sum_u8,
                 "avx512vbmi2",
             };
         }
@@ -119,6 +131,8 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx512bw::encode_posting_kpx,
                 ikafssn_pfd_avx512bw::open_stream_kix,
                 ikafssn_pfd_avx512bw::open_stream_kpx_for_candidates,
+                ikafssn_pfd_avx512bw::popcount_kinds,
+                ikafssn_pfd_avx512bw::horizontal_sum_u8,
                 "avx512bw",
             };
         }
@@ -128,6 +142,8 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx2::encode_posting_kpx,
                 ikafssn_pfd_avx2::open_stream_kix,
                 ikafssn_pfd_avx2::open_stream_kpx_for_candidates,
+                ikafssn_pfd_avx2::popcount_kinds,
+                ikafssn_pfd_avx2::horizontal_sum_u8,
                 "avx2",
             };
         }
@@ -137,6 +153,8 @@ const VTable& active_vtable() {
                 ikafssn_pfd_sse42::encode_posting_kpx,
                 ikafssn_pfd_sse42::open_stream_kix,
                 ikafssn_pfd_sse42::open_stream_kpx_for_candidates,
+                ikafssn_pfd_sse42::popcount_kinds,
+                ikafssn_pfd_sse42::horizontal_sum_u8,
                 "sse42",
             };
         }
@@ -153,6 +171,8 @@ const VTable& active_vtable() {
                 ikafssn_pfd_neon::encode_posting_kpx,
                 ikafssn_pfd_neon::open_stream_kix,
                 ikafssn_pfd_neon::open_stream_kpx_for_candidates,
+                ikafssn_pfd_neon::popcount_kinds,
+                ikafssn_pfd_neon::horizontal_sum_u8,
                 "neon",
             };
         }
@@ -210,6 +230,17 @@ bool open_stream_kpx_for_candidates(const std::uint8_t* posting_list, std::size_
                                     kix_decoded, kix_count,
                                     candidates, n_candidates,
                                     scratch, out);
+}
+
+void popcount_kinds(const std::uint8_t* km, std::uint32_t distinct_count,
+                    std::uint32_t* p_partition, std::uint32_t* p_short1,
+                    std::uint32_t* p_short2) noexcept {
+    active_vtable().popcount(km, distinct_count, p_partition, p_short1, p_short2);
+}
+
+std::uint32_t horizontal_sum_u8(const std::uint8_t* arr,
+                                std::uint32_t n) noexcept {
+    return active_vtable().hsum_u8(arr, n);
 }
 
 } // namespace ikafssn::pfd

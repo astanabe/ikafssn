@@ -191,4 +191,26 @@ inline uint32_t posting_count(const uint8_t* posting_list, size_t bytes) {
 // diagnostic logging.
 const char* active_tier_name();
 
+// Phase 7d dedup C: count partition / short1 / short2 entries packed
+// in a 2-bit kind map.  Encoding (per pair) is
+//
+//   00 -> short_occ1   (incremented into *p_short1)
+//   01 -> short_occ_ge2 (incremented into *p_short2)
+//   10 -> partition    (incremented into *p_partition)
+//   11 -> reserved (silently ignored — caller is expected to validate)
+//
+// km must have at least ceil(distinct_count * 2 / 8) bytes; trailing
+// padding bits in the last byte must be zero (the encoder zero-fills
+// the kind map before writing entries).
+void popcount_kinds(const uint8_t* km,
+                    uint32_t distinct_count,
+                    uint32_t* p_partition,
+                    uint32_t* p_short1,
+                    uint32_t* p_short2) noexcept;
+
+// Phase 7d dedup D: sum a u8 array.  Returns the total of arr[0..n).
+// The compiler's per-tier auto-vectorisation lowers this to vpsadbw
+// on AVX2 / AVX-512BW.
+uint32_t horizontal_sum_u8(const uint8_t* arr, uint32_t n) noexcept;
+
 } // namespace ikafssn::pfd
