@@ -243,8 +243,7 @@ static bool filter_one_volume(
 
     // Compute new totals.  v7: .kix tracks distinct seq_id postings;
     // .kpx tracks the total position count (sum of intra-sequence
-    // occurrences).  The .kpx position count per k-mer lives at byte
-    // offset 4 of each posting list (u32 right after distinct_count).
+    // occurrences).
     auto counts = kix_in.bulk_count_postings();
     uint64_t new_total_distinct_postings = 0;
     for (uint32_t i = 0; i < tbl_size; i++) {
@@ -253,14 +252,23 @@ static bool filter_one_volume(
         }
     }
 
+    // FIXME(phase 7d --validate): this recompute is a pre-existing v8
+    // bug (the field at offset 4 of a v8 .kpx posting list was
+    // `partition_count`, not the per-k-mer position count).  The
+    // proper value would require summing `short1_count +
+    // short2_position_count + sum(partition occ_counts)` per k-mer.
+    // Phase 7c shifts the bug by 4 bytes (post dedup A, offset 0 is
+    // `partition_count`); 7d's --validate path will replace this with
+    // a correct walk.  The header field is informational (used by
+    // ikafssninfo only) and does not affect search correctness.
     uint64_t new_total_position_count = 0;
     if (has_kpx_tmp) {
         const uint8_t* kpx_posting_in = kpx_in.posting_file();
         for (uint32_t i = 0; i < tbl_size; i++) {
-            if (kix_sizes[i] > 0 && !excluded[i] && kpx_sizes[i] >= 8) {
+            if (kix_sizes[i] > 0 && !excluded[i] && kpx_sizes[i] >= 4) {
                 uint32_t pos_cnt;
                 std::memcpy(&pos_cnt,
-                            kpx_posting_in + kpx_in.pos_offset(i) + sizeof(uint32_t),
+                            kpx_posting_in + kpx_in.pos_offset(i),
                             sizeof(uint32_t));
                 new_total_position_count += pos_cnt;
             }

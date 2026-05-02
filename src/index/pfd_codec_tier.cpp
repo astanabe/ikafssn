@@ -263,23 +263,22 @@ inline std::uint8_t get_kind_bits(const std::uint8_t* kind_map, std::uint32_t i)
 
 } // anonymous namespace
 
-// ===== .kix v8 encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
+// ===== .kix encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
 //
-// Wire-compatible with v7.  On-disk per-posting-list layout:
-//   [u32 distinct_count]  — number of distinct seq_ids represented
-//   [u32 body_words]      — number of u32 words written by the codec
-//   [u32 body[N]]         — codec output, byte-unaligned
+// Phase 7c dedup B: only the leading `[u32 distinct_count]` is written;
+// `body_words` is derived at decode time from the EF dictionary's
+// posting_byte_length.  On-disk per-posting-list layout:
+//   [u32 distinct_count]   — number of distinct seq_ids represented
+//   [u32 body[N]]          — codec output (N = (bytes - 4) / 4)
 
 std::size_t encode_posting_kix(const std::uint32_t* delta_array,
                                std::uint32_t count,
                                std::vector<std::uint8_t>& out) {
     const std::size_t before = out.size();
-    out.resize(before + 8);
+    out.resize(before + 4);
     std::memcpy(out.data() + before, &count, sizeof(std::uint32_t));
     if (count == 0) {
-        std::uint32_t zero = 0;
-        std::memcpy(out.data() + before + 4, &zero, sizeof(std::uint32_t));
-        return 8;
+        return 4;
     }
 
     const std::size_t worst_words = std::size_t(count) * 2 + 1024;
@@ -287,21 +286,20 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
     std::size_t nvalue = codec_out.size();
     kix_codec().encodeArray(delta_array, count, codec_out.data(), nvalue);
 
-    const std::uint32_t body_words = static_cast<std::uint32_t>(nvalue);
-    std::memcpy(out.data() + before + 4, &body_words, sizeof(std::uint32_t));
-
-    const std::size_t body_bytes = std::size_t(body_words) * sizeof(std::uint32_t);
+    const std::size_t body_bytes = nvalue * sizeof(std::uint32_t);
     out.resize(out.size() + body_bytes);
-    std::memcpy(out.data() + before + 8, codec_out.data(), body_bytes);
+    std::memcpy(out.data() + before + 4, codec_out.data(), body_bytes);
 
     return out.size() - before;
 }
 
-// ===== .kpx v8 encode =====
+// ===== .kpx encode =====
 //
-// Top header (5 u32) + 2-bit kind map + partition groups (no per-group
-// sid) + short_occ1 sub-bucket + u8 occ_count[short2] + short_occ_ge2
-// sub-bucket.  See src/index/pfd_codec.hpp for the wire format.
+// Phase 7c dedup A: leading `[u32 distinct_count]` removed (decoder
+// takes it from kix_count).  Top header is 4 u32 = 16 B + 2-bit
+// kind map + partition groups (no per-group sid) + short_occ1 sub-
+// bucket + u8 occ_count[short2] + short_occ_ge2 sub-bucket.  See
+// src/index/pfd_codec.hpp for the wire format.
 
 std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
                                const std::uint32_t* occ_count,
@@ -312,11 +310,11 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
                                std::vector<std::uint8_t>& out) {
     const std::size_t before = out.size();
 
-    // Top header placeholders.
-    out.resize(before + 5 * sizeof(std::uint32_t));
+    // Top header placeholders (4 u32 = 16 B post-7c).
+    out.resize(before + 4 * sizeof(std::uint32_t));
 
     if (distinct_count == 0) {
-        std::memset(out.data() + before, 0, 5 * sizeof(std::uint32_t));
+        std::memset(out.data() + before, 0, 4 * sizeof(std::uint32_t));
         return out.size() - before;
     }
 
@@ -341,14 +339,14 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
         kinds[k] = kind;
     }
 
-    // Top header.
+    // Top header (Phase 7c: no distinct_count — derived from kix_count
+    // at decode time).
     {
         std::uint8_t* hdr = out.data() + before;
-        std::memcpy(hdr +  0, &distinct_count,        sizeof(std::uint32_t));
-        std::memcpy(hdr +  4, &partition_count,       sizeof(std::uint32_t));
-        std::memcpy(hdr +  8, &short1_count,          sizeof(std::uint32_t));
-        std::memcpy(hdr + 12, &short2_count,          sizeof(std::uint32_t));
-        std::memcpy(hdr + 16, &short2_position_count, sizeof(std::uint32_t));
+        std::memcpy(hdr +  0, &partition_count,       sizeof(std::uint32_t));
+        std::memcpy(hdr +  4, &short1_count,          sizeof(std::uint32_t));
+        std::memcpy(hdr +  8, &short2_count,          sizeof(std::uint32_t));
+        std::memcpy(hdr + 12, &short2_position_count, sizeof(std::uint32_t));
     }
 
     // 2-bit kind map.
@@ -425,19 +423,21 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
     ctx.count = 0;
     ctx.pos = 0;
     if (bytes == 0) return true;
-    if (bytes < 8) return false;
+    if (bytes < 4) return false;  // Phase 7c: header is just [u32 distinct_count]
 
     std::uint32_t count;
-    std::uint32_t body_words;
-    std::memcpy(&count,      posting_list,     sizeof(std::uint32_t));
-    std::memcpy(&body_words, posting_list + 4, sizeof(std::uint32_t));
+    std::memcpy(&count, posting_list, sizeof(std::uint32_t));
     if (count == 0) return true;
 
-    const std::size_t body_bytes = std::size_t(body_words) * sizeof(std::uint32_t);
-    if (bytes < 8 + body_bytes) return false;
+    // Phase 7c dedup B: body_words derived from the posting list byte
+    // length supplied by the EF dictionary (no on-wire body_words).
+    const std::size_t body_bytes_avail = bytes - 4;
+    if ((body_bytes_avail % sizeof(std::uint32_t)) != 0) return false;
+    const std::uint32_t body_words = static_cast<std::uint32_t>(
+        body_bytes_avail / sizeof(std::uint32_t));
 
     std::vector<std::uint32_t> codec_in(body_words);
-    std::memcpy(codec_in.data(), posting_list + 8, body_bytes);
+    std::memcpy(codec_in.data(), posting_list + 4, body_bytes_avail);
 
     ctx.decoded.resize(count);
     std::size_t nvalue = ctx.decoded.size();
@@ -469,24 +469,25 @@ bool open_stream_kpx_for_candidates(
 
     if (n_candidates == 0) return true;
     if (bytes == 0) return true;
-    if (bytes < 5 * sizeof(std::uint32_t)) return false;
+    // Phase 7c dedup A: leading `[u32 distinct_count]` removed; decoder
+    // uses kix_count instead.  Header is now 4 u32 = 16 B.
+    if (bytes < 4 * sizeof(std::uint32_t)) return false;
 
     const std::uint8_t* p = posting_list;
     const std::uint8_t* end = posting_list + bytes;
 
-    std::uint32_t distinct_count, partition_count, short1_count, short2_count, short2_position_count;
-    std::memcpy(&distinct_count,        p, 4); p += 4;
+    std::uint32_t partition_count, short1_count, short2_count, short2_position_count;
     std::memcpy(&partition_count,       p, 4); p += 4;
     std::memcpy(&short1_count,          p, 4); p += 4;
     std::memcpy(&short2_count,          p, 4); p += 4;
     std::memcpy(&short2_position_count, p, 4); p += 4;
 
+    const std::uint32_t distinct_count = static_cast<std::uint32_t>(kix_count);
     if (distinct_count == 0) {
         if (partition_count != 0 || short1_count != 0 ||
             short2_count != 0 || short2_position_count != 0) return false;
         return true;
     }
-    if (distinct_count != kix_count) return false;
     if (distinct_count != partition_count + short1_count + short2_count) return false;
 
     const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;

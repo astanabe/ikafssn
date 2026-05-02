@@ -1,45 +1,48 @@
 #pragma once
 
-// Phase 6 — split codec for .kix v8 and .kpx v8.
+// Phase 6 + 7c — split codec for .kix and .kpx posting lists.
 //
-//   .kix v8: FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
-//            (PForDelta + VByte tail) over the **distinct seq_id**
-//            delta stream — wire format identical to v7.  Intra-
-//            sequence k-mer duplicates are removed by a SIMD dedup
-//            kernel (src/index/seq_id_dedup.*) at build time, so the
-//            input stream to the codec is
-//            [abs_first, d1, d2, ...] with d_i >= 1 strictly.
-//            Posting list layout on disk:
-//              [u32 distinct_count]         — distinct seq_ids in this k-mer
-//              [u32 body_words]             — posting list body size in u32 words
-//              [u32 body[body_words]]       — codec output, byte-unaligned
-//                                             on the wire (use memcpy)
+//   .kix: FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
+//         (PForDelta + VByte tail) over the **distinct seq_id**
+//         delta stream — wire format unchanged from v8 except the
+//         redundant `[u32 body_words]` was removed (Phase 7c dedup B;
+//         body length is derivable from the EF dictionary's
+//         posting_byte_length).  Intra-sequence k-mer duplicates are
+//         removed by a SIMD dedup kernel (src/index/seq_id_dedup.*)
+//         at build time, so the input stream to the codec is
+//         [abs_first, d1, d2, ...] with d_i >= 1 strictly.
+//         Posting list layout on disk:
+//           [u32 distinct_count]         — distinct seq_ids in this k-mer
+//           [u32 body[(bytes-4)/4]]      — codec output, byte-unaligned
+//                                          on the wire (use memcpy)
 //
-//   .kpx v8: per-(kmer, seq_id) partitioned position posting list whose
-//            **decoder is driven by the .kix distinct seq_id array**.
-//            Each distinct seq_id is classified into one of three
-//            kinds via a 2-bit kind map; the seq_id itself is not
-//            stored in the .kpx posting list (the .kix decoded array
-//            supplies the resolution between rank and seq_id).
+//   .kpx: per-(kmer, seq_id) partitioned position posting list whose
+//         **decoder is driven by the .kix distinct seq_id array**.
+//         Each distinct seq_id is classified into one of three
+//         kinds via a 2-bit kind map; the seq_id itself is not
+//         stored in the .kpx posting list (the .kix decoded array
+//         supplies the resolution between rank and seq_id).
 //
-//                00 = short_occ1     — exactly 1 position
-//                01 = short_occ_ge2  — between 2 and freq_threshold_part
-//                10 = partition      — strictly more than freq_threshold_part
-//                11 = reserved
+//             00 = short_occ1     — exactly 1 position
+//             01 = short_occ_ge2  — between 2 and freq_threshold_part
+//             10 = partition      — strictly more than freq_threshold_part
+//             11 = reserved
 //
-//            Posting list layout on disk (top header is 5 u32 = 20 B):
-//              [u32 distinct_count]                  — must match .kix
-//              [u32 partition_count]
-//              [u32 short1_count]                    — # occ=1 clusters
-//              [u32 short2_count]                    — # occ>=2 clusters
-//              [u32 short2_position_count]           — sum of u8 occ_count[]
-//              [2-bit kind map: ceil(distinct_count*2/8) bytes]
-//              repeated partition_count times in .kix sid order:
-//                [u32 occ_count]                     — > freq_threshold_part
-//                [FOR-block stream over occ_count positions]
-//              [FOR-block stream over short1_count positions]
-//              [u8 occ_count[short2_count]]          — 2..freq_threshold_part
-//              [FOR-block stream over short2_position_count positions]
+//         Posting list layout on disk (Phase 7c — top header dropped
+//         the redundant `[u32 distinct_count]`; the decoder takes
+//         distinct_count from the kix_count parameter, so the four
+//         remaining u32 fields make up a 16 B fixed header):
+//           [u32 partition_count]
+//           [u32 short1_count]                    — # occ=1 clusters
+//           [u32 short2_count]                    — # occ>=2 clusters
+//           [u32 short2_position_count]           — sum of u8 occ_count[]
+//           [2-bit kind map: ceil(distinct_count*2/8) bytes]
+//           repeated partition_count times in .kix sid order:
+//             [u32 occ_count]                     — > freq_threshold_part
+//             [FOR-block stream over occ_count positions]
+//           [FOR-block stream over short1_count positions]
+//           [u8 occ_count[short2_count]]          — 2..freq_threshold_part
+//           [FOR-block stream over short2_position_count positions]
 //
 //            Each FOR-block is 8 + 16*b bytes:
 //                [u32 min][u8 b][3 B pad][16*b bytes bitpacked (value-min)]
@@ -69,10 +72,12 @@ namespace ikafssn::pfd {
 // 128, matching the plan).
 inline constexpr int kPfdBlockSize = 128;
 
-// Posting list header byte size for .kix (distinct_count + body_words).
-// The .kpx layout uses its own variable-length header (see the file-level
-// comment above) so this constant only describes the .kix posting list.
-inline constexpr size_t kPostingListHeaderBytes = 8;
+// Posting list header byte size for .kix.  Phase 7c dedup B removed
+// the redundant `[u32 body_words]` field, so the only fixed-size .kix
+// posting list header is the leading `[u32 distinct_count]`.  The
+// .kpx layout uses its own 16 B fixed header; this constant only
+// describes the .kix posting list.
+inline constexpr size_t kPostingListHeaderBytes = 4;
 
 // === posting-list-level encode wrappers ===
 
@@ -170,8 +175,9 @@ bool open_stream_kpx_for_candidates(
 
 // === posting list inspection (no decode) ===
 
-// Read the distinct_count u32 at the start of a .kix posting list.  Returns
-// 0 if the posting list is shorter than the 8-byte header.
+// Read the distinct_count u32 at the start of a .kix posting list.
+// Returns 0 if the posting list is shorter than the 4-byte header
+// (Phase 7c dedup B).
 inline uint32_t posting_count(const uint8_t* posting_list, size_t bytes) {
     if (bytes < kPostingListHeaderBytes) return 0;
     uint32_t cnt;
