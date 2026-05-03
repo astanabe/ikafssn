@@ -61,7 +61,8 @@ struct KpxStats {
     uint64_t total_position_count = 0;
     uint64_t total_distinct_count = 0;
 
-    // Top-level posting list headers: 5 u32 = 20 B per non-empty kmer.
+    // Phase 7c+7d removed the 5 u32 top-level posting list header.  Field
+    // retained for layout symmetry with older runs but stays at 0 in v9.
     uint64_t bytes_top_header = 0;
     // 2-bit kind map bytes per posting list.
     uint64_t bytes_kind_map = 0;
@@ -135,34 +136,41 @@ ssize_t walk_for_stream(const uint8_t* p, const uint8_t* end, uint32_t count,
     return p - p0;
 }
 
-bool walk_kpx_posting(const uint8_t* p, const uint8_t* end, KpxStats& st) {
-    if (end - p < 5 * 4) return false;
-    uint32_t distinct_count, partition_count, short1_count, short2_count, short2_position_count;
-    std::memcpy(&distinct_count,        p, 4); p += 4;
-    std::memcpy(&partition_count,       p, 4); p += 4;
-    std::memcpy(&short1_count,          p, 4); p += 4;
-    std::memcpy(&short2_count,          p, 4); p += 4;
-    std::memcpy(&short2_position_count, p, 4); p += 4;
-    st.bytes_top_header += 5 * 4;
-
-    if (distinct_count == 0) {
-        if (partition_count != 0 || short1_count != 0 ||
-            short2_count != 0 || short2_position_count != 0) return false;
+// Phase 7c+7d dedup A/C/D: distinct_count comes from .kix; the four
+// redundant top-header u32 fields were removed.  The body starts
+// directly at the 2-bit kind map.
+bool walk_kpx_posting(const uint8_t* p, const uint8_t* end, uint32_t kix_count,
+                      KpxStats& st) {
+    if (kix_count == 0) {
+        // Empty .kix posting list aliases to the next non-empty
+        // k-mer's slice; the v9 .kpx writer emits zero bytes for it.
         return true;
     }
 
-    if (distinct_count != partition_count + short1_count + short2_count) return false;
-
     st.n_kmers_nonempty++;
-    st.total_distinct_count += distinct_count;
+    st.total_distinct_count += kix_count;
 
     // 2-bit kind map.
-    const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;
+    const std::size_t kind_map_bytes = (std::size_t(kix_count) * 2 + 7) / 8;
     if (size_t(end - p) < kind_map_bytes) return false;
+    const uint8_t* kind_map = p;
     p += kind_map_bytes;
     st.bytes_kind_map += kind_map_bytes;
 
-    // Partition groups.
+    // Per-kind counts via kind-map popcount.
+    uint32_t partition_count = 0, short1_count = 0, short2_count = 0;
+    for (uint32_t k = 0; k < kix_count; k++) {
+        uint8_t kind = static_cast<uint8_t>(
+            (kind_map[k >> 2] >> ((k & 3) * 2)) & 0x03);
+        switch (kind) {
+            case 0: short1_count++;    break;
+            case 1: short2_count++;    break;
+            case 2: partition_count++; break;
+            default: return false;  // 11 reserved
+        }
+    }
+
+    // Partition groups: each [u32 occ_count][FOR stream].
     for (uint32_t g = 0; g < partition_count; g++) {
         if (size_t(end - p) < 4) return false;
         uint32_t gcnt;
@@ -190,8 +198,12 @@ bool walk_kpx_posting(const uint8_t* p, const uint8_t* end, KpxStats& st) {
     // short_occ_ge2 sub-bucket.
     if (short2_count > 0) {
         st.short2_seqs += short2_count;
-        st.short2_positions += short2_position_count;
         if (size_t(end - p) < short2_count) return false;
+        uint32_t short2_position_count = 0;
+        for (uint32_t i = 0; i < short2_count; i++) {
+            short2_position_count += p[i];
+        }
+        st.short2_positions += short2_position_count;
         p += short2_count;
         st.short2_occ_bytes += short2_count;
         if (short2_position_count > 0) {
@@ -262,7 +274,7 @@ void print_kpx_report(const KpxStats& st, uint64_t total_bytes) {
 
     std::printf("\n[top headers + kind map]      : %lu (%.2f%% of file)\n",
                 top_total, 100.0 * double(top_total) / double(total_bytes));
-    std::printf("  top header bytes (5 u32)   : %lu (20 B/non-empty kmer)\n", st.bytes_top_header);
+    std::printf("  top header bytes (Phase 7c+7d removed) : %lu\n", st.bytes_top_header);
     std::printf("  2-bit kind map bytes       : %lu\n", st.bytes_kind_map);
 
     std::printf("\n[partition groups] total      : %lu (%.2f%% of file)\n",
@@ -349,14 +361,15 @@ bool walk_kix(const KixReader& kix, KixStats& st, uint64_t& total_bytes) {
         uint64_t off = kix.posting_list_offset(kmer);
         uint64_t len = kix.posting_list_byte_length(kmer);
         if (len == 0) continue;
-        if (len < 8) return false;
-        uint32_t count, body_words;
-        std::memcpy(&count,      base + off,     4);
-        std::memcpy(&body_words, base + off + 4, 4);
+        // Phase 7c dedup B: per-posting-list header is just [u32 distinct_count].
+        if (len < 4) return false;
+        uint32_t count;
+        std::memcpy(&count, base + off, 4);
+        const uint64_t body_bytes = len - 4;
         st.n_kmers_nonempty++;
         st.total_distinct_count += count;
-        st.bytes_posting_list_header += 8;
-        st.bytes_posting_list_body += uint64_t(body_words) * 4;
+        st.bytes_posting_list_header += 4;
+        st.bytes_posting_list_body += body_bytes;
     }
     return true;
 }
@@ -373,18 +386,28 @@ bool walk_kpx(const KixReader& kix, const KpxReader& kpx,
     const uint32_t tbl = kpx.table_size();
     const uint8_t* end = base + total_bytes;
     uint64_t skipped_empty = 0;
+    // Phase 7c+7d: walk_kpx_posting needs kix_count to size the kind map
+    // and derive per-kind sub-bucket counts.  Read it from the leading
+    // u32 of every .kix posting list.
+    const uint8_t* kix_base = kix.posting_file();
     for (uint32_t kmer = 0; kmer < tbl; kmer++) {
-        if (kix.posting_list_byte_length(kmer) == 0) {
+        const uint64_t kix_len = kix.posting_list_byte_length(kmer);
+        if (kix_len == 0) {
             skipped_empty++;
             continue;
         }
+        const uint64_t kix_off = kix.posting_list_offset(kmer);
+        uint32_t kix_count = 0;
+        if (kix_len >= 4) {
+            std::memcpy(&kix_count, kix_base + kix_off, 4);
+        }
         uint64_t off = kpx.pos_offset(kmer);
-        if (off >= total_bytes) {
+        if (off > total_bytes) {
             std::fprintf(stderr, "kmer %u: offset %lu past end %lu\n",
                          kmer, off, total_bytes);
             return false;
         }
-        if (!walk_kpx_posting(base + off, end, st)) {
+        if (!walk_kpx_posting(base + off, end, kix_count, st)) {
             std::fprintf(stderr, "kmer %u: walk failed at offset %lu\n", kmer, off);
             return false;
         }

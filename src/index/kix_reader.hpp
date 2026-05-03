@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "io/mmap_file.hpp"
+#include "index/ef_codec.hpp"
 #include "index/kix_format.hpp"
 
 namespace ikafssn {
@@ -21,7 +22,9 @@ public:
     uint8_t t() const { return header_->t; }
     uint8_t template_type() const { return header_->template_type; }
     uint32_t table_size() const { return table_size_; }
-    bool is_offset32() const { return offset32_; }
+    // Phase 7a: dictionary is Elias-Fano; the legacy flag is no longer
+    // consulted at read time (kept on the header for byte-stability).
+    bool is_offset32() const { return false; }
 
     // Raw pointer to the start of the ID posting file
     const uint8_t* posting_file() const { return posting_file_; }
@@ -33,13 +36,30 @@ public:
 
     // Get posting list byte offset for a k-mer
     uint64_t posting_list_offset(uint32_t kmer) const {
-        if (offset32_) return offsets32_[kmer];
-        return offsets64_[kmer];
+        return dict_.access(kmer);
     }
 
-    // Byte length of posting list for a k-mer
+    // Byte length of posting list for a k-mer.  The Elias-Fano dictionary
+    // resolves both endpoints in a single pair-fetch (a single select1 +
+    // adjacent low-bits read in 7b SIMD; two sequential accesses in the
+    // 7a scalar PoC).
     uint64_t posting_list_byte_length(uint32_t kmer) const {
-        return posting_list_offset(kmer + 1) - posting_list_offset(kmer);
+        uint64_t s, e;
+        dict_.access_pair(kmer, s, e);
+        return e - s;
+    }
+
+    // Phase 7d hot-path helper: fetch (offset, byte_length) for a k-mer
+    // in one EF access_pair, halving the dispatcher round-trips that
+    // Stage 1 / Stage 2 paid by calling posting_list_offset(kmer) +
+    // posting_list_offset(kmer+1) (or _byte_length + _offset).
+    void posting_list_range(uint32_t kmer,
+                            uint64_t& offset,
+                            uint64_t& byte_length) const {
+        uint64_t s, e;
+        dict_.access_pair(kmer, s, e);
+        offset = s;
+        byte_length = e - s;
     }
 
     // Bulk count all postings: for each k-mer, returns the number of
@@ -51,9 +71,7 @@ public:
 private:
     MmapFile mmap_;
     const KixHeader* header_ = nullptr;
-    const uint64_t* offsets64_ = nullptr;
-    const uint32_t* offsets32_ = nullptr;
-    bool offset32_ = false;
+    ef::EFDictionary dict_;
     const uint8_t* posting_file_ = nullptr;
     size_t posting_file_size_ = 0;
     uint32_t table_size_ = 0;

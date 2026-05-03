@@ -261,25 +261,98 @@ inline std::uint8_t get_kind_bits(const std::uint8_t* kind_map, std::uint32_t i)
     return std::uint8_t((kind_map[i >> 2] >> ((i & 3) * 2)) & 0x03);
 }
 
-} // anonymous namespace
+} // anonymous namespace (TU-private helpers)
 
-// ===== .kix v8 encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
+// Phase 7d dedup C: count partition / short1 / short2 entries directly
+// from the 2-bit kind map.  Replaces the redundant
+// [u32 partition_count][u32 short1_count][u32 short2_count] header
+// fields.  The kind_map encoding is:
 //
-// Wire-compatible with v7.  On-disk per-posting-list layout:
-//   [u32 distinct_count]  — number of distinct seq_ids represented
-//   [u32 body_words]      — number of u32 words written by the codec
-//   [u32 body[N]]         — codec output, byte-unaligned
+//   00 = short_occ1     -> short1
+//   01 = short_occ_ge2  -> short2
+//   10 = partition      -> partition
+//   11 = reserved
+//
+// Bulk path: process 32 pairs (8 bytes) per iteration via three
+// popcount-of-mask operations, isolating each kind via bitwise
+// expressions on the low and high bits of every pair.  Under -mavx2 /
+// -mavx512bw the compiler auto-vectorises the AND/POPCNT chain into
+// vpshufb-based byte popcount where applicable; on SSE4.2 the
+// per-tier -mpopcnt produces hardware POPCNT for the inner u64.
+void popcount_kinds(const std::uint8_t* km,
+                    std::uint32_t distinct_count,
+                    std::uint32_t* p_partition,
+                    std::uint32_t* p_short1,
+                    std::uint32_t* p_short2) noexcept {
+    constexpr std::uint64_t kLow  = 0x5555555555555555ULL;
+    std::uint32_t partition_count = 0;
+    std::uint32_t short1_count    = 0;
+    std::uint32_t short2_count    = 0;
+
+    // Whole-chunk loop: 32 pairs (8 bytes) at a time, only when the
+    // chunk lies entirely within distinct_count.
+    std::uint32_t k = 0;
+    while (k + 32 <= distinct_count) {
+        std::uint64_t w;
+        std::memcpy(&w, km + (k >> 2), 8);
+        const std::uint64_t lo_bits = w & kLow;
+        const std::uint64_t hi_bits = (w >> 1) & kLow;
+        // 00 -> short1: ~hi & ~lo  (masked to pair positions via kLow)
+        // 01 -> short2: ~hi &  lo
+        // 10 -> partition: hi & ~lo
+        // 11 -> reserved (caller must still invoke get_kind_bits to detect it)
+        partition_count += static_cast<std::uint32_t>(
+            __builtin_popcountll(hi_bits & ~lo_bits));
+        short2_count    += static_cast<std::uint32_t>(
+            __builtin_popcountll(~hi_bits & lo_bits & kLow));
+        short1_count    += static_cast<std::uint32_t>(
+            __builtin_popcountll(~hi_bits & ~lo_bits & kLow));
+        k += 32;
+    }
+
+    // Tail: per-pair scalar.
+    for (; k < distinct_count; ++k) {
+        std::uint8_t kind = get_kind_bits(km, k);
+        switch (kind) {
+            case 0: short1_count++;    break;
+            case 1: short2_count++;    break;
+            case 2: partition_count++; break;
+            default: break;  // 11 reserved; counted as "other" (caller validates)
+        }
+    }
+
+    *p_partition = partition_count;
+    *p_short1    = short1_count;
+    *p_short2    = short2_count;
+}
+
+// Phase 7d dedup D: sum a u8 array — replaces the redundant
+// [u32 short2_position_count] header field.  Compiler auto-vectorises
+// to vpsadbw under AVX2 / AVX512BW.  Tier-namespaced (not anonymous)
+// for the same VTable-dispatch reason as popcount_kinds.
+std::uint32_t horizontal_sum_u8(const std::uint8_t* arr,
+                                std::uint32_t n) noexcept {
+    std::uint32_t sum = 0;
+    for (std::uint32_t i = 0; i < n; ++i) sum += arr[i];
+    return sum;
+}
+
+// ===== .kix encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
+//
+// Phase 7c dedup B: only the leading `[u32 distinct_count]` is written;
+// `body_words` is derived at decode time from the EF dictionary's
+// posting_byte_length.  On-disk per-posting-list layout:
+//   [u32 distinct_count]   — number of distinct seq_ids represented
+//   [u32 body[N]]          — codec output (N = (bytes - 4) / 4)
 
 std::size_t encode_posting_kix(const std::uint32_t* delta_array,
                                std::uint32_t count,
                                std::vector<std::uint8_t>& out) {
     const std::size_t before = out.size();
-    out.resize(before + 8);
+    out.resize(before + 4);
     std::memcpy(out.data() + before, &count, sizeof(std::uint32_t));
     if (count == 0) {
-        std::uint32_t zero = 0;
-        std::memcpy(out.data() + before + 4, &zero, sizeof(std::uint32_t));
-        return 8;
+        return 4;
     }
 
     const std::size_t worst_words = std::size_t(count) * 2 + 1024;
@@ -287,21 +360,26 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
     std::size_t nvalue = codec_out.size();
     kix_codec().encodeArray(delta_array, count, codec_out.data(), nvalue);
 
-    const std::uint32_t body_words = static_cast<std::uint32_t>(nvalue);
-    std::memcpy(out.data() + before + 4, &body_words, sizeof(std::uint32_t));
-
-    const std::size_t body_bytes = std::size_t(body_words) * sizeof(std::uint32_t);
+    const std::size_t body_bytes = nvalue * sizeof(std::uint32_t);
     out.resize(out.size() + body_bytes);
-    std::memcpy(out.data() + before + 8, codec_out.data(), body_bytes);
+    std::memcpy(out.data() + before + 4, codec_out.data(), body_bytes);
 
     return out.size() - before;
 }
 
-// ===== .kpx v8 encode =====
+// ===== .kpx encode =====
 //
-// Top header (5 u32) + 2-bit kind map + partition groups (no per-group
-// sid) + short_occ1 sub-bucket + u8 occ_count[short2] + short_occ_ge2
-// sub-bucket.  See src/index/pfd_codec.hpp for the wire format.
+// Phase 7c+7d: all four redundant header fields removed.  The body
+// starts directly at the 2-bit kind map; counts are derived at decode
+// time from the kind map (popcount_kinds for partition/short1/short2)
+// and from the u8 occ_count[] array (horizontal_sum_u8 for
+// short2_position_count).  See src/index/pfd_codec.hpp for the wire
+// format.
+//
+// Empty posting lists (distinct_count == 0) emit zero bytes; the
+// caller's offset table is responsible for delimiting the per-k-mer
+// region (an empty .kpx posting list aliases the next non-empty
+// posting list's start).
 
 std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
                                const std::uint32_t* occ_count,
@@ -312,12 +390,10 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
                                std::vector<std::uint8_t>& out) {
     const std::size_t before = out.size();
 
-    // Top header placeholders.
-    out.resize(before + 5 * sizeof(std::uint32_t));
-
     if (distinct_count == 0) {
-        std::memset(out.data() + before, 0, 5 * sizeof(std::uint32_t));
-        return out.size() - before;
+        // Phase 7d: empty posting list emits 0 bytes (no header).  The
+        // decoder gates on kix_count > 0 and never reads this region.
+        return 0;
     }
 
     // Pass 1: classify each distinct sid by occ_count.
@@ -341,17 +417,7 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
         kinds[k] = kind;
     }
 
-    // Top header.
-    {
-        std::uint8_t* hdr = out.data() + before;
-        std::memcpy(hdr +  0, &distinct_count,        sizeof(std::uint32_t));
-        std::memcpy(hdr +  4, &partition_count,       sizeof(std::uint32_t));
-        std::memcpy(hdr +  8, &short1_count,          sizeof(std::uint32_t));
-        std::memcpy(hdr + 12, &short2_count,          sizeof(std::uint32_t));
-        std::memcpy(hdr + 16, &short2_position_count, sizeof(std::uint32_t));
-    }
-
-    // 2-bit kind map.
+    // 2-bit kind map (the body now starts here — no preceding u32 fields).
     const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;
     const std::size_t kind_map_off = out.size();
     out.resize(out.size() + kind_map_bytes);
@@ -425,19 +491,21 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
     ctx.count = 0;
     ctx.pos = 0;
     if (bytes == 0) return true;
-    if (bytes < 8) return false;
+    if (bytes < 4) return false;  // Phase 7c: header is just [u32 distinct_count]
 
     std::uint32_t count;
-    std::uint32_t body_words;
-    std::memcpy(&count,      posting_list,     sizeof(std::uint32_t));
-    std::memcpy(&body_words, posting_list + 4, sizeof(std::uint32_t));
+    std::memcpy(&count, posting_list, sizeof(std::uint32_t));
     if (count == 0) return true;
 
-    const std::size_t body_bytes = std::size_t(body_words) * sizeof(std::uint32_t);
-    if (bytes < 8 + body_bytes) return false;
+    // Phase 7c dedup B: body_words derived from the posting list byte
+    // length supplied by the EF dictionary (no on-wire body_words).
+    const std::size_t body_bytes_avail = bytes - 4;
+    if ((body_bytes_avail % sizeof(std::uint32_t)) != 0) return false;
+    const std::uint32_t body_words = static_cast<std::uint32_t>(
+        body_bytes_avail / sizeof(std::uint32_t));
 
     std::vector<std::uint32_t> codec_in(body_words);
-    std::memcpy(codec_in.data(), posting_list + 8, body_bytes);
+    std::memcpy(codec_in.data(), posting_list + 4, body_bytes_avail);
 
     ctx.decoded.resize(count);
     std::size_t nvalue = ctx.decoded.size();
@@ -469,30 +537,25 @@ bool open_stream_kpx_for_candidates(
 
     if (n_candidates == 0) return true;
     if (bytes == 0) return true;
-    if (bytes < 5 * sizeof(std::uint32_t)) return false;
+    // Phase 7c+7d: all four redundant header fields removed.  Body
+    // starts directly at the 2-bit kind map; per-kind counts are
+    // derived via popcount_kinds, and short2_position_count via
+    // horizontal_sum_u8 over the u8 occ_count[] array.
+    const std::uint32_t distinct_count = static_cast<std::uint32_t>(kix_count);
+    if (distinct_count == 0) return true;
 
     const std::uint8_t* p = posting_list;
     const std::uint8_t* end = posting_list + bytes;
-
-    std::uint32_t distinct_count, partition_count, short1_count, short2_count, short2_position_count;
-    std::memcpy(&distinct_count,        p, 4); p += 4;
-    std::memcpy(&partition_count,       p, 4); p += 4;
-    std::memcpy(&short1_count,          p, 4); p += 4;
-    std::memcpy(&short2_count,          p, 4); p += 4;
-    std::memcpy(&short2_position_count, p, 4); p += 4;
-
-    if (distinct_count == 0) {
-        if (partition_count != 0 || short1_count != 0 ||
-            short2_count != 0 || short2_position_count != 0) return false;
-        return true;
-    }
-    if (distinct_count != kix_count) return false;
-    if (distinct_count != partition_count + short1_count + short2_count) return false;
 
     const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;
     if (std::size_t(end - p) < kind_map_bytes) return false;
     const std::uint8_t* kind_map = p;
     p += kind_map_bytes;
+
+    std::uint32_t partition_count, short1_count, short2_count;
+    popcount_kinds(kind_map, distinct_count,
+                   &partition_count, &short1_count, &short2_count);
+    if (distinct_count != partition_count + short1_count + short2_count) return false;
 
     // Decode partition groups into scratch.partition_positions, building
     // partition_offsets[] alongside.
@@ -521,12 +584,14 @@ bool open_stream_kpx_for_candidates(
     }
 
     // Decode short_occ_ge2 sub-bucket: u8 occ_count[] then FOR stream.
+    // Phase 7d dedup D: short2_position_count is derived as a horizontal
+    // sum of the u8 occ_count[] array (the v8 in-blob u32 was redundant).
     auto& short2_occ = scratch.short2_occ;
     auto& short2_off = scratch.short2_offsets;
     auto& short2_pos = scratch.short2_positions;
     short2_occ.assign(short2_count, 0);
     short2_off.assign(std::size_t(short2_count) + 1, 0);
-    short2_pos.assign(short2_position_count, 0);
+    std::uint32_t short2_position_count = 0;
     if (short2_count > 0) {
         if (std::size_t(end - p) < short2_count) return false;
         std::memcpy(short2_occ.data(), p, short2_count);
@@ -538,11 +603,12 @@ bool open_stream_kpx_for_candidates(
             cum += short2_occ[i];
         }
         short2_off[short2_count] = cum;
-        if (cum != short2_position_count) return false;
-        if (short2_position_count > 0) {
-            if (!decode_for_stream_v8(p, end, short2_position_count, short2_pos.data())) {
-                return false;
-            }
+        short2_position_count = cum;
+    }
+    short2_pos.assign(short2_position_count, 0);
+    if (short2_position_count > 0) {
+        if (!decode_for_stream_v8(p, end, short2_position_count, short2_pos.data())) {
+            return false;
         }
     }
 

@@ -60,18 +60,34 @@ static std::vector<uint32_t> decode_pos_postings(
 }
 
 // Compute the .kpx per-kmer position count by summing partition occ_counts
-// + short1_count + short2_position_count from the v8 top header.
-static uint32_t kpx_position_count(const KpxReader& kpx, uint32_t kmer) {
+// + short1_count + sum(short2 u8 occ_count[]).  Phase 7c+7d removed all
+// four redundant header fields; the body starts directly at the 2-bit
+// kind map and partition / short1 / short2 counts are derived from
+// popcount of the kind map.
+static uint32_t kpx_position_count(const KixReader& kix,
+                                   const KpxReader& kpx,
+                                   uint32_t kmer) {
     const uint8_t* p = kpx.posting_file() + kpx.pos_offset(kmer);
-    uint32_t distinct_count, partition_count, short1_count, short2_count, short2_pos;
-    std::memcpy(&distinct_count, p +  0, sizeof(uint32_t));
-    std::memcpy(&partition_count,p +  4, sizeof(uint32_t));
-    std::memcpy(&short1_count,   p +  8, sizeof(uint32_t));
-    std::memcpy(&short2_count,   p + 12, sizeof(uint32_t));
-    std::memcpy(&short2_pos,     p + 16, sizeof(uint32_t));
+    const uint64_t kix_byte_len = kix.posting_list_byte_length(kmer);
+    const uint32_t distinct_count = pfd::posting_count(
+        kix.posting_file() + kix.posting_list_offset(kmer), kix_byte_len);
     if (distinct_count == 0) return 0;
+
+    // Derive the per-kind counts from the kind map (mirrors the
+    // pfd_codec_tier popcount_kinds helper but kept inline for the test).
     const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;
-    const uint8_t* gp = p + 5 * sizeof(uint32_t) + kind_map_bytes;
+    uint32_t partition_count = 0, short1_count = 0, short2_count = 0;
+    for (uint32_t k = 0; k < distinct_count; k++) {
+        uint8_t kind = static_cast<uint8_t>(
+            (p[k >> 2] >> ((k & 3) * 2)) & 0x03);
+        switch (kind) {
+            case 0: short1_count++; break;
+            case 1: short2_count++; break;
+            case 2: partition_count++; break;
+        }
+    }
+
+    const uint8_t* gp = p + kind_map_bytes;
     uint32_t partition_pos = 0;
     for (uint32_t g = 0; g < partition_count; g++) {
         uint32_t gcnt;
@@ -94,6 +110,30 @@ static uint32_t kpx_position_count(const KpxReader& kpx, uint32_t kmer) {
             gp += (body_bits + 7) / 8;
         }
     }
+
+    // Skip short1 FOR stream — its position count is just short1_count
+    // (one position per cluster).  No need to walk it for this aggregate.
+    // Then read short2's u8 occ_count[] and horizontal-sum.
+    if (short1_count > 0) {
+        const uint32_t num_blocks = short1_count / 128u;
+        const uint32_t tail_count = short1_count % 128u;
+        for (uint32_t b = 0; b < num_blocks; b++) {
+            uint8_t bw = gp[4];
+            gp += 8 + std::size_t(16) * bw;
+        }
+        const uint8_t got_tail = *gp++;
+        (void)got_tail;
+        if (tail_count > 0) {
+            gp += sizeof(uint32_t);
+            uint8_t tail_b = *gp++;
+            const std::size_t body_bits = std::size_t(tail_count) * tail_b;
+            gp += (body_bits + 7) / 8;
+        }
+    }
+
+    uint32_t short2_pos = 0;
+    for (uint32_t i = 0; i < short2_count; i++) short2_pos += gp[i];
+
     return partition_pos + short1_count + short2_pos;
 }
 
@@ -195,7 +235,7 @@ static void test_build_and_verify_kix_kpx() {
             kpx.posting_file_size() - kpx.pos_offset(kmer),
             ids);
         CHECK_EQ(positions.size(),
-                 static_cast<size_t>(kpx_position_count(kpx, kmer)));
+                 static_cast<size_t>(kpx_position_count(kix, kpx, kmer)));
 
         kmers_checked++;
     }

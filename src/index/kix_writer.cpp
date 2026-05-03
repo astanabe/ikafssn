@@ -1,5 +1,6 @@
 #include "index/kix_writer.hpp"
 #include "index/kix_format.hpp"
+#include "index/dictionary_io.hpp"
 #include "index/pfd_codec.hpp"
 #include "core/config.hpp"
 
@@ -53,15 +54,16 @@ bool KixWriter::write(const std::string& path) {
     // Set sentinel: offset after all posting file bytes
     offsets_[table_size_] = posting_file_.size();
 
-    bool use_offset32 = (posting_file_.size() <= UINT32_MAX);
-
     FILE* fp = std::fopen(path.c_str(), "wb");
     if (!fp) {
         std::fprintf(stderr, "KixWriter: cannot open '%s' for writing\n", path.c_str());
         return false;
     }
 
-    // Write header
+    // Write header.  Phase 7a stores the dictionary as an Elias-Fano blob;
+    // KIX_FLAG_OFFSET32 is no longer meaningful and is forced to 0 (the
+    // header bit is preserved as reserved/sentinel for the eventual v9
+    // bump per Phase 7 design decision #6).
     KixHeader hdr{};
     std::memcpy(hdr.magic, KIX_MAGIC, 4);
     hdr.format_version = KIX_FORMAT_VERSION;
@@ -69,7 +71,7 @@ bool KixWriter::write(const std::string& path) {
     hdr.kmer_type = kmer_type_;
     hdr.num_sequences = num_sequences_;
     hdr.total_distinct_postings = total_distinct_postings_;
-    hdr.flags = flags_ | (use_offset32 ? KIX_FLAG_OFFSET32 : 0);
+    hdr.flags = flags_ & ~KIX_FLAG_OFFSET32;
     hdr.volume_index = volume_index_;
     hdr.total_volumes = total_volumes_;
 
@@ -87,15 +89,13 @@ bool KixWriter::write(const std::string& path) {
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
-    // Write offsets table (table_size_ + 1 entries)
-    if (use_offset32) {
-        std::vector<uint32_t> offsets32(table_size_ + 1);
-        for (uint32_t i = 0; i <= table_size_; i++) {
-            offsets32[i] = static_cast<uint32_t>(offsets_[i]);
-        }
-        std::fwrite(offsets32.data(), sizeof(uint32_t), table_size_ + 1, fp);
-    } else {
-        std::fwrite(offsets_.data(), sizeof(uint64_t), table_size_ + 1, fp);
+    // Write Elias-Fano dictionary in place of the raw u32/u64 offsets table.
+    if (!write_kix_dictionary_ef(fp, offsets_.data(), table_size_,
+                                 posting_file_.size())) {
+        std::fprintf(stderr, "KixWriter: failed to write EF dictionary to '%s'\n",
+                     path.c_str());
+        std::fclose(fp);
+        return false;
     }
 
     // Write posting file

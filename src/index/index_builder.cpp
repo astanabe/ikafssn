@@ -8,6 +8,7 @@
 #include "core/spaced_seed.hpp"
 #include "index/ksx_writer.hpp"
 #include "index/kix_format.hpp"
+#include "index/dictionary_io.hpp"
 #include "index/kpx_format.hpp"
 #include "index/pfd_codec.hpp"
 #include "index/seq_id_dedup.hpp"
@@ -450,7 +451,8 @@ bool build_index(BlastDbReader& db,
 
     // Forward-fill kix_offsets: empty k-mers get the same offset as the next
     // non-empty k-mer (or the sentinel). This ensures offsets[i+1]-offsets[i]==0
-    // for empty k-mers.
+    // for empty k-mers and keeps the array monotonically non-decreasing so
+    // it can be Elias-Fano encoded (Phase 7a).
     {
         uint64_t fill = kix_data_pos; // sentinel value for trailing empties
         for (int32_t i = static_cast<int32_t>(tbl_size) - 1; i >= 0; i--) {
@@ -458,6 +460,22 @@ bool build_index(BlastDbReader& db,
                 fill = kix_offsets[i];
             } else {
                 kix_offsets[i] = fill;
+            }
+        }
+    }
+
+    // Phase 7e: same treatment for kpx_offsets — needed so the EF
+    // encoder sees a monotonically non-decreasing input (the v8 raw
+    // u32/u64 dictionary tolerated the leading zeros because pos_offset
+    // was only ever queried after kix_len > 0 gating, but EF encoding
+    // requires monotonic input).
+    if (!config.skip_kpx) {
+        uint64_t fill = kpx_data_pos;
+        for (int32_t i = static_cast<int32_t>(tbl_size) - 1; i >= 0; i--) {
+            if (counts[i] > 0) {
+                fill = kpx_offsets[i];
+            } else {
+                kpx_offsets[i] = fill;
             }
         }
     }
@@ -470,13 +488,14 @@ bool build_index(BlastDbReader& db,
     // Set sentinel offset
     kix_offsets[tbl_size] = kix_data_pos;
 
-    // Determine offset types based on posting file sizes
-    const bool kix_offset32 = (kix_data_pos <= UINT32_MAX);
-    const bool kpx_offset32 = (!config.skip_kpx && kpx_data_pos <= UINT32_MAX);
+    // Phase 7a/7e: both .kix and .kpx use Elias-Fano; the offset-width
+    // selection branch is gone.  Files are still rewritten at finalize
+    // because the in-progress placeholders use raw u64 offsets and need
+    // to be replaced with the EF blob.
 
-    // Close the in-progress kix/kpx files; we'll rewrite them below with the
-    // correct (uint32 vs uint64) offset width.  Both must be flushed before
-    // we reopen them for read, otherwise stdio's userspace write buffer can
+    // Close the in-progress kix/kpx files; we'll rewrite them below
+    // with the EF dictionary.  Both must be flushed before we reopen
+    // them for read, otherwise stdio's userspace write buffer can
     // shadow the just-written tail bytes of the last few k-mers.
     std::fclose(kix_fp);
     if (kpx_fp) std::fclose(kpx_fp);
@@ -501,7 +520,8 @@ bool build_index(BlastDbReader& db,
         kix_hdr.kmer_type = kmer_type_for(k, config.t);
         kix_hdr.num_sequences = num_seqs;
         kix_hdr.total_distinct_postings = total_distinct_postings;
-        kix_hdr.flags = KIX_FLAG_HAS_KSX | (kix_offset32 ? KIX_FLAG_OFFSET32 : 0);
+        // Phase 7a: KIX_FLAG_OFFSET32 reserved (Elias-Fano dictionary follows).
+        kix_hdr.flags = KIX_FLAG_HAS_KSX;
         kix_hdr.volume_index = volume_index;
         kix_hdr.total_volumes = total_volumes;
         size_t name_len = std::min(db_name.size(), size_t(32));
@@ -518,13 +538,11 @@ bool build_index(BlastDbReader& db,
         kix_hdr.exception_codec_flags = 0;
         std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, wr);
 
-        if (kix_offset32) {
-            std::vector<uint32_t> off32(tbl_size + 1);
-            for (uint32_t i = 0; i <= tbl_size; i++)
-                off32[i] = static_cast<uint32_t>(kix_offsets[i]);
-            std::fwrite(off32.data(), sizeof(uint32_t), tbl_size + 1, wr);
-        } else {
-            std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, wr);
+        if (!write_kix_dictionary_ef(wr, kix_offsets.data(), tbl_size,
+                                     kix_data_pos)) {
+            logger.error("Failed to write EF dictionary to %s", kix_tmp.c_str());
+            std::fclose(wr);
+            return false;
         }
 
         if (!posting_blob.empty()) {
@@ -554,7 +572,9 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.t = config.t;
         kpx_hdr.template_type = config.template_type;
         kpx_hdr.total_position_count = total_position_count;
-        kpx_hdr.offset_type = kpx_offset32 ? 0 : 1;
+        // Phase 7e: pos_offsets is Elias-Fano; offset_type takes the EF
+        // sentinel byte (0xFF) and is no longer consulted at read time.
+        kpx_hdr.offset_type = 0xFF;
         // Reserved codec-extension area (zero in v5).
         kpx_hdr.codec_id      = 0;
         kpx_hdr.codec_version = 0;
@@ -562,13 +582,11 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.tail_codec    = 0;
         std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, wr);
 
-        if (kpx_offset32) {
-            std::vector<uint32_t> off32(tbl_size);
-            for (uint32_t i = 0; i < tbl_size; i++)
-                off32[i] = static_cast<uint32_t>(kpx_offsets[i]);
-            std::fwrite(off32.data(), sizeof(uint32_t), tbl_size, wr);
-        } else {
-            std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, wr);
+        if (!write_kpx_dictionary_ef(wr, kpx_offsets.data(), tbl_size,
+                                     kpx_data_pos)) {
+            logger.error("Failed to write EF dictionary to %s", kpx_tmp.c_str());
+            std::fclose(wr);
+            return false;
         }
 
         if (!posting_blob.empty()) {

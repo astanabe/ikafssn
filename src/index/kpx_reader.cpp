@@ -37,19 +37,24 @@ bool KpxReader::open(const std::string& path) {
 
     table_size_ = ikafssn::table_size(header_->k);
 
-    // offset_type: 0=uint32, 1=uint64
-    offset32_ = (header_->offset_type == 0);
-
-    const uint8_t* ptr = mmap_.data() + sizeof(KpxHeader);
-
-    if (offset32_) {
-        pos_offsets32_ = reinterpret_cast<const uint32_t*>(ptr);
-        ptr += sizeof(uint32_t) * table_size_;
-    } else {
-        pos_offsets64_ = reinterpret_cast<const uint64_t*>(ptr);
-        ptr += sizeof(uint64_t) * table_size_;
+    // Phase 7e: pos_offsets dictionary is Elias-Fano; the legacy
+    // offset_type byte is ignored at read time.
+    const uint8_t* dict_ptr = mmap_.data() + sizeof(KpxHeader);
+    const size_t   remaining = mmap_.size() - sizeof(KpxHeader);
+    if (!pos_dict_.open(dict_ptr, remaining)) {
+        std::fprintf(stderr, "KpxReader: invalid Elias-Fano dictionary\n");
+        close();
+        return false;
+    }
+    if (pos_dict_.size() != static_cast<size_t>(table_size_)) {
+        std::fprintf(stderr,
+            "KpxReader: pos_offsets entry count %zu does not match expected %zu\n",
+            pos_dict_.size(), static_cast<size_t>(table_size_));
+        close();
+        return false;
     }
 
+    const uint8_t* ptr = dict_ptr + pos_dict_.blob_bytes();
     posting_file_ = ptr;
     posting_file_size_ = mmap_.size() - (ptr - mmap_.data());
 
@@ -59,9 +64,7 @@ bool KpxReader::open(const std::string& path) {
 void KpxReader::close() {
     mmap_.close();
     header_ = nullptr;
-    pos_offsets64_ = nullptr;
-    pos_offsets32_ = nullptr;
-    offset32_ = false;
+    pos_dict_ = ef::EFDictionary{};
     posting_file_ = nullptr;
     posting_file_size_ = 0;
     table_size_ = 0;
@@ -69,10 +72,7 @@ void KpxReader::close() {
 
 size_t KpxReader::willneed_size() const {
     if (!mmap_.is_open()) return 0;
-    size_t offset_bytes = offset32_
-        ? sizeof(uint32_t) * table_size_
-        : sizeof(uint64_t) * table_size_;
-    return sizeof(KpxHeader) + offset_bytes;
+    return sizeof(KpxHeader) + pos_dict_.willneed_size();
 }
 
 void KpxReader::apply_madvise(bool willneed) {

@@ -175,25 +175,27 @@ static void test_scanner_k13_u32() {
     }
 }
 
-static void test_scanner_k16_u32() {
-    // k=16 with uint32_t (max supported, uses all 32 bits)
-    std::string seq = "ACGTACGTACGTACGTACGT"; // len=20, produces 20-16+1=5 k-mers
+static void test_scanner_k15_u32() {
+    // k=15 with uint32_t (MAX_K = 15 — see core/config.hpp).  Uses
+    // 30 of 32 bits; the next k would overflow the table_size u32
+    // return type so MAX_K is capped at 15.
+    std::string seq = "ACGTACGTACGTACGTACGT"; // len=20, produces 20-15+1=6 k-mers
     std::vector<std::pair<uint32_t, uint32_t>> results;
-    KmerScanner<uint32_t> scanner(16);
+    KmerScanner<uint32_t> scanner(15);
     scanner.scan(seq.c_str(), seq.size(), [&](uint32_t pos, uint32_t kmer) {
         results.push_back({pos, kmer});
     });
-    CHECK_EQ(results.size(), 5u);
-    // k=16 uses full uint32_t: mask = 0xFFFFFFFF
-    uint32_t mask = kmer_mask<uint32_t>(16);
-    CHECK_EQ(mask, uint32_t(0xFFFFFFFF));
+    CHECK_EQ(results.size(), 6u);
+    // k=15 uses 30 bits of uint32_t: mask = (1<<30) - 1 = 0x3FFFFFFF
+    uint32_t mask = kmer_mask<uint32_t>(15);
+    CHECK_EQ(mask, uint32_t(0x3FFFFFFF));
     for (auto& [pos, kmer] : results) {
         CHECK((kmer & mask) == kmer);
     }
-    // Verify revcomp involution at k=16
+    // Verify revcomp involution at k=15
     for (auto& [pos, kmer] : results) {
-        uint32_t rc1 = kmer_revcomp<uint32_t>(kmer, 16);
-        uint32_t rc2 = kmer_revcomp<uint32_t>(rc1, 16);
+        uint32_t rc1 = kmer_revcomp<uint32_t>(kmer, 15);
+        uint32_t rc2 = kmer_revcomp<uint32_t>(rc1, 15);
         CHECK_EQ(rc2, kmer);
     }
 }
@@ -614,8 +616,8 @@ static void test_revcomp_batch_bit_exact() {
     for (int k : {4, 5, 6, 7, 8}) {
         check_revcomp_batch_for_k<uint16_t>(k, rng);
     }
-    // uint32_t covers k = 9..16.
-    for (int k : {9, 10, 11, 12, 13, 14, 15, 16}) {
+    // uint32_t covers k = 9..15 (Phase 7-post: MAX_K = 15).
+    for (int k : {9, 10, 11, 12, 13, 14, 15}) {
         check_revcomp_batch_for_k<uint32_t>(k, rng);
     }
 }
@@ -685,7 +687,7 @@ int main() {
     test_scanner_k8_boundary();
     test_scanner_k9_u32();
     test_scanner_k13_u32();
-    test_scanner_k16_u32();
+    test_scanner_k15_u32();
     test_contains_degenerate_base();
     test_degenerate_ncbi4na();
     test_ncbi4na_expansion_count();

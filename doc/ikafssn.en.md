@@ -62,7 +62,7 @@ ikafssnindex [options]
 
 Required:
   -db <path>              BLAST DB prefix
-  -k <int>                K-mer length (5-16)
+  -k <int>                K-mer length (5-15)
   -o <dir>                Output directory
 
 Options:
@@ -1138,12 +1138,30 @@ Examples:
 
 **Multi-accession deflines:** When the source BLAST DB was built with `makeblastdb -parse_seqids` and carries multi-defline records (the NCBI convention for registering identical sequences under several accessions, separated by `\x01` / `^A` in the FASTA defline), `ikafssnindex` preserves **all** accessions for each OID. The `.ksx` accession string for such OIDs contains every accession joined by `\x01`, and search output emits the same `\x01`-joined string in the `sseqid` column / SAM RNAME / FASTA defline / protocol `sseqid` field. Downstream consumers should split on `\x01` to recover individual accessions. The `-seqidlist` filter and `ikafssnretrieve` accept either the full `\x01`-joined form or any individual constituent accession.
 
-**Index format version:** The current index format is version 7 for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`). Key changes from earlier versions:
+**Index format version:** The current index format is version 9 for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`). Key changes from earlier versions:
 
-- **`.kix` v7 (Phase 5i):** Each posting list body is FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the **distinct seq_id** delta stream `[abs_first, d1, d2, ...]` with `d_i >= 1`. Intra-sequence k-mer duplicates are removed at build time by a SIMD dedup kernel. The leading `[u32 distinct_count][u32 body_words]` posting list header makes `distinct_count` an O(1) read. As a result, `-max_freq_build` now thresholds by **the number of containing sequences** (matching the original design intent), not by total occurrences. When the `KIX_FLAG_OFFSET32` flag (0x04) is set, dictionary entries are stored as `uint32_t` instead of `uint64_t` (applicable when the posting file is < 4 GiB).
-- **`.kpx` v7 (Phase 5i):** Per-(kmer, seq_id) partitioned layout with a self-describing short bucket. Each (k-mer, seq_id) cluster whose occurrence count exceeds the build-time `-freq_threshold_part` (default 8, max 255) becomes its own partition group; remaining low-multiplicity occurrences merge into a short bucket that carries its own delta-encoded seq_id list and per-seq_id u8 occurrence counts. Both partition groups and the short bucket use the FOR-within-block stream from Phase 5e (per-128-element block stores its min, then bitpacks the spread). Decoding is candidate-set-driven (the caller passes a sorted candidate seq_id array; the decoder returns per-candidate position vectors), eliminating the v6 lock-step dependency on the .kix stream. The header `offset_type` field (byte 0x11) indicates offset width: 0 = `uint32_t`, 1 = `uint64_t`.
+- **`.kix` v9 (Phase 7):** The dictionary is stored as an Elias-Fano blob in place of the raw `u32`/`u64` `offsets[]` array (4.6× smaller on average across NCBI nt_v4). Each posting list header is now just `[u32 distinct_count]` (4 B) — `body_words` was removed (Phase 7c dedup B; derived from the EF dictionary's `posting_byte_length`). Body encoding is unchanged: FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the **distinct seq_id** delta stream `[abs_first, d1, d2, ...]` with `d_i >= 1`. The legacy `KIX_FLAG_OFFSET32` flag (0x04) is reserved (writers force-clear it; readers ignore it).
+- **`.kpx` v9 (Phase 7):** The `pos_offsets` dictionary is also Elias-Fano. Per-posting-list, all four redundant header `u32` fields were dropped — the body starts directly at the 2-bit kind map. `distinct_count` is taken from the `kix_count` decoder parameter (Phase 7c dedup A); `partition_count`, `short1_count`, `short2_count` are derived from a SIMD popcount of the kind map (Phase 7d dedup C); `short2_position_count` is derived as the cumulative sum that builds the short2 offset table from the `u8 occ_count[]` array (Phase 7d dedup D). Empty `.kpx` posting lists emit zero bytes. The `KpxHeader.offset_type` byte is reserved (writers set the EF sentinel `0xFF`; readers ignore it).
+- **`.ksx` / `.khx` v9 (Phase 7):** Data layouts are unchanged from v8; the `format_version` field bumps for family-wide alignment (single-major-version policy). Magic strings stay `KMSX` / `KMHX`.
+- **`.kvx` v9 (Phase 7):** Manifest text format is unchanged; the `FORMAT_VERSION` line bumps to 9.
 
-Indexes built before Phase 5i (format_version <= 6) are rejected at open with a clear "rebuild your index" message. Rebuild indexes after upgrading.
+### Migration (v8 → v9)
+
+ikafssn 0.1.2026.05.03+ requires v9 indexes. v8 indexes are rejected at open with the message:
+
+```
+KixReader: index format version mismatch (got 8, expected 9). Please rebuild with the current ikafssnindex.
+```
+
+(and analogous messages for `.kpx` / `.ksx` / `.khx`). To migrate, rebuild the index from the BLAST DB:
+
+```
+ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir>
+```
+
+For NCBI nt-scale databases (~700 volumes at k=12 t=21), expect tens of hours of rebuild time on a 32-core host. v9 indexes are 25–35 % smaller on disk than v8 (the dictionary EF blob is ~4.6× smaller, posting list headers shrink by 4–24 B per non-empty k-mer); RAM/page-cache savings are substantially larger because the dictionary and posting list headers sit on the Stage 1 hot path.
+
+Indexes built before v8 are still rejected with the same "rebuild your index" message. Rebuild after upgrading.
 
 ## Installation
 
