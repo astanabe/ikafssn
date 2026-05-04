@@ -111,8 +111,9 @@ add_library(ikafssn_search STATIC
     search/stage2_chaining.cpp
     search/query_preprocessor.cpp
     search/volume_searcher.cpp
+    search/parallel_search.cpp
 )
-target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_io ikafssn_util)
+target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_io ikafssn_util TBB::tbb)
 
 # Stage 3 alignment library (requires Parasail + BLAST DB)
 add_library(ikafssn_stage3 STATIC

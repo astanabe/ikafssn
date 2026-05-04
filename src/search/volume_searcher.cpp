@@ -1,204 +1,55 @@
 #include "search/volume_searcher.hpp"
+#include "search/parallel_search.hpp"
 #include "search/oid_filter.hpp"
-#include "search/seq_id_decoder.hpp"
-#include "search/posting_decoder.hpp"
 #include "search/stage1_filter.hpp"
 #include "search/stage2_chaining.hpp"
 #include "search/query_preprocessor.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
-#include "index/khx_reader.hpp"
-#include "index/pfd_codec.hpp"
-#include "core/kmer_encoding.hpp"
 #include "core/spaced_seed.hpp"
 
 #include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <unordered_map>
-#include <unordered_set>
+#include <iterator>
 
 namespace ikafssn {
 
-// Per-thread scratch for the v8 .kpx candidate-set decoder.  The buffers
-// inside grow monotonically across calls so the search hot path avoids
-// per-k-mer allocation.  Each TBB worker holds its own instance.
-static inline pfd::PosDecodeScratch& tls_pos_scratch() {
-    thread_local pfd::PosDecodeScratch scratch;
-    return scratch;
-}
-
-template <typename KmerInt>
-static std::vector<std::pair<uint32_t, KmerInt>>
-extract_kmers(const std::string& seq, int k, int max_expansion = 16) {
-    std::vector<std::pair<uint32_t, KmerInt>> kmers;
-    KmerScanner<KmerInt> scanner(k);
-    scanner.scan_ambig(seq.data(), seq.size(),
-        [&](uint32_t pos, KmerInt kmer) {
-            kmers.emplace_back(pos, kmer);
-        },
-        [&](uint32_t pos, KmerInt base_kmer, const AmbigInfo* infos, int count) {
-            expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
-                [&](KmerInt expanded) {
-                    kmers.emplace_back(pos, expanded);
-                });
-        },
-        nullptr,
-        max_expansion);
-    return kmers;
-}
-
-// Stage 1 only: return candidates as ChainResult with stage1_score, no chaining.
+// Drain a Phase A state by running Phase B for every candidate in the order
+// produced by Phase A.  Used by the volume-level wrappers below; the
+// parallel orchestrator (`run_search_jobs`) calls `phase_b_one_subject`
+// directly across all jobs.
 static std::vector<ChainResult>
-stage1_only_results(const std::vector<Stage1Candidate>& candidates,
-                    bool is_reverse,
-                    uint32_t min_score) {
+drain_phase_b_single_template(const PhaseAState& state) {
+    if (state.mode1_only) return state.mode1_results;
     std::vector<ChainResult> results;
-    for (const auto& c : candidates) {
-        if (c.score < min_score) continue;
-        ChainResult cr{};
-        cr.seq_id = c.id;
-        cr.chainscore = 0;
-        cr.stage1_score = c.score;
-        cr.q_start = 0;
-        cr.q_end = 0;
-        cr.s_start = 0;
-        cr.s_end = 0;
-        cr.is_reverse = is_reverse;
-        results.push_back(cr);
+    for (const auto& c : state.candidates) {
+        auto chains = phase_b_one_subject(c.id, c.score, state);
+        if (!chains.empty()) {
+            results.insert(results.end(),
+                           std::make_move_iterator(chains.begin()),
+                           std::make_move_iterator(chains.end()));
+        }
     }
     return results;
 }
 
-// New search_one_strand: takes pre-resolved threshold and effective_min_score.
-// High-freq k-mers have already been removed from query_kmers by the preprocessor.
-template <typename KmerInt>
 static std::vector<ChainResult>
-search_one_strand_preprocessed(
-    const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
-    int k,
-    bool is_reverse,
-    const KixReader& kix,
-    const KpxReader& kpx,
-    const OidFilter& filter,
-    const SearchConfig& config,
-    uint32_t resolved_threshold,
-    uint32_t effective_min_score,
-    Stage1Buffer& buf) {
-
-    if (resolved_threshold == 0 || n_kmers == 0) return {};
-
-    // Stage 1: candidate selection with pre-resolved threshold
-    Stage1Config stage1_config = config.stage1;
-    stage1_config.min_stage1_score = resolved_threshold;
-
-    auto candidates = stage1_filter(positions, kmers, n_kmers, kix, filter, stage1_config, buf);
-    if (candidates.empty()) return {};
-
-    // Mode 1: Stage 1 only — return candidates directly
-    if (config.mode == 1) {
-        return stage1_only_results(candidates, is_reverse, effective_min_score);
-    }
-
-    // Build sorted candidate seq_id array for the candidate-set-driven
-    // .kpx decoder, plus a score map used by the chaining loop below.
-    std::vector<SeqId> candidate_sids;
-    candidate_sids.reserve(candidates.size());
-    std::unordered_map<SeqId, uint32_t> stage1_scores;
-    stage1_scores.reserve(candidates.size());
-    for (const auto& c : candidates) {
-        candidate_sids.push_back(c.id);
-        stage1_scores[c.id] = c.score;
-    }
-    std::sort(candidate_sids.begin(), candidate_sids.end());
-
-    // Stage 2: collect hits for candidates
-    std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
-
-    const uint8_t* kix_data = kix.posting_file();
-    const uint8_t* pos_data = kpx.posting_file();
-    pfd::PosDecodeScratch& scratch = tls_pos_scratch();
-
-    for (size_t qi = 0; qi < n_kmers; qi++) {
-        uint32_t q_pos = positions[qi];
-        auto kmer_idx = kmers[qi];
-
-        // Skip k-mers with no .kix posting list (excluded by .khx, or rare
-        // k-mers that did not appear in this volume).  Their .kpx
-        // pos_offset may alias the first non-empty k-mer's posting list.
-        // Phase 7d hot-path: one EF access_pair fan-out via
-        // posting_list_range instead of paired offset / byte_length calls.
-        uint64_t kix_off, kix_len;
-        kix.posting_list_range(kmer_idx, kix_off, kix_len);
-        if (kix_len == 0) continue;
-
-        // v8 requires the .kix decoded distinct seq_id array as the
-        // resolution table for the .kpx kind map.  Stage 1 has already
-        // walked these postings, but Stage 2 re-decodes per-k-mer so the
-        // .kix decoded buffer can be passed directly into PosDecoder.
-        SeqIdDecoder kix_dec(kix_data + kix_off,
-                             kix_data + kix_off + kix_len);
-        kix_dec.ensure_decoded();
-
-        PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
-                               pos_data + kpx.posting_file_size(),
-                               kix_dec.decoded_data(),
-                               kix_dec.decoded_count(),
-                               candidate_sids.data(),
-                               candidate_sids.size(),
-                               &scratch);
-        pos_decoder.for_each_candidate(
-            [&](uint32_t sid, const std::vector<uint32_t>& positions_v) {
-                auto& bucket = hits_per_seq[sid];
-                bucket.reserve(bucket.size() + positions_v.size());
-                for (uint32_t spos : positions_v) {
-                    bucket.push_back({q_pos, spos});
-                }
-            });
-    }
-
-    // Chain hits for each candidate, using effective_min_score
-    Stage2Config stage2_config = config.stage2;
-    stage2_config.min_score = effective_min_score;
-
+drain_phase_b_both_template(const PhaseAState& state) {
+    if (state.mode1_only) return state.mode1_results;
     std::vector<ChainResult> results;
-    for (const auto& c : candidates) {
-        auto it = hits_per_seq.find(c.id);
-        if (it == hits_per_seq.end()) continue;
-
-        auto chains = chain_hits(it->second, c.id, seed_span(config.t, k), is_reverse, stage2_config);
-        for (auto& cr : chains) {
-            cr.stage1_score = c.score;
-            results.push_back(cr);
+    for (SeqId sid : state.sorted_candidate_sids) {
+        auto sit = state.stage1_scores.find(sid);
+        uint32_t score = (sit != state.stage1_scores.end()) ? sit->second : 0;
+        auto chains = phase_b_one_subject(sid, score, state);
+        if (!chains.empty()) {
+            results.insert(results.end(),
+                           std::make_move_iterator(chains.begin()),
+                           std::make_move_iterator(chains.end()));
         }
     }
-
     return results;
 }
 
-// Sort and truncate helper.
-static void sort_and_truncate(SearchResult& result, const SearchConfig& config) {
-    if (config.num_results > 0) {
-        auto cmp = (config.sort_score == 1)
-            ? [](const ChainResult& a, const ChainResult& b) {
-                  return a.stage1_score > b.stage1_score;
-              }
-            : [](const ChainResult& a, const ChainResult& b) {
-                  return a.chainscore > b.chainscore;
-              };
-
-        if (result.hits.size() > config.num_results) {
-            std::nth_element(result.hits.begin(),
-                             result.hits.begin() + config.num_results,
-                             result.hits.end(), cmp);
-            result.hits.resize(config.num_results);
-        }
-        std::sort(result.hits.begin(), result.hits.end(), cmp);
-    }
-}
-
-// Search a single volume using pre-processed QueryKmerData with globally resolved thresholds.
 template <typename KmerInt>
 SearchResult search_volume(
     const std::string& query_id,
@@ -214,195 +65,36 @@ SearchResult search_volume(
     SearchResult result;
     result.query_id = query_id;
 
-    // Search forward strand
     if (config.strand == 2 || config.strand == 1) {
-        auto fwd_results = search_one_strand_preprocessed(
+        PhaseAState state;
+        phase_a_one_strand_single(
             qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
             qdata.fwd_positions.size(),
             k, false, kix, kpx, filter, config,
-            qdata.resolved_threshold_fwd, qdata.effective_min_score_fwd, buf);
-        result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
+            qdata.resolved_threshold_fwd, qdata.effective_min_score_fwd,
+            buf, state);
+        auto fwd_results = drain_phase_b_single_template(state);
+        result.hits.insert(result.hits.end(),
+                           std::make_move_iterator(fwd_results.begin()),
+                           std::make_move_iterator(fwd_results.end()));
     }
 
-    // Search reverse complement
     if (config.strand == 2 || config.strand == -1) {
-        auto rc_results = search_one_strand_preprocessed(
+        PhaseAState state;
+        phase_a_one_strand_single(
             qdata.rc_positions.data(), qdata.rc_kmer_values.data(),
             qdata.rc_positions.size(),
             k, true, kix, kpx, filter, config,
-            qdata.resolved_threshold_rc, qdata.effective_min_score_rc, buf);
-        result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
+            qdata.resolved_threshold_rc, qdata.effective_min_score_rc,
+            buf, state);
+        auto rc_results = drain_phase_b_single_template(state);
+        result.hits.insert(result.hits.end(),
+                           std::make_move_iterator(rc_results.begin()),
+                           std::make_move_iterator(rc_results.end()));
     }
 
     sort_and_truncate(result, config);
     return result;
-}
-
-// Collect position hits for Stage 2 from one index set.
-template <typename KmerInt>
-static void collect_position_hits(
-    const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
-    const KixReader& kix, const KpxReader& kpx,
-    const std::vector<SeqId>& candidate_sids,
-    std::unordered_map<SeqId, std::vector<Hit>>& hits_per_seq) {
-
-    const uint8_t* kix_data = kix.posting_file();
-    const uint8_t* pos_data = kpx.posting_file();
-    pfd::PosDecodeScratch& scratch = tls_pos_scratch();
-
-    for (size_t qi = 0; qi < n_kmers; qi++) {
-        uint32_t q_pos = positions[qi];
-        auto kmer_idx = kmers[qi];
-
-        // Phase 7d hot-path: one EF access_pair fan-out via posting_list_range.
-        uint64_t kix_off, kix_len;
-        kix.posting_list_range(kmer_idx, kix_off, kix_len);
-        if (kix_len == 0) continue;
-
-        SeqIdDecoder kix_dec(kix_data + kix_off,
-                             kix_data + kix_off + kix_len);
-        kix_dec.ensure_decoded();
-
-        PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
-                               pos_data + kpx.posting_file_size(),
-                               kix_dec.decoded_data(),
-                               kix_dec.decoded_count(),
-                               candidate_sids.data(),
-                               candidate_sids.size(),
-                               &scratch);
-        pos_decoder.for_each_candidate(
-            [&](uint32_t sid, const std::vector<uint32_t>& positions_v) {
-                auto& bucket = hits_per_seq[sid];
-                bucket.reserve(bucket.size() + positions_v.size());
-                for (uint32_t spos : positions_v) {
-                    bucket.push_back({q_pos, spos});
-                }
-            });
-    }
-}
-
-// Phase 2: cross-template "both" mode.
-// Stage 1 runs both templates against a *single* shared Stage1Buffer so that
-// the buf's per-(sid, q_pos) dedup (`last_pos[sid] == q_pos`) carries across
-// templates: when coding and optimal both hit the same query position p for
-// the same sequence, the second update is suppressed and the score remains
-// in [0, Nqkmer]. The unified threshold is min(thr_cod, thr_opt) so that a
-// hybrid query (cod-only matches in one region + opt-only in another) is
-// not lost; this matches the spec's "ANY-side reduces" Nhighfreq semantic.
-template <typename KmerInt>
-static std::vector<ChainResult>
-search_one_strand_both(
-    const uint32_t* pos_cod, const KmerInt* kmers_cod, size_t n_cod,
-    const uint32_t* pos_opt, const KmerInt* kmers_opt, size_t n_opt,
-    int k,
-    bool is_reverse,
-    const KixReader& kix_cod, const KpxReader& kpx_cod,
-    const KixReader& kix_opt, const KpxReader& kpx_opt,
-    const OidFilter& filter,
-    const SearchConfig& config,
-    uint32_t resolved_threshold_cod,
-    uint32_t resolved_threshold_opt,
-    uint32_t effective_min_score,
-    Stage1Buffer& buf) {
-
-    if (n_cod == 0 && n_opt == 0) return {};
-
-    // Unified threshold: a hybrid match (cod-only in one region, opt-only in
-    // another) should not be lost. A position is counted whenever *either*
-    // template fires at it; dedup happens implicitly via the shared buf.
-    uint32_t unified_threshold = 0;
-    if (resolved_threshold_cod > 0 && resolved_threshold_opt > 0) {
-        unified_threshold = std::min(resolved_threshold_cod, resolved_threshold_opt);
-    } else {
-        unified_threshold = std::max(resolved_threshold_cod, resolved_threshold_opt);
-    }
-    if (unified_threshold == 0) return {};
-
-    // Stage 1: accumulate updates from both templates into the shared buf,
-    // walking both streams in q_pos order so per-(sid, q_pos) dedup carries
-    // across templates. Naively running cod-then-opt would leave last_pos[sid]
-    // pinned to cod's *last* q_pos when opt starts, defeating the dedup at
-    // opt's earlier positions and inflating Stage 1 scores up to 2*Nqkmer.
-    //
-    // Both streams are already sorted by q_pos (extract_kmers emits in
-    // increasing pos), so a 2-pointer merge walk is sufficient.
-    Stage1Config s1cfg_acc = config.stage1;
-    s1cfg_acc.min_stage1_score = 1; // not used by accumulate
-    s1cfg_acc.stage1_topn = 0;       // not used by accumulate
-
-    {
-        size_t ic = 0, io = 0;
-        while (ic < n_cod || io < n_opt) {
-            uint32_t p_c = (ic < n_cod) ? pos_cod[ic] : UINT32_MAX;
-            uint32_t p_o = (io < n_opt) ? pos_opt[io] : UINT32_MAX;
-            uint32_t cur = (p_c < p_o) ? p_c : p_o;
-
-            if (p_c == cur) {
-                size_t end = ic;
-                while (end < n_cod && pos_cod[end] == cur) end++;
-                stage1_filter_accumulate(pos_cod + ic, kmers_cod + ic,
-                                         end - ic, kix_cod, filter,
-                                         s1cfg_acc, buf);
-                ic = end;
-            }
-            if (p_o == cur) {
-                size_t end = io;
-                while (end < n_opt && pos_opt[end] == cur) end++;
-                stage1_filter_accumulate(pos_opt + io, kmers_opt + io,
-                                         end - io, kix_opt, filter,
-                                         s1cfg_acc, buf);
-                io = end;
-            }
-        }
-    }
-
-    Stage1Config s1cfg_fin = config.stage1;
-    s1cfg_fin.min_stage1_score = unified_threshold;
-    auto candidates = stage1_filter_finish(buf, s1cfg_fin);
-
-    if (candidates.empty()) return {};
-
-    // Mode 1: Stage 1 only — return merged candidates directly
-    if (config.mode == 1) {
-        return stage1_only_results(candidates, is_reverse, effective_min_score);
-    }
-
-    // Build sorted candidate seq_id array for the candidate-set-driven decoder.
-    std::vector<SeqId> candidate_sids;
-    candidate_sids.reserve(candidates.size());
-    std::unordered_map<SeqId, uint32_t> stage1_scores;
-    stage1_scores.reserve(candidates.size());
-    for (const auto& c : candidates) {
-        candidate_sids.push_back(c.id);
-        stage1_scores[c.id] = c.score;
-    }
-    std::sort(candidate_sids.begin(), candidate_sids.end());
-
-    // Stage 2: collect position hits from both indexes
-    std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
-
-    collect_position_hits(pos_cod, kmers_cod, n_cod, kix_cod, kpx_cod,
-                          candidate_sids, hits_per_seq);
-    collect_position_hits(pos_opt, kmers_opt, n_opt, kix_opt, kpx_opt,
-                          candidate_sids, hits_per_seq);
-
-    // Chain hits
-    Stage2Config stage2_config = config.stage2;
-    stage2_config.min_score = effective_min_score;
-
-    std::vector<ChainResult> results;
-    for (auto sid : candidate_sids) {
-        auto it = hits_per_seq.find(sid);
-        if (it == hits_per_seq.end()) continue;
-
-        auto chains = chain_hits(it->second, sid, seed_span(config.t, k), is_reverse, stage2_config);
-        for (auto& cr : chains) {
-            cr.stage1_score = stage1_scores[sid];
-            results.push_back(cr);
-        }
-    }
-
-    return results;
 }
 
 template <typename KmerInt>
@@ -421,18 +113,14 @@ SearchResult search_volume_both(
     SearchResult result;
     result.query_id = query_id;
 
-    // Phase 2: unified effective_min_score for "both" mode.
-    // Both per-strand effective_min_scores are derived from the same Nqkmer
-    // (window count is template-independent), so picking the smaller of the
-    // two non-zero values matches the unified-threshold semantic of Stage 1.
     auto unify_min = [](uint32_t a, uint32_t b) -> uint32_t {
         if (a > 0 && b > 0) return std::min(a, b);
         return std::max(a, b);
     };
 
-    // Search forward strand
     if (config.strand == 2 || config.strand == 1) {
-        auto fwd_results = search_one_strand_both(
+        PhaseAState state;
+        phase_a_one_strand_both(
             qdata_cod.fwd_positions.data(), qdata_cod.fwd_kmer_values.data(),
             qdata_cod.fwd_positions.size(),
             qdata_opt.fwd_positions.data(), qdata_opt.fwd_kmer_values.data(),
@@ -443,13 +131,16 @@ SearchResult search_volume_both(
             qdata_cod.resolved_threshold_fwd, qdata_opt.resolved_threshold_fwd,
             unify_min(qdata_cod.effective_min_score_fwd,
                       qdata_opt.effective_min_score_fwd),
-            buf);
-        result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
+            buf, state);
+        auto fwd_results = drain_phase_b_both_template(state);
+        result.hits.insert(result.hits.end(),
+                           std::make_move_iterator(fwd_results.begin()),
+                           std::make_move_iterator(fwd_results.end()));
     }
 
-    // Search reverse complement
     if (config.strand == 2 || config.strand == -1) {
-        auto rc_results = search_one_strand_both(
+        PhaseAState state;
+        phase_a_one_strand_both(
             qdata_cod.rc_positions.data(), qdata_cod.rc_kmer_values.data(),
             qdata_cod.rc_positions.size(),
             qdata_opt.rc_positions.data(), qdata_opt.rc_kmer_values.data(),
@@ -460,15 +151,17 @@ SearchResult search_volume_both(
             qdata_cod.resolved_threshold_rc, qdata_opt.resolved_threshold_rc,
             unify_min(qdata_cod.effective_min_score_rc,
                       qdata_opt.effective_min_score_rc),
-            buf);
-        result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
+            buf, state);
+        auto rc_results = drain_phase_b_both_template(state);
+        result.hits.insert(result.hits.end(),
+                           std::make_move_iterator(rc_results.begin()),
+                           std::make_move_iterator(rc_results.end()));
     }
 
     sort_and_truncate(result, config);
     return result;
 }
 
-// Explicit template instantiations
 template SearchResult search_volume<uint16_t>(
     const std::string&, const QueryKmerData<uint16_t>&, int,
     const KixReader&, const KpxReader&, const KsxReader&,

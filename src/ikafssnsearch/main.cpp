@@ -11,8 +11,11 @@
 #include "index/khx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/volume_searcher.hpp"
+#include "search/parallel_search.hpp"
+#include "search/preprocess_runner.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/stage3_alignment.hpp"
+#include "search/tier_selection.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/blastdb_reader.hpp"
 #include "io/volume_discovery.hpp"
@@ -37,10 +40,8 @@
 #include <vector>
 
 #include <tbb/blocked_range.h>
-#include <tbb/combinable.h>
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
-#include <tbb/parallel_for_each.h>
 #include <tbb/parallel_sort.h>
 #include <tbb/task_arena.h>
 
@@ -125,12 +126,6 @@ struct TemplateContext {
     std::vector<uint32_t> seed_masks;
     std::vector<PreprocessedQuery<uint16_t>> pp16;
     std::vector<PreprocessedQuery<uint32_t>> pp32;
-};
-
-// A (query, volume) search job.
-struct SearchJob {
-    size_t query_idx;
-    size_t volume_idx;
 };
 
 int main(int argc, char* argv[]) {
@@ -661,55 +656,73 @@ int main(int argc, char* argv[]) {
         logger.info("Generated %zu primer pair queries", primer_pairs.size());
     }
 
-    // Phase 1: preprocess queries (sequential per-query, global high-freq determination)
-    // Store preprocessed data per non-skipped query, per template context.
+    // Phase 1: preprocess queries in parallel.  Slots are pre-allocated so
+    // each task writes to ctx.pp{16,32}[qi] independently; query_pp_idx
+    // collapses to the identity (qi -> qi).  Warnings and the skip-reason
+    // bookkeeping run in a sequential post-pass for deterministic ordering.
     const bool use_uint16 = (kmer_type_for(k, spaced_t) == 0);
-    // Map from original query index to preprocessed index (shared across ctxs).
     std::vector<size_t> query_pp_idx(queries.size(), SIZE_MAX);
+    for (size_t qi = 0; qi < queries.size(); ++qi) query_pp_idx[qi] = qi;
 
     for (auto& ctx : ctxs) {
-        if (use_uint16) ctx.pp16.reserve(queries.size());
-        else            ctx.pp32.reserve(queries.size());
+        if (use_uint16) ctx.pp16.resize(queries.size());
+        else            ctx.pp32.resize(queries.size());
     }
 
-    for (size_t qi = 0; qi < queries.size(); qi++) {
-        query_pp_idx[qi] = use_uint16 ? ctxs[0].pp16.size() : ctxs[0].pp32.size();
-        bool any_multi_degen = false;
-        uint8_t skip_reason = 0;
-        std::string skip_detail;
-        for (auto& ctx : ctxs) {
-            if (use_uint16) {
-                ctx.pp16.push_back({preprocess_query<uint16_t>(
-                    queries[qi].sequence, k, ctx.khx_ptr, config,
-                    spaced_t, ctx.seed_masks)});
-                const auto& q = ctx.pp16.back().qdata;
-                if (q.has_multi_degen) any_multi_degen = true;
-                if (q.skip_reason != 0 && skip_reason == 0) {
-                    skip_reason = q.skip_reason;
-                    skip_detail = q.skip_detail;
-                }
-            } else {
-                ctx.pp32.push_back({preprocess_query<uint32_t>(
-                    queries[qi].sequence, k, ctx.khx_ptr, config,
-                    spaced_t, ctx.seed_masks)});
-                const auto& q = ctx.pp32.back().qdata;
-                if (q.has_multi_degen) any_multi_degen = true;
-                if (q.skip_reason != 0 && skip_reason == 0) {
-                    skip_reason = q.skip_reason;
-                    skip_detail = q.skip_detail;
-                }
-            }
-        }
-        if (skip_reason != 0) {
-            query_skip_reason[qi] = skip_reason;
-            query_skip_detail[qi] = skip_detail;
+    std::vector<uint8_t> any_multi_degen_per_q(queries.size(), 0);
+
+    {
+        tbb::task_arena arena_pp(num_threads);
+        arena_pp.execute([&] {
+            tbb::parallel_for(
+                tbb::blocked_range<size_t>(0, queries.size()),
+                [&](const tbb::blocked_range<size_t>& range) {
+                    for (size_t qi = range.begin(); qi != range.end(); ++qi) {
+                        if (use_uint16) {
+                            std::vector<PreprocessTemplateBinding<uint16_t>> b(ctxs.size());
+                            for (size_t i = 0; i < ctxs.size(); ++i) {
+                                b[i].slot  = &ctxs[i].pp16[qi].qdata;
+                                b[i].khx   = ctxs[i].khx_ptr;
+                                b[i].masks = &ctxs[i].seed_masks;
+                            }
+                            auto out = run_preprocess_one_query<uint16_t>(
+                                queries[qi].sequence, k, spaced_t, config,
+                                b.data(), b.size());
+                            if (out.skip_reason != 0) {
+                                query_skip_reason[qi] = out.skip_reason;
+                                query_skip_detail[qi] = std::move(out.skip_detail);
+                            }
+                            any_multi_degen_per_q[qi] = out.multi_degen ? 1 : 0;
+                        } else {
+                            std::vector<PreprocessTemplateBinding<uint32_t>> b(ctxs.size());
+                            for (size_t i = 0; i < ctxs.size(); ++i) {
+                                b[i].slot  = &ctxs[i].pp32[qi].qdata;
+                                b[i].khx   = ctxs[i].khx_ptr;
+                                b[i].masks = &ctxs[i].seed_masks;
+                            }
+                            auto out = run_preprocess_one_query<uint32_t>(
+                                queries[qi].sequence, k, spaced_t, config,
+                                b.data(), b.size());
+                            if (out.skip_reason != 0) {
+                                query_skip_reason[qi] = out.skip_reason;
+                                query_skip_detail[qi] = std::move(out.skip_detail);
+                            }
+                            any_multi_degen_per_q[qi] = out.multi_degen ? 1 : 0;
+                        }
+                    }
+                });
+        });
+    }
+
+    for (size_t qi = 0; qi < queries.size(); ++qi) {
+        if (query_skip_reason[qi] != 0) {
             has_skipped = true;
             std::fprintf(stderr, "Warning: query '%s' skipped: %s (%s)\n",
                          queries[qi].id.c_str(),
-                         skip_reason_str(skip_reason),
-                         skip_detail.c_str());
+                         skip_reason_str(query_skip_reason[qi]),
+                         query_skip_detail[qi].c_str());
         }
-        if (any_multi_degen) {
+        if (any_multi_degen_per_q[qi]) {
             std::fprintf(stderr,
                 "Warning: query '%s' contains k-mers exceeding max_degen_expand=%u; "
                 "those k-mers are ignored and not used in the search\n",
@@ -724,22 +737,12 @@ int main(int argc, char* argv[]) {
     for (const auto& vd : ctxs[0].volumes)
         max_num_seqs = std::max(max_num_seqs, vd.kix.num_sequences());
 
-    // Determine optimal tier from actual preprocessed k-mer counts
+    // Determine optimal tier from actual preprocessed k-mer counts.
     uint32_t max_kmer_positions = 0;
     for (const auto& ctx : ctxs) {
-        if (use_uint16) {
-            for (const auto& pp : ctx.pp16) {
-                max_kmer_positions = std::max(max_kmer_positions,
-                    static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                                   pp.qdata.rc_positions.size())));
-            }
-        } else {
-            for (const auto& pp : ctx.pp32) {
-                max_kmer_positions = std::max(max_kmer_positions,
-                    static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                                   pp.qdata.rc_positions.size())));
-            }
-        }
+        max_kmer_positions = use_uint16
+            ? accumulate_max_kmer_positions(max_kmer_positions, ctx.pp16)
+            : accumulate_max_kmer_positions(max_kmer_positions, ctx.pp32);
     }
     Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
 
@@ -751,141 +754,85 @@ int main(int argc, char* argv[]) {
     };
     tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(make_tls_buf);
 
-    // Thread-local hit collection (no mutex needed)
-    tbb::combinable<std::vector<OutputHit>> tls_hits;
-
-    // Adaptive parallel granularity:
-    // - Many queries or single volume: parallel_for over queries (coarser tasks)
-    // - Few queries, multiple volumes: parallel_for_each over (query, volume) pairs
-    size_t non_skipped_count = use_uint16 ? ctxs[0].pp16.size() : ctxs[0].pp32.size();
     size_t num_volumes = ctxs[0].volumes.size();
-    bool use_query_level_parallel =
-        (non_skipped_count > static_cast<size_t>(num_threads) * 2) ||
-        (num_volumes == 1);
 
-    // Helper: convert SearchResult hits to OutputHits
-    auto collect_hits = [&](const SearchResult& sr, const KsxReader& ksx,
-                            uint16_t volume_index, const std::string& query_seq,
-                            std::vector<OutputHit>& local_hits) {
-        for (const auto& cr : sr.hits) {
-            OutputHit oh;
-            oh.qseqid = sr.query_id;
-            oh.sseqid = std::string(ksx.accession(cr.seq_id));
-            oh.sstrand = cr.is_reverse ? '-' : '+';
-            oh.qstart = cr.q_start;
-            oh.qend = cr.q_end;
-            oh.sstart = cr.s_start;
-            oh.send = cr.s_end;
-            oh.chainscore = cr.chainscore;
-            if (config.stage1.stage1_score_type == 2)
-                oh.matchscore = cr.stage1_score;
-            else
-                oh.coverscore = cr.stage1_score;
-            oh.volume = volume_index;
-            oh.oid = cr.seq_id;
-            oh.qlen = static_cast<uint32_t>(query_seq.size());
-            oh.slen = ksx.seq_length(cr.seq_id);
-            local_hits.push_back(oh);
-        }
-    };
+    // Build VolumeBundle / QueryBundle vectors for the orchestrator. Pointers
+    // alias the existing TemplateContext storage; ctxs and pp* must outlive
+    // the call below.
+    auto run_orchestrated = [&](auto kmer_int_tag) {
+        using KmerInt = decltype(kmer_int_tag);
 
-    // Phase 2: execute search jobs in parallel using preprocessed data.
-    // run_one() encapsulates the both-mode vs single-mode dispatch so the
-    // outer parallel paths only differ in their work distribution.
-    auto run_one = [&](size_t qi, size_t vi,
-                       Stage1Buffer& buf,
-                       std::vector<OutputHit>& local_hits) {
-        const auto& query = queries[qi];
-        size_t pp_idx = query_pp_idx[qi];
-        const auto& ksx_primary = ctxs[0].volumes[vi].ksx;
-        const auto& filter_primary = ctxs[0].volumes[vi].filter;
-        const uint16_t volume_index = ctxs[0].volumes[vi].volume_index;
-
-        SearchResult sr;
-        if (is_both_mode) {
-            const auto& vd_cod = ctxs[0].volumes[vi];
-            const auto& vd_opt = ctxs[1].volumes[vi];
-            if (use_uint16) {
-                sr = search_volume_both<uint16_t>(
-                    query.id,
-                    ctxs[0].pp16[pp_idx].qdata, ctxs[1].pp16[pp_idx].qdata,
-                    k, vd_cod.kix, vd_cod.kpx, vd_opt.kix, vd_opt.kpx,
-                    ksx_primary, filter_primary, config, buf);
-            } else {
-                sr = search_volume_both<uint32_t>(
-                    query.id,
-                    ctxs[0].pp32[pp_idx].qdata, ctxs[1].pp32[pp_idx].qdata,
-                    k, vd_cod.kix, vd_cod.kpx, vd_opt.kix, vd_opt.kpx,
-                    ksx_primary, filter_primary, config, buf);
-            }
-        } else {
-            const auto& vd = ctxs[0].volumes[vi];
-            if (use_uint16) {
-                sr = search_volume<uint16_t>(
-                    query.id, ctxs[0].pp16[pp_idx].qdata, k,
-                    vd.kix, vd.kpx, vd.ksx, vd.filter, config, buf);
-            } else {
-                sr = search_volume<uint32_t>(
-                    query.id, ctxs[0].pp32[pp_idx].qdata, k,
-                    vd.kix, vd.kpx, vd.ksx, vd.filter, config, buf);
+        std::vector<VolumeBundle<KmerInt>> volume_bundles(num_volumes);
+        for (size_t vi = 0; vi < num_volumes; ++vi) {
+            volume_bundles[vi].kix    = &ctxs[0].volumes[vi].kix;
+            volume_bundles[vi].kpx    = &ctxs[0].volumes[vi].kpx;
+            volume_bundles[vi].ksx    = &ctxs[0].volumes[vi].ksx;
+            volume_bundles[vi].filter = &ctxs[0].volumes[vi].filter;
+            volume_bundles[vi].volume_index = ctxs[0].volumes[vi].volume_index;
+            if (is_both_mode) {
+                volume_bundles[vi].kix_opt = &ctxs[1].volumes[vi].kix;
+                volume_bundles[vi].kpx_opt = &ctxs[1].volumes[vi].kpx;
             }
         }
-        if (!sr.hits.empty()) {
-            collect_hits(sr, ksx_primary, volume_index,
-                         query.sequence, local_hits);
-        }
-    };
 
-    tbb::task_arena arena(num_threads);
-
-    if (use_query_level_parallel) {
-        // Path A: query-level parallelism (parallel_for over queries)
-        logger.info("Launching query-level parallel search (%zu queries, %zu volumes)...",
-                    non_skipped_count, num_volumes);
-        arena.execute([&] {
-            tbb::parallel_for(
-                tbb::blocked_range<size_t>(0, queries.size()),
-                [&](const tbb::blocked_range<size_t>& range) {
-                    auto& buf = tls_bufs.local();
-                    auto& local_hits = tls_hits.local();
-
-                    for (size_t qi = range.begin(); qi != range.end(); ++qi) {
-                        if (query_skip_reason[qi] != 0) continue;
-                        for (size_t vi = 0; vi < num_volumes; vi++) {
-                            run_one(qi, vi, buf, local_hits);
-                        }
-                    }
-                });
-        });
-    } else {
-        // Path B: fine-grained parallelism (parallel_for_each over query x volume)
-        std::vector<SearchJob> jobs;
+        std::vector<QueryBundle<KmerInt>> query_bundles(queries.size());
+        std::vector<std::pair<size_t, size_t>> jobs;
         jobs.reserve(queries.size() * num_volumes);
-        for (size_t qi = 0; qi < queries.size(); qi++) {
+        for (size_t qi = 0; qi < queries.size(); ++qi) {
+            query_bundles[qi].query_id = &queries[qi].id;
             if (query_skip_reason[qi] != 0) continue;
-            for (size_t vi = 0; vi < num_volumes; vi++) {
-                jobs.push_back({qi, vi});
+            size_t pp_idx = query_pp_idx[qi];
+            if constexpr (std::is_same_v<KmerInt, uint16_t>) {
+                query_bundles[qi].qdata_primary = &ctxs[0].pp16[pp_idx].qdata;
+                if (is_both_mode)
+                    query_bundles[qi].qdata_secondary = &ctxs[1].pp16[pp_idx].qdata;
+            } else {
+                query_bundles[qi].qdata_primary = &ctxs[0].pp32[pp_idx].qdata;
+                if (is_both_mode)
+                    query_bundles[qi].qdata_secondary = &ctxs[1].pp32[pp_idx].qdata;
+            }
+            for (size_t vi = 0; vi < num_volumes; ++vi) {
+                jobs.emplace_back(qi, vi);
             }
         }
 
-        logger.info("Launching %zu search job(s) (fine-grained)...", jobs.size());
-        arena.execute([&] {
-            tbb::parallel_for_each(jobs.begin(), jobs.end(),
-                [&](const SearchJob& job) {
-                    auto& buf = tls_bufs.local();
-                    auto& local_hits = tls_hits.local();
-                    run_one(job.query_idx, job.volume_idx, buf, local_hits);
-                });
-        });
-    }
+        logger.info("Launching %zu search job(s) (Phase A) and Phase B chain extraction...",
+                    jobs.size());
 
-    // Merge thread-local hits
+        tbb::task_arena arena(num_threads);
+        return run_search_jobs<KmerInt>(query_bundles, volume_bundles, jobs,
+                                        k, config, is_both_mode, arena, tls_bufs);
+    };
+
+    std::vector<OrchestratorHit> orch_hits;
+    if (use_uint16) orch_hits = run_orchestrated(uint16_t{});
+    else            orch_hits = run_orchestrated(uint32_t{});
+
+    // Convert OrchestratorHit -> OutputHit at the boundary.
     std::vector<OutputHit> all_hits;
-    tls_hits.combine_each([&all_hits](std::vector<OutputHit>& local) {
-        all_hits.insert(all_hits.end(),
-            std::make_move_iterator(local.begin()),
-            std::make_move_iterator(local.end()));
-    });
+    all_hits.reserve(orch_hits.size());
+    for (const auto& oh_in : orch_hits) {
+        const auto& cr = oh_in.cr;
+        const auto& ksx_primary = ctxs[0].volumes[oh_in.volume_idx].ksx;
+        OutputHit oh;
+        oh.qseqid = queries[oh_in.query_idx].id;
+        oh.sseqid = std::string(ksx_primary.accession(cr.seq_id));
+        oh.sstrand = cr.is_reverse ? '-' : '+';
+        oh.qstart = cr.q_start;
+        oh.qend = cr.q_end;
+        oh.sstart = cr.s_start;
+        oh.send = cr.s_end;
+        oh.chainscore = cr.chainscore;
+        if (config.stage1.stage1_score_type == 2)
+            oh.matchscore = cr.stage1_score;
+        else
+            oh.coverscore = cr.stage1_score;
+        oh.volume = oh_in.volume_index;
+        oh.oid = cr.seq_id;
+        oh.qlen = static_cast<uint32_t>(queries[oh_in.query_idx].sequence.size());
+        oh.slen = ksx_primary.seq_length(cr.seq_id);
+        all_hits.push_back(std::move(oh));
+    }
 
     // Build skip-marker rows for queries that were not searched. Held aside
     // so Stage 3 only sees real hits.

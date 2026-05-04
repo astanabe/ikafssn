@@ -9,14 +9,18 @@
 #include "io/fasta_reader.hpp"
 #include "io/result_writer.hpp"
 #include "search/oid_filter.hpp"
+#include "search/parallel_search.hpp"
+#include "search/preprocess_runner.hpp"
 #include "search/query_preprocessor.hpp"
+#include "search/tier_selection.hpp"
 
 #include <algorithm>
 #include <functional>
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
 
 #include <tbb/blocked_range.h>
-#include <tbb/combinable.h>
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
 
@@ -223,101 +227,118 @@ SearchResponse process_search_request(
         khx_ptr = group.khx.is_open() ? &group.khx : nullptr;
     }
 
-    // Preprocess accepted queries and build jobs
+    // Preprocess accepted queries in parallel and build jobs.
+    // Slots are pre-allocated to req.queries.size(); rejected slots remain
+    // default-constructed and are simply not referenced downstream.
     struct PreprocessedQuery16 { QueryKmerData<uint16_t> qdata; };
     struct PreprocessedQuery32 { QueryKmerData<uint32_t> qdata; };
     std::vector<PreprocessedQuery16> pp16;
     std::vector<PreprocessedQuery32> pp32;
-    std::vector<PreprocessedQuery16> pp16_cod;  // both mode: coding
-    std::vector<PreprocessedQuery16> pp16_opt;  // both mode: optimal
-    std::vector<PreprocessedQuery32> pp32_cod;  // both mode: coding
-    std::vector<PreprocessedQuery32> pp32_opt;  // both mode: optimal
-    std::vector<size_t> query_pp_idx(req.queries.size(), SIZE_MAX);
+    std::vector<PreprocessedQuery16> pp16_cod;
+    std::vector<PreprocessedQuery16> pp16_opt;
+    std::vector<PreprocessedQuery32> pp32_cod;
+    std::vector<PreprocessedQuery32> pp32_opt;
 
+    if (is_both_mode) {
+        if (group.kmer_type == 0) {
+            pp16_cod.resize(req.queries.size());
+            pp16_opt.resize(req.queries.size());
+        } else {
+            pp32_cod.resize(req.queries.size());
+            pp32_opt.resize(req.queries.size());
+        }
+    } else {
+        if (group.kmer_type == 0) pp16.resize(req.queries.size());
+        else                      pp32.resize(req.queries.size());
+    }
+
+    // qi -> qi identity mapping after pre-allocation.
+    std::vector<size_t> query_pp_idx(req.queries.size());
+    for (size_t qi = 0; qi < req.queries.size(); ++qi) query_pp_idx[qi] = qi;
+
+    // Per-query skip / multi-degen state filled inside the parallel body.
+    std::vector<uint8_t> per_q_skip_reason(req.queries.size(), 0);
+    std::vector<std::string> per_q_skip_detail(req.queries.size());
+    std::vector<uint8_t> per_q_multi_degen(req.queries.size(), 0);
+
+    arena.execute([&] {
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, req.queries.size()),
+            [&](const tbb::blocked_range<size_t>& range) {
+                for (size_t qi = range.begin(); qi != range.end(); ++qi) {
+                    if (!is_accepted[qi]) continue;
+                    if (group.kmer_type == 0) {
+                        std::vector<PreprocessTemplateBinding<uint16_t>> b;
+                        if (is_both_mode) {
+                            b.resize(2);
+                            b[0].slot  = &pp16_cod[qi].qdata;
+                            b[0].khx   = khx_ptr_cod;
+                            b[0].masks = &seed_masks_cod;
+                            b[1].slot  = &pp16_opt[qi].qdata;
+                            b[1].khx   = khx_ptr_opt;
+                            b[1].masks = &seed_masks_opt;
+                        } else {
+                            b.resize(1);
+                            b[0].slot  = &pp16[qi].qdata;
+                            b[0].khx   = khx_ptr;
+                            b[0].masks = &seed_masks;
+                        }
+                        auto out = run_preprocess_one_query<uint16_t>(
+                            req.queries[qi].sequence, k, t, config,
+                            b.data(), b.size());
+                        per_q_skip_reason[qi] = out.skip_reason;
+                        per_q_skip_detail[qi] = std::move(out.skip_detail);
+                        per_q_multi_degen[qi] = out.multi_degen ? 1 : 0;
+                    } else {
+                        std::vector<PreprocessTemplateBinding<uint32_t>> b;
+                        if (is_both_mode) {
+                            b.resize(2);
+                            b[0].slot  = &pp32_cod[qi].qdata;
+                            b[0].khx   = khx_ptr_cod;
+                            b[0].masks = &seed_masks_cod;
+                            b[1].slot  = &pp32_opt[qi].qdata;
+                            b[1].khx   = khx_ptr_opt;
+                            b[1].masks = &seed_masks_opt;
+                        } else {
+                            b.resize(1);
+                            b[0].slot  = &pp32[qi].qdata;
+                            b[0].khx   = khx_ptr;
+                            b[0].masks = &seed_masks;
+                        }
+                        auto out = run_preprocess_one_query<uint32_t>(
+                            req.queries[qi].sequence, k, t, config,
+                            b.data(), b.size());
+                        per_q_skip_reason[qi] = out.skip_reason;
+                        per_q_skip_detail[qi] = std::move(out.skip_detail);
+                        per_q_multi_degen[qi] = out.multi_degen ? 1 : 0;
+                    }
+                }
+            });
+    });
+
+    // Sequential second pass: build resp.results in original query order so
+    // that result_idx and accepted_queries match the legacy layout, and
+    // adjust permit bookkeeping for skipped queries.
     std::vector<AcceptedQuery> accepted_queries;
     accepted_queries.reserve(static_cast<size_t>(acquired));
-
-    // Iterate in original order: include accepted, skip rejected
-    for (size_t qi = 0; qi < req.queries.size(); qi++) {
-        if (!is_accepted[qi]) continue; // rejected, skip
-
-        // Preprocess this accepted query
-        bool multi_degen = false;
-        uint8_t qskip = 0;
-        std::string qskip_detail;
-        if (is_both_mode) {
-            if (group.kmer_type == 0) {
-                query_pp_idx[qi] = pp16_cod.size();
-                pp16_cod.push_back({preprocess_query<uint16_t>(
-                    req.queries[qi].sequence, k, khx_ptr_cod, config,
-                    t, seed_masks_cod)});
-                pp16_opt.push_back({preprocess_query<uint16_t>(
-                    req.queries[qi].sequence, k, khx_ptr_opt, config,
-                    t, seed_masks_opt)});
-                multi_degen = pp16_cod.back().qdata.has_multi_degen ||
-                              pp16_opt.back().qdata.has_multi_degen;
-                if (pp16_cod.back().qdata.skip_reason != 0) {
-                    qskip = pp16_cod.back().qdata.skip_reason;
-                    qskip_detail = pp16_cod.back().qdata.skip_detail;
-                } else if (pp16_opt.back().qdata.skip_reason != 0) {
-                    qskip = pp16_opt.back().qdata.skip_reason;
-                    qskip_detail = pp16_opt.back().qdata.skip_detail;
-                }
-            } else {
-                query_pp_idx[qi] = pp32_cod.size();
-                pp32_cod.push_back({preprocess_query<uint32_t>(
-                    req.queries[qi].sequence, k, khx_ptr_cod, config,
-                    t, seed_masks_cod)});
-                pp32_opt.push_back({preprocess_query<uint32_t>(
-                    req.queries[qi].sequence, k, khx_ptr_opt, config,
-                    t, seed_masks_opt)});
-                multi_degen = pp32_cod.back().qdata.has_multi_degen ||
-                              pp32_opt.back().qdata.has_multi_degen;
-                if (pp32_cod.back().qdata.skip_reason != 0) {
-                    qskip = pp32_cod.back().qdata.skip_reason;
-                    qskip_detail = pp32_cod.back().qdata.skip_detail;
-                } else if (pp32_opt.back().qdata.skip_reason != 0) {
-                    qskip = pp32_opt.back().qdata.skip_reason;
-                    qskip_detail = pp32_opt.back().qdata.skip_detail;
-                }
-            }
-        } else {
-            if (group.kmer_type == 0) {
-                query_pp_idx[qi] = pp16.size();
-                pp16.push_back({preprocess_query<uint16_t>(
-                    req.queries[qi].sequence, k, khx_ptr, config,
-                    t, seed_masks)});
-                multi_degen = pp16.back().qdata.has_multi_degen;
-                qskip = pp16.back().qdata.skip_reason;
-                qskip_detail = pp16.back().qdata.skip_detail;
-            } else {
-                query_pp_idx[qi] = pp32.size();
-                pp32.push_back({preprocess_query<uint32_t>(
-                    req.queries[qi].sequence, k, khx_ptr, config,
-                    t, seed_masks)});
-                multi_degen = pp32.back().qdata.has_multi_degen;
-                qskip = pp32.back().qdata.skip_reason;
-                qskip_detail = pp32.back().qdata.skip_detail;
-            }
-        }
-
+    for (size_t qi = 0; qi < req.queries.size(); ++qi) {
+        if (!is_accepted[qi]) continue;
         size_t result_idx = resp.results.size();
         QueryResult qr;
         qr.qseqid = req.queries[qi].qseqid;
         qr.qlen = static_cast<uint32_t>(req.queries[qi].sequence.size());
-        qr.skip_reason = qskip;
-        qr.skip_detail = std::move(qskip_detail);
-        if (multi_degen) {
+        qr.skip_reason = per_q_skip_reason[qi];
+        qr.skip_detail = std::move(per_q_skip_detail[qi]);
+        if (per_q_multi_degen[qi]) {
             qr.warnings |= kWarnMultiDegen;
         }
         resp.results.push_back(std::move(qr));
-
-        if (qskip == 0) {
+        if (per_q_skip_reason[qi] == 0) {
             accepted_queries.push_back({result_idx, qi});
         } else {
-            // Skipped queries do not run Stage 1/2/3. Release their permit
-            // immediately so queue_depth reflects actual concurrent work and
-            // the next request can claim the slot.
+            // Skipped queries do not run Stage 1/2/3.  Release the permit so
+            // queue_depth reflects actual concurrent work and the next
+            // request can claim the slot.
             server.release_sequences(1);
             acquired--;
         }
@@ -333,40 +354,16 @@ SearchResponse process_search_request(
             max_num_seqs = std::max(max_num_seqs, vol.kix.num_sequences());
     }
 
-    // Determine optimal tier from actual preprocessed k-mer counts
+    // Determine optimal tier from actual preprocessed k-mer counts.
     uint32_t max_kmer_positions = 0;
     if (is_both_mode) {
-        for (const auto& pp : pp16_cod) {
-            max_kmer_positions = std::max(max_kmer_positions,
-                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                               pp.qdata.rc_positions.size())));
-        }
-        for (const auto& pp : pp16_opt) {
-            max_kmer_positions = std::max(max_kmer_positions,
-                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                               pp.qdata.rc_positions.size())));
-        }
-        for (const auto& pp : pp32_cod) {
-            max_kmer_positions = std::max(max_kmer_positions,
-                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                               pp.qdata.rc_positions.size())));
-        }
-        for (const auto& pp : pp32_opt) {
-            max_kmer_positions = std::max(max_kmer_positions,
-                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                               pp.qdata.rc_positions.size())));
-        }
+        max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp16_cod);
+        max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp16_opt);
+        max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp32_cod);
+        max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp32_opt);
     } else {
-        for (const auto& pp : pp16) {
-            max_kmer_positions = std::max(max_kmer_positions,
-                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                               pp.qdata.rc_positions.size())));
-        }
-        for (const auto& pp : pp32) {
-            max_kmer_positions = std::max(max_kmer_positions,
-                static_cast<uint32_t>(std::max(pp.qdata.fwd_positions.size(),
-                                               pp.qdata.rc_positions.size())));
-        }
+        max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp16);
+        max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp32);
     }
     Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
 
@@ -378,100 +375,118 @@ SearchResponse process_search_request(
             return buf;
         });
 
-    // Thread-local hit collection: (result_idx, ResponseHit) pairs
-    tbb::combinable<std::vector<std::pair<size_t, ResponseHit>>> tls_hits;
-
     // Number of volumes for the search loop
     size_t num_volumes = is_both_mode ? group_cod->volumes.size() : group.volumes.size();
 
-    // Parallel execution using preprocessed data (query-level granularity)
-    arena.execute([&] {
-        tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, accepted_queries.size()),
-            [&](const tbb::blocked_range<size_t>& range) {
-                auto& buf = tls_bufs.local();
-                auto& local_hits = tls_hits.local();
-
-                for (size_t i = range.begin(); i != range.end(); ++i) {
-                    const auto& aq = accepted_queries[i];
-                    const auto& query = req.queries[aq.query_idx];
-                    size_t pp_idx = query_pp_idx[aq.query_idx];
-
-                    for (size_t vol_i = 0; vol_i < num_volumes; vol_i++) {
-                        // Use coding group's ksx for accession lookup (both modes share the same DB)
-                        const auto& vol = is_both_mode ? group_cod->volumes[vol_i] : group.volumes[vol_i];
-
-                        // Build per-volume OID filter
-                        OidFilter oid_filter;
-                        if (filter_mode != OidFilterMode::kNone) {
-                            oid_filter.build(req.seqids, vol.ksx, filter_mode);
-                        }
-
-                        SearchResult sr;
-                        if (is_both_mode) {
-                            const auto& vd_cod = group_cod->volumes[vol_i];
-                            const auto& vd_opt = group_opt->volumes[vol_i];
-                            if (group.kmer_type == 0) {
-                                sr = search_volume_both<uint16_t>(
-                                    query.qseqid,
-                                    pp16_cod[pp_idx].qdata, pp16_opt[pp_idx].qdata,
-                                    k, vd_cod.kix, vd_cod.kpx,
-                                    vd_opt.kix, vd_opt.kpx,
-                                    vd_cod.ksx, oid_filter, config,
-                                    buf);
-                            } else {
-                                sr = search_volume_both<uint32_t>(
-                                    query.qseqid,
-                                    pp32_cod[pp_idx].qdata, pp32_opt[pp_idx].qdata,
-                                    k, vd_cod.kix, vd_cod.kpx,
-                                    vd_opt.kix, vd_opt.kpx,
-                                    vd_cod.ksx, oid_filter, config,
-                                    buf);
-                            }
-                        } else {
-                            if (group.kmer_type == 0) {
-                                sr = search_volume<uint16_t>(
-                                    query.qseqid, pp16[pp_idx].qdata, k,
-                                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, buf);
-                            } else {
-                                sr = search_volume<uint32_t>(
-                                    query.qseqid, pp32[pp_idx].qdata, k,
-                                    vol.kix, vol.kpx, vol.ksx, oid_filter, config, buf);
-                            }
-                        }
-
-                        if (!sr.hits.empty()) {
-                            for (const auto& cr : sr.hits) {
-                                ResponseHit rh;
-                                rh.sseqid = std::string(vol.ksx.accession(cr.seq_id));
-                                rh.sstrand = cr.is_reverse ? 1 : 0;
-                                rh.qstart = cr.q_start;
-                                rh.qend = cr.q_end;
-                                rh.sstart = cr.s_start;
-                                rh.send = cr.s_end;
-                                rh.chainscore = static_cast<uint16_t>(cr.chainscore);
-                                if (config.stage1.stage1_score_type == 2)
-                                    rh.matchscore = static_cast<uint16_t>(cr.stage1_score);
-                                else
-                                    rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
-                                rh.volume = vol.volume_index;
-                                rh.oid = cr.seq_id;
-                                rh.qlen = static_cast<uint32_t>(query.sequence.size());
-                                rh.slen = vol.ksx.seq_length(cr.seq_id);
-                                local_hits.emplace_back(aq.result_idx, rh);
-                            }
-                        }
+    // Hoist OidFilter construction out of the inner (query, volume) loop:
+    // req.seqids, ksx, and filter_mode are all request-invariant, so M*V
+    // redundant builds collapse to V builds.  Each OidFilter::build() walks
+    // the whole ksx accession array, so parallel_for over volumes amortises
+    // the cost.
+    std::vector<OidFilter> oid_filters(num_volumes);
+    if (filter_mode != OidFilterMode::kNone) {
+        arena.execute([&] {
+            tbb::parallel_for(
+                tbb::blocked_range<size_t>(0, num_volumes),
+                [&](const tbb::blocked_range<size_t>& range) {
+                    for (size_t vi = range.begin(); vi != range.end(); ++vi) {
+                        const auto& vol = is_both_mode
+                            ? group_cod->volumes[vi]
+                            : group.volumes[vi];
+                        oid_filters[vi].build(req.seqids, vol.ksx, filter_mode);
                     }
-                }
-            });
-    });
+                });
+        });
+    }
 
-    // Merge thread-local hits into resp.results
-    tls_hits.combine_each([&resp](std::vector<std::pair<size_t, ResponseHit>>& local) {
-        for (auto& [idx, rh] : local) {
-            resp.results[idx].hits.push_back(std::move(rh));
+    // Map each accepted query's req-index into its result-index so we can
+    // attach orchestrator hits back to the correct QueryResult slot.
+    std::vector<size_t> query_to_result(req.queries.size(), SIZE_MAX);
+    for (const auto& aq : accepted_queries) {
+        query_to_result[aq.query_idx] = aq.result_idx;
+    }
+
+    auto run_orchestrated = [&](auto kmer_int_tag) {
+        using KmerInt = decltype(kmer_int_tag);
+
+        std::vector<VolumeBundle<KmerInt>> volume_bundles(num_volumes);
+        for (size_t vi = 0; vi < num_volumes; ++vi) {
+            const auto& vol_primary = is_both_mode
+                ? group_cod->volumes[vi]
+                : group.volumes[vi];
+            volume_bundles[vi].kix    = &vol_primary.kix;
+            volume_bundles[vi].kpx    = &vol_primary.kpx;
+            volume_bundles[vi].ksx    = &vol_primary.ksx;
+            volume_bundles[vi].filter = &oid_filters[vi];
+            volume_bundles[vi].volume_index = vol_primary.volume_index;
+            if (is_both_mode) {
+                volume_bundles[vi].kix_opt = &group_opt->volumes[vi].kix;
+                volume_bundles[vi].kpx_opt = &group_opt->volumes[vi].kpx;
+            }
         }
-    });
+
+        std::vector<QueryBundle<KmerInt>> query_bundles(req.queries.size());
+        std::vector<std::pair<size_t, size_t>> jobs;
+        jobs.reserve(accepted_queries.size() * num_volumes);
+        for (const auto& aq : accepted_queries) {
+            size_t qi = aq.query_idx;
+            size_t pp_idx = query_pp_idx[qi];
+            query_bundles[qi].query_id = &req.queries[qi].qseqid;
+            if (is_both_mode) {
+                if constexpr (std::is_same_v<KmerInt, uint16_t>) {
+                    query_bundles[qi].qdata_primary   = &pp16_cod[pp_idx].qdata;
+                    query_bundles[qi].qdata_secondary = &pp16_opt[pp_idx].qdata;
+                } else {
+                    query_bundles[qi].qdata_primary   = &pp32_cod[pp_idx].qdata;
+                    query_bundles[qi].qdata_secondary = &pp32_opt[pp_idx].qdata;
+                }
+            } else {
+                if constexpr (std::is_same_v<KmerInt, uint16_t>) {
+                    query_bundles[qi].qdata_primary = &pp16[pp_idx].qdata;
+                } else {
+                    query_bundles[qi].qdata_primary = &pp32[pp_idx].qdata;
+                }
+            }
+            for (size_t vi = 0; vi < num_volumes; ++vi) {
+                jobs.emplace_back(qi, vi);
+            }
+        }
+
+        return run_search_jobs<KmerInt>(query_bundles, volume_bundles, jobs,
+                                        k, config, is_both_mode, arena, tls_bufs);
+    };
+
+    std::vector<OrchestratorHit> orch_hits;
+    if (group.kmer_type == 0) orch_hits = run_orchestrated(uint16_t{});
+    else                      orch_hits = run_orchestrated(uint32_t{});
+
+    // Convert OrchestratorHit -> ResponseHit at the boundary, fanning out
+    // into the corresponding QueryResult slot.
+    for (const auto& oh_in : orch_hits) {
+        const auto& cr = oh_in.cr;
+        size_t result_idx = query_to_result[oh_in.query_idx];
+        if (result_idx == SIZE_MAX) continue;  // defensive; should not happen
+        const auto& vol = is_both_mode
+            ? group_cod->volumes[oh_in.volume_idx]
+            : group.volumes[oh_in.volume_idx];
+        ResponseHit rh;
+        rh.sseqid = std::string(vol.ksx.accession(cr.seq_id));
+        rh.sstrand = cr.is_reverse ? 1 : 0;
+        rh.qstart = cr.q_start;
+        rh.qend = cr.q_end;
+        rh.sstart = cr.s_start;
+        rh.send = cr.s_end;
+        rh.chainscore = static_cast<uint16_t>(cr.chainscore);
+        if (config.stage1.stage1_score_type == 2)
+            rh.matchscore = static_cast<uint16_t>(cr.stage1_score);
+        else
+            rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
+        rh.volume = vol.volume_index;
+        rh.oid = cr.seq_id;
+        rh.qlen = static_cast<uint32_t>(req.queries[oh_in.query_idx].sequence.size());
+        rh.slen = vol.ksx.seq_length(cr.seq_id);
+        resp.results[result_idx].hits.push_back(std::move(rh));
+    }
 
     // Stage 3 alignment (mode 3 only)
     if (config.mode == 3) {
