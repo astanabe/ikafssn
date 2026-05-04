@@ -88,8 +88,6 @@ ikafssnindex [options]
   -highfreq_filter_threads <int>
                           ボリューム横断高頻度フィルタリングのスレッド数
                           (デフォルト: min(8, threads))
-  -openvol <int>          ボリューム同時処理数の上限 (デフォルト: 1)
-                          マルチボリューム DB のピークメモリ使用量を制御
   -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 4、最大: 16、0/1: 無効)
                           IUPAC 縮重塩基を含む k-mer から生成する非縮重 k-mer の最大数を制御。
                           各位置の変異数の積がこの上限以下の場合に展開を実行。
@@ -115,9 +113,6 @@ ikafssnindex -db mydb -k 11 -o ./index -memory_limit 128G
 
 # 大規模 DB、メモリ制限、マルチスレッド
 ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -threads 32
-
-# 大規模 DB、ボリューム同時処理数を 2 に制限
-ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2
 
 # 高頻度 k-mer を除外して構築 (絶対値指定)
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000

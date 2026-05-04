@@ -89,8 +89,6 @@ Options:
   -highfreq_filter_threads <int>
                           Threads for cross-volume high-frequency filtering
                           (default: min(8, threads))
-  -openvol <int>          Max volumes processed simultaneously (default: 1)
-                          Controls peak memory usage for multi-volume DBs
   -max_degen_expand <int> Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)
                           Controls how many non-degenerate k-mers are generated from
                           a k-mer containing IUPAC degenerate bases. Expansion occurs
@@ -117,9 +115,6 @@ ikafssnindex -db mydb -k 11 -o ./index -memory_limit 128G
 
 # Large DB, limited memory, multi-threaded
 ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -threads 32
-
-# Large DB, allow 2 volumes to be processed simultaneously
-ikafssnindex -db nt -k 11 -o ./nt_index -openvol 2
 
 # Exclude high-frequency k-mers during build (absolute)
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000

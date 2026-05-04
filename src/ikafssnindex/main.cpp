@@ -23,13 +23,8 @@
 #include <unistd.h>
 #include <vector>
 #include <filesystem>
-#include <atomic>
-#include <condition_variable>
-#include <mutex>
-#include <thread>
 
 #include <tbb/global_control.h>
-#include <tbb/task_group.h>
 
 using namespace ikafssn;
 
@@ -208,8 +203,6 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         16, 18, 21: requires -k 11 or 12\n"
         "  -template_type <str>   Template type: coding, optimal, or both (required with -t)\n"
         "                         both: builds coding and optimal indexes sequentially\n"
-        "  -openvol <int>         Max volumes processed simultaneously\n"
-        "                         (default: 1)\n"
         "  -threads <int>         Number of threads (default: all cores)\n"
         "  -no-validate           Skip the post-build structural validation pass\n"
         "                         (Phase 7d default-on validation walks each\n"
@@ -340,9 +333,6 @@ int main(int argc, char* argv[]) {
         highfreq_filter_threads = std::min(8, threads);
     }
 
-    int openvol = cli.get_int("-openvol", 1);
-    if (openvol < 1) openvol = 1;
-
     int rebuild_mode = cli.get_int("-rebuild", 0);
     if (rebuild_mode != 0 && rebuild_mode != 1) {
         std::fprintf(stderr, "Error: -rebuild must be 0 or 1\n");
@@ -408,12 +398,12 @@ int main(int argc, char* argv[]) {
     if (spaced_t > 0) {
         std::string type_display = (spaced_type == TemplateType::kBoth)
             ? "both (coding+optimal)" : template_type_to_string(spaced_type);
-        logger.info("Parameters: k=%d, t=%d, template_type=%s, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
+        logger.info("Parameters: k=%d, t=%d, template_type=%s, mode=%d, memory_limit=%s, threads=%d",
                     k, spaced_t, type_display.c_str(),
-                    index_mode, mem_limit_str.c_str(), openvol, threads);
+                    index_mode, mem_limit_str.c_str(), threads);
     } else {
-        logger.info("Parameters: k=%d, mode=%d, memory_limit=%s, openvol=%d, threads=%d",
-                    k, index_mode, mem_limit_str.c_str(), openvol, threads);
+        logger.info("Parameters: k=%d, mode=%d, memory_limit=%s, threads=%d",
+                    k, index_mode, mem_limit_str.c_str(), threads);
     }
 
     // Extract DB base name from path
@@ -422,10 +412,10 @@ int main(int argc, char* argv[]) {
     // Centralized TBB thread control
     tbb::global_control gc(tbb::global_control::max_allowed_parallelism, threads);
 
-    // Build config (per-volume memory budget = total limit / openvol)
+    // Build config
     IndexBuilderConfig config;
     config.k = k;
-    config.memory_limit = memory_limit / static_cast<uint64_t>(openvol);
+    config.memory_limit = memory_limit;
     config.threads = threads;
     config.verbose = verbose;
     config.skip_kpx = (index_mode == 1);
@@ -587,52 +577,25 @@ int main(int argc, char* argv[]) {
         }
 
         if (!build_skipped) {
-        // Process volumes via TBB task_group with concurrency limited by -openvol.
-        {
-        std::atomic<bool> any_error{false};
-        std::vector<std::string> error_messages(total_volumes);
-        std::mutex log_mutex;
+            // Process volumes sequentially.  Volume-level concurrency was
+            // dropped along with the legacy -openvol option: per-volume
+            // partition processing is already TBB-parallel end-to-end
+            // (counting reduce, sort, per-k-mer encode), so an additional
+            // outer task_group provided no extra parallelism while
+            // doubling peak memory and forcing -memory_limit / openvol
+            // accounting on every caller.
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                if (skip_volume[vi]) continue;
 
-        int max_active = std::min(openvol, static_cast<int>(total_volumes));
-        std::mutex vol_mutex;
-        std::condition_variable vol_cv;
-        int active_volumes = 0;
-
-        tbb::task_group tg;
-        for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            if (skip_volume[vi]) continue;
-
-            // Wait until a slot is available
-            {
-                std::unique_lock<std::mutex> lock(vol_mutex);
-                vol_cv.wait(lock, [&] { return active_volumes < max_active; });
-                active_volumes++;
-            }
-
-            if (any_error.load(std::memory_order_relaxed)) break;
-
-            tg.run([&, vi]() {
-                if (any_error.load(std::memory_order_relaxed)) {
-                    std::lock_guard<std::mutex> lock(vol_mutex);
-                    active_volumes--;
-                    vol_cv.notify_one();
-                    return;
-                }
-
-                {
-                    std::lock_guard<std::mutex> lock(log_mutex);
-                    logger.info("=== Volume %d/%d: %s ===", vi + 1, total_volumes,
-                                vol_paths[vi].c_str());
-                }
+                logger.info("=== Volume %d/%d: %s ===", vi + 1, total_volumes,
+                            vol_paths[vi].c_str());
 
                 BlastDbReader db;
                 if (!db.open(vol_paths[vi])) {
-                    error_messages[vi] = "cannot open volume '" + vol_paths[vi] + "'";
-                    any_error.store(true, std::memory_order_relaxed);
-                    std::lock_guard<std::mutex> lock(vol_mutex);
-                    active_volumes--;
-                    vol_cv.notify_one();
-                    return;
+                    std::fprintf(stderr,
+                        "Error: cannot open volume '%s'\n",
+                        vol_paths[vi].c_str());
+                    return 1;
                 }
 
                 const std::string& prefix = vol_prefixes[vi];
@@ -647,28 +610,12 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (!ok) {
-                    error_messages[vi] = "index build failed for volume " + std::to_string(vi);
-                    any_error.store(true, std::memory_order_relaxed);
-                }
-
-                {
-                    std::lock_guard<std::mutex> lock(vol_mutex);
-                    active_volumes--;
-                }
-                vol_cv.notify_one();
-            });
-        }
-        tg.wait();
-
-        if (any_error.load()) {
-            for (uint16_t vi = 0; vi < total_volumes; vi++) {
-                if (!error_messages[vi].empty()) {
-                    std::fprintf(stderr, "Error: %s\n", error_messages[vi].c_str());
+                    std::fprintf(stderr,
+                        "Error: index build failed for volume %u\n",
+                        static_cast<unsigned>(vi));
+                    return 1;
                 }
             }
-            return 1;
-        }
-        } // end volume processing block
         } // end if (!build_skipped)
 
         // Write .kvx manifest for this template type
