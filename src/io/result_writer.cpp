@@ -1,4 +1,5 @@
 #include "io/result_writer.hpp"
+#include "io/compressed_stream.hpp"
 #include "protocol/messages.hpp"
 
 #include <map>
@@ -310,6 +311,14 @@ bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
     if (fmt == OutputFormat::kBam && output_path.empty()) {
         error_msg = "Error: BAM output requires -o <path>";
         return false;
+    }
+    if (fmt == OutputFormat::kSam || fmt == OutputFormat::kBam) {
+        if (detect_format_from_extension(output_path) != CompressionFormat::kNone) {
+            error_msg = "Error: SAM/BAM output does not support compression "
+                        "suffix; remove .gz/.bz2/.xz/.zst or switch to "
+                        "-outfmt tab/json";
+            return false;
+        }
     }
     return true;
 }

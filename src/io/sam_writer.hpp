@@ -22,12 +22,18 @@ void write_results_bam(const std::string& output_path,
 
 // Write results in the appropriate format (tab/json/sam/bam), dispatching
 // to the correct writer. Returns true on success.
+//
+// `compression_level` is forwarded to TAB / JSON output paths whose
+// trailing suffix selects a codec (.gz / .bz2 / .xz / .zst); SAM / BAM
+// branches ignore it (compressed SAM/BAM is rejected at the
+// validate_output_format() boundary).
 bool write_all_results(const std::string& output_path,
                        const std::vector<OutputHit>& hits,
                        OutputFormat fmt,
                        uint8_t mode,
                        uint8_t stage1_score_type,
-                       bool stage3_traceback);
+                       bool stage3_traceback,
+                       int compression_level = -1);
 
 // Merge multiple SAM batch files into a single output.
 // @SQ headers are unioned across all files; @HD and @PG from the first file.

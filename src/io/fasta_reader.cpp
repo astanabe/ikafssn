@@ -1,4 +1,5 @@
 #include "io/fasta_reader.hpp"
+#include "io/compressed_stream.hpp"
 #include "io/text_simd.hpp"
 
 #include <algorithm>
@@ -58,16 +59,13 @@ std::vector<FastaRecord> read_fasta_stream(std::istream& in) {
 }
 
 std::vector<FastaRecord> read_fasta(const std::string& path) {
-    if (path == "-") {
-        return read_fasta_stream(std::cin);
-    }
-
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        std::fprintf(stderr, "read_fasta: cannot open %s\n", path.c_str());
+    std::string err;
+    auto in = open_input_compressed(path, err);
+    if (!in) {
+        std::fprintf(stderr, "read_fasta: %s\n", err.c_str());
         return {};
     }
-    return read_fasta_stream(file);
+    return read_fasta_stream(*in.stream);
 }
 
 } // namespace ikafssn

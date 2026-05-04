@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.05")  # ikafssnclient/httpd: async REST polling (job-store + zstd-cached defline)
+set(IKAFSSN_VERSION "0.1.2026.05.05")  # io: transparent gzip/bzip2/xz/zstd I/O for FASTA queries and TSV/JSON/FASTA output
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
@@ -118,6 +118,14 @@ set_target_properties(hts PROPERTIES
 # --- Intel TBB ---
 find_package(TBB REQUIRED)
 
+# --- Compressed I/O codecs (used by ikafssn_io for FASTA / TSV / JSON / FASTA
+#     output paths with .gz / .bz2 / .xz / .zst suffixes) ---
+find_package(ZLIB    REQUIRED)
+find_package(BZip2   REQUIRED)
+find_package(LibLZMA REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET libzstd)
+
 # --- Drogon (optional, for ikafssnhttpd) ---
 option(BUILD_HTTPD "Build ikafssnhttpd (requires Drogon)" ON)
 if(BUILD_HTTPD)
@@ -190,13 +198,9 @@ if(ENABLE_REMOTE_RETRIEVE)
     find_package(CURL REQUIRED)
 endif()
 
-# --- libzstd (used by ikafssnclient async job state and ikafssnhttpd) ---
-# Both halves of the async REST stack persist defline lists / result blobs
-# through zstd; pull it in whenever either side is being built.
-if(ENABLE_CLIENT_HTTP OR BUILD_HTTPD)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET libzstd)
-endif()
+# libzstd is now an unconditional project-wide dependency (see the codec
+# block above).  ikafssnclient / ikafssnhttpd reuse the same PkgConfig::ZSTD
+# imported target for their async-job persistence layer.
 
 # --- x86-simd-sort (Phase 2c, M-4) ---
 # Header + per-arch dispatch library used by index_builder for the posting

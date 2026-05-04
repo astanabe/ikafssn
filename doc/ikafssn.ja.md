@@ -53,6 +53,28 @@ ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db mydb > m
  Package: ikafssn <バージョン>, build <ISO 8601 タイムスタンプ>
 ```
 
+### 圧縮入出力
+
+`ikafssnsearch`、`ikafssnclient`、`ikafssnretrieve` は FASTA クエリ入力および
+TSV / JSON / FASTA 出力に対し、透過的なコーデックラッパを通します。
+
+- **入力**は先頭バイトのマジック判定で自動検出されるため、`.gz` / `.bz2`
+  / `.xz` / `.zst` の FASTA ファイル（およびそれらをパイプした標準入力）
+  はユーザー側でフラグを付けることなく展開されます。連結ストリーム
+  (`cat a.fa.gz b.fa.gz > c.fa.gz`) も 4 種すべてのコーデックで正しく展開されます。
+- **出力**はパス末尾の拡張子でコーデックを選択します
+  (`out.tsv.gz`、`out.json.zst`、`out.fa.bz2` など)。`-o` 未指定または
+  `-o -` の場合は他の設定によらず標準出力には無圧縮のまま書き込まれます。
+  標準出力を圧縮したい場合は外部エンコーダにパイプしてください。
+- `-compression_level <int>` で選択したコーデックの圧縮レベルを指定します。
+  各コーデックの受理範囲と既定値: gzip 0..9 (既定 6)、bzip2 1..9 (既定 9)、
+  xz 0..9 (既定 6)、zstd は `ZSTD_minCLevel()..ZSTD_maxCLevel()` (既定 3)。
+  範囲は I/O オープン前にパース時点で検証されます。
+- SAM / BAM 出力は 4 種の圧縮拡張子を **拒否** します — BAM 自体が
+  既に BGZF であり、二重ラップを意図的に避けるためです。圧縮された
+  結果ファイルが必要な場合は `-outfmt tab` または `-outfmt json` を
+  指定してください。
+
 ### ikafssnindex
 
 BLAST DB から k-mer 転置インデックスを構築します。各ボリュームに対して `.kix` (ID ポスティング)、`.kpx` (位置ポスティング、`-mode 1` の場合は省略)、`.ksx` (配列メタデータ) のファイルを生成します。`-max_freq_build` 使用時は共有 `.khx` (構築時除外ビットセット) も生成されます。`.khx` ファイルは全ボリューム共通 (k 値ごとに 1 つ) です。
@@ -199,6 +221,8 @@ ikafssnsearch [options]
                           optimal: optimal インデックスのみ使用
                           both: coding と optimal のインデックスを検索時にマージ
   -outfmt <tab|json|sam|bam>  出力形式 (デフォルト: tab)
+  -compression_level <int> 出力圧縮レベル (gzip/bzip2/xz/zstd; 既定値: gzip=6, bzip2=9, xz=6, zstd=3)
+                          コーデックは -o の拡張子 (.gz/.bz2/.xz/.zst) で選択。SAM/BAM では拒否
   -v, --verbose           詳細ログ出力
 ```
 
@@ -336,10 +360,15 @@ ikafssnretrieve [options]
 
 共通オプション:
   -o <path>               出力 FASTA ファイル (デフォルト: 標準出力)
+                          拡張子 (.gz/.bz2/.xz/.zst) で出力コーデックを選択
   -context <value>        コンテクスト拡張 (デフォルト: 2.0)
                           整数: マッチ領域の前後に付加する塩基数
                           小数: クエリ長 (qlen) に対する倍率
+  -compression_level <int> 出力圧縮レベル (既定値: gzip=6, bzip2=9, xz=6, zstd=3)
   -v, --verbose           詳細ログ出力
+
+(注: -results は gzip/bzip2/xz/zstd 圧縮された検索結果ファイルを先頭マジック
+ バイトで自動判定するため、フラグ指定は不要です。)
 
 リモート取得オプション (-remote 時):
   -api_key <key>          NCBI API key (環境変数 NCBI_API_KEY でも可)
@@ -577,7 +606,12 @@ ikafssnclient [options]
                            optimal: optimal インデックスのみ使用
                            both: coding と optimal のインデックスを検索時にマージ
   -outfmt <tab|json|sam|bam>  出力形式 (デフォルト: tab)
+  -compression_level <int> 出力圧縮レベル (既定値: gzip=6, bzip2=9, xz=6, zstd=3)
+                           コーデックは -o の拡張子 (.gz/.bz2/.xz/.zst) で選択。SAM/BAM では拒否
   -v, --verbose            詳細ログ出力
+
+(注: -query は gzip/bzip2/xz/zstd 圧縮された FASTA を先頭マジックバイトで
+ 自動判定するため、フラグ指定は不要です。)
 
 HTTP 認証 (HTTP モード専用):
   --user <user:password>   認証情報 (curl 形式)

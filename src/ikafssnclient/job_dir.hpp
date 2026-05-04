@@ -41,6 +41,7 @@ struct GroupMeta {
     uint8_t     template_type = 0;
     std::string outfmt;
     std::string output_path;
+    int32_t     compression_level = -1;  // -1 = codec default
     std::vector<std::string> job_ids;
 
     int32_t cnt_queued = 0;

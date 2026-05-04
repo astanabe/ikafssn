@@ -101,6 +101,7 @@ bool write_group_meta(const std::string& root, const GroupMeta& meta,
     root_j["template_type"]       = meta.template_type;
     root_j["outfmt"]              = meta.outfmt;
     root_j["output_path"]         = meta.output_path;
+    root_j["compression_level"]   = meta.compression_level;
     Json::Value jids(Json::arrayValue);
     for (const auto& j : meta.job_ids) jids.append(j);
     root_j["job_ids"] = std::move(jids);
@@ -158,6 +159,7 @@ bool read_group_meta(const std::string& root, const std::string& group_id,
     out.template_type       = static_cast<uint8_t>(j.get("template_type", 0).asUInt());
     out.outfmt              = j.get("outfmt", "").asString();
     out.output_path         = j.get("output_path", "").asString();
+    out.compression_level   = j.get("compression_level", -1).asInt();
     if (j.isMember("job_ids") && j["job_ids"].isArray()) {
         for (const auto& v : j["job_ids"]) out.job_ids.push_back(v.asString());
     }

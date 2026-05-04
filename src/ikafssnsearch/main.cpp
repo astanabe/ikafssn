@@ -18,6 +18,7 @@
 #include "search/tier_selection.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/blastdb_reader.hpp"
+#include "io/compressed_stream.hpp"
 #include "io/volume_discovery.hpp"
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
@@ -96,6 +97,7 @@ static void print_usage(const char* prog) {
         "  -t <int>                 Template length for spaced seeds (0=contiguous, 13/15/18 for k=8-9, 16/18/21 for k=11-12; default: 0)\n"
         "  -template_type <string>  Template type: coding, optimal, both (default: both)\n"
         "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
+        "  -compression_level <int>    Output compression level (default per codec: gzip=6, bzip2=9, xz=6, zstd=3)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
 }
@@ -347,6 +349,22 @@ int main(int argc, char* argv[]) {
         std::string err;
         if (!validate_output_format(outfmt, config.mode, stage3_config.traceback,
                                     output_path, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+    }
+
+    // Validate compression level (parsed against the codec selected by the
+    // output path's trailing suffix).  When -compression_level is absent we
+    // pass the kCompressionLevelDefault sentinel through unchanged.
+    int compression_level = cli.has("-compression_level")
+        ? cli.get_int("-compression_level", kCompressionLevelDefault)
+        : kCompressionLevelDefault;
+    {
+        std::string err;
+        if (!validate_compression_level(
+                detect_format_from_extension(output_path),
+                compression_level, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
@@ -904,7 +922,7 @@ int main(int argc, char* argv[]) {
     // Write output
     if (!write_all_results(output_path, all_hits, outfmt,
                            config.mode, config.stage1.stage1_score_type,
-                           stage3_config.traceback)) {
+                           stage3_config.traceback, compression_level)) {
         return 1;
     }
 

@@ -1,4 +1,5 @@
 #include "io/sam_writer.hpp"
+#include "io/compressed_stream.hpp"
 #include "core/version.hpp"
 #include "protocol/messages.hpp"
 
@@ -332,23 +333,21 @@ bool write_all_results(const std::string& output_path,
                        OutputFormat fmt,
                        uint8_t mode,
                        uint8_t stage1_score_type,
-                       bool stage3_traceback) {
+                       bool stage3_traceback,
+                       int compression_level) {
     if (fmt == OutputFormat::kSam) {
         write_results_sam(output_path.empty() ? "-" : output_path,
                           hits, stage1_score_type);
     } else if (fmt == OutputFormat::kBam) {
         write_results_bam(output_path, hits, stage1_score_type);
-    } else if (output_path.empty()) {
-        write_results(std::cout, hits, fmt, mode, stage1_score_type,
-                      stage3_traceback);
     } else {
-        std::ofstream out(output_path);
-        if (!out.is_open()) {
-            std::fprintf(stderr, "Error: cannot open output file %s\n",
-                         output_path.c_str());
+        std::string err;
+        auto out = open_output_compressed(output_path, compression_level, err);
+        if (!out) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return false;
         }
-        write_results(out, hits, fmt, mode, stage1_score_type,
+        write_results(*out.stream, hits, fmt, mode, stage1_score_type,
                       stage3_traceback);
     }
     return true;

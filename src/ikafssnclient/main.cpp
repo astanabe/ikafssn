@@ -15,6 +15,7 @@
 #include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
 #include "util/simd_dispatch.hpp"
+#include "io/compressed_stream.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/primer_query.hpp"
 #include "io/seqidlist_reader.hpp"
@@ -250,7 +251,8 @@ static int finalize_group(const std::string& root,
     else if (gm.outfmt == "bam") fmt = OutputFormat::kBam;
 
     if (!write_all_results(gm.output_path, all_hits, fmt,
-                            resp_mode, resp_stage1, resp_traceback)) {
+                            resp_mode, resp_stage1, resp_traceback,
+                            gm.compression_level)) {
         logger.error("finalize: write_all_results failed");
         return 1;
     }
@@ -634,6 +636,19 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    int compression_level = cli.has("-compression_level")
+        ? cli.get_int("-compression_level", kCompressionLevelDefault)
+        : kCompressionLevelDefault;
+    {
+        std::string err;
+        if (!validate_compression_level(
+                detect_format_from_extension(output_path),
+                compression_level, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+    }
+
     std::string seqidlist_path, neg_seqidlist_path;
     if (cli.has("-seqidlist")) {
         base_req.seqidlist_mode = SeqidlistMode::kInclude;
@@ -772,6 +787,7 @@ int main(int argc, char* argv[]) {
                   : (outfmt == OutputFormat::kBam)  ? "bam"
                   : "tab";
         gm.output_path = output_path;
+        gm.compression_level = compression_level;
 
         // Persist stdin content as <group>/stdin.fasta so a later -resume can
         // recover the original input even if the user closed their pipe.
@@ -883,6 +899,7 @@ int main(int argc, char* argv[]) {
     ckpt_cfg.ix_name = ix_name;
     ckpt_cfg.resolved_k = resolved_k;
     ckpt_cfg.outfmt = outfmt;
+    ckpt_cfg.compression_level = compression_level;
 
     Checkpoint ckpt(ckpt_cfg, logger);
     LockGuard lock;

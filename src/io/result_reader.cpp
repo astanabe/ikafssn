@@ -1,4 +1,5 @@
 #include "io/result_reader.hpp"
+#include "io/compressed_stream.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -299,16 +300,13 @@ std::vector<OutputHit> read_results_tab(std::istream& in) {
 }
 
 std::vector<OutputHit> read_results_tab(const std::string& path) {
-    if (path == "-") {
-        return read_results_tab(std::cin);
-    }
-
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        std::fprintf(stderr, "result_reader: cannot open %s\n", path.c_str());
+    std::string err;
+    auto in = open_input_compressed(path, err);
+    if (!in) {
+        std::fprintf(stderr, "result_reader: %s\n", err.c_str());
         return {};
     }
-    return read_results_tab(file);
+    return read_results_tab(*in.stream);
 }
 
 } // namespace ikafssn

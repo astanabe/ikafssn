@@ -12,6 +12,7 @@ A conference talk on the methods used in ikafssn is available on YouTube: <https
 - Client-server architecture with UNIX/TCP socket and HTTP REST API support, with multi-database serving from a single process
 - Handles IUPAC ambiguous bases by expanding degenerate k-mers during indexing and search (configurable expansion limit)
 - Reports queries that cannot be searched as skip-markers in TSV / JSON / SAM (with reason and detail), so no query is silently dropped
+- Transparent compressed I/O: FASTA inputs auto-detect gzip / bzip2 / xz / zstd from leading magic bytes; TSV / JSON / FASTA outputs select the codec by `.gz` / `.bz2` / `.xz` / `.zst` suffix (SAM/BAM excluded)
 - Parallel indexing and search via Intel TBB
 - Lightweight per-command executables, each linking only its required dependencies
 
@@ -95,6 +96,7 @@ ikafssnsearch -ix ./index -query query.fasta | ikafssnretrieve -db mydb > matche
 - Intel TBB (for parallelization)
 - Parasail >= 2.6 (for Stage 3 pairwise alignment)
 - htslib >= 1.17 (for SAM/BAM output)
+- zlib, libbz2, liblzma, libzstd (for transparent compressed I/O); pkg-config required for libzstd discovery
 - Drogon (optional, for ikafssnhttpd)
 - libcurl (optional, for HTTP client mode and remote retrieval)
 

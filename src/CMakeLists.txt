@@ -88,8 +88,12 @@ add_library(ikafssn_io STATIC
     io/result_reader.cpp
     io/primer_query.cpp
     io/text_simd.cpp
+    io/compressed_stream.cpp
 )
-target_link_libraries(ikafssn_io PUBLIC ikafssn_core ikafssn_util)
+target_link_libraries(ikafssn_io
+    PUBLIC  ikafssn_core ikafssn_util
+    PRIVATE ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA PkgConfig::ZSTD
+)
 
 # IO library for BLAST DB access (requires NCBI C++ Toolkit)
 add_library(ikafssn_blastdb STATIC

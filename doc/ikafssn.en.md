@@ -53,6 +53,31 @@ The `-version` output format is:
  Package: ikafssn <version>, build <ISO 8601 timestamp>
 ```
 
+### Compressed I/O
+
+`ikafssnsearch`, `ikafssnclient`, and `ikafssnretrieve` read FASTA query
+inputs and write TSV / JSON / FASTA output through transparent codec
+wrappers:
+
+- **Inputs** are auto-detected from the first few bytes of the source, so
+  `.gz`, `.bz2`, `.xz`, and `.zst` FASTA files (and the same formats on
+  stdin) decode without any user-side flag.  Concatenated streams
+  (`cat a.fa.gz b.fa.gz > c.fa.gz`) decode correctly across all four
+  codecs.
+- **Outputs** select the codec from the trailing path suffix
+  (`out.tsv.gz`, `out.json.zst`, `out.fa.bz2`, …).  Empty `-o` or
+  `-o -` always writes uncompressed bytes to stdout regardless of any
+  other setting; pipe through your own encoder if you need stdout
+  compressed.
+- `-compression_level <int>` controls the compression level for the
+  selected codec.  Per-codec accepted ranges and defaults are: gzip 0..9
+  (default 6), bzip2 1..9 (default 9), xz 0..9 (default 6), zstd
+  `ZSTD_minCLevel()..ZSTD_maxCLevel()` (default 3).  The level is
+  validated against the codec at parse time, before any I/O is opened.
+- SAM and BAM **reject** the four compressed suffixes — BAM is already
+  BGZF and we deliberately do not double-wrap.  Use `-outfmt tab` /
+  `-outfmt json` if you want a compressed result file.
+
 ### ikafssnindex
 
 Build a k-mer inverted index from a BLAST database. For each volume, index files are generated: `.kix` (ID postings), `.kpx` (position postings, unless `-mode 1`), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a shared `.khx` file (build-time exclusion bitset) is also generated. The `.khx` file is shared across all volumes (one per k value, not per volume).
@@ -200,6 +225,8 @@ Options:
                           optimal: use optimal index only
                           both: merge coding and optimal indexes at search time
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
+  -compression_level <int> Output compression level (gzip/bzip2/xz/zstd; default per codec: gzip=6, bzip2=9, xz=6, zstd=3)
+                          Codec is selected by -o suffix (.gz/.bz2/.xz/.zst); SAM/BAM reject all four
   -v, --verbose           Verbose logging
 
 Primer mode (alternative to -query):
@@ -343,10 +370,15 @@ Input:
 
 Common options:
   -o <path>               Output FASTA file (default: stdout)
+                          Suffix (.gz/.bz2/.xz/.zst) selects an output codec
   -context <value>        Context extension (default: 2.0)
                           Integer: bases to add before/after match region
                           Decimal: multiplier of query length (qlen)
+  -compression_level <int> Output compression level (defaults: gzip=6, bzip2=9, xz=6, zstd=3)
   -v, --verbose           Verbose logging
+
+(Note: -results auto-detects gzip/bzip2/xz/zstd-compressed result files from
+ their leading magic bytes; no flag is required.)
 
 Remote options (-remote):
   -api_key <key>          NCBI API key (or NCBI_API_KEY env var)
@@ -582,7 +614,12 @@ Options:
                            optimal: use optimal index only
                            both: merge coding and optimal indexes at search time
   -outfmt <tab|json|sam|bam>  Output format (default: tab)
+  -compression_level <int> Output compression level (defaults: gzip=6, bzip2=9, xz=6, zstd=3)
+                           Codec is selected by -o suffix (.gz/.bz2/.xz/.zst); SAM/BAM reject all four
   -v, --verbose            Verbose logging
+
+(Note: -query auto-detects gzip/bzip2/xz/zstd-compressed FASTA inputs from
+ their leading magic bytes; no flag is required.)
 
 HTTP Authentication (HTTP mode only):
   --user <user:password>   Credentials (curl-style)

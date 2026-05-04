@@ -15,6 +15,7 @@
 
 #include <openssl/evp.h>
 
+#include "io/compressed_stream.hpp"
 #include "io/sam_writer.hpp"
 
 namespace ikafssn {
@@ -516,72 +517,65 @@ bool Checkpoint::merge_results(const std::string& output_path,
         batch_paths.push_back(path);
     }
 
-    if (batch_paths.empty()) {
-        logger_.info("No batch results to merge");
-        // Still produce empty output for tab/json
-        if (cfg_.outfmt == OutputFormat::kTab || cfg_.outfmt == OutputFormat::kJson) {
-            std::vector<OutputHit> empty;
-            if (output_path.empty()) {
-                write_results(std::cout, empty, cfg_.outfmt, mode, stage1_score,
-                              stage3_traceback);
-            } else {
-                std::ofstream out(output_path);
-                write_results(out, empty, cfg_.outfmt, mode, stage1_score,
-                              stage3_traceback);
-            }
-        }
-        return true;
-    }
-
     if (cfg_.outfmt == OutputFormat::kSam || cfg_.outfmt == OutputFormat::kBam) {
+        // SAM/BAM merging is delegated to htslib (compression of SAM/BAM
+        // by external suffix is rejected at CLI parse time).
+        if (batch_paths.empty()) {
+            logger_.info("No batch results to merge");
+            return true;
+        }
         bool as_bam = (cfg_.outfmt == OutputFormat::kBam);
         std::string out_path = output_path.empty() ? "-" : output_path;
         return merge_sam_files(batch_paths, out_path, as_bam);
     }
 
-    // Tab or JSON merge
-    auto open_output = [&]() -> std::ostream* {
-        if (output_path.empty()) return &std::cout;
-        static std::ofstream ofs;
-        ofs.open(output_path);
-        return ofs.is_open() ? &ofs : nullptr;
-    };
-
-    std::ostream* out = open_output();
-    if (!out) {
-        logger_.error("Cannot open output file: %s", output_path.c_str());
+    // Tab / JSON: open the (possibly-compressed) output once and route
+    // every write through it.
+    std::string err;
+    auto out_owned = open_output_compressed(output_path,
+                                              cfg_.compression_level, err);
+    if (!out_owned) {
+        logger_.error("merge_results: %s", err.c_str());
         return false;
+    }
+    std::ostream& os = *out_owned.stream;
+
+    if (batch_paths.empty()) {
+        logger_.info("No batch results to merge");
+        std::vector<OutputHit> empty;
+        write_results(os, empty, cfg_.outfmt, mode, stage1_score,
+                      stage3_traceback);
+        return true;
     }
 
     if (cfg_.outfmt == OutputFormat::kJson) {
-        *out << "{\n  \"results\": [\n";
+        os << "{\n  \"results\": [\n";
         for (size_t i = 0; i < batch_paths.size(); i++) {
             std::string content = read_file_string(batch_paths[i]);
             // Content has trailing commas after each query object.
             // For the last batch, remove the trailing comma before the final newline.
             if (i + 1 == batch_paths.size() && !content.empty()) {
-                // Find last comma and remove it
                 auto last_comma = content.rfind(',');
                 if (last_comma != std::string::npos) {
                     content.erase(last_comma, 1);
                 }
             }
-            *out << content;
+            os << content;
         }
-        *out << "  ]\n}\n";
+        os << "  ]\n}\n";
     } else {
         // Tab format
         for (size_t i = 0; i < batch_paths.size(); i++) {
             std::string content = read_file_string(batch_paths[i]);
             if (i == 0) {
-                *out << content;
+                os << content;
             } else {
                 // Skip header line(s) starting with '#'
                 std::istringstream iss(content);
                 std::string line;
                 while (std::getline(iss, line)) {
                     if (!line.empty() && line[0] == '#') continue;
-                    *out << line << "\n";
+                    os << line << "\n";
                 }
             }
         }

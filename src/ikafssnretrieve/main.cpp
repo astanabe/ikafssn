@@ -1,3 +1,4 @@
+#include "io/compressed_stream.hpp"
 #include "io/result_reader.hpp"
 #include "io/result_writer.hpp"
 #include "ikafssnretrieve/local_retriever.hpp"
@@ -38,6 +39,7 @@ static void print_usage(const char* prog) {
         "Common options:\n"
         "  -o <path>               Output FASTA file (default: stdout)\n"
         "  -context <value>        Context extension: integer=bases, decimal=multiplier of q_len (default: 2.0)\n"
+        "  -compression_level <int> Output compression level (default per codec: gzip=6, bzip2=9, xz=6, zstd=3)\n"
         "  -v, --verbose           Verbose logging\n"
 #ifdef IKAFSSN_ENABLE_REMOTE
         "\n"
@@ -109,16 +111,26 @@ int main(int argc, char* argv[]) {
 
     // Open output
     std::string output_path = cli.get_string("-o");
-    std::ofstream out_file;
-    std::ostream* out_ptr = &std::cout;
-    if (!output_path.empty()) {
-        out_file.open(output_path);
-        if (!out_file.is_open()) {
-            std::fprintf(stderr, "Error: cannot open output file %s\n", output_path.c_str());
+    int compression_level = cli.has("-compression_level")
+        ? cli.get_int("-compression_level", kCompressionLevelDefault)
+        : kCompressionLevelDefault;
+    {
+        std::string err;
+        if (!validate_compression_level(
+                detect_format_from_extension(output_path),
+                compression_level, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-        out_ptr = &out_file;
     }
+    std::string open_err;
+    auto out_owned = open_output_compressed(output_path, compression_level,
+                                              open_err);
+    if (!out_owned) {
+        std::fprintf(stderr, "%s\n", open_err.c_str());
+        return 1;
+    }
+    std::ostream* out_ptr = out_owned.stream.get();
 
     uint32_t retrieved = 0;
 

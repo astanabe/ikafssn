@@ -57,6 +57,7 @@ public:
         std::string ix_name;       // -ix value (DB name)
         uint8_t resolved_k;        // actual k value (never 0)
         OutputFormat outfmt;
+        int compression_level = -1; // CLI -compression_level (kCompressionLevelDefault)
     };
 
     Checkpoint(const Config& cfg, const Logger& logger);

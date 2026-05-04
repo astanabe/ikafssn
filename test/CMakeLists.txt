@@ -30,6 +30,11 @@ endfunction()
 
 add_ikafssn_test(test_varint test_varint.cpp)
 
+# Compressed I/O round-trip + concatenation + magic / extension detection.
+# ikafssn_io already PRIVATE-links zlib/bz2/lzma/zstd, so the test
+# binary inherits them via the static archive.
+add_ikafssn_test(test_compressed_stream test_compressed_stream.cpp)
+
 add_ikafssn_test(test_kmer_encoding test_kmer_encoding.cpp)
 target_link_libraries(test_kmer_encoding PRIVATE ikafssn_util)
 target_compile_definitions(test_kmer_encoding PRIVATE IKAFSSN_TESTING)
