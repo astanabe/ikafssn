@@ -272,6 +272,13 @@ bool build_index(BlastDbReader& db,
     for (int p = 0; p < num_partitions; p++) {
         logger.info("  Partition %d/%d...", p + 1, num_partitions);
 
+        // [Bench timing — temporary, removed in a follow-up commit]
+        using clock = std::chrono::steady_clock;
+        auto sec = [](clock::time_point a, clock::time_point b) {
+            return std::chrono::duration<double>(b - a).count();
+        };
+        auto t_phase0 = clock::now();
+
         // Parallel scan: collect entries for this partition using thread-local buffers
         tbb::combinable<std::vector<TempEntry>> local_buffers;
 
@@ -338,6 +345,8 @@ bool build_index(BlastDbReader& db,
             std::fflush(stderr);
         }
 
+        auto t_scan_done = clock::now();
+
         // Merge thread-local buffers into single buffer
         std::vector<TempEntry> buffer;
         buffer.reserve(std::min(est_partition_postings, reserve_entries));
@@ -349,11 +358,25 @@ bool build_index(BlastDbReader& db,
             std::vector<TempEntry>().swap(local);
         });
 
-        if (buffer.empty()) continue;
+        auto t_merge_done = clock::now();
+
+        if (buffer.empty()) {
+            if (config.verbose) {
+                logger.info("  Partition %d timings: scan=%.2fs merge=%.2fs (empty)",
+                            p + 1,
+                            sec(t_phase0, t_scan_done),
+                            sec(t_scan_done, t_merge_done));
+            }
+            continue;
+        }
 
         // Sort by (kmer_value, seq_id, pos). Dispatched to SIMD path
         // (x86-simd-sort) on AVX2+ x86_64 / TBB parallel_sort otherwise.
         parallel_sort_temp_entries(buffer);
+
+        auto t_sort_done = clock::now();
+        double encode_total = 0.0;
+        double io_total = 0.0;
 
         // Write sorted postings grouped by kmer (sequential — I/O bound)
         size_t i = 0;
@@ -403,6 +426,8 @@ bool build_index(BlastDbReader& db,
                 abs_pos_buf[e] = buffer[i + e].pos;
             }
 
+            auto t_kmer_enc_start = clock::now();
+
             // SIMD dedup → distinct_sid + per-seq_id occurrence count.
             distinct_sid_buf.resize(position_count);
             occ_count_buf.resize(position_count);
@@ -424,12 +449,16 @@ bool build_index(BlastDbReader& db,
             }
             pfd_out_buf.clear();
             pfd::encode_posting_kix(seq_delta_buf.data(), distinct_count, pfd_out_buf);
+            auto t_kmer_kix_io_start = clock::now();
+            encode_total += sec(t_kmer_enc_start, t_kmer_kix_io_start);
             std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kix_fp);
             kix_data_pos += pfd_out_buf.size();
 
             // .kpx (skip if mode 1).  v7: hand the encoder distinct_sid +
             // occ_count + abs_pos_array.
             if (!config.skip_kpx) {
+                auto t_kpx_enc_start = clock::now();
+                io_total += sec(t_kmer_kix_io_start, t_kpx_enc_start);
                 pfd_out_buf.clear();
                 pfd::encode_posting_kpx(distinct_sid_buf.data(),
                                         occ_count_buf.data(),
@@ -438,8 +467,15 @@ bool build_index(BlastDbReader& db,
                                         position_count,
                                         config.freq_threshold_part,
                                         pfd_out_buf);
+                auto t_kpx_io_start = clock::now();
+                encode_total += sec(t_kpx_enc_start, t_kpx_io_start);
                 std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kpx_fp);
                 kpx_data_pos += pfd_out_buf.size();
+                auto t_kpx_io_done = clock::now();
+                io_total += sec(t_kpx_io_start, t_kpx_io_done);
+            } else {
+                auto t_kix_io_done = clock::now();
+                io_total += sec(t_kmer_kix_io_start, t_kix_io_done);
             }
 
             i = j;
@@ -447,6 +483,17 @@ bool build_index(BlastDbReader& db,
 
         logger.debug("  Partition %d: %lu entries written", p + 1,
                      static_cast<unsigned long>(buffer.size()));
+
+        if (config.verbose) {
+            logger.info("  Partition %d timings: scan=%.2fs merge=%.2fs sort=%.2fs "
+                        "encode=%.2fs io=%.2fs",
+                        p + 1,
+                        sec(t_phase0, t_scan_done),
+                        sec(t_scan_done, t_merge_done),
+                        sec(t_merge_done, t_sort_done),
+                        encode_total,
+                        io_total);
+        }
     }
 
     // Forward-fill kix_offsets: empty k-mers get the same offset as the next
