@@ -615,6 +615,31 @@ bool filter_volumes_cross_volume(
                 static_cast<unsigned long>(num_excluded),
                 static_cast<unsigned long>(freq_threshold));
 
+    // Write .khx BEFORE running the per-volume filter pass.  The filter
+    // pass deletes each volume's .kix.tmp / .kpx.tmp / .ksx.tmp once it
+    // produces the final files, which throws away the only source of the
+    // pre-filter distinct-seq_id counts.  Writing .khx first means a
+    // crash between aggregation and full filter completion always leaves
+    // either (a) all volumes still as .tmp with .khx valid, or (b) a
+    // partial mix of final + .tmp with .khx valid — both recoverable
+    // from .tmp by the resume path.  The "all final + no .khx" state
+    // therefore cannot arise from a crash, only from manual deletion.
+    const uint32_t base_tbl_size = table_size(k);
+    std::vector<bool> khx_excluded;
+    if (eff_tbl_size > base_tbl_size) {
+        khx_excluded.resize(base_tbl_size, false);
+        for (uint32_t i = 0; i < eff_tbl_size; i++) {
+            if (excluded[i]) {
+                khx_excluded[i & (base_tbl_size - 1)] = true;
+            }
+        }
+    } else {
+        khx_excluded = excluded;
+    }
+    if (!write_khx_bitset(khx_path, k, khx_excluded, logger)) {
+        return false;
+    }
+
     size_t num_vols = vol_prefixes.size();
     std::vector<bool> vol_ok(num_vols, false);
 
@@ -634,22 +659,6 @@ bool filter_volumes_cross_volume(
             logger.error("filter: volume %zu failed", vi);
             return false;
         }
-    }
-
-    const uint32_t base_tbl_size = table_size(k);
-    std::vector<bool> khx_excluded;
-    if (eff_tbl_size > base_tbl_size) {
-        khx_excluded.resize(base_tbl_size, false);
-        for (uint32_t i = 0; i < eff_tbl_size; i++) {
-            if (excluded[i]) {
-                khx_excluded[i & (base_tbl_size - 1)] = true;
-            }
-        }
-    } else {
-        khx_excluded = excluded;
-    }
-    if (!write_khx_bitset(khx_path, k, khx_excluded, logger)) {
-        return false;
     }
 
     logger.info("Cross-volume filter: done.");

@@ -3,7 +3,10 @@
 #include "index/index_builder.hpp"
 #include "index/index_filter.hpp"
 #include "index/kix_format.hpp"
+#include "index/kix_reader.hpp"
 #include "index/ksx_format.hpp"
+#include "index/khx_format.hpp"
+#include "index/khx_writer.hpp"
 #include "core/config.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/types.hpp"
@@ -20,6 +23,7 @@
 #include <cstring>
 #include <set>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 #include <filesystem>
@@ -40,14 +44,151 @@ struct IndexValidation {
     std::string detail;  // mismatch description (for error messages)
 };
 
+// Return on-disk size of a file, or -1 if it cannot be stat'd.
+static int64_t file_size_or_neg(const std::string& path) {
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0) return -1;
+    return static_cast<int64_t>(st.st_size);
+}
+
+// Verify the on-disk .ksx size matches the expected layout
+// (header + seq_lengths[N] + acc_offsets[N+1] + accession string table,
+// where the string table size is recorded in acc_offsets[N]).
+// Returns true on match.  Reads the KsxHeader and acc_offsets[N] from
+// disk, so the caller does not need to know num_sequences in advance.
+static bool verify_ksx_file_size(const std::string& ksx_path,
+                                 const Logger& logger) {
+    FILE* fp = std::fopen(ksx_path.c_str(), "rb");
+    if (!fp) return false;
+    KsxHeader hdr{};
+    if (std::fread(&hdr, sizeof(hdr), 1, fp) != 1) {
+        std::fclose(fp);
+        return false;
+    }
+    if (std::memcmp(hdr.magic, KSX_MAGIC, 4) != 0
+        || hdr.format_version != KSX_FORMAT_VERSION) {
+        std::fclose(fp);
+        return false;
+    }
+    const uint32_t num_sequences = hdr.num_sequences;
+    if (std::fseek(fp, sizeof(KsxHeader)
+                       + sizeof(uint32_t) * num_sequences
+                       + sizeof(uint32_t) * num_sequences,
+                   SEEK_SET) != 0) {
+        std::fclose(fp);
+        return false;
+    }
+    uint32_t string_table_bytes = 0;
+    if (std::fread(&string_table_bytes, sizeof(uint32_t), 1, fp) != 1) {
+        std::fclose(fp);
+        return false;
+    }
+    std::fclose(fp);
+
+    int64_t expected = static_cast<int64_t>(sizeof(KsxHeader))
+                     + static_cast<int64_t>(sizeof(uint32_t)) * num_sequences
+                     + static_cast<int64_t>(sizeof(uint32_t)) * (num_sequences + 1)
+                     + static_cast<int64_t>(string_table_bytes);
+    int64_t actual = file_size_or_neg(ksx_path);
+    if (actual != expected) {
+        logger.warn("validate: %s file size %ld != expected %ld",
+                    ksx_path.c_str(),
+                    static_cast<long>(actual),
+                    static_cast<long>(expected));
+        return false;
+    }
+    return true;
+}
+
+// Open the .kix via KixReader and verify that its on-disk posting file
+// region exactly matches the EF dictionary's sentinel offset (the
+// expected end of the posting file).  Catches truncation past the
+// dictionary as well as oversized files.  Returns true on match.
+static bool verify_kix_file_size(const std::string& kix_path,
+                                 const Logger& logger) {
+    KixReader kix;
+    if (!kix.open(kix_path)) return false;
+    uint64_t expected_post = kix.posting_list_offset(kix.table_size());
+    uint64_t actual_post = kix.posting_file_size();
+    if (expected_post != actual_post) {
+        logger.warn("validate: %s posting file size %lu != EF sentinel %lu",
+                    kix_path.c_str(),
+                    static_cast<unsigned long>(actual_post),
+                    static_cast<unsigned long>(expected_post));
+        return false;
+    }
+    return true;
+}
+
+// Standalone validation for a .khx file.  Checks magic, format_version,
+// the (k, t, template_type) tuple matches what we are about to build,
+// and the on-disk file size equals header + ceil(4^k / 8).
+// Returns kValid if usable, kNotFound otherwise (callers treat the
+// .khx as missing and trigger a regeneration / rebuild path).
+static IndexValidation validate_khx_standalone(
+    const std::string& khx_path,
+    int k, uint8_t t, uint8_t template_type,
+    const Logger& logger) {
+
+    IndexValidation result;
+    FILE* fp = std::fopen(khx_path.c_str(), "rb");
+    if (!fp) return result; // kNotFound
+
+    KhxHeader hdr{};
+    bool ok = (std::fread(&hdr, sizeof(hdr), 1, fp) == 1);
+    std::fclose(fp);
+    if (!ok) return result;
+
+    if (std::memcmp(hdr.magic, KHX_MAGIC, 4) != 0) {
+        logger.warn("validate: %s has invalid magic", khx_path.c_str());
+        return result;
+    }
+    if (hdr.format_version != KHX_FORMAT_VERSION) {
+        logger.warn("validate: %s format_version=%u != expected %u",
+                    khx_path.c_str(), hdr.format_version, KHX_FORMAT_VERSION);
+        return result;
+    }
+    if (hdr.k != static_cast<uint8_t>(k) ||
+        hdr.t != t ||
+        hdr.template_type != template_type) {
+        logger.warn("validate: %s (k=%u, t=%u, template_type=%u) does not match "
+                    "requested (k=%d, t=%u, template_type=%u)",
+                    khx_path.c_str(), hdr.k, hdr.t, hdr.template_type,
+                    k, t, template_type);
+        return result;
+    }
+
+    int64_t expected = static_cast<int64_t>(sizeof(KhxHeader))
+                     + static_cast<int64_t>((table_size(k) + 7) / 8);
+    int64_t actual = file_size_or_neg(khx_path);
+    if (actual != expected) {
+        logger.warn("validate: %s file size %ld != expected %ld",
+                    khx_path.c_str(),
+                    static_cast<long>(actual),
+                    static_cast<long>(expected));
+        return result;
+    }
+
+    result.status = IndexStatus::kValid;
+    return result;
+}
+
 // Validate existing index files for a volume against the BLAST DB.
-// Checks: file existence, header validity, num_sequences, total_bases.
+// Checks (in order): file existence, header validity, BLAST DB
+// metadata match (num_sequences / total_bases / k / t / template_type),
+// .kix and .ksx on-disk file size, and (if deep == true) a structural
+// walk of the (.kix, .kpx) pair via validate_volume() so truncated /
+// FOR-stream-corrupt files left behind by a previous crash are caught
+// before we try to reuse them.
+//
 // suffix: "" for final files (.kix), ".tmp" for temp files (.kix.tmp).
 static IndexValidation validate_existing_index(
     const std::string& output_prefix,
     const std::string& vol_path,
     int k, uint8_t t, uint8_t template_type,
     bool skip_kpx,
+    const Logger& logger,
+    bool deep,
     const char* suffix = "") {
 
     IndexValidation result;
@@ -89,8 +230,8 @@ static IndexValidation validate_existing_index(
     }
 
     // Check .kpx exists (if required)
+    std::string kpx_path = skip_kpx ? std::string{} : (output_prefix + ".kpx" + suffix);
     if (!skip_kpx) {
-        std::string kpx_path = output_prefix + ".kpx" + suffix;
         if (!std::filesystem::exists(kpx_path)) return result; // kNotFound
     }
 
@@ -143,6 +284,24 @@ static IndexValidation validate_existing_index(
         result.status = IndexStatus::kMismatch;
         result.detail = buf;
         return result;
+    }
+
+    // File size sanity (catches header-only-correct truncation that the
+    // BLAST-DB-metadata check above can't see).  Treated as kNotFound so
+    // the caller falls back to per-volume rebuild instead of erroring out.
+    if (!verify_kix_file_size(kix_path, logger)) return result;
+    if (!verify_ksx_file_size(ksx_path, logger)) return result;
+
+    // Deep structural walk of the (.kix, .kpx) pair.  validate_volume
+    // walks every k-mer's posting list and verifies the byte length
+    // recorded in the .kpx EF dictionary matches the bytes actually
+    // consumed by the kind map + partition groups + short FOR streams,
+    // catching truncation / FOR-stream corruption that the size check
+    // above can't see for .kpx.
+    if (deep) {
+        if (!validate_volume(kix_path, kpx_path, nullptr, logger)) {
+            return result; // kNotFound
+        }
     }
 
     result.status = IndexStatus::kValid;
@@ -494,11 +653,13 @@ int main(int argc, char* argv[]) {
         bool build_skipped = false;  // set when all volumes are skipped
 
         if (rebuild_mode == 0) {
-            // Validate each volume's existing index
+            // Validate each volume's existing index (deep walk + size checks
+            // included so truncated / FOR-stream-corrupt files left behind by
+            // a previous crash are caught before we try to reuse them).
             std::vector<IndexValidation> validations(total_volumes);
             for (uint16_t vi = 0; vi < total_volumes; vi++) {
                 validations[vi] = validate_existing_index(vol_prefixes[vi], vol_paths[vi],
-                    k, spaced_t, cur_tt, config.skip_kpx);
+                    k, spaced_t, cur_tt, config.skip_kpx, logger, /*deep=*/true);
             }
 
             // Check for mismatches — error out immediately
@@ -513,8 +674,21 @@ int main(int argc, char* argv[]) {
             }
 
             if (freq_filter_active) {
-                // With cross-volume filtering: skip only if ALL volumes have
-                // valid final files AND .khx exists (entire pipeline completed).
+                // With cross-volume filtering: skip the build pipeline only
+                // when ALL volumes have valid final files AND the shared
+                // .khx is valid (entire pipeline completed).  Otherwise
+                // fall back to per-volume .tmp resume.
+                //
+                // Note: .khx is now written before filter_one_volume() runs
+                // (see filter_volumes_cross_volume), so a crash mid-pipeline
+                // either leaves .tmp files behind (recoverable) or, after
+                // all volumes are filtered, has .khx already on disk.  The
+                // "all final + .khx missing" combination therefore only
+                // arises from manual deletion of .khx; in that case the
+                // resume path falls through here, finds no .tmp, and triggers
+                // a full rebuild — which is the only option since the
+                // pre-filter distinct-seq_id counts cannot be recovered
+                // from the post-filter .kix files.
                 bool all_final_valid = true;
                 for (uint16_t vi = 0; vi < total_volumes; vi++) {
                     if (validations[vi].status != IndexStatus::kValid) {
@@ -523,18 +697,29 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, cur_tt);
-                if (all_final_valid && std::filesystem::exists(khx_path)) {
-                    logger.info("All %d volumes have valid indexes and .khx exists; "
+                bool khx_valid = false;
+                if (all_final_valid) {
+                    auto khx_val = validate_khx_standalone(khx_path, k, spaced_t, cur_tt, logger);
+                    khx_valid = (khx_val.status == IndexStatus::kValid);
+                }
+                if (all_final_valid && khx_valid) {
+                    logger.info("All %d volumes have valid indexes and .khx is valid; "
                                 "skipping build and filter (-rebuild 0)",
                                 total_volumes);
                     build_skipped = true;
                 } else {
-                    // Not all final+.khx: check .tmp files for per-volume resume.
-                    // Filter needs .tmp from ALL volumes, but we can reuse valid .tmp
-                    // and only rebuild the missing/invalid ones.
+                    if (all_final_valid && !khx_valid) {
+                        logger.warn("All %d volumes valid but .khx missing or invalid; "
+                                    "cannot regenerate .khx from final files; "
+                                    "rebuilding from BLAST DB",
+                                    total_volumes);
+                    }
+                    // Per-volume .tmp resume.  Filter needs .tmp from ALL
+                    // volumes, but we can reuse any valid .tmp and only
+                    // rebuild the missing/invalid ones.
                     for (uint16_t vi = 0; vi < total_volumes; vi++) {
                         auto tmp_val = validate_existing_index(vol_prefixes[vi], vol_paths[vi],
-                            k, spaced_t, cur_tt, config.skip_kpx, ".tmp");
+                            k, spaced_t, cur_tt, config.skip_kpx, logger, /*deep=*/true, ".tmp");
                         if (tmp_val.status == IndexStatus::kValid) {
                             skip_volume[vi] = true;
                             logger.info("Volume %d/%d (%s): valid .tmp index exists, "
@@ -652,12 +837,27 @@ int main(int argc, char* argv[]) {
 
         // Phase 7d: structural validation on the just-finalised .kix / .kpx
         // pair (catches silent kind-map / FOR-stream corruption that the
-        // v9 dedup'd headers can no longer detect by redundancy).
+        // v9 dedup'd headers can no longer detect by redundancy), plus
+        // .kix / .ksx / .khx file size checks (catch truncation that the
+        // structural walk and metadata checks can't see).
         if (run_validate && !build_skipped) {
             for (size_t vi = 0; vi < vol_prefixes.size(); vi++) {
                 const std::string& prefix = vol_prefixes[vi];
                 std::string kix_path = prefix + ".kix";
+                std::string ksx_path = prefix + ".ksx";
                 std::string kpx_path = config.skip_kpx ? std::string{} : (prefix + ".kpx");
+                if (!verify_kix_file_size(kix_path, logger)) {
+                    std::fprintf(stderr,
+                        "Error: post-build .kix file size check failed for %s\n",
+                        kix_path.c_str());
+                    return 1;
+                }
+                if (!verify_ksx_file_size(ksx_path, logger)) {
+                    std::fprintf(stderr,
+                        "Error: post-build .ksx file size check failed for %s\n",
+                        ksx_path.c_str());
+                    return 1;
+                }
                 if (!validate_volume(kix_path, kpx_path, nullptr, logger)) {
                     std::fprintf(stderr,
                         "Error: post-build validation failed for volume %s\n",
@@ -665,6 +865,17 @@ int main(int argc, char* argv[]) {
                     return 1;
                 }
                 logger.info("Validated volume: %s", prefix.c_str());
+            }
+            if (freq_filter_active) {
+                std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, cur_tt);
+                auto khx_val = validate_khx_standalone(khx_path, k, spaced_t, cur_tt, logger);
+                if (khx_val.status != IndexStatus::kValid) {
+                    std::fprintf(stderr,
+                        "Error: post-build .khx validation failed for %s\n",
+                        khx_path.c_str());
+                    return 1;
+                }
+                logger.info("Validated .khx: %s", khx_path.c_str());
             }
         }
 
