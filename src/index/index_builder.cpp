@@ -300,13 +300,6 @@ bool build_index(BlastDbReader& db,
     for (int p = 0; p < num_partitions; p++) {
         logger.info("  Partition %d/%d...", p + 1, num_partitions);
 
-        // [Bench timing — temporary, removed in a follow-up commit]
-        using clock = std::chrono::steady_clock;
-        auto sec = [](clock::time_point a, clock::time_point b) {
-            return std::chrono::duration<double>(b - a).count();
-        };
-        auto t_phase0 = clock::now();
-
         // Parallel scan: collect entries for this partition using thread-local buffers
         tbb::combinable<std::vector<TempEntry>> local_buffers;
 
@@ -373,8 +366,6 @@ bool build_index(BlastDbReader& db,
             std::fflush(stderr);
         }
 
-        auto t_scan_done = clock::now();
-
         // Merge thread-local buffers into single buffer
         std::vector<TempEntry> buffer;
         buffer.reserve(std::min(est_partition_postings, reserve_entries));
@@ -386,23 +377,11 @@ bool build_index(BlastDbReader& db,
             std::vector<TempEntry>().swap(local);
         });
 
-        auto t_merge_done = clock::now();
-
-        if (buffer.empty()) {
-            if (config.verbose) {
-                logger.info("  Partition %d timings: scan=%.2fs merge=%.2fs (empty)",
-                            p + 1,
-                            sec(t_phase0, t_scan_done),
-                            sec(t_scan_done, t_merge_done));
-            }
-            continue;
-        }
+        if (buffer.empty()) continue;
 
         // Sort by (kmer_value, seq_id, pos). Dispatched to SIMD path
         // (x86-simd-sort) on AVX2+ x86_64 / TBB parallel_sort otherwise.
         parallel_sort_temp_entries(buffer);
-
-        auto t_sort_done = clock::now();
 
         // Step 1 (sequential): identify k-mer runs in the sorted buffer.
         // Cheap linear scan; the heavy work — dedup + encode_posting_kix /
@@ -511,8 +490,6 @@ bool build_index(BlastDbReader& db,
                 }
             });
 
-        auto t_encode_done = clock::now();
-
         // Step 3 (sequential): record dictionary offsets, accumulate header
         // totals, and stream the per-run blobs to disk in k-mer order.
         // Runs are already sorted by k-mer because `runs` was built from a
@@ -537,21 +514,8 @@ bool build_index(BlastDbReader& db,
             }
         }
 
-        auto t_io_done = clock::now();
-
         logger.debug("  Partition %d: %lu entries written", p + 1,
                      static_cast<unsigned long>(buffer.size()));
-
-        if (config.verbose) {
-            logger.info("  Partition %d timings: scan=%.2fs merge=%.2fs sort=%.2fs "
-                        "encode=%.2fs io=%.2fs",
-                        p + 1,
-                        sec(t_phase0, t_scan_done),
-                        sec(t_scan_done, t_merge_done),
-                        sec(t_merge_done, t_sort_done),
-                        sec(t_sort_done, t_encode_done),
-                        sec(t_encode_done, t_io_done));
-        }
     }
 
     // Forward-fill kix_offsets: empty k-mers get the same offset as the next
