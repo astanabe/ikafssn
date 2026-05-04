@@ -447,14 +447,24 @@ jobs:
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'conda'
         shell: bash -el {0}
         run: |
-          mamba install -y conda-build
+          # Install conda-build into the base env: setup-miniconda activates a
+          # separate "test" env via `bash -el {0}`, but `conda` itself lives in
+          # base, so its plugin discovery only finds subcommands installed
+          # there. With conda 26.3.x the entry-point lookup tightened, and a
+          # conda-build that lives in `test` no longer registers `conda build`,
+          # producing `argument COMMAND: invalid choice: 'build'` (cf. the
+          # 2026.05.04 release run on conda 26.3.2).
+          mamba install -n base -y conda-build
 
       - name: Build .conda package
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type == 'conda'
         shell: bash -el {0}
         run: |
           mkdir -p conda-out
-          conda build \
+          # Run via `conda run -n base` so PATH is set to base's bin and the
+          # `conda build` plugin (installed above) is on the resolution path,
+          # regardless of which env `bash -el {0}` happened to activate.
+          conda run -n base conda build \
             --no-anaconda-upload \
             --output-folder ./conda-out \
             -c conda-forge \
