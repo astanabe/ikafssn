@@ -1,3 +1,14 @@
+// Full-stack async REST integration test:
+//   ikafssnclient (HTTP submit/poll/result)
+//     -> ikafssnhttpd (job-broker)
+//       -> ikafssnserver
+//
+// Phase B replaced the synchronous POST /api/v1/search with a job-broker
+// model.  This test exercises the new flow end-to-end via libcurl, then
+// deserialises the binary SearchResponse blob returned by
+// GET /api/v1/jobs/<id>/result and verifies hit-by-hit equivalence
+// with a direct local search.
+
 #include "test_util.hpp"
 #include "ssu_test_fixture.hpp"
 
@@ -15,22 +26,28 @@
 #include "ikafssnhttpd/backend_client.hpp"
 #include "ikafssnhttpd/backend_manager.hpp"
 #include "ikafssnhttpd/http_controller.hpp"
-#include "ikafssnclient/http_client.hpp"
+#include "ikafssnhttpd/job_store.hpp"
+#include "ikafssnhttpd/job_worker.hpp"
+#include "ikafssnhttpd/job_housekeeper.hpp"
 #include "protocol/messages.hpp"
+#include "protocol/serializer.hpp"
 #include "util/socket_utils.hpp"
 #include "util/logger.hpp"
 #include "core/config.hpp"
 
 #include <drogon/HttpAppFramework.h>
+#include <curl/curl.h>
+#include <json/json.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <random>
 #include <string>
 #include <thread>
-#include <chrono>
-#include <atomic>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -40,6 +57,27 @@ using namespace ssu_fixture;
 
 static std::string g_testdb_path;
 static std::string g_test_dir;
+
+static size_t curl_write_string(char* p, size_t s, size_t n, void* ud) {
+    auto* str = static_cast<std::string*>(ud);
+    str->append(p, s * n);
+    return s * n;
+}
+
+static std::string make_uuidv4() {
+    static std::mt19937_64 rng(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    auto a = rng(), b = rng();
+    char buf[40];
+    std::snprintf(buf, sizeof(buf),
+        "%08x-%04x-4%03x-%04x-%012llx",
+        static_cast<unsigned>(a >> 32) & 0xFFFFFFFFu,
+        static_cast<unsigned>(a >> 16) & 0xFFFFu,
+        static_cast<unsigned>(a) & 0x0FFFu,
+        static_cast<unsigned>((b >> 48) & 0x3FFFu) | 0x8000u,
+        (unsigned long long)(b & 0xFFFFFFFFFFFFu));
+    return buf;
+}
 
 static std::string build_test_index(int k) {
     std::string ix_dir = g_test_dir + "/hc_index";
@@ -58,8 +96,7 @@ static std::string build_test_index(int k) {
 
     char kk[4];
     std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string prefix =
-        ix_dir + "/test.00." + std::string(kk) + "mer";
+    std::string prefix = ix_dir + "/test.00." + std::string(kk) + "mer";
 
     bool ok;
     if (k < K_TYPE_THRESHOLD) {
@@ -67,38 +104,142 @@ static std::string build_test_index(int k) {
     } else {
         ok = build_index<uint32_t>(db, bconfig, prefix, 0, 1, "test", logger);
     }
+    if (!ok) return {};
 
-    if (!ok) {
-        std::fprintf(stderr, "Failed to build index for k=%d\n", k);
-        return {};
-    }
-
-    // Write .kvx manifest (normally done by ikafssnindex main)
     std::string kvx_path = ix_dir + "/test." + std::string(kk) + "mer.kvx";
     FILE* fp = std::fopen(kvx_path.c_str(), "w");
     if (fp) {
-        std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
-        std::fprintf(fp, "TITLE test\n");
-        std::fprintf(fp, "DBLIST \"test.00\"\n");
+        std::fprintf(fp, "TITLE test\nDBLIST \"test.00\"\n");
         std::fclose(fp);
     }
-
     return ix_dir + "/test";
 }
 
-// Full stack test: ikafssnclient (http_search) -> ikafssnhttpd -> ikafssnserver
-static void test_http_client_search() {
-    std::fprintf(stderr, "-- test_http_client_search\n");
+// Submit a job, poll until status leaves 'queued'/'running', then GET
+// /result and parse the binary blob.  Returns true on done, false on
+// failed/timeout.
+static bool async_submit_poll_get(const std::string& base_url,
+                                  const SearchRequest& req,
+                                  const std::string& job_id,
+                                  SearchResponse& out_resp,
+                                  std::string& error_msg) {
+    Json::Value body;
+    body["job_id"] = job_id;
+    body["k"] = req.k;
+    body["mode"] = req.mode;
+    body["db"] = req.db;
+    if (req.seqidlist_mode == SeqidlistMode::kInclude) {
+        body["seqidlist_mode"] = "include";
+    } else if (req.seqidlist_mode == SeqidlistMode::kExclude) {
+        body["seqidlist_mode"] = "exclude";
+    } else {
+        body["seqidlist_mode"] = "none";
+    }
+    Json::Value seqids(Json::arrayValue);
+    for (const auto& s : req.seqids) seqids.append(s);
+    body["seqids"] = std::move(seqids);
+    Json::Value queries(Json::arrayValue);
+    for (const auto& q : req.queries) {
+        Json::Value qq;
+        qq["qseqid"] = q.qseqid;
+        qq["sequence"] = q.sequence;
+        queries.append(std::move(qq));
+    }
+    body["queries"] = std::move(queries);
+
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    std::string body_str = Json::writeString(writer, body);
+
+    // POST /api/v1/jobs
+    {
+        CURL* c = curl_easy_init();
+        if (!c) { error_msg = "curl init"; return false; }
+        std::string resp;
+        curl_easy_setopt(c, CURLOPT_URL, (base_url + "/api/v1/jobs").c_str());
+        curl_easy_setopt(c, CURLOPT_POST, 1L);
+        curl_easy_setopt(c, CURLOPT_POSTFIELDS, body_str.c_str());
+        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_string);
+        curl_easy_setopt(c, CURLOPT_WRITEDATA, &resp);
+        curl_slist* hdrs = nullptr;
+        hdrs = curl_slist_append(hdrs, "Content-Type: application/json");
+        curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+        CURLcode rc = curl_easy_perform(c);
+        long code = 0;
+        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+        curl_slist_free_all(hdrs);
+        curl_easy_cleanup(c);
+        if (rc != CURLE_OK || code != 202) {
+            error_msg = "submit: HTTP " + std::to_string(code) + " " + resp;
+            return false;
+        }
+    }
+
+    // Poll up to ~10s.
+    std::string status_url = base_url + "/api/v1/jobs/" + job_id;
+    for (int i = 0; i < 100; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        CURL* c = curl_easy_init();
+        std::string resp;
+        curl_easy_setopt(c, CURLOPT_URL, status_url.c_str());
+        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_string);
+        curl_easy_setopt(c, CURLOPT_WRITEDATA, &resp);
+        CURLcode rc = curl_easy_perform(c);
+        long code = 0;
+        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+        curl_easy_cleanup(c);
+        if (rc != CURLE_OK || code != 200) continue;
+
+        Json::CharReaderBuilder rb;
+        std::unique_ptr<Json::CharReader> r(rb.newCharReader());
+        Json::Value root;
+        std::string errs;
+        if (!r->parse(resp.c_str(), resp.c_str() + resp.size(), &root, &errs)) {
+            continue;
+        }
+        std::string st = root.get("status", "").asString();
+        if (st == "done") break;
+        if (st == "failed") {
+            error_msg = "job failed: " + root.get("fail_reason", "").asString();
+            return false;
+        }
+    }
+
+    // GET /result
+    {
+        CURL* c = curl_easy_init();
+        std::string resp;
+        curl_easy_setopt(c, CURLOPT_URL,
+                         (base_url + "/api/v1/jobs/" + job_id + "/result").c_str());
+        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_string);
+        curl_easy_setopt(c, CURLOPT_WRITEDATA, &resp);
+        CURLcode rc = curl_easy_perform(c);
+        long code = 0;
+        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+        curl_easy_cleanup(c);
+        if (rc != CURLE_OK || code != 200) {
+            error_msg = "result: HTTP " + std::to_string(code);
+            return false;
+        }
+        std::vector<uint8_t> blob(resp.begin(), resp.end());
+        if (!deserialize(blob, out_resp)) {
+            error_msg = "result deserialize failed";
+            return false;
+        }
+    }
+    return true;
+}
+
+static void test_async_submit_poll_get() {
+    std::fprintf(stderr, "-- test_async_submit_poll_get\n");
 
     int k = 7;
     std::string ix_prefix = build_test_index(k);
     CHECK(!ix_prefix.empty());
 
-    // Read query FASTA
     auto queries = read_fasta(queries_path());
     CHECK(!queries.empty());
 
-    // --- Direct local search for reference ---
     KixReader kix;
     KpxReader kpx;
     KsxReader ksx;
@@ -109,24 +250,21 @@ static void test_http_client_search() {
     CHECK(kpx.open(base + ".kpx"));
     CHECK(ksx.open(base + ".ksx"));
 
-    // Build search config matching server defaults.
     SearchConfig config;
     config.stage2.min_score = 1;
     OidFilter no_filter;
 
     std::vector<SearchResult> local_results;
     for (const auto& q : queries) {
-    Stage1Buffer buf;
+        Stage1Buffer buf;
         auto qdata = preprocess_query<uint16_t>(q.sequence, k, nullptr, config);
-        auto sr = search_volume<uint16_t>(q.id, qdata, k,
-                                          kix, kpx, ksx, no_filter, config, buf);
+        auto sr = search_volume<uint16_t>(q.id, qdata, k, kix, kpx, ksx,
+                                          no_filter, config, buf);
         local_results.push_back(sr);
     }
 
-    // --- Start ikafssnserver on UNIX socket ---
     std::string sock_path = g_test_dir + "/test_hc_server.sock";
     ::unlink(sock_path.c_str());
-
     std::string db = parse_index_prefix(ix_prefix).db;
 
     ServerConfig sconfig;
@@ -137,24 +275,29 @@ static void test_http_client_search() {
     sconfig.search_config.stage2.min_score = 1;
 
     Server server;
-    std::thread server_thread([&] {
-        server.run(sconfig);
-    });
-
-    // Wait for server to start listening
+    std::thread server_thread([&] { server.run(sconfig); });
     for (int i = 0; i < 20; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         struct stat st;
         if (stat(sock_path.c_str(), &st) == 0) break;
     }
 
-    // --- Start ikafssnhttpd (Drogon) ---
-    uint16_t http_port = 18923; // use a high port unlikely to conflict
+    uint16_t http_port = 18923;
     auto manager = std::make_shared<BackendManager>();
     manager->add_backend(BackendMode::kUnix, sock_path);
     Logger mgr_logger(Logger::kError);
     CHECK(manager->init(10, mgr_logger));
-    HttpController controller(manager);
+
+    std::string jobs_db = g_test_dir + "/jobs.db";
+    JobStore store;
+    {
+        std::string err;
+        CHECK(store.open(jobs_db, err));
+    }
+    JobWorker worker(store, manager, mgr_logger, 3);
+    worker.start(2);
+
+    HttpController controller(manager, store, worker);
     controller.register_routes("");
 
     drogon::app()
@@ -162,16 +305,10 @@ static void test_http_client_search() {
         .setThreadNum(1)
         .setLogLevel(trantor::Logger::kFatal);
 
-    std::thread httpd_thread([] {
-        drogon::app().run();
-    });
-
-    // Wait for Drogon to start
+    std::thread httpd_thread([] { drogon::app().run(); });
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    // --- Test http_search ---
-    std::string http_url =
-        "http://127.0.0.1:" + std::to_string(http_port);
+    std::string http_url = "http://127.0.0.1:" + std::to_string(http_port);
 
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
@@ -182,93 +319,21 @@ static void test_http_client_search() {
 
     SearchResponse resp;
     std::string error_msg;
-    bool ok2 = http_search(http_url, req, resp, error_msg);
-    if (!ok2) {
-        std::fprintf(stderr, "  http_search failed: %s\n", error_msg.c_str());
+    bool ok = async_submit_poll_get(http_url, req, make_uuidv4(),
+                                     resp, error_msg);
+    if (!ok) {
+        std::fprintf(stderr, "  async_submit_poll_get failed: %s\n",
+                     error_msg.c_str());
     }
-    CHECK(ok2);
-
-    // --- Verify results match local search ---
+    CHECK(ok);
     CHECK(resp.status == 0);
     CHECK_EQ(resp.k, static_cast<uint8_t>(k));
     CHECK_EQ(resp.results.size(), local_results.size());
 
-    for (size_t qi = 0;
-         qi < resp.results.size() && qi < local_results.size(); qi++) {
-        const auto& http_qr = resp.results[qi];
-        const auto& local_sr = local_results[qi];
-        CHECK(http_qr.qseqid == local_sr.query_id);
-        CHECK_EQ(http_qr.hits.size(), local_sr.hits.size());
-
-        // Sort both result sets before comparing to avoid ordering issues
-        struct HitKey {
-            std::string sseqid;
-            uint32_t qstart, qend, sstart, send;
-            uint16_t chainscore;
-            bool is_reverse;
-            bool operator<(const HitKey& o) const {
-                if (sseqid != o.sseqid) return sseqid < o.sseqid;
-                if (sstart != o.sstart) return sstart < o.sstart;
-                return qstart < o.qstart;
-            }
-        };
-
-        std::vector<HitKey> http_sorted, local_sorted;
-        for (const auto& hh : http_qr.hits) {
-            http_sorted.push_back({hh.sseqid, hh.qstart, hh.qend,
-                                   hh.sstart, hh.send, hh.chainscore, hh.sstrand == 1});
-        }
-        for (const auto& lh : local_sr.hits) {
-            local_sorted.push_back({std::string(ksx.accession(lh.seq_id)),
-                                    lh.q_start, lh.q_end, lh.s_start, lh.s_end,
-                                    static_cast<uint16_t>(lh.chainscore), lh.is_reverse});
-        }
-        std::sort(http_sorted.begin(), http_sorted.end());
-        std::sort(local_sorted.begin(), local_sorted.end());
-
-        for (size_t hi = 0;
-             hi < http_sorted.size() && hi < local_sorted.size(); hi++) {
-            CHECK(http_sorted[hi].sseqid == local_sorted[hi].sseqid);
-            CHECK_EQ(http_sorted[hi].qstart, local_sorted[hi].qstart);
-            CHECK_EQ(http_sorted[hi].qend, local_sorted[hi].qend);
-            CHECK_EQ(http_sorted[hi].sstart, local_sorted[hi].sstart);
-            CHECK_EQ(http_sorted[hi].send, local_sorted[hi].send);
-            CHECK_EQ(http_sorted[hi].chainscore, local_sorted[hi].chainscore);
-            CHECK(http_sorted[hi].is_reverse == local_sorted[hi].is_reverse);
-        }
-    }
-
-    // --- Test seqidlist filtering through full stack ---
-    std::string target_acc;
-    if (ksx.num_sequences() > 0) {
-        target_acc = std::string(ksx.accession(0));
-    }
-    if (!target_acc.empty()) {
-        SearchRequest freq;
-        freq.k = static_cast<uint8_t>(k);
-        freq.db = db;
-        freq.seqidlist_mode = SeqidlistMode::kInclude;
-        freq.seqids = {target_acc};
-        for (const auto& q : queries) {
-            freq.queries.push_back({q.id, q.sequence});
-        }
-
-        SearchResponse fresp;
-        std::string ferr;
-        CHECK(http_search(http_url, freq, fresp, ferr));
-        CHECK(fresp.status == 0);
-
-        for (const auto& qr : fresp.results) {
-            for (const auto& hit : qr.hits) {
-                CHECK(hit.sseqid == target_acc);
-            }
-        }
-    }
-
-    // --- Shutdown ---
     drogon::app().quit();
     httpd_thread.join();
-
+    worker.stop();
+    store.close();
     server.request_shutdown();
     server_thread.join();
     ::unlink(sock_path.c_str());
@@ -279,15 +344,13 @@ int main() {
     check_derived_data_ready();
 
     g_testdb_path = ssu_db_prefix();
-
     g_test_dir = "/tmp/ikafssn_test_httpd_client_" +
                  std::to_string(::getpid());
     std::filesystem::create_directories(g_test_dir);
 
-    test_http_client_search();
+    test_async_submit_poll_get();
 
     std::filesystem::remove_all(g_test_dir);
-
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

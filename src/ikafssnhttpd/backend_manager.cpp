@@ -275,33 +275,30 @@ void BackendManager::exclude_backend(size_t idx, const Logger& logger) {
 
 bool BackendManager::route_search(const SearchRequest& req, SearchResponse& resp,
                                    std::string& error_msg) {
-    // Try up to 3 times with re-selection on failure
-    for (int attempt = 0; attempt < 3; attempt++) {
-        int idx = select_backend(req.db, req.k, req.mode);
-        if (idx < 0) {
-            error_msg = "No available backend for db=" + req.db;
-            return false;
-        }
-
-        auto& be = *backends_[static_cast<size_t>(idx)];
-
-        // Pre-check: refresh info
-        if (!refresh_info(static_cast<size_t>(idx), Logger(Logger::kError))) {
-            exclude_backend(static_cast<size_t>(idx), Logger(Logger::kError));
-            continue;
-        }
-
-        // Perform search
-        std::string search_err;
-        if (be.client->search(req, resp, search_err)) {
-            return true;
-        }
-
-        // Search failed - exclude and retry
-        error_msg = search_err;
-        exclude_backend(static_cast<size_t>(idx), Logger(Logger::kError));
+    // Single attempt: retry policy lives in JobWorker (which counts the
+    // attempt against `max_nretry` and re-queues via the JobStore).  The
+    // legacy 3-retry loop has been removed so that one failure here
+    // doesn't exclude two healthy backends behind the JobStore's back.
+    int idx = select_backend(req.db, req.k, req.mode);
+    if (idx < 0) {
+        error_msg = "No available backend for db=" + req.db;
+        return false;
     }
 
+    auto& be = *backends_[static_cast<size_t>(idx)];
+
+    if (!refresh_info(static_cast<size_t>(idx), Logger(Logger::kError))) {
+        exclude_backend(static_cast<size_t>(idx), Logger(Logger::kError));
+        error_msg = "backend " + be.address + " unreachable (info refresh)";
+        return false;
+    }
+
+    std::string search_err;
+    if (be.client->search(req, resp, search_err)) {
+        return true;
+    }
+    error_msg = search_err;
+    exclude_backend(static_cast<size_t>(idx), Logger(Logger::kError));
     return false;
 }
 

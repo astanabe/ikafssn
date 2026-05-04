@@ -4,6 +4,7 @@
 #include <curl/curl.h>
 #include <json/json.h>
 
+#include <memory>
 #include <sstream>
 
 namespace ikafssn {
@@ -17,8 +18,7 @@ static size_t write_callback(char* ptr, size_t size, size_t nmemb,
     return total;
 }
 
-// Build JSON request body from SearchRequest.
-static std::string build_request_json(const SearchRequest& req) {
+std::string build_request_json(const SearchRequest& req) {
     Json::Value root;
 
     root["k"] = req.k;
@@ -30,7 +30,8 @@ static std::string build_request_json(const SearchRequest& req) {
     root["stage2_max_lookback"] = req.stage2_max_lookback;
     root["stage2_max_nhit_per_subject"] = req.stage2_max_nhit_per_subject;
     if (req.stage1_min_score_frac_x10000 != 0) {
-        root["stage1_min_score_frac"] = static_cast<double>(req.stage1_min_score_frac_x10000) / 10000.0;
+        root["stage1_min_score_frac"] =
+            static_cast<double>(req.stage1_min_score_frac_x10000) / 10000.0;
     }
     root["stage2_min_diag_hits"] = req.stage2_min_diag_hits;
     root["stage1_topn"] = req.stage1_topn;
@@ -41,7 +42,6 @@ static std::string build_request_json(const SearchRequest& req) {
     root["accept_qdegen"] = req.accept_qdegen;
     root["strand"] = req.strand;
 
-    // Stage 3 parameters
     root["stage3_traceback"] = req.stage3_traceback;
     if (req.stage3_gapopen != INT16_MIN)
         root["stage3_gapopen"] = req.stage3_gapopen;
@@ -53,25 +53,18 @@ static std::string build_request_json(const SearchRequest& req) {
     root["context_frac_x10000"] = req.context_frac_x10000;
     root["max_degen_expand"] = req.max_degen_expand;
     if (req.score_matrix != 0) root["stage3_score_matrix"] = req.score_matrix;
-    if (!req.db.empty())
-        root["db"] = req.db;
+    if (req.t > 0) root["t"] = req.t;
+    if (req.template_type > 0) root["template_type"] = req.template_type;
+    if (!req.db.empty()) root["db"] = req.db;
 
     switch (req.seqidlist_mode) {
-    case SeqidlistMode::kInclude:
-        root["seqidlist_mode"] = "include";
-        break;
-    case SeqidlistMode::kExclude:
-        root["seqidlist_mode"] = "exclude";
-        break;
-    default:
-        root["seqidlist_mode"] = "none";
-        break;
+    case SeqidlistMode::kInclude: root["seqidlist_mode"] = "include"; break;
+    case SeqidlistMode::kExclude: root["seqidlist_mode"] = "exclude"; break;
+    default:                       root["seqidlist_mode"] = "none";    break;
     }
 
     Json::Value seqids(Json::arrayValue);
-    for (const auto& s : req.seqids) {
-        seqids.append(s);
-    }
+    for (const auto& s : req.seqids) seqids.append(s);
     root["seqids"] = std::move(seqids);
 
     Json::Value queries(Json::arrayValue);
@@ -88,204 +81,8 @@ static std::string build_request_json(const SearchRequest& req) {
     return Json::writeString(writer, root);
 }
 
-// Parse JSON response into SearchResponse.
-static bool parse_response_json(const std::string& body,
-                                SearchResponse& resp,
-                                std::string& error_msg) {
-    Json::CharReaderBuilder reader_builder;
-    std::unique_ptr<Json::CharReader> reader(reader_builder.newCharReader());
-
-    Json::Value root;
-    std::string parse_errors;
-    if (!reader->parse(body.c_str(), body.c_str() + body.size(),
-                       &root, &parse_errors)) {
-        error_msg = "Failed to parse JSON response: " + parse_errors;
-        return false;
-    }
-
-    // Check for error field
-    if (root.isMember("error")) {
-        error_msg = "Server error: " + root["error"].asString();
-        return false;
-    }
-
-    std::string status = root.get("status", "").asString();
-    resp.status = (status == "success") ? 0 : 1;
-    resp.k = static_cast<uint8_t>(root.get("k", 0).asUInt());
-    resp.mode = static_cast<uint8_t>(root.get("mode", 2).asUInt());
-    resp.stage1_score = static_cast<uint8_t>(root.get("stage1_score", 1).asUInt());
-    resp.stage3_traceback = static_cast<uint8_t>(root.get("stage3_traceback", 0).asUInt());
-
-    // Determine stage1 score field name
-    const char* s1name = (resp.stage1_score == 2) ? "matchscore" : "coverscore";
-
-    const auto& results = root["results"];
-    if (!results.isArray()) {
-        error_msg = "Missing 'results' array in response";
-        return false;
-    }
-
-    for (const auto& qr : results) {
-        QueryResult query_result;
-        query_result.qseqid = qr.get("qseqid", "").asString();
-        query_result.qlen = qr.get("qlen", 0).asUInt();
-        // New-style skip_reason field; fall back to legacy "skipped" boolean.
-        if (qr.isMember("skip_reason")) {
-            const auto& sr = qr["skip_reason"];
-            if (sr.isString()) {
-                std::string s = sr.asString();
-                if (s == "query_too_short")        query_result.skip_reason = 1;
-                else if (s == "degen_rejected")        query_result.skip_reason = 2;
-                else if (s == "threshold_unreachable") query_result.skip_reason = 3;
-                else if (s == "invalid_char")          query_result.skip_reason = 4;
-            } else if (sr.isInt()) {
-                query_result.skip_reason = static_cast<uint8_t>(sr.asInt());
-            }
-            query_result.skip_detail = qr.get("skip_detail", "").asString();
-        } else if (qr.get("skipped", false).asBool()) {
-            query_result.skip_reason = 2; // legacy: degenerate rejection
-        }
-        if (qr.isMember("warnings") && qr["warnings"].isArray()) {
-            for (const auto& w : qr["warnings"]) {
-                if (w.asString() == "multi_degen") {
-                    query_result.warnings |= kWarnMultiDegen;
-                }
-            }
-        }
-
-        const auto& hits = qr["hits"];
-        if (hits.isArray()) {
-            for (const auto& h : hits) {
-                ResponseHit hit;
-                hit.sseqid = h.get("sseqid", "").asString();
-                std::string strand = h.get("sstrand", "+").asString();
-                hit.sstrand = (strand == "-") ? 1 : 0;
-                if (resp.mode != 1) {
-                    hit.qstart = h.get("qstart", 0).asUInt();
-                    hit.qend = h.get("qend", 0).asUInt();
-                    hit.sstart = h.get("sstart", 0).asUInt();
-                    hit.send = h.get("send", 0).asUInt();
-                    hit.chainscore = static_cast<uint16_t>(h.get("chainscore", 0).asUInt());
-                }
-                hit.qlen = h.get("qlen", 0).asUInt();
-                hit.slen = h.get("slen", 0).asUInt();
-                hit.coverscore = static_cast<uint16_t>(h.get("coverscore", 0).asUInt());
-                hit.matchscore = static_cast<uint16_t>(h.get("matchscore", 0).asUInt());
-                hit.volume = static_cast<uint16_t>(h.get("volume", 0).asUInt());
-                if (resp.mode == 3) {
-                    hit.alnscore = h.get("alnscore", 0).asInt();
-                    if (resp.stage3_traceback) {
-                        hit.ppositive_x100 = static_cast<uint16_t>(h.get("ppositive", 0.0).asDouble() * 100.0);
-                        hit.npositive = h.get("npositive", 0).asUInt();
-                        hit.nnegative = h.get("nnegative", 0).asUInt();
-                        hit.cigar = h.get("cigar", "").asString();
-                        hit.qseq = h.get("qseq", "").asString();
-                        hit.sseq = h.get("sseq", "").asString();
-                    }
-                }
-                query_result.hits.push_back(std::move(hit));
-            }
-        }
-
-        resp.results.push_back(std::move(query_result));
-    }
-
-    // Parse rejected query IDs (optional field)
-    if (root.isMember("rejected_qseqids") && root["rejected_qseqids"].isArray()) {
-        for (const auto& qid : root["rejected_qseqids"])
-            resp.rejected_qseqids.push_back(qid.asString());
-    }
-
-    return true;
-}
-
-bool http_search(const std::string& base_url, const SearchRequest& req,
-                 SearchResponse& resp, std::string& error_msg,
-                 const HttpAuthConfig& auth) {
-    // Build URL
-    std::string url = base_url;
-    if (!url.empty() && url.back() == '/') {
-        url.pop_back();
-    }
-    url += "/api/v1/search";
-
-    // Build JSON body
-    std::string body = build_request_json(req);
-
-    // Initialize curl
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        error_msg = "Failed to initialize libcurl";
-        return false;
-    }
-
-    std::string response_body;
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
-                     static_cast<long>(body.size()));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
-
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    // HTTP authentication
-    if (!auth.userpwd.empty()) {
-        curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
-        curl_easy_setopt(curl, CURLOPT_USERPWD, auth.userpwd.c_str());
-    }
-    if (!auth.netrc_file.empty()) {
-        curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
-        curl_easy_setopt(curl, CURLOPT_NETRC_FILE, auth.netrc_file.c_str());
-    }
-
-    // Perform request
-    CURLcode res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK) {
-        error_msg = "HTTP request failed: ";
-        error_msg += curl_easy_strerror(res);
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-        return false;
-    }
-
-    // Check HTTP status code
-    long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
-    if (http_code != 200) {
-        // Try to parse error from JSON body
-        Json::CharReaderBuilder rb;
-        std::unique_ptr<Json::CharReader> r(rb.newCharReader());
-        Json::Value err_json;
-        std::string errs;
-        if (r->parse(response_body.c_str(),
-                     response_body.c_str() + response_body.size(),
-                     &err_json, &errs) &&
-            err_json.isMember("error")) {
-            error_msg = "HTTP " + std::to_string(http_code) + ": " +
-                        err_json["error"].asString();
-        } else {
-            error_msg = "HTTP " + std::to_string(http_code);
-        }
-        return false;
-    }
-
-    return parse_response_json(response_body, resp, error_msg);
-}
-
-// Parse JSON info response into InfoResponse.
-static bool parse_info_json(const std::string& body,
-                            InfoResponse& resp,
-                            std::string& error_msg) {
+bool parse_info_json(const std::string& body, InfoResponse& resp,
+                     std::string& error_msg) {
     Json::CharReaderBuilder reader_builder;
     std::unique_ptr<Json::CharReader> reader(reader_builder.newCharReader());
 
@@ -321,6 +118,8 @@ static bool parse_info_json(const std::string& body,
                     g.k = static_cast<uint8_t>(gj.get("k", 0).asUInt());
                     std::string ktype = gj.get("kmer_type", "uint16").asString();
                     g.kmer_type = (ktype == "uint32") ? 1 : 0;
+                    if (gj.isMember("t"))             g.t = static_cast<uint8_t>(gj["t"].asUInt());
+                    if (gj.isMember("template_type")) g.template_type = static_cast<uint8_t>(gj["template_type"].asUInt());
 
                     if (gj.isMember("volumes") && gj["volumes"].isArray()) {
                         for (const auto& vj : gj["volumes"]) {
@@ -339,20 +138,15 @@ static bool parse_info_json(const std::string& body,
             resp.databases.push_back(std::move(db));
         }
     }
-
     return true;
 }
 
 bool http_info(const std::string& base_url, InfoResponse& resp,
                std::string& error_msg, const HttpAuthConfig& auth) {
-    // Build URL
     std::string url = base_url;
-    if (!url.empty() && url.back() == '/') {
-        url.pop_back();
-    }
+    if (!url.empty() && url.back() == '/') url.pop_back();
     url += "/api/v1/info";
 
-    // Initialize curl
     CURL* curl = curl_easy_init();
     if (!curl) {
         error_msg = "Failed to initialize libcurl";
@@ -360,13 +154,11 @@ bool http_info(const std::string& base_url, InfoResponse& resp,
     }
 
     std::string response_body;
-
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
 
-    // HTTP authentication
     if (!auth.userpwd.empty()) {
         curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
         curl_easy_setopt(curl, CURLOPT_USERPWD, auth.userpwd.c_str());
@@ -377,18 +169,15 @@ bool http_info(const std::string& base_url, InfoResponse& resp,
     }
 
     CURLcode res = curl_easy_perform(curl);
-
     if (res != CURLE_OK) {
         error_msg = "HTTP request failed: ";
         error_msg += curl_easy_strerror(res);
         curl_easy_cleanup(curl);
         return false;
     }
-
     long http_code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     curl_easy_cleanup(curl);
-
     if (http_code != 200) {
         Json::CharReaderBuilder rb;
         std::unique_ptr<Json::CharReader> r(rb.newCharReader());
@@ -396,8 +185,7 @@ bool http_info(const std::string& base_url, InfoResponse& resp,
         std::string errs;
         if (r->parse(response_body.c_str(),
                      response_body.c_str() + response_body.size(),
-                     &err_json, &errs) &&
-            err_json.isMember("error")) {
+                     &err_json, &errs) && err_json.isMember("error")) {
             error_msg = "HTTP " + std::to_string(http_code) + ": " +
                         err_json["error"].asString();
         } else {
@@ -405,7 +193,6 @@ bool http_info(const std::string& base_url, InfoResponse& resp,
         }
         return false;
     }
-
     return parse_info_json(response_body, resp, error_msg);
 }
 

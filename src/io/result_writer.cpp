@@ -10,11 +10,15 @@ static const char* stage1_score_name(uint8_t stage1_score_type) {
     return (stage1_score_type == 2) ? "matchscore" : "coverscore";
 }
 
-// Build the sentinel sseqid for a skipped query, e.g. "*SKIPPED:degen_rejected".
-static std::string skipped_sseqid(uint8_t reason) {
-    std::string s = "*SKIPPED:";
-    s += skip_reason_str(reason);
-    return s;
+// Build the sentinel sseqid for a skipped or failed query.  Server-produced
+// skip reasons render as "*SKIPPED:<reason>", while the client-only
+// kFailHttpJob value renders as "*FAILED:<detail>" so async-job failures
+// carry their full reason string into the output file.
+static std::string skipped_sseqid(uint8_t reason, const std::string& detail) {
+    if (reason == kFailHttpJob) {
+        return "*FAILED:" + detail;
+    }
+    return std::string("*SKIPPED:") + skip_reason_str(reason);
 }
 
 void write_results_tab(std::ostream& out,
@@ -29,7 +33,7 @@ void write_results_tab(std::ostream& out,
         for (const auto& h : hits) {
             if (h.skip_reason != 0) {
                 out << h.qseqid << '\t'
-                    << skipped_sseqid(h.skip_reason) << '\t'
+                    << skipped_sseqid(h.skip_reason, h.skip_detail) << '\t'
                     << '*' << '\t'
                     << h.qlen << '\t'
                     << 0 << '\t'
@@ -51,7 +55,7 @@ void write_results_tab(std::ostream& out,
         for (const auto& h : hits) {
             if (h.skip_reason != 0) {
                 out << h.qseqid << '\t'
-                    << skipped_sseqid(h.skip_reason) << '\t'
+                    << skipped_sseqid(h.skip_reason, h.skip_detail) << '\t'
                     << '*' << '\t'
                     << 0 << '\t' << 0 << '\t' << h.qlen << '\t'
                     << 0 << '\t' << 0 << '\t' << 0 << '\t'
@@ -87,7 +91,7 @@ void write_results_tab(std::ostream& out,
         for (const auto& h : hits) {
             if (h.skip_reason != 0) {
                 out << h.qseqid << '\t'
-                    << skipped_sseqid(h.skip_reason) << '\t'
+                    << skipped_sseqid(h.skip_reason, h.skip_detail) << '\t'
                     << '*' << '\t'
                     << 0 << '\t' << h.qlen << '\t'
                     << 0 << '\t' << 0 << '\t'
@@ -113,7 +117,7 @@ void write_results_tab(std::ostream& out,
         for (const auto& h : hits) {
             if (h.skip_reason != 0) {
                 out << h.qseqid << '\t'
-                    << skipped_sseqid(h.skip_reason) << '\t'
+                    << skipped_sseqid(h.skip_reason, h.skip_detail) << '\t'
                     << '*' << '\t'
                     << 0 << '\t' << 0 << '\t' << h.qlen << '\t'
                     << 0 << '\t' << 0 << '\t' << 0 << '\t'
@@ -185,14 +189,21 @@ static void write_results_json_inner(std::ostream& out,
         auto skip_it = by_query_skip.find(qid);
         if (skip_it != by_query_skip.end() && by_query[qid].empty()) {
             const OutputHit* sk = skip_it->second;
+            const bool failed = (sk->skip_reason == kFailHttpJob);
             out << "    {\n      \"qseqid\": ";
             json_escape(out, qid);
             out << ",\n      \"qlen\": " << sk->qlen;
-            out << ",\n      \"status\": \"skipped\"";
-            out << ",\n      \"skip_reason\": ";
-            json_escape(out, std::string(skip_reason_str(sk->skip_reason)));
-            out << ",\n      \"skip_detail\": ";
-            json_escape(out, sk->skip_detail);
+            if (failed) {
+                out << ",\n      \"status\": \"failed\"";
+                out << ",\n      \"reason\": ";
+                json_escape(out, sk->skip_detail);
+            } else {
+                out << ",\n      \"status\": \"skipped\"";
+                out << ",\n      \"skip_reason\": ";
+                json_escape(out, std::string(skip_reason_str(sk->skip_reason)));
+                out << ",\n      \"skip_detail\": ";
+                json_escape(out, sk->skip_detail);
+            }
             out << ",\n      \"hits\": []\n    }";
             if (is_fragment || qi + 1 < query_order.size()) out << ',';
             out << '\n';

@@ -12,6 +12,10 @@
 #   LISTEN=0.0.0.0:8080
 #   THREADS=4
 #   PATH_PREFIX=
+#   JOBS_DB=/var/lib/ikafssnhttpd/jobs.db
+#   RETENTION_TIME=86400
+#   MAX_NRETRY=3
+#   WORKER_THREADS=4
 #   EXTRA_OPTS=
 #
 # The instance name (%i) corresponds to the backend DB name.
@@ -30,12 +34,21 @@ ExecStart=/usr/local/bin/ikafssnhttpd \
     -server_socket ${SERVER_SOCKET} \
     -listen ${LISTEN} \
     -threads ${THREADS} \
+    -db ${JOBS_DB} \
+    -retention_time ${RETENTION_TIME} \
+    -max_nretry ${MAX_NRETRY} \
+    -worker_threads ${WORKER_THREADS} \
     -pid /run/ikafssn/httpd-%i.pid \
     ${EXTRA_OPTS}
 
-# Runtime directory
+# Runtime + state directories
+# RuntimeDirectory creates /run/ikafssn (PID file).
+# StateDirectory creates /var/lib/ikafssnhttpd (job DB), automatically
+# scoped read/write for the unit even with ProtectSystem=strict.
 RuntimeDirectory=ikafssn
 RuntimeDirectoryMode=0755
+StateDirectory=ikafssnhttpd
+StateDirectoryMode=0750
 
 # Process management
 Restart=on-failure
@@ -49,7 +62,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadOnlyPaths=/
-ReadWritePaths=/run/ikafssn
+ReadWritePaths=/run/ikafssn /var/lib/ikafssnhttpd
 PrivateTmp=yes
 PrivateDevices=yes
 

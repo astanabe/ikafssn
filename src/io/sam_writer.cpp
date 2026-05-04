@@ -103,7 +103,9 @@ static void write_sam_bam_impl(const std::string& output_path,
     bam1_t* b = bam_init1();
 
     for (const auto& h : hits) {
-        // Skip-marker: emit unmapped record with XR/XD tags (no real reference).
+        // Skip-marker: emit unmapped record.  Server-produced skip rows
+        // carry XR/XD tags; client-produced HTTP-job-failed rows carry
+        // the merged reason in XF instead.
         if (h.skip_reason != 0) {
             bam_set1(b,
                      h.qseqid.size(), h.qseqid.c_str(),
@@ -112,11 +114,19 @@ static void write_sam_bam_impl(const std::string& output_path,
                      -1, -1, 0,
                      0, nullptr, nullptr,
                      0);
-            const char* reason = skip_reason_str(h.skip_reason);
-            bam_aux_append(b, "XR", 'Z', static_cast<int>(std::strlen(reason)) + 1,
-                           reinterpret_cast<const uint8_t*>(reason));
-            bam_aux_append(b, "XD", 'Z', static_cast<int>(h.skip_detail.size()) + 1,
-                           reinterpret_cast<const uint8_t*>(h.skip_detail.c_str()));
+            if (h.skip_reason == kFailHttpJob) {
+                bam_aux_append(b, "XF", 'Z',
+                               static_cast<int>(h.skip_detail.size()) + 1,
+                               reinterpret_cast<const uint8_t*>(h.skip_detail.c_str()));
+            } else {
+                const char* reason = skip_reason_str(h.skip_reason);
+                bam_aux_append(b, "XR", 'Z',
+                               static_cast<int>(std::strlen(reason)) + 1,
+                               reinterpret_cast<const uint8_t*>(reason));
+                bam_aux_append(b, "XD", 'Z',
+                               static_cast<int>(h.skip_detail.size()) + 1,
+                               reinterpret_cast<const uint8_t*>(h.skip_detail.c_str()));
+            }
             if (sam_write1(fp, hdr, b) < 0) break;
             continue;
         }

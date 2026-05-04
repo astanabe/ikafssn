@@ -1,6 +1,9 @@
 #include "ikafssnhttpd/http_controller.hpp"
 #include "ikafssnhttpd/backend_manager.hpp"
 #include "ikafssnhttpd/backend_client.hpp"
+#include "ikafssnhttpd/job_store.hpp"
+#include "ikafssnhttpd/job_worker.hpp"
+#include "ikafssnhttpd/job_housekeeper.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
 #include "util/common_init.hpp"
@@ -31,6 +34,13 @@ static void print_usage(const char* prog) {
         "  -server_socket <path>      UNIX socket path to ikafssnserver\n"
         "  -server_tcp <host>:<port>  TCP address of ikafssnserver\n"
         "\n"
+        "Job store (async REST):\n"
+        "  -db <path>                  SQLite job DB path\n"
+        "                              (default: /var/lib/ikafssnhttpd/jobs.db)\n"
+        "  -retention_time <int>       Done/failed retention in seconds (default: 86400)\n"
+        "  -max_nretry <int>           Per-job retry cap (default: 3)\n"
+        "  -worker_threads <int>       Backend search worker pool size (default: 4)\n"
+        "\n"
         "Options:\n"
         "  -listen <host>:<port>       HTTP listen address (default: 0.0.0.0:8080)\n"
         "  -path_prefix <prefix>       API path prefix (e.g., /nt)\n"
@@ -56,9 +66,6 @@ int main(int argc, char* argv[]) {
     init_simd_dispatch(&logger);
     bool verbose = logger.verbose();
 
-    // Create BackendManager and add backends in CLI argument order.
-    // We scan argv directly to preserve inter-key ordering
-    // (CliParser::get_strings only returns values per key).
     auto manager = std::make_shared<BackendManager>();
     int backend_count = 0;
 
@@ -83,12 +90,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Parse heartbeat and exclusion time
     int heartbeat_interval = cli.get_int("-heartbeat_interval", 3600);
     int exclusion_time = cli.get_int("-exclusion_time", 3600);
     manager->set_exclusion_time(exclusion_time);
 
-    // Initialize backends (connect and validate)
     logger.info("Connecting to %d backend(s)...", backend_count);
     if (!manager->init(30, logger)) {
         std::fprintf(stderr,
@@ -98,16 +103,46 @@ int main(int argc, char* argv[]) {
     }
     logger.info("All reachable backends initialized successfully.");
 
-    // Start heartbeat
     manager->start_heartbeat(heartbeat_interval, logger);
 
-    // Create HTTP controller and register routes
-    HttpController controller(manager);
+    std::string db_path = cli.get_string("-db", "/var/lib/ikafssnhttpd/jobs.db");
+    int retention_time = cli.get_int("-retention_time", 86400);
+    int max_nretry     = cli.get_int("-max_nretry", 3);
+    int worker_threads = cli.get_int("-worker_threads", 4);
 
+    JobStore store;
+    {
+        std::string err;
+        if (!store.open(db_path, err)) {
+            std::fprintf(stderr, "Error: %s\n", err.c_str());
+            manager->stop_heartbeat();
+            return 1;
+        }
+    }
+    logger.info("JobStore opened at %s (retention=%ds, max_nretry=%d, workers=%d)",
+                db_path.c_str(), retention_time, max_nretry, worker_threads);
+
+    {
+        std::string err;
+        int64_t requeued = store.requeue_orphans(err);
+        if (!err.empty()) {
+            logger.error("requeue_orphans failed: %s", err.c_str());
+        } else if (requeued > 0) {
+            logger.info("Re-queued %lld orphan job(s) on startup",
+                        static_cast<long long>(requeued));
+        }
+    }
+
+    JobWorker worker(store, manager, logger, max_nretry);
+    worker.start(worker_threads);
+
+    JobHousekeeper housekeeper(store, logger);
+    housekeeper.start(retention_time);
+
+    HttpController controller(manager, store, worker);
     std::string path_prefix = cli.get_string("-path_prefix");
     controller.register_routes(path_prefix);
 
-    // Parse listen address
     std::string listen_addr = cli.get_string("-listen", "0.0.0.0:8080");
     std::string host;
     uint16_t port;
@@ -115,20 +150,20 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr,
             "Error: invalid listen address '%s' (expected host:port)\n",
             listen_addr.c_str());
+        housekeeper.stop();
+        worker.stop();
         manager->stop_heartbeat();
         return 1;
     }
 
     int threads = resolve_threads(cli);
 
-    // Configure Drogon
     drogon::app()
         .addListener(host, port)
         .setThreadNum(static_cast<size_t>(threads))
         .setLogLevel(verbose ? trantor::Logger::kDebug
                              : trantor::Logger::kWarn);
 
-    // PID file
     std::string pid_file = cli.get_string("-pid");
     if (!pid_file.empty()) {
         FILE* f = std::fopen(pid_file.c_str(), "w");
@@ -146,13 +181,12 @@ int main(int argc, char* argv[]) {
     logger.info("Heartbeat interval: %d seconds, exclusion time: %d seconds",
                 heartbeat_interval, exclusion_time);
 
-    // Run Drogon (blocks until shutdown via SIGTERM/SIGINT)
     drogon::app().run();
 
-    // Stop heartbeat
+    housekeeper.stop();
+    worker.stop();
     manager->stop_heartbeat();
 
-    // Cleanup PID file
     if (!pid_file.empty()) {
         std::remove(pid_file.c_str());
     }

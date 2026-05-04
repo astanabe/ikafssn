@@ -38,6 +38,7 @@ requirements:
     - bzip2
     - xz
     - libdeflate
+    - zstd
   run:
     - tbb
     - lmdb
@@ -50,6 +51,7 @@ requirements:
     - bzip2
     - xz
     - libdeflate
+    - zstd
 
 test:
   commands:

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.05")  # ikafssnindex: parallelise per-partition combine_each merge and EF dictionary encode
+set(IKAFSSN_VERSION "0.1.2026.05.05")  # ikafssnclient/httpd: async REST polling (job-store + zstd-cached defline)
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
@@ -127,6 +127,31 @@ if(BUILD_HTTPD)
     # transitive find_dependency(Trantor) also resolves under the same prefix.
     list(PREPEND CMAKE_PREFIX_PATH "${DROGON_DIR}")
     find_package(Drogon REQUIRED)
+    # SQLite3 backs the ikafssnhttpd job store (async REST polling).
+    # FindSQLite3.cmake exposes the imported target as `SQLite::SQLite3`
+    # on CMake >= 3.14; older systems and some distros only set the
+    # SQLite3_LIBRARY / SQLite3_INCLUDE_DIRS variables, so we synthesise
+    # the imported target if needed.
+    find_package(SQLite3 REQUIRED)
+    # Some upstream module (NCBI's bundled cmake exports) creates an empty
+    # SQLite::SQLite3 imported target before find_package(SQLite3) runs, in
+    # which case FindSQLite3's `if(NOT TARGET SQLite::SQLite3) ... endif()`
+    # block never populates IMPORTED_LOCATION.  Resolve the library path
+    # by hand via find_library and force-fill the target so generation
+    # does not fail with CMP0111 ("missing location property").
+    if(NOT SQLite3_LIBRARY)
+        find_library(SQLite3_LIBRARY NAMES sqlite3 sqlite)
+    endif()
+    if(NOT SQLite3_INCLUDE_DIR)
+        find_path(SQLite3_INCLUDE_DIR NAMES sqlite3.h)
+    endif()
+    if(NOT TARGET SQLite::SQLite3)
+        add_library(SQLite::SQLite3 UNKNOWN IMPORTED)
+    endif()
+    set_target_properties(SQLite::SQLite3 PROPERTIES
+        IMPORTED_LOCATION "${SQLite3_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SQLite3_INCLUDE_DIR}"
+    )
 endif()
 
 # --- OpenSSL (for ikafssnclient checkpointing SHA256) ---
@@ -163,6 +188,14 @@ endif()
 option(ENABLE_REMOTE_RETRIEVE "Enable NCBI efetch in ikafssnretrieve (requires libcurl)" ON)
 if(ENABLE_REMOTE_RETRIEVE)
     find_package(CURL REQUIRED)
+endif()
+
+# --- libzstd (used by ikafssnclient async job state and ikafssnhttpd) ---
+# Both halves of the async REST stack persist defline lists / result blobs
+# through zstd; pull it in whenever either side is being built.
+if(ENABLE_CLIENT_HTTP OR BUILD_HTTPD)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET libzstd)
 endif()
 
 # --- x86-simd-sort (Phase 2c, M-4) ---

@@ -1,11 +1,17 @@
 #include "ikafssnclient/socket_client.hpp"
 #ifdef IKAFSSN_ENABLE_HTTP
 #include "ikafssnclient/http_client.hpp"
+#include "ikafssnclient/async_http_client.hpp"
+#include "ikafssnclient/job_dir.hpp"
+#include "ikafssnclient/poll_loop.hpp"
+#include "ikafssnclient/failed_writer.hpp"
 #endif
 #include "ikafssnclient/checkpoint.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/version.hpp"
 #include "protocol/info_format.hpp"
+#include "protocol/messages.hpp"
+#include "protocol/serializer.hpp"
 #include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
 #include "util/simd_dispatch.hpp"
@@ -14,15 +20,18 @@
 #include "io/seqidlist_reader.hpp"
 #include "io/result_writer.hpp"
 #include "io/sam_writer.hpp"
-#include "protocol/messages.hpp"
 #include "util/cli_parser.hpp"
 #include "util/socket_utils.hpp"
 #include "util/logger.hpp"
 
 #include <chrono>
 #include <climits>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -32,70 +41,255 @@
 
 using namespace ikafssn;
 
+#ifdef IKAFSSN_ENABLE_HTTP
+static void install_sigint_handler() {
+    static bool installed = false;
+    if (installed) return;
+    installed = true;
+    std::signal(SIGINT, [](int) {
+        PollLoop::sigint_flag().store(true);
+    });
+}
+#endif
+
 static void print_usage(const char* prog) {
     print_version_header("ikafssnclient");
     std::fprintf(stderr,
         "Usage: %s [options]\n"
         "\n"
-        "Connection (one required):\n"
+        "Connection (one required for search):\n"
         "  -socket <path>           UNIX domain socket path\n"
         "  -tcp <host>:<port>       TCP server address\n"
 #ifdef IKAFSSN_ENABLE_HTTP
         "  -http <url>              ikafssnhttpd URL (e.g., http://example.com:8080)\n"
+        "                           HTTP mode uses async REST polling.\n"
 #endif
         "\n"
         "Required:\n"
         "  -query <path>            Query FASTA file (- for stdin)\n"
         "  -ix <name>               Target database name on server\n"
         "\n"
-        "Primer mode (alternative to -query):\n"
-        "  -primer <path>           Primer pair FASTA (mutually exclusive with -query)\n"
-        "  -insert_length <int>     Expected insert length (required with -primer)\n"
-        "  -stage1_primer_score <num>  Stage 1 threshold (0<v<=1: fraction, v>=2: absolute; default: 0.5)\n"
-        "  -stage2_primer_score_add <int>  Stage 2 threshold addon: max(Lf,Lr) + N (default: 1)\n"
-        "\n"
-        "Options:\n"
-        "  -o <path>                Output file (default: stdout)\n"
-        "  -k <int>                 K-mer size (default: server default)\n"
-        "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: server default)\n"
-        "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: server default)\n"
-        "  -stage2_min_score <int>  Minimum chain score (default: server default)\n"
-        "  -stage2_max_gap <int>    Chaining gap tolerance (default: server default)\n"
-        "  -stage2_max_lookback <int>  Chaining DP lookback window (default: server default)\n"
-        "  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: server default)\n"
-        "  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: server default)\n"
-        "  -stage1_topn <int>       Stage 1 candidate limit (default: server default)\n"
-        "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: server default)\n"
-        "  -num_results <int>       Max results per query (default: server default)\n"
-        "  -seqidlist <path>        Include only listed accessions\n"
-        "  -negative_seqidlist <path>  Exclude listed accessions\n"
-        "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)\n"
-        "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
-        "  -context <value>         Context extension (int=bases, decimal=ratio, default: 2.0)\n"
-        "  -stage3_traceback <0|1>  Enable traceback in mode 3 (default: 0)\n"
-        "  -stage3_gapopen <int>    Gap open penalty (default: server default)\n"
-        "  -stage3_gapext <int>     Gap extension penalty (default: server default)\n"
-        "  -stage3_min_ppositive <num> Min percent positive filter (default: server default)\n"
-        "  -stage3_min_npositive <int> Min positive-scoring positions filter (default: server default)\n"
-        "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: server default)\n"
-        "  -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)\n"
-        "  -t <int>                 Template length for spaced seeds (0/13/15/16/18/21, default: 0)\n"
-        "  -template_type <string>  Template type: coding, optimal, both (default: server default)\n"
-        "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
-        "  -v, --verbose            Verbose logging\n"
 #ifdef IKAFSSN_ENABLE_HTTP
-        "\n"
-        "HTTP Authentication:\n"
-        "  --user <user:password>   Credentials (curl-style)\n"
-        "  --http-user <USER>       Username (wget-style)\n"
-        "  --http-password <PASS>   Password (wget-style, used with --http-user)\n"
-        "  --netrc-file <path>      .netrc file for credentials\n"
+        "Async REST job management (requires -http):\n"
+        "  -submit_only             Submit, print group_id, and exit\n"
+        "  -jobs                    List all locally-tracked job groups\n"
+        "  -jobdetail <id>          Show jobs in a group, or detail of a single job\n"
+        "  -resume <id>             Resume polling for an existing group or job\n"
 #endif
-        ,
+        "(See `ikafssnclient -h` for the full list of search options.)\n",
         prog);
 }
 
-// Execute an info request via socket or HTTP, returning true on success.
+#ifdef IKAFSSN_ENABLE_HTTP
+// Inline subcommand handlers for the async REST stack.
+
+static int cmd_jobs() {
+    auto root = default_jobs_root();
+    auto groups = list_groups(root);
+    if (groups.empty()) {
+        std::printf("No locally-tracked job groups under %s\n", root.c_str());
+        return 0;
+    }
+    std::printf("%-40s  %-20s  %s\n", "GROUP_ID", "SUBMITTED_AT", "JOBS (q/r/d/f)");
+    for (const auto& g : groups) {
+        GroupMeta gm;
+        std::string err;
+        if (!read_group_meta(root, g, gm, err)) continue;
+        char tbuf[32];
+        time_t t = static_cast<time_t>(gm.submitted_at);
+        std::strftime(tbuf, sizeof(tbuf), "%Y-%m-%dT%H:%M:%S",
+                      std::localtime(&t));
+        std::printf("%-40s  %-20s  %d/%d/%d/%d\n",
+                    gm.group_id.c_str(), tbuf,
+                    gm.cnt_queued, gm.cnt_running, gm.cnt_done, gm.cnt_failed);
+    }
+    return 0;
+}
+
+static int cmd_jobdetail(const std::string& id) {
+    auto root = default_jobs_root();
+    bool is_group = false;
+    std::string gid, jid;
+    if (!resolve_id(root, id, is_group, gid, jid)) {
+        std::fprintf(stderr, "Error: id not found: %s\n", id.c_str());
+        return 1;
+    }
+    if (is_group) {
+        GroupMeta gm;
+        std::string err;
+        if (!read_group_meta(root, gid, gm, err)) {
+            std::fprintf(stderr, "Error: %s\n", err.c_str());
+            return 1;
+        }
+        std::printf("group_id=%s db=%s url=%s\n",
+                    gm.group_id.c_str(), gm.db.c_str(), gm.httpd_url.c_str());
+        std::printf("query=%s output=%s outfmt=%s\n",
+                    gm.query_file_path_abs.c_str(),
+                    gm.output_path.c_str(), gm.outfmt.c_str());
+        std::printf("%-40s  %-10s  %-8s\n", "JOB_ID", "STATUS", "ATTEMPTS");
+        for (const auto& job_id : gm.job_ids) {
+            JobMeta jm;
+            std::string e;
+            if (!read_job_meta(root, gid, job_id, jm, e)) continue;
+            std::printf("%-40s  %-10s  %-8d\n",
+                        jm.job_id.c_str(), jm.status.c_str(), jm.attempts);
+        }
+    } else {
+        JobMeta jm;
+        std::string err;
+        if (!read_job_meta(root, gid, jid, jm, err)) {
+            std::fprintf(stderr, "Error: %s\n", err.c_str());
+            return 1;
+        }
+        std::printf("job_id=%s\ngroup_id=%s\nstatus=%s\nattempts=%d\n",
+                    jm.job_id.c_str(), jm.group_id.c_str(),
+                    jm.status.c_str(), jm.attempts);
+        std::printf("submitted_at=%lld completed_at=%lld\n",
+                    (long long)jm.submitted_at, (long long)jm.completed_at);
+        if (!jm.error_message.empty())
+            std::printf("error_message=%s\n", jm.error_message.c_str());
+        if (!jm.fail_reason.empty())
+            std::printf("fail_reason=%s\n", jm.fail_reason.c_str());
+    }
+    return 0;
+}
+
+// After polling completes, walk every job in the group, deserialise its
+// cached result blob, and merge into the user's output file.  Failed
+// jobs are turned into kFailHttpJob OutputHit rows via failed_writer.
+static int finalize_group(const std::string& root,
+                          const GroupMeta& gm,
+                          Logger& logger) {
+    std::vector<OutputHit> all_hits;
+    uint8_t resp_mode = 0;
+    uint8_t resp_stage1 = 0;
+    bool resp_traceback = false;
+    bool first_resp = true;
+
+    for (const auto& job_id : gm.job_ids) {
+        JobMeta jm;
+        std::string err;
+        if (!read_job_meta(root, gm.group_id, job_id, jm, err)) {
+            logger.error("finalize: missing job meta %s: %s",
+                         job_id.c_str(), err.c_str());
+            continue;
+        }
+
+        if (jm.status == "done") {
+            std::vector<uint8_t> blob;
+            if (!read_job_result(root, gm.group_id, job_id, blob, err)) {
+                logger.error("finalize: read result %s: %s",
+                             job_id.c_str(), err.c_str());
+                continue;
+            }
+            SearchResponse resp;
+            if (!deserialize(blob, resp)) {
+                logger.error("finalize: deserialize %s failed",
+                             job_id.c_str());
+                continue;
+            }
+            if (first_resp) {
+                resp_mode = resp.mode;
+                resp_stage1 = resp.stage1_score;
+                resp_traceback = (resp.stage3_traceback != 0);
+                first_resp = false;
+            }
+            for (const auto& qr : resp.results) {
+                if (qr.skip_reason != 0) {
+                    OutputHit oh;
+                    oh.qseqid = qr.qseqid;
+                    oh.qlen = qr.qlen;
+                    oh.skip_reason = qr.skip_reason;
+                    oh.skip_detail = qr.skip_detail;
+                    oh.sstrand = '*';
+                    all_hits.push_back(std::move(oh));
+                    continue;
+                }
+                for (const auto& hit : qr.hits) {
+                    OutputHit oh;
+                    oh.qseqid = qr.qseqid;
+                    oh.sseqid = hit.sseqid;
+                    oh.sstrand = (hit.sstrand == 0) ? '+' : '-';
+                    oh.qstart = hit.qstart; oh.qend = hit.qend;
+                    oh.sstart = hit.sstart; oh.send = hit.send;
+                    oh.chainscore = hit.chainscore;
+                    oh.coverscore = hit.coverscore;
+                    oh.matchscore = hit.matchscore;
+                    oh.volume = hit.volume;
+                    oh.qlen = hit.qlen; oh.slen = hit.slen;
+                    oh.alnscore = hit.alnscore;
+                    oh.npositive = hit.npositive;
+                    oh.nnegative = hit.nnegative;
+                    oh.ppositive =
+                        static_cast<double>(hit.ppositive_x100) / 100.0;
+                    oh.cigar = hit.cigar;
+                    oh.qseq = hit.qseq; oh.sseq = hit.sseq;
+                    all_hits.push_back(std::move(oh));
+                }
+            }
+        } else if (jm.status == "failed" || jm.status == "timeout") {
+            std::vector<std::string> deflines;
+            std::string derr;
+            if (!read_job_deflines(root, gm.group_id, job_id, deflines, derr)) {
+                logger.error("finalize: deflines %s: %s",
+                             job_id.c_str(), derr.c_str());
+                continue;
+            }
+            std::string reason = !jm.fail_reason.empty()
+                ? jm.fail_reason
+                : (jm.status == "timeout"
+                    ? "timeout: exceeded retention_time"
+                    : "backend_error: unknown");
+            synth_failed_hits(deflines, reason, all_hits);
+        }
+    }
+
+    OutputFormat fmt = OutputFormat::kTab;
+    if (gm.outfmt == "json") fmt = OutputFormat::kJson;
+    else if (gm.outfmt == "sam") fmt = OutputFormat::kSam;
+    else if (gm.outfmt == "bam") fmt = OutputFormat::kBam;
+
+    if (!write_all_results(gm.output_path, all_hits, fmt,
+                            resp_mode, resp_stage1, resp_traceback)) {
+        logger.error("finalize: write_all_results failed");
+        return 1;
+    }
+    // Drop result.bin.zst caches; metadata stays for forensic use.
+    for (const auto& job_id : gm.job_ids) {
+        std::string e;
+        delete_job_result(root, gm.group_id, job_id, e);
+    }
+    return 0;
+}
+
+static int cmd_resume(const std::string& id, Logger& logger,
+                      const HttpAuthConfig& auth) {
+    install_sigint_handler();
+    auto root = default_jobs_root();
+    bool is_group = false;
+    std::string gid, jid;
+    if (!resolve_id(root, id, is_group, gid, jid)) {
+        std::fprintf(stderr, "Error: id not found: %s\n", id.c_str());
+        return 1;
+    }
+    GroupMeta gm;
+    std::string err;
+    if (!read_group_meta(root, gid, gm, err)) {
+        std::fprintf(stderr, "Error: %s\n", err.c_str());
+        return 1;
+    }
+    PollLoop loop(root, gid, auth, logger);
+    if (!loop.run()) {
+        if (PollLoop::sigint_flag().load()) {
+            return 130;
+        }
+        // Other failure: fall through to finalize what we have.
+    }
+    return finalize_group(root, gm, logger);
+}
+#endif // IKAFSSN_ENABLE_HTTP
+
+// Execute an info request via socket / TCP / HTTP. Returns true on success.
 static bool execute_info(
     const CliParser& cli,
     bool has_http,
@@ -105,12 +299,9 @@ static bool execute_info(
     , const HttpAuthConfig& auth
 #endif
     ) {
-
 #ifdef IKAFSSN_ENABLE_HTTP
     if (has_http) {
         std::string http_url = cli.get_string("-http");
-        logger.debug("Fetching server info via HTTP from %s", http_url.c_str());
-
         std::string error_msg;
         if (!http_info(http_url, resp, error_msg, auth)) {
             std::fprintf(stderr, "Error: failed to fetch server info: %s\n",
@@ -123,6 +314,32 @@ static bool execute_info(
     (void)has_http;
 #endif
 
+    int fd = -1;
+    if (cli.has("-socket")) {
+        std::string sock_path = cli.get_string("-socket");
+        fd = unix_connect(sock_path);
+    } else {
+        std::string tcp_addr = cli.get_string("-tcp");
+        fd = tcp_connect(tcp_addr);
+    }
+    if (fd < 0) {
+        std::fprintf(stderr, "Error: cannot connect for info\n");
+        return false;
+    }
+    if (!socket_info(fd, resp)) {
+        std::fprintf(stderr, "Error: info request failed\n");
+        close_fd(fd);
+        return false;
+    }
+    close_fd(fd);
+    return true;
+}
+
+static bool execute_search(
+    const CliParser& cli,
+    const SearchRequest& req,
+    SearchResponse& resp,
+    const Logger& logger) {
     int fd = -1;
     if (cli.has("-socket")) {
         std::string sock_path = cli.get_string("-socket");
@@ -141,64 +358,6 @@ static bool execute_info(
             return false;
         }
     }
-
-    if (!socket_info(fd, resp)) {
-        std::fprintf(stderr, "Error: info request failed\n");
-        close_fd(fd);
-        return false;
-    }
-    close_fd(fd);
-    return true;
-}
-
-// Execute a search request via socket or HTTP, returning true on success.
-static bool execute_search(
-    const CliParser& cli,
-    bool has_http,
-    const SearchRequest& req,
-    SearchResponse& resp,
-    const Logger& logger
-#ifdef IKAFSSN_ENABLE_HTTP
-    , const HttpAuthConfig& auth
-#endif
-    ) {
-
-#ifdef IKAFSSN_ENABLE_HTTP
-    if (has_http) {
-        std::string http_url = cli.get_string("-http");
-        logger.debug("Connecting via HTTP to %s", http_url.c_str());
-
-        std::string error_msg;
-        if (!http_search(http_url, req, resp, error_msg, auth)) {
-            std::fprintf(stderr, "Error: %s\n", error_msg.c_str());
-            return false;
-        }
-        return true;
-    }
-#else
-    (void)has_http;
-#endif
-
-    // Socket mode: create a new connection per attempt
-    int fd = -1;
-    if (cli.has("-socket")) {
-        std::string sock_path = cli.get_string("-socket");
-        fd = unix_connect(sock_path);
-        if (fd < 0) {
-            std::fprintf(stderr, "Error: cannot connect to UNIX socket %s\n", sock_path.c_str());
-            return false;
-        }
-        logger.debug("Connected to UNIX socket %s", sock_path.c_str());
-    } else {
-        std::string tcp_addr = cli.get_string("-tcp");
-        fd = tcp_connect(tcp_addr);
-        if (fd < 0) {
-            std::fprintf(stderr, "Error: cannot connect to TCP %s\n", tcp_addr.c_str());
-            return false;
-        }
-        logger.debug("Connected to TCP %s", tcp_addr.c_str());
-    }
-
     if (!socket_search(fd, req, resp)) {
         std::fprintf(stderr, "Error: search request failed\n");
         close_fd(fd);
@@ -230,8 +389,7 @@ static void collect_results(const SearchResponse& resp,
         }
         if (qr.warnings & kWarnMultiDegen) {
             std::fprintf(stderr,
-                "Warning: query '%s' contains k-mers with 2 or more degenerate bases; "
-                "those k-mers are ignored and not used in the search\n",
+                "Warning: query '%s' contains k-mers with 2 or more degenerate bases\n",
                 qr.qseqid.c_str());
         }
         for (const auto& hit : qr.hits) {
@@ -276,6 +434,36 @@ int main(int argc, char* argv[]) {
     has_http = cli.has("-http");
 #endif
 
+#ifdef IKAFSSN_ENABLE_HTTP
+    Logger early_logger = make_logger(cli);
+    HttpAuthConfig auth;
+    if (cli.has("--user") && cli.has("--http-user")) {
+        std::fprintf(stderr, "Error: --user and --http-user are mutually exclusive\n");
+        return 1;
+    }
+    if (cli.has("--user")) auth.userpwd = cli.get_string("--user");
+    else if (cli.has("--http-user")) {
+        std::string user = cli.get_string("--http-user");
+        std::string pass = cli.get_string("--http-password", "");
+        auth.userpwd = user + ":" + pass;
+    }
+    if (cli.has("--netrc-file")) auth.netrc_file = cli.get_string("--netrc-file");
+
+    if (cli.has("-jobs")) {
+        return cmd_jobs();
+    }
+    if (cli.has("-jobdetail")) {
+        return cmd_jobdetail(cli.get_string("-jobdetail"));
+    }
+    if (cli.has("-resume")) {
+        return cmd_resume(cli.get_string("-resume"), early_logger, auth);
+    }
+    if (cli.has("-submit_only") && !has_http) {
+        std::fprintf(stderr, "Error: -submit_only requires -http\n");
+        return 1;
+    }
+#endif
+
     if (!cli.has("-socket") && !cli.has("-tcp") && !has_http) {
         std::fprintf(stderr, "Error: one of -socket, -tcp"
 #ifdef IKAFSSN_ENABLE_HTTP
@@ -288,19 +476,14 @@ int main(int argc, char* argv[]) {
 
     bool has_query = cli.has("-query");
     bool has_primer = cli.has("-primer");
-
     if (!has_query && !has_primer) {
         std::fprintf(stderr, "Error: -query or -primer is required\n");
-        print_usage(argv[0]);
         return 1;
     }
-
     if (has_query && has_primer) {
         std::fprintf(stderr, "Error: -query and -primer are mutually exclusive\n");
         return 1;
     }
-
-    // Primer mode validation
     {
         std::string err;
         if (!validate_primer_mode_options(cli, err)) {
@@ -308,14 +491,10 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-
     if (!cli.has("-ix")) {
         std::fprintf(stderr, "Error: -ix is required\n");
-        print_usage(argv[0]);
         return 1;
     }
-
-    // Check mutually exclusive options
     if (cli.has("-seqidlist") && cli.has("-negative_seqidlist")) {
         std::fprintf(stderr, "Error: -seqidlist and -negative_seqidlist are mutually exclusive\n");
         return 1;
@@ -324,32 +503,12 @@ int main(int argc, char* argv[]) {
     Logger logger = make_logger(cli);
     init_simd_dispatch(&logger);
 
-#ifdef IKAFSSN_ENABLE_HTTP
-    // HTTP authentication resolution
-    HttpAuthConfig auth;
-    if (cli.has("--user") && cli.has("--http-user")) {
-        std::fprintf(stderr, "Error: --user and --http-user are mutually exclusive\n");
-        return 1;
-    }
-    if (cli.has("--user")) {
-        auth.userpwd = cli.get_string("--user");
-    } else if (cli.has("--http-user")) {
-        std::string user = cli.get_string("--http-user");
-        std::string pass = cli.get_string("--http-password", "");
-        auth.userpwd = user + ":" + pass;
-    }
-    if (cli.has("--netrc-file")) {
-        auth.netrc_file = cli.get_string("--netrc-file");
-    }
-#endif
-
     std::string query_path = has_query ? cli.get_string("-query") : "";
     std::string primer_path = has_primer ? cli.get_string("-primer") : "";
     std::string input_path = has_primer ? primer_path : query_path;
     std::string output_path = cli.get_string("-o");
     std::string ix_name = cli.get_string("-ix");
 
-    // Primer mode parameters
     uint32_t insert_length = 0;
     double stage1_primer_score = 0.5;
     int stage2_primer_score_add = 1;
@@ -357,14 +516,12 @@ int main(int argc, char* argv[]) {
         insert_length = static_cast<uint32_t>(cli.get_int("-insert_length", 0));
         stage1_primer_score = cli.get_double("-stage1_primer_score", 0.5);
         stage2_primer_score_add = cli.get_int("-stage2_primer_score_add", 1);
-
         if (stage1_primer_score > 1.0 && stage1_primer_score < 2.0) {
-            std::fprintf(stderr, "Error: -stage1_primer_score must be 0<v<=1 (fraction) or v>=2 (absolute)\n");
+            std::fprintf(stderr, "Error: -stage1_primer_score must be 0<v<=1 or v>=2\n");
             return 1;
         }
     }
 
-    // Output format
     OutputFormat outfmt;
     {
         std::string err;
@@ -374,7 +531,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Read FASTA (query or primer, with stdin buffering for checkpoint)
     std::string stdin_content;
     std::vector<FastaRecord> queries;
     if (input_path == "-") {
@@ -391,10 +547,7 @@ int main(int argc, char* argv[]) {
                      has_primer ? "primer" : "query");
         return 1;
     }
-    logger.info("Read %zu %s sequence(s)", queries.size(),
-                has_primer ? "primer" : "query");
 
-    // Build base search request parameters (shared across retries)
     SearchRequest base_req;
     base_req.k = static_cast<uint8_t>(cli.get_int("-k", 0));
     if (cli.has("-stage2_min_score")) {
@@ -409,8 +562,7 @@ int main(int argc, char* argv[]) {
     {
         double min_s1 = cli.get_double("-stage1_min_score", 0.0);
         if (min_s1 > 0 && min_s1 < 1.0) {
-            base_req.stage1_min_score_frac_x10000 =
-                static_cast<uint16_t>(min_s1 * 10000.0);
+            base_req.stage1_min_score_frac_x10000 = static_cast<uint16_t>(min_s1 * 10000.0);
         } else {
             base_req.stage1_min_score = static_cast<uint16_t>(min_s1);
         }
@@ -438,22 +590,17 @@ int main(int argc, char* argv[]) {
     if (cli.has("-template_type")) {
         TemplateType tt;
         std::string err;
-        if (!parse_template_type_cli(cli, TemplateType::kBoth,
-                                     /*allow_contiguous=*/false, tt, err)) {
+        if (!parse_template_type_cli(cli, TemplateType::kBoth, false, tt, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
         base_req.template_type = static_cast<uint8_t>(tt);
     }
-
-    // Stage 3 parameters
     base_req.stage3_traceback = static_cast<uint8_t>(cli.get_int("-stage3_traceback", 0));
     base_req.stage3_gapopen = cli.has("-stage3_gapopen")
-        ? static_cast<int16_t>(cli.get_int("-stage3_gapopen", 0))
-        : INT16_MIN;
+        ? static_cast<int16_t>(cli.get_int("-stage3_gapopen", 0)) : INT16_MIN;
     base_req.stage3_gapext = cli.has("-stage3_gapext")
-        ? static_cast<int16_t>(cli.get_int("-stage3_gapext", 0))
-        : INT16_MIN;
+        ? static_cast<int16_t>(cli.get_int("-stage3_gapext", 0)) : INT16_MIN;
     {
         double min_ppositive = cli.get_double("-stage3_min_ppositive", 0.0);
         base_req.stage3_min_ppositive_x100 = static_cast<uint16_t>(min_ppositive * 100.0);
@@ -468,8 +615,6 @@ int main(int argc, char* argv[]) {
         }
         base_req.score_matrix = score_matrix_code(sm);
     }
-
-    // Context
     {
         std::string context_str = cli.get_string("-context", "2.0");
         if (context_str.find('.') != std::string::npos) {
@@ -479,8 +624,6 @@ int main(int argc, char* argv[]) {
             base_req.context_abs = static_cast<uint32_t>(std::stoi(context_str));
         }
     }
-
-    // Validate output format compatibility
     {
         std::string err;
         if (!validate_output_format(outfmt, base_req.mode,
@@ -491,22 +634,17 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Seqidlist
-    std::string seqidlist_path;
-    std::string neg_seqidlist_path;
+    std::string seqidlist_path, neg_seqidlist_path;
     if (cli.has("-seqidlist")) {
         base_req.seqidlist_mode = SeqidlistMode::kInclude;
         seqidlist_path = cli.get_string("-seqidlist");
         base_req.seqids = read_seqidlist(seqidlist_path);
-        logger.info("Loaded %zu accessions (include mode)", base_req.seqids.size());
     } else if (cli.has("-negative_seqidlist")) {
         base_req.seqidlist_mode = SeqidlistMode::kExclude;
         neg_seqidlist_path = cli.get_string("-negative_seqidlist");
         base_req.seqids = read_seqidlist(neg_seqidlist_path);
-        logger.info("Loaded %zu accessions (exclude mode)", base_req.seqids.size());
     }
 
-    // Pre-flight validation
     InfoResponse server_info;
     if (!execute_info(cli, has_http, server_info, logger
 #ifdef IKAFSSN_ENABLE_HTTP
@@ -524,9 +662,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-    logger.debug("Pre-flight validation passed");
 
-    // Resolve k value from server info
     uint8_t resolved_k = base_req.k;
     if (resolved_k == 0) {
         for (const auto& db : server_info.databases) {
@@ -537,13 +673,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Primer mode: parse pairs and generate query sequences (needs resolved_k)
     if (has_primer) {
-        // Resolve seed masks from server info
         std::vector<uint32_t> seed_masks;
         if (base_req.t > 0) {
             if (base_req.template_type == 3) {
-                // "both" mode: use both coding and optimal masks for position counting
                 auto cod = get_seed_masks(resolved_k, base_req.t, TemplateType::kCoding);
                 auto opt = get_seed_masks(resolved_k, base_req.t, TemplateType::kOptimal);
                 seed_masks.insert(seed_masks.end(), cod.begin(), cod.end());
@@ -553,21 +686,17 @@ int main(int argc, char* argv[]) {
                                  static_cast<TemplateType>(base_req.template_type));
             }
         }
-
         PrimerConfig pcfg;
         pcfg.insert_length = insert_length;
         pcfg.k = resolved_k;
         pcfg.t = base_req.t;
         pcfg.masks = base_req.t > 0 ? &seed_masks : nullptr;
-
         std::vector<PrimerPair> primer_pairs;
         std::string primer_err = parse_primer_pairs(queries, pcfg, primer_pairs);
         if (!primer_err.empty()) {
             std::fprintf(stderr, "%s\n", primer_err.c_str());
             return 1;
         }
-
-        // Replace queries with generated primer pair queries and resolve thresholds
         queries.clear();
         uint32_t min_stage2_score = UINT32_MAX;
         for (const auto& pp : primer_pairs) {
@@ -575,58 +704,161 @@ int main(int argc, char* argv[]) {
             qr.id = pp.query_id;
             qr.sequence = pp.query_seq;
             queries.push_back(std::move(qr));
-
             uint32_t total_pos = pp.fwd_kmer_positions + pp.rev_kmer_positions;
-
-            // Validate stage1_primer_score (absolute mode)
-            if (stage1_primer_score >= 2.0) {
-                if (static_cast<uint32_t>(stage1_primer_score) > total_pos) {
-                    std::fprintf(stderr,
-                        "Error: -stage1_primer_score (%u) exceeds total k-mer positions (%u) for pair %s\n",
-                        static_cast<unsigned>(stage1_primer_score), total_pos, pp.query_id.c_str());
-                    return 1;
-                }
-            }
-
-            // Compute stage2 threshold: max(fwd_pos, rev_pos) + add
-            uint32_t s2_score = std::max(pp.fwd_kmer_positions, pp.rev_kmer_positions)
-                                + static_cast<uint32_t>(stage2_primer_score_add);
-            if (s2_score > total_pos) {
-                std::fprintf(stderr,
-                    "Error: stage2 threshold (%u) exceeds total k-mer positions (%u) for pair %s\n",
-                    s2_score, total_pos, pp.query_id.c_str());
+            if (stage1_primer_score >= 2.0 &&
+                static_cast<uint32_t>(stage1_primer_score) > total_pos) {
+                std::fprintf(stderr, "Error: -stage1_primer_score exceeds positions for %s\n",
+                             pp.query_id.c_str());
                 return 1;
             }
-            min_stage2_score = std::min(min_stage2_score, s2_score);
+            uint32_t s2 = std::max(pp.fwd_kmer_positions, pp.rev_kmer_positions)
+                          + static_cast<uint32_t>(stage2_primer_score_add);
+            if (s2 > total_pos) {
+                std::fprintf(stderr, "Error: stage2 threshold exceeds positions for %s\n",
+                             pp.query_id.c_str());
+                return 1;
+            }
+            min_stage2_score = std::min(min_stage2_score, s2);
         }
-
-        // Set stage1 threshold
         if (stage1_primer_score > 0 && stage1_primer_score <= 1.0) {
             base_req.stage1_min_score_frac_x10000 =
                 static_cast<uint16_t>(stage1_primer_score * 10000.0);
         } else if (stage1_primer_score >= 2.0) {
             base_req.stage1_min_score = static_cast<uint16_t>(stage1_primer_score);
         }
-
-        // Set stage2 threshold (use minimum across all pairs)
         base_req.stage2_min_score = static_cast<uint16_t>(min_stage2_score);
         base_req.has_stage2_min_score = 1;
-
-        // Set stage2 max_gap to insert_length (unless explicitly overridden)
         if (!cli.has("-stage2_max_gap")) {
             base_req.stage2_max_gap = static_cast<uint16_t>(insert_length);
         }
-
-        logger.info("Generated %zu primer pair queries", primer_pairs.size());
     }
 
-    // Compute SHA256s for checkpoint validation
+#ifdef IKAFSSN_ENABLE_HTTP
+    if (has_http) {
+        install_sigint_handler();
+        std::string http_url = cli.get_string("-http");
+        std::string err;
+        if (!ensure_jobs_root(err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+        std::string root = default_jobs_root();
+
+        // Determine batch size from server info.
+        int batch_size = static_cast<int>(queries.size());
+        if (server_info.max_seqs_per_req > 0)
+            batch_size = std::min(batch_size, server_info.max_seqs_per_req);
+        if (batch_size < 1) batch_size = 1;
+
+        GroupMeta gm;
+        gm.group_id = make_uuidv4();
+        gm.submitted_at =
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+        gm.httpd_url = http_url;
+        gm.db = base_req.db;
+        gm.query_file_path_abs = (input_path == "-")
+            ? (root + "/" + gm.group_id + "/stdin.fasta")
+            : input_path;
+        if (input_path == "-") gm.query_file_sha256 = sha256_string(stdin_content);
+        else                    gm.query_file_sha256 = sha256_file(input_path);
+        gm.max_seqs_per_req = batch_size;
+        gm.k             = resolved_k;
+        gm.mode          = base_req.mode;
+        gm.t             = base_req.t;
+        gm.template_type = base_req.template_type;
+        gm.outfmt = (outfmt == OutputFormat::kJson) ? "json"
+                  : (outfmt == OutputFormat::kSam)  ? "sam"
+                  : (outfmt == OutputFormat::kBam)  ? "bam"
+                  : "tab";
+        gm.output_path = output_path;
+
+        // Persist stdin content as <group>/stdin.fasta so a later -resume can
+        // recover the original input even if the user closed their pipe.
+        if (input_path == "-") {
+            std::error_code ec;
+            std::filesystem::create_directories(
+                std::filesystem::path(gm.query_file_path_abs).parent_path(), ec);
+            std::ofstream sf(gm.query_file_path_abs, std::ios::binary);
+            sf.write(stdin_content.data(),
+                     static_cast<std::streamsize>(stdin_content.size()));
+        }
+
+        for (size_t off = 0; off < queries.size(); off += batch_size) {
+            size_t end = std::min(off + static_cast<size_t>(batch_size),
+                                   queries.size());
+            std::string job_id = make_uuidv4();
+            gm.job_ids.push_back(job_id);
+
+            JobMeta jm;
+            jm.job_id = job_id;
+            jm.group_id = gm.group_id;
+            jm.n_seqs = static_cast<int32_t>(end - off);
+            jm.fasta_file = gm.query_file_path_abs;
+            jm.seq_index_range = {static_cast<int32_t>(off),
+                                   static_cast<int32_t>(end)};
+            jm.status = "submitted";
+            jm.submitted_at = gm.submitted_at;
+            std::string werr;
+            write_job_meta(root, jm, werr);
+
+            std::vector<std::string> deflines;
+            for (size_t i = off; i < end; i++) deflines.push_back(queries[i].id);
+            std::string derr;
+            write_job_deflines(root, gm.group_id, job_id, deflines, derr);
+        }
+        write_group_meta(root, gm, err);
+
+        // Submit jobs (best-effort; failures leave the meta on disk so
+        // -resume can pick them up).
+        for (size_t i = 0; i < gm.job_ids.size(); i++) {
+            const auto& job_id = gm.job_ids[i];
+            size_t off = i * static_cast<size_t>(batch_size);
+            size_t end = std::min(off + static_cast<size_t>(batch_size),
+                                   queries.size());
+            SearchRequest req = base_req;
+            for (size_t j = off; j < end; j++) {
+                req.queries.push_back({queries[j].id, queries[j].sequence});
+            }
+            std::string serr;
+            auto rc = http_submit_job(http_url, job_id, req, serr, auth);
+            JobMeta jm;
+            std::string e;
+            read_job_meta(root, gm.group_id, job_id, jm, e);
+            if (rc == AsyncHttpOutcome::kOk || rc == AsyncHttpOutcome::kConflict) {
+                jm.status = "queued";
+            } else {
+                jm.status = "submitted"; // will be retried by -resume
+                jm.error_message = serr;
+                logger.error("submit %s failed: %s", job_id.c_str(), serr.c_str());
+            }
+            write_job_meta(root, jm, e);
+        }
+
+        if (cli.has("-submit_only")) {
+            std::printf("%s\n", gm.group_id.c_str());
+            return 0;
+        }
+
+        PollLoop loop(root, gm.group_id, auth, logger);
+        if (!loop.run()) {
+            if (PollLoop::sigint_flag().load()) return 130;
+        }
+        // Re-read group meta to pick up worker-updated counters.
+        GroupMeta gm2;
+        std::string g2err;
+        if (!read_group_meta(root, gm.group_id, gm2, g2err)) {
+            logger.error("post-poll group_meta read: %s", g2err.c_str());
+            gm2 = gm;
+        }
+        return finalize_group(root, gm2, logger);
+    }
+#endif
+
+    // -- socket / TCP path: legacy synchronous loop with checkpoint --
     std::string input_sha256;
-    if (input_path == "-") {
-        input_sha256 = sha256_string(stdin_content);
-    } else {
-        input_sha256 = sha256_file(input_path);
-    }
+    if (input_path == "-") input_sha256 = sha256_string(stdin_content);
+    else                    input_sha256 = sha256_file(input_path);
     std::string seqidlist_sha256;
     std::string neg_seqidlist_sha256;
     if (!seqidlist_path.empty())
@@ -634,13 +866,10 @@ int main(int argc, char* argv[]) {
     if (!neg_seqidlist_path.empty())
         neg_seqidlist_sha256 = sha256_file(neg_seqidlist_path);
 
-    // Build options text and checkpoint
     DbStats db_stats = resolve_db_stats(server_info, base_req.db, resolved_k);
     std::string options_text = build_options_text(
         base_req, db_stats, resolved_k, outfmt,
         seqidlist_sha256, neg_seqidlist_sha256);
-
-    // Append primer mode parameters to options text
     if (has_primer) {
         options_text += "primer=1\n";
         options_text += "insert_length=" + std::to_string(insert_length) + "\n";
@@ -656,175 +885,103 @@ int main(int argc, char* argv[]) {
     ckpt_cfg.outfmt = outfmt;
 
     Checkpoint ckpt(ckpt_cfg, logger);
-
-    // Acquire lock
     LockGuard lock;
-    if (!ckpt.acquire_lock(lock)) {
-        // Lock dir might not exist yet if temp_dir doesn't exist
-        // Try to create temp dir first, then lock
-    }
+    ckpt.acquire_lock(lock);
 
-    // Resume or initialize checkpoint
     std::unordered_set<std::string> completed_seqids;
     int next_batch_num = 0;
-
     if (ckpt.exists()) {
-        // Acquire lock first if we haven't already
-        if (!lock.locked()) {
-            if (!ckpt.acquire_lock(lock)) {
-                return 1;
-            }
-        }
+        if (!lock.locked()) ckpt.acquire_lock(lock);
         if (!ckpt.resume(options_text, input_sha256,
                           completed_seqids, next_batch_num)) {
-            logger.info("Checkpoint validation failed, starting fresh");
             lock.release();
             ckpt.cleanup();
-            if (!ckpt.initialize(options_text, input_sha256, stdin_content)) {
-                return 1;
-            }
-            if (!ckpt.acquire_lock(lock)) {
-                return 1;
-            }
-        } else {
-            logger.info("Resumed from checkpoint: %zu queries already completed",
-                        completed_seqids.size());
+            if (!ckpt.initialize(options_text, input_sha256, stdin_content)) return 1;
+            ckpt.acquire_lock(lock);
         }
     } else {
-        if (!ckpt.initialize(options_text, input_sha256, stdin_content)) {
-            return 1;
-        }
-        if (!lock.locked()) {
-            if (!ckpt.acquire_lock(lock)) {
-                return 1;
-            }
-        }
+        if (!ckpt.initialize(options_text, input_sha256, stdin_content)) return 1;
+        if (!lock.locked()) ckpt.acquire_lock(lock);
     }
 
-    // Build remaining queries (filter out completed)
     std::vector<FastaRecord> remaining;
     for (const auto& q : queries) {
         if (completed_seqids.find(q.id) == completed_seqids.end()) {
             remaining.push_back(q);
         }
     }
-    logger.info("%zu remaining queries to process", remaining.size());
-
-    // Build query_id -> sequence lookup for retry
     std::unordered_map<std::string, std::string> query_map;
-    for (const auto& q : queries) {
-        query_map[q.id] = q.sequence;
-    }
+    for (const auto& q : queries) query_map[q.id] = q.sequence;
 
-    // Determine batch size from server info
     int batch_size = static_cast<int>(remaining.size());
-    if (batch_size == 0) batch_size = 1;  // avoid div-by-zero
+    if (batch_size == 0) batch_size = 1;
     if (server_info.max_seqs_per_req > 0)
         batch_size = std::min(batch_size, static_cast<int>(server_info.max_seqs_per_req));
     if (server_info.max_queue_size > 0) {
         int available = server_info.max_queue_size - server_info.queue_depth;
-        if (available > 0)
-            batch_size = std::min(batch_size, available);
+        if (available > 0) batch_size = std::min(batch_size, available);
     }
     if (batch_size <= 0) batch_size = 1;
-    logger.debug("Batch size: %d (remaining=%zu, max_seqs_per_req=%d)",
-                 batch_size, remaining.size(), server_info.max_seqs_per_req);
 
     bool has_skipped = false;
     uint8_t resp_mode = 0;
     uint8_t resp_stage1_score = 0;
     bool resp_stage3_traceback = false;
     bool first_response = true;
-
-    // Try to load response meta from checkpoint (for resume with all queries done)
     if (!remaining.empty() || !ckpt.read_response_meta(resp_mode, resp_stage1_score,
                                                         resp_stage3_traceback)) {
-        // Will be populated from first response
+        // wait for first response
     } else {
         first_response = false;
     }
 
-    // Retry schedule: 30s, 60s, 120s, 120s, ...
     static constexpr int retry_delays[] = {30, 60, 120};
     static constexpr int num_retry_delays =
         static_cast<int>(sizeof(retry_delays) / sizeof(retry_delays[0]));
-
     int batch_num = next_batch_num;
-
-    // Process remaining queries in batches
     size_t sent = 0;
     while (sent < remaining.size()) {
         size_t batch_end = std::min(sent + static_cast<size_t>(batch_size),
                                      remaining.size());
-
-        // Build batch seqid list
         std::vector<std::string> batch_seqids;
         for (size_t i = sent; i < batch_end; i++) {
             batch_seqids.push_back(remaining[i].id);
         }
-
-        // Write batch seqids before sending
         ckpt.write_batch_seqids(batch_num, batch_seqids);
-
-        // Build request for this batch
         SearchRequest req = base_req;
         for (size_t i = sent; i < batch_end; i++) {
             req.queries.push_back({remaining[i].id, remaining[i].sequence});
         }
         sent = batch_end;
-
-        logger.info("Sending batch %d: %zu queries (%zu/%zu)",
-                     batch_num, req.queries.size(), sent, remaining.size());
-
-        // Retry loop for this batch (rejected = server busy)
         for (int attempt = 0; ; attempt++) {
             SearchResponse resp;
-            if (!execute_search(cli, has_http, req, resp, logger
-#ifdef IKAFSSN_ENABLE_HTTP
-                    , auth
-#endif
-                    )) {
+            if (!execute_search(cli, req, resp, logger)) {
                 lock.release();
                 return 1;
             }
-
             if (resp.status != 0) {
                 std::fprintf(stderr, "Error: server returned status %d\n", resp.status);
                 lock.release();
                 return 1;
             }
-
-            logger.info("Received response: k=%d, %zu query result(s), %zu rejected",
-                         resp.k, resp.results.size(), resp.rejected_qseqids.size());
-
-            // Save mode/score_type from first successful response
             if (first_response) {
                 resp_mode = resp.mode;
                 resp_stage1_score = resp.stage1_score;
                 resp_stage3_traceback = (resp.stage3_traceback != 0);
                 first_response = false;
-                ckpt.write_response_meta(resp_mode, resp_stage1_score,
-                                          resp_stage3_traceback);
+                ckpt.write_response_meta(resp_mode, resp_stage1_score, resp_stage3_traceback);
             }
-
-            // Collect accepted results
             std::vector<OutputHit> batch_hits;
             collect_results(resp, batch_hits, has_skipped);
-
             if (resp.rejected_qseqids.empty()) {
-                // All accepted - save batch results
                 ckpt.write_batch_results(batch_num, batch_hits,
                                           resp_mode, resp_stage1_score,
                                           resp_stage3_traceback);
                 batch_num++;
                 break;
             }
-
-            // Partial reject: save accepted results with updated seqid list
             std::unordered_set<std::string> rejected_set(
                 resp.rejected_qseqids.begin(), resp.rejected_qseqids.end());
-
-            // Rewrite batch seqids to only include accepted
             std::vector<std::string> accepted_seqids;
             for (const auto& id : batch_seqids) {
                 if (rejected_set.find(id) == rejected_set.end()) {
@@ -836,15 +993,8 @@ int main(int argc, char* argv[]) {
                                       resp_mode, resp_stage1_score,
                                       resp_stage3_traceback);
             batch_num++;
-
-            // Sleep before retry
-            int delay_idx = std::min(attempt, num_retry_delays - 1);
-            int delay = retry_delays[delay_idx];
-            logger.info("%zu queries rejected, retrying in %d seconds...",
-                        resp.rejected_qseqids.size(), delay);
+            int delay = retry_delays[std::min(attempt, num_retry_delays - 1)];
             std::this_thread::sleep_for(std::chrono::seconds(delay));
-
-            // Rebuild request with only rejected query IDs as new batch
             batch_seqids.clear();
             req = base_req;
             for (const auto& qid : resp.rejected_qseqids) {
@@ -854,36 +1004,23 @@ int main(int argc, char* argv[]) {
                     batch_seqids.push_back(qid);
                 }
             }
-
-            if (req.queries.empty()) break; // all resolved
-
-            // Write seqids for the new retry batch
+            if (req.queries.empty()) break;
             ckpt.write_batch_seqids(batch_num, batch_seqids);
         }
     }
-
-    // If all queries were already completed (resume case), load meta
     if (remaining.empty() && first_response) {
         if (!ckpt.read_response_meta(resp_mode, resp_stage1_score,
                                       resp_stage3_traceback)) {
-            logger.error("No response metadata found in checkpoint");
             lock.release();
             return 1;
         }
     }
-
-    // Merge all batch results
     if (!ckpt.merge_results(output_path, resp_mode, resp_stage1_score,
                              resp_stage3_traceback)) {
-        logger.error("Failed to merge results");
         lock.release();
         return 1;
     }
-
-    // Cleanup
     lock.release();
     ckpt.cleanup();
-
-    logger.info("Done.");
     return has_skipped ? 2 : 0;
 }

@@ -12,12 +12,14 @@ struct HttpAuthConfig {
     std::string netrc_file;  // path for CURLOPT_NETRC_FILE
 };
 
-// Send a search request via HTTP POST to ikafssnhttpd's /api/v1/search.
-// base_url: e.g., "http://example.com:8080" or "http://example.com:8080/nt"
-// Returns true on success. On failure, error_msg is set.
-bool http_search(const std::string& base_url, const SearchRequest& req,
-                 SearchResponse& resp, std::string& error_msg,
-                 const HttpAuthConfig& auth = {});
+// Build the JSON body for a /api/v1/jobs POST or the legacy
+// /api/v1/search POST.  Exposed so async_http_client can reuse the
+// exact same field encoding without duplicating it.
+std::string build_request_json(const SearchRequest& req);
+
+// Parse JSON server-info reply from /api/v1/info into InfoResponse.
+bool parse_info_json(const std::string& body, InfoResponse& resp,
+                     std::string& error_msg);
 
 // Fetch server info via HTTP GET to ikafssnhttpd's /api/v1/info.
 // Returns true on success. On failure, error_msg is set.

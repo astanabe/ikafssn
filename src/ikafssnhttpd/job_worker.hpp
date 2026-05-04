@@ -1,0 +1,62 @@
+#pragma once
+
+#include <atomic>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "ikafssnhttpd/backend_manager.hpp"
+#include "ikafssnhttpd/job_store.hpp"
+#include "util/logger.hpp"
+
+namespace ikafssn {
+
+// Background worker pool that drains the JobStore queue.  Each worker
+// fetches one queued job, deserialises its SearchRequest, hands the
+// request to BackendManager::route_search, and either marks the job as
+// done, requeues it for retry, or marks it terminally failed.
+//
+// The retry policy lives entirely in this layer: BackendManager::route_search
+// is configured for a single attempt (Phase B reduced its built-in 3-retry
+// loop), so all retry counting is owned by attempts++ in the JobStore.
+class JobWorker {
+public:
+    JobWorker(JobStore& store,
+              std::shared_ptr<BackendManager> manager,
+              Logger& logger,
+              int max_nretry);
+
+    ~JobWorker();
+
+    JobWorker(const JobWorker&) = delete;
+    JobWorker& operator=(const JobWorker&) = delete;
+
+    // Spawn `n_workers` threads.  Idempotent: a second call with the
+    // pool already running is a no-op.
+    void start(int n_workers);
+
+    // Wake any sleeping workers (e.g. after a new POST inserts a row).
+    void notify();
+
+    // Stop and join all workers.  Idempotent.
+    void stop();
+
+private:
+    JobStore&                       store_;
+    std::shared_ptr<BackendManager> manager_;
+    Logger&                         logger_;
+    int                             max_nretry_;
+
+    std::vector<std::thread>  threads_;
+    std::atomic<bool>         stop_flag_{false};
+    std::mutex                cv_mu_;
+    std::condition_variable   cv_;
+
+    void worker_loop_();
+    void process_one_(JobMeta& meta, std::vector<uint8_t>& request_blob);
+};
+
+} // namespace ikafssn

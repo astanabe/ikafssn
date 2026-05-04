@@ -96,8 +96,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake dpkg-dev \
-            libtbb-dev liblmdb-dev libsqlite3-dev \
+            build-essential cmake dpkg-dev pkg-config \
+            libtbb-dev liblmdb-dev libsqlite3-dev libzstd-dev \
             libcurl4-openssl-dev libjsoncpp-dev \
             zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
             libssl-dev uuid-dev
@@ -107,9 +107,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake dpkg-dev \
+            build-essential cmake dpkg-dev pkg-config \
             gcc-12 g++-12 \
-            libtbb-dev liblmdb-dev libsqlite3-dev \
+            libtbb-dev liblmdb-dev libsqlite3-dev libzstd-dev \
             libcurl4-openssl-dev libjsoncpp-dev \
             zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
             libssl-dev uuid-dev
@@ -117,7 +117,7 @@ jobs:
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS' && matrix.pkg_type != 'conda'
         run: |
-          pkgs=(tbb lmdb sqlite3 curl jsoncpp xz libdeflate autoconf automake libtool openssl@3)
+          pkgs=(tbb lmdb sqlite3 curl jsoncpp xz libdeflate zstd pkg-config autoconf automake libtool openssl@3)
           to_install=()
           for p in "${pkgs[@]}"; do
             brew list --formula "$p" >/dev/null 2>&1 || to_install+=("$p")
@@ -135,8 +135,8 @@ jobs:
           dnf install -y 'dnf-command(config-manager)' || true
           dnf config-manager --set-enabled crb || true
           dnf install -y \
-            gcc-c++ cmake rpm-build make \
-            tbb-devel lmdb-devel sqlite-devel \
+            gcc-c++ cmake rpm-build make pkgconfig \
+            tbb-devel lmdb-devel sqlite-devel libzstd-devel \
             libcurl-devel jsoncpp-devel \
             zlib-devel bzip2-devel xz-devel libdeflate-devel \
             openssl-devel libuuid-devel \

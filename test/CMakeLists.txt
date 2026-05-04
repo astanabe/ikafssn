@@ -423,6 +423,32 @@ add_test(NAME test_stage3_integration COMMAND test_stage3_integration)
 
 # --- Phase 7 tests ---
 
+# Async-job zstd_io round-trip test (Phase A — libzstd dependency only)
+if(ENABLE_CLIENT_HTTP OR BUILD_HTTPD)
+    add_executable(test_zstd_io test_zstd_io.cpp
+        "${CMAKE_SOURCE_DIR}/src/ikafssnclient/zstd_io.cpp"
+    )
+    target_link_libraries(test_zstd_io PRIVATE
+        ikafssn_core PkgConfig::ZSTD
+    )
+    target_include_directories(test_zstd_io PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src"
+    )
+    add_test(NAME test_zstd_io COMMAND test_zstd_io)
+endif()
+
+# JobStore round-trip + retry + TTL tests (Phase B)
+if(BUILD_HTTPD)
+    add_executable(test_job_store test_job_store.cpp)
+    target_link_libraries(test_job_store PRIVATE
+        ikafssn_httpd_jobstore ikafssn_core
+    )
+    target_include_directories(test_job_store PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src"
+    )
+    add_test(NAME test_job_store COMMAND test_job_store)
+endif()
+
 # Checkpoint test (requires OpenSSL)
 add_executable(test_checkpoint test_checkpoint.cpp
     "${CMAKE_SOURCE_DIR}/src/ikafssnclient/checkpoint.cpp"

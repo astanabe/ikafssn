@@ -86,12 +86,20 @@ enum QueryWarning : uint8_t {
 };
 
 // Reasons a query may be skipped (no hits produced).
+//
+// Values 1-4 are produced by the server's preprocess_query() and travel
+// over the wire as `QueryResult.skip_reason`.  Value 255 is a client-
+// only sentinel: ikafssnclient synthesises a kFailHttpJob row when an
+// async REST job ends up in `failed` state so the user's output file
+// still records the failure (sseqid sentinel `*FAILED:<reason>`).
+// kFailHttpJob is never produced by the server and never serialised.
 enum SkipReason : uint8_t {
     kSkipNone                 = 0,
     kSkipQueryTooShort        = 1,  // seq_len < (t > 0 ? t : k)
     kSkipDegenRejected        = 2,  // accept_qdegen=0 and query has IUPAC degenerates
     kSkipThresholdUnreachable = 3,  // resolved Stage 1 threshold <= 0
     kSkipInvalidChar          = 4,  // sequence contained a non-IUPAC character
+    kFailHttpJob              = 255,// client-only: async HTTP job failed
 };
 
 inline const char* skip_reason_str(uint8_t r) {
@@ -100,6 +108,7 @@ inline const char* skip_reason_str(uint8_t r) {
         case kSkipDegenRejected:        return "degen_rejected";
         case kSkipThresholdUnreachable: return "threshold_unreachable";
         case kSkipInvalidChar:          return "invalid_char";
+        case kFailHttpJob:              return "http_job_failed";
         default:                        return "ok";
     }
 }

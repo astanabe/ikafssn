@@ -93,10 +93,14 @@ static char field_char(
     return s.empty() ? fallback : s[0];
 }
 
-// Returns true if the sseqid is a skip-marker sentinel like "*SKIPPED:..."
-// emitted by result_writer for queries that were not searched.
+// Returns true if the sseqid is a skip-marker sentinel emitted by
+// result_writer for queries that were not searched.  Two prefixes
+// exist: "*SKIPPED:" (server-produced) and "*FAILED:" (client-produced
+// async-job failure).  Both must be silently dropped on read.
 static bool is_skip_sseqid(const std::string& s) {
-    return s.size() >= 9 && s.compare(0, 9, "*SKIPPED:") == 0;
+    if (s.size() >= 9 && s.compare(0, 9, "*SKIPPED:") == 0) return true;
+    if (s.size() >= 8 && s.compare(0, 8, "*FAILED:") == 0)  return true;
+    return false;
 }
 
 // Parse a data line using the column map built from the header.
