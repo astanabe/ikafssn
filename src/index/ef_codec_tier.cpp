@@ -42,28 +42,9 @@ namespace ikafssn::ef::IKAFSSN_EF_TIER_NS(IKAFSSN_EF_TIER_NAME) {
 
 namespace {
 
-inline std::uint8_t floor_log2_u64(std::uint64_t n) noexcept {
-    if (n == 0) return 0;
-    return static_cast<std::uint8_t>(63 - __builtin_clzll(n));
-}
-
 inline std::uint64_t mask_for_bits(std::uint8_t l) noexcept {
     return (l >= 64) ? ~std::uint64_t{0}
                      : ((std::uint64_t{1} << l) - std::uint64_t{1});
-}
-
-inline void write_lower_bits(std::uint64_t* lower,
-                             std::uint64_t bit_pos,
-                             std::uint64_t value,
-                             std::uint8_t l) noexcept {
-    if (l == 0) return;
-    std::uint64_t word_idx     = bit_pos >> 6;
-    std::uint64_t bit_in_word  = bit_pos & 63;
-    lower[word_idx] |= value << bit_in_word;
-    std::uint64_t spill = bit_in_word + l;
-    if (spill > 64) {
-        lower[word_idx + 1] |= value >> (64 - bit_in_word);
-    }
 }
 
 inline std::uint64_t read_lower_bits(const std::uint64_t* lower,
@@ -121,80 +102,6 @@ inline std::uint64_t select1_after(const std::uint64_t* upper,
 }
 
 } // anonymous namespace
-
-std::size_t encode_dictionary_ef(const std::uint64_t* offsets,
-                                 std::size_t D,
-                                 std::uint64_t U_raw,
-                                 std::vector<std::uint8_t>& out) {
-    std::size_t out_start = out.size();
-
-    EFHeader hdr{};
-    std::memcpy(hdr.magic, EF_MAGIC, 4);
-    hdr.D = static_cast<std::uint64_t>(D);
-
-    if (D == 0) {
-        hdr.l = 0;
-        hdr.U = 0;
-        hdr.upper_bits = 0;
-        hdr.select_count = 0;
-        out.resize(out_start + sizeof(EFHeader));
-        std::memcpy(out.data() + out_start, &hdr, sizeof(EFHeader));
-        return sizeof(EFHeader);
-    }
-
-    std::uint64_t U_ef = U_raw + static_cast<std::uint64_t>(D);
-    std::uint8_t l = (U_ef > static_cast<std::uint64_t>(D))
-                         ? floor_log2_u64(U_ef / D)
-                         : std::uint8_t{0};
-    if (l > 63) l = 63;
-    std::uint64_t mask_l = mask_for_bits(l);
-
-    std::uint64_t max_ef = offsets[D - 1] + (D - 1);
-    std::uint64_t max_high = max_ef >> l;
-    std::uint64_t upper_bits_total = static_cast<std::uint64_t>(D) + max_high + 1;
-
-    std::uint64_t lower_bits_total = static_cast<std::uint64_t>(D) * l;
-    std::size_t lower_words = static_cast<std::size_t>((lower_bits_total + 63) / 64);
-    std::size_t upper_words = static_cast<std::size_t>((upper_bits_total + 63) / 64);
-
-    std::uint32_t select_count = static_cast<std::uint32_t>(
-        (static_cast<std::uint64_t>(D) + kSelectStep - 1) / kSelectStep);
-
-    hdr.l = l;
-    hdr.U = U_ef;
-    hdr.upper_bits = static_cast<std::uint32_t>(upper_bits_total);
-    hdr.select_count = select_count;
-
-    std::size_t blob_bytes = sizeof(EFHeader)
-                           + lower_words * 8
-                           + upper_words * 8
-                           + static_cast<std::size_t>(select_count) * 8;
-    out.resize(out_start + blob_bytes);
-    std::uint8_t* base = out.data() + out_start;
-    std::memcpy(base, &hdr, sizeof(EFHeader));
-
-    std::uint64_t* lower = reinterpret_cast<std::uint64_t*>(base + sizeof(EFHeader));
-    std::uint64_t* upper = lower + lower_words;
-    std::uint64_t* sel   = upper + upper_words;
-    std::memset(lower, 0, lower_words * 8);
-    std::memset(upper, 0, upper_words * 8);
-
-    for (std::size_t i = 0; i < D; ++i) {
-        std::uint64_t v = offsets[i] + static_cast<std::uint64_t>(i);
-        std::uint64_t lo = v & mask_l;
-        std::uint64_t hi = v >> l;
-        std::uint64_t up_pos = hi + static_cast<std::uint64_t>(i);
-
-        write_lower_bits(lower, static_cast<std::uint64_t>(i) * l, lo, l);
-        upper[up_pos >> 6] |= std::uint64_t{1} << (up_pos & 63);
-
-        if (i % kSelectStep == 0) {
-            sel[i / kSelectStep] = up_pos;
-        }
-    }
-
-    return blob_bytes;
-}
 
 std::uint64_t access_dictionary_ef(const EFHeader& hdr,
                                    const std::uint64_t* lower,

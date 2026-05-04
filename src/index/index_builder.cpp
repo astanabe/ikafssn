@@ -268,9 +268,6 @@ bool build_index(BlastDbReader& db,
     uint64_t kix_data_pos = 0;
     uint64_t kpx_data_pos = 0;
 
-    uint64_t est_partition_postings = (total_occurrences + num_partitions - 1) / num_partitions;
-    uint64_t reserve_entries = config.memory_limit / parallel_sort_entry_overhead();
-
     // Per-thread scratch for the parallel per-k-mer encode step below.
     // The buffers grow monotonically across k-mer runs so the dedup +
     // encode pipeline avoids per-call allocation in the hot path.
@@ -366,16 +363,33 @@ bool build_index(BlastDbReader& db,
             std::fflush(stderr);
         }
 
-        // Merge thread-local buffers into single buffer
-        std::vector<TempEntry> buffer;
-        buffer.reserve(std::min(est_partition_postings, reserve_entries));
-        local_buffers.combine_each([&buffer](std::vector<TempEntry>& local) {
-            buffer.insert(buffer.end(),
-                          std::make_move_iterator(local.begin()),
-                          std::make_move_iterator(local.end()));
-            // Release local memory
-            std::vector<TempEntry>().swap(local);
+        // Merge thread-local buffers into a single buffer.  The serial
+        // `combine_each(insert)` form was a sustained 1-CPU stretch on
+        // large partitions; instead, collect the per-thread vectors,
+        // prefix-sum their sizes, allocate the destination once, and
+        // copy each thread's slice in parallel.
+        std::vector<std::vector<TempEntry>*> local_ptrs;
+        local_buffers.combine_each([&](std::vector<TempEntry>& local) {
+            local_ptrs.push_back(&local);
         });
+        std::vector<std::size_t> chunk_off(local_ptrs.size() + 1, 0);
+        for (std::size_t t = 0; t < local_ptrs.size(); ++t) {
+            chunk_off[t + 1] = chunk_off[t] + local_ptrs[t]->size();
+        }
+        std::vector<TempEntry> buffer;
+        buffer.resize(chunk_off.back());
+        if (!local_ptrs.empty()) {
+            tbb::parallel_for(
+                tbb::blocked_range<std::size_t>(0, local_ptrs.size(), 1),
+                [&](const tbb::blocked_range<std::size_t>& r) {
+                    for (std::size_t t = r.begin(); t < r.end(); ++t) {
+                        auto& src = *local_ptrs[t];
+                        std::move(src.begin(), src.end(),
+                                  buffer.begin() + chunk_off[t]);
+                        std::vector<TempEntry>().swap(src);
+                    }
+                });
+        }
 
         if (buffer.empty()) continue;
 

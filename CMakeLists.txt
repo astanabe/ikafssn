@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.04")  # search/server: shared Phase A/B orchestrator (parallel_search), parallelised preprocess, OidFilter hoisting
+set(IKAFSSN_VERSION "0.1.2026.05.05")  # ikafssnindex: parallelise per-partition combine_each merge and EF dictionary encode
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
