@@ -226,6 +226,9 @@ ikafssnsearch [options]
   -v, --verbose           詳細ログ出力
 ```
 
+(注: -query および -primer は gzip/bzip2/xz/zstd 圧縮された FASTA を
+ 先頭マジックバイトで自動判定するため、フラグ指定は不要です。)
+
 `-ix` オプションには `blastn -db` と同様にインデックスのプレフィックスパス (拡張子なし) を指定します。例えば、マルチボリューム BLAST DB (`nt`、ボリューム `nt.00`、`nt.01`) に対して `ikafssnindex -db nt -k 11 -o /data/index` が以下のファイルを生成した場合:
 
 ```
@@ -610,8 +613,8 @@ ikafssnclient [options]
                            コーデックは -o の拡張子 (.gz/.bz2/.xz/.zst) で選択。SAM/BAM では拒否
   -v, --verbose            詳細ログ出力
 
-(注: -query は gzip/bzip2/xz/zstd 圧縮された FASTA を先頭マジックバイトで
- 自動判定するため、フラグ指定は不要です。)
+(注: -query および -primer は gzip/bzip2/xz/zstd 圧縮された FASTA を
+ 先頭マジックバイトで自動判定するため、フラグ指定は不要です。)
 
 HTTP 認証 (HTTP モード専用):
   --user <user:password>   認証情報 (curl 形式)

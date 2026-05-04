@@ -236,6 +236,9 @@ Primer mode (alternative to -query):
   -stage2_primer_score_add <int>  Stage 2 threshold addon: max(Lf,Lr) + N (default: 1)
 ```
 
+(Note: -query and -primer auto-detect gzip/bzip2/xz/zstd-compressed FASTA
+ inputs from their leading magic bytes; no flag is required.)
+
 The `-ix` option specifies the index prefix path (without extension), similar to `blastn -db`. For example, if `ikafssnindex -db nt -k 11 -o /data/index` generated the following files for a multi-volume BLAST DB (`nt` with volumes `nt.00`, `nt.01`):
 
 ```
@@ -618,8 +621,8 @@ Options:
                            Codec is selected by -o suffix (.gz/.bz2/.xz/.zst); SAM/BAM reject all four
   -v, --verbose            Verbose logging
 
-(Note: -query auto-detects gzip/bzip2/xz/zstd-compressed FASTA inputs from
- their leading magic bytes; no flag is required.)
+(Note: -query and -primer auto-detect gzip/bzip2/xz/zstd-compressed FASTA
+ inputs from their leading magic bytes; no flag is required.)
 
 HTTP Authentication (HTTP mode only):
   --user <user:password>   Credentials (curl-style)
