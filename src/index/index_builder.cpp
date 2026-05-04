@@ -271,14 +271,25 @@ bool build_index(BlastDbReader& db,
     uint64_t est_partition_postings = (total_occurrences + num_partitions - 1) / num_partitions;
     uint64_t reserve_entries = config.memory_limit / parallel_sort_entry_overhead();
 
-    // Process each partition (sequentially to respect memory constraints)
-    // Buffers reused per k-mer for the v8 dedup + encoder pipeline.
-    std::vector<uint32_t> sid_buf;          sid_buf.reserve(64 * 1024);
-    std::vector<uint32_t> abs_pos_buf;      abs_pos_buf.reserve(64 * 1024);
-    std::vector<uint32_t> distinct_sid_buf; distinct_sid_buf.reserve(64 * 1024);
-    std::vector<uint32_t> occ_count_buf;    occ_count_buf.reserve(64 * 1024);
-    std::vector<uint32_t> seq_delta_buf;    seq_delta_buf.reserve(64 * 1024);
-    std::vector<uint8_t>  pfd_out_buf;      pfd_out_buf.reserve(256 * 1024);
+    // Per-thread scratch for the parallel per-k-mer encode step below.
+    // The buffers grow monotonically across k-mer runs so the dedup +
+    // encode pipeline avoids per-call allocation in the hot path.
+    struct EncodeScratch {
+        std::vector<uint32_t> sid_buf;
+        std::vector<uint32_t> abs_pos_buf;
+        std::vector<uint32_t> distinct_sid_buf;
+        std::vector<uint32_t> occ_count_buf;
+        std::vector<uint32_t> seq_delta_buf;
+    };
+
+    // Per-k-mer run output: kix / kpx posting list bodies plus the
+    // distinct / position counts that the prefix-sum step needs.
+    struct RunOut {
+        std::vector<uint8_t> kix_blob;
+        std::vector<uint8_t> kpx_blob;   // empty when skip_kpx
+        uint32_t distinct_count = 0;
+        uint32_t position_count = 0;
+    };
 
     // Track v7 totals for the .kix and .kpx headers separately:
     //   total_distinct_postings — sum of distinct seq_ids across all k-mers (.kix)
@@ -392,111 +403,141 @@ bool build_index(BlastDbReader& db,
         parallel_sort_temp_entries(buffer);
 
         auto t_sort_done = clock::now();
-        double encode_total = 0.0;
-        double io_total = 0.0;
 
-        // Write sorted postings grouped by kmer (sequential — I/O bound)
-        size_t i = 0;
-        while (i < buffer.size()) {
-            uint32_t cur_kmer = buffer[i].kmer_value;
-
-            // Find range [i, j) for this kmer
-            size_t j = i;
-            while (j < buffer.size() && buffer[j].kmer_value == cur_kmer) {
-                j++;
+        // Step 1 (sequential): identify k-mer runs in the sorted buffer.
+        // Cheap linear scan; the heavy work — dedup + encode_posting_kix /
+        // encode_posting_kpx per run — is parallelised below.
+        struct KmerRun {
+            uint32_t kmer;
+            std::size_t begin;
+            std::size_t end;
+        };
+        std::vector<KmerRun> runs;
+        {
+            std::size_t i = 0;
+            while (i < buffer.size()) {
+                uint32_t cur_kmer = buffer[i].kmer_value;
+                std::size_t j = i;
+                while (j < buffer.size() && buffer[j].kmer_value == cur_kmer) {
+                    j++;
+                }
+                // The .kix / .kpx encoder APIs take position_count as u32,
+                // so a single (k-mer, partition) slice cannot exceed
+                // 2^32 - 1.  In practice this only matters for hypothetical
+                // mega-volumes (NCBI BLAST splits at ~4 GB of sequence
+                // data, where the dominant k-mer typically has < 100 M
+                // occurrences).  Detect the overflow and abort with a
+                // clear error rather than silently truncating and
+                // corrupting downstream buffers.
+                if ((j - i) > UINT32_MAX) {
+                    logger.error("k-mer %u has %zu positions in this partition, "
+                                 "exceeding uint32_t.  Reduce -memory_limit to "
+                                 "force more partitions, or split the BLAST DB "
+                                 "into smaller volumes.",
+                                 cur_kmer, j - i);
+                    std::fclose(kix_fp);
+                    if (kpx_fp) std::fclose(kpx_fp);
+                    std::remove(ksx_tmp.c_str());
+                    std::remove(kix_tmp.c_str());
+                    if (!config.skip_kpx) std::remove(kpx_tmp.c_str());
+                    return false;
+                }
+                runs.push_back({cur_kmer, i, j});
+                i = j;
             }
+        }
 
-            // Record offsets and actual counts for this kmer
+        // Step 2 (parallel): per-k-mer dedup + encode into per-run blobs.
+        // Each thread reuses an EncodeScratch instance across runs so the
+        // dedup and delta-stream allocations don't churn in the hot path.
+        // RunOut holds the per-run output buffers; the sequential fwrite
+        // loop below walks them in k-mer order.
+        std::vector<RunOut> run_outs(runs.size());
+        tbb::combinable<EncodeScratch> scratch_ets;
+
+        tbb::parallel_for(
+            tbb::blocked_range<std::size_t>(0, runs.size()),
+            [&](const tbb::blocked_range<std::size_t>& r) {
+                auto& s = scratch_ets.local();
+                for (std::size_t ri = r.begin(); ri < r.end(); ri++) {
+                    const KmerRun& run = runs[ri];
+                    const uint32_t position_count =
+                        static_cast<uint32_t>(run.end - run.begin);
+
+                    // Materialise per-k-mer sid / pos arrays (sorted by
+                    // (seq_id, pos)).  Both feed the dedup + encode pipeline.
+                    s.sid_buf.resize(position_count);
+                    s.abs_pos_buf.resize(position_count);
+                    for (std::size_t e = 0; e < position_count; e++) {
+                        s.sid_buf[e]     = buffer[run.begin + e].seq_id;
+                        s.abs_pos_buf[e] = buffer[run.begin + e].pos;
+                    }
+
+                    // SIMD dedup → distinct_sid + per-seq_id occurrence count.
+                    s.distinct_sid_buf.resize(position_count);
+                    s.occ_count_buf.resize(position_count);
+                    const uint32_t distinct_count = seq_id_dedup::dedup_seq_ids(
+                        s.sid_buf.data(), position_count,
+                        s.distinct_sid_buf.data(), s.occ_count_buf.data());
+                    s.distinct_sid_buf.resize(distinct_count);
+                    s.occ_count_buf.resize(distinct_count);
+
+                    // .kix: distinct seq_id delta-stream → FastPFor.
+                    s.seq_delta_buf.resize(distinct_count);
+                    if (distinct_count > 0) {
+                        s.seq_delta_buf[0] = s.distinct_sid_buf[0];
+                        for (uint32_t e = 1; e < distinct_count; e++) {
+                            s.seq_delta_buf[e] =
+                                s.distinct_sid_buf[e] - s.distinct_sid_buf[e - 1];
+                        }
+                    }
+                    pfd::encode_posting_kix(s.seq_delta_buf.data(),
+                                            distinct_count,
+                                            run_outs[ri].kix_blob);
+
+                    // .kpx (skip if mode 1).
+                    if (!config.skip_kpx) {
+                        pfd::encode_posting_kpx(s.distinct_sid_buf.data(),
+                                                s.occ_count_buf.data(),
+                                                distinct_count,
+                                                s.abs_pos_buf.data(),
+                                                position_count,
+                                                config.freq_threshold_part,
+                                                run_outs[ri].kpx_blob);
+                    }
+
+                    run_outs[ri].distinct_count = distinct_count;
+                    run_outs[ri].position_count = position_count;
+                }
+            });
+
+        auto t_encode_done = clock::now();
+
+        // Step 3 (sequential): record dictionary offsets, accumulate header
+        // totals, and stream the per-run blobs to disk in k-mer order.
+        // Runs are already sorted by k-mer because `runs` was built from a
+        // (kmer, seq_id, pos)-sorted buffer.
+        for (std::size_t ri = 0; ri < runs.size(); ri++) {
+            const uint32_t cur_kmer = runs[ri].kmer;
+            auto& out = run_outs[ri];
+
             kix_offsets[cur_kmer] = kix_data_pos;
             if (!config.skip_kpx) kpx_offsets[cur_kmer] = kpx_data_pos;
+            total_distinct_postings += out.distinct_count;
+            total_position_count    += out.position_count;
 
-            // The .kix / .kpx encoder APIs take position_count as u32, so a
-            // single (k-mer, partition) slice cannot exceed 2^32 - 1.  In
-            // practice this only matters for hypothetical mega-volumes
-            // (NCBI BLAST splits at ~4 GB of sequence data, where the
-            // dominant k-mer typically has < 100 M occurrences).  Detect
-            // the overflow and abort with a clear error rather than
-            // silently truncating and corrupting downstream buffers.
-            const std::size_t run_len_64 = j - i;
-            if (run_len_64 > UINT32_MAX) {
-                logger.error("k-mer %u has %zu positions in this partition, "
-                             "exceeding uint32_t.  Reduce -memory_limit to "
-                             "force more partitions, or split the BLAST DB "
-                             "into smaller volumes.",
-                             cur_kmer, run_len_64);
-                std::fclose(kix_fp);
-                if (kpx_fp) std::fclose(kpx_fp);
-                std::remove(ksx_tmp.c_str());
-                std::remove(kix_tmp.c_str());
-                if (!config.skip_kpx) std::remove(kpx_tmp.c_str());
-                return false;
-            }
-            const uint32_t position_count = static_cast<uint32_t>(run_len_64);
+            std::fwrite(out.kix_blob.data(), 1, out.kix_blob.size(), kix_fp);
+            kix_data_pos += out.kix_blob.size();
+            std::vector<uint8_t>().swap(out.kix_blob);
 
-            // Materialise sid_buf / abs_pos_buf for this k-mer (sorted by
-            // (seq_id, pos)).  Both are needed for the v7 dedup + encode
-            // pipeline below.
-            sid_buf.resize(position_count);
-            abs_pos_buf.resize(position_count);
-            for (size_t e = 0; e < position_count; e++) {
-                sid_buf[e]     = buffer[i + e].seq_id;
-                abs_pos_buf[e] = buffer[i + e].pos;
-            }
-
-            auto t_kmer_enc_start = clock::now();
-
-            // SIMD dedup → distinct_sid + per-seq_id occurrence count.
-            distinct_sid_buf.resize(position_count);
-            occ_count_buf.resize(position_count);
-            const uint32_t distinct_count = seq_id_dedup::dedup_seq_ids(
-                sid_buf.data(), position_count,
-                distinct_sid_buf.data(), occ_count_buf.data());
-            distinct_sid_buf.resize(distinct_count);
-            occ_count_buf.resize(distinct_count);
-            total_distinct_postings += distinct_count;
-            total_position_count    += position_count;
-
-            // .kix: distinct seq_id delta-stream → FastPFor.
-            seq_delta_buf.resize(distinct_count);
-            if (distinct_count > 0) {
-                seq_delta_buf[0] = distinct_sid_buf[0];
-                for (uint32_t e = 1; e < distinct_count; e++) {
-                    seq_delta_buf[e] = distinct_sid_buf[e] - distinct_sid_buf[e - 1];
-                }
-            }
-            pfd_out_buf.clear();
-            pfd::encode_posting_kix(seq_delta_buf.data(), distinct_count, pfd_out_buf);
-            auto t_kmer_kix_io_start = clock::now();
-            encode_total += sec(t_kmer_enc_start, t_kmer_kix_io_start);
-            std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kix_fp);
-            kix_data_pos += pfd_out_buf.size();
-
-            // .kpx (skip if mode 1).  v7: hand the encoder distinct_sid +
-            // occ_count + abs_pos_array.
             if (!config.skip_kpx) {
-                auto t_kpx_enc_start = clock::now();
-                io_total += sec(t_kmer_kix_io_start, t_kpx_enc_start);
-                pfd_out_buf.clear();
-                pfd::encode_posting_kpx(distinct_sid_buf.data(),
-                                        occ_count_buf.data(),
-                                        distinct_count,
-                                        abs_pos_buf.data(),
-                                        position_count,
-                                        config.freq_threshold_part,
-                                        pfd_out_buf);
-                auto t_kpx_io_start = clock::now();
-                encode_total += sec(t_kpx_enc_start, t_kpx_io_start);
-                std::fwrite(pfd_out_buf.data(), 1, pfd_out_buf.size(), kpx_fp);
-                kpx_data_pos += pfd_out_buf.size();
-                auto t_kpx_io_done = clock::now();
-                io_total += sec(t_kpx_io_start, t_kpx_io_done);
-            } else {
-                auto t_kix_io_done = clock::now();
-                io_total += sec(t_kmer_kix_io_start, t_kix_io_done);
+                std::fwrite(out.kpx_blob.data(), 1, out.kpx_blob.size(), kpx_fp);
+                kpx_data_pos += out.kpx_blob.size();
+                std::vector<uint8_t>().swap(out.kpx_blob);
             }
-
-            i = j;
         }
+
+        auto t_io_done = clock::now();
 
         logger.debug("  Partition %d: %lu entries written", p + 1,
                      static_cast<unsigned long>(buffer.size()));
@@ -508,8 +549,8 @@ bool build_index(BlastDbReader& db,
                         sec(t_phase0, t_scan_done),
                         sec(t_scan_done, t_merge_done),
                         sec(t_merge_done, t_sort_done),
-                        encode_total,
-                        io_total);
+                        sec(t_sort_done, t_encode_done),
+                        sec(t_encode_done, t_io_done));
         }
     }
 
