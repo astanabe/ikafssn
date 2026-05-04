@@ -154,12 +154,29 @@ bool build_index(BlastDbReader& db,
                 }
             });
 
-        // Reduce thread-local counts
-        local_counts.combine_each([&counts64, &tbl_size](const std::vector<uint64_t>& lc) {
-            for (uint32_t i = 0; i < tbl_size; i++) {
-                counts64[i] += lc[i];
-            }
+        // Reduce thread-local counts.  Walking each thread-local vector
+        // sequentially is O(num_threads * tbl_size) on a single thread and
+        // becomes a bottleneck at k=13/15 (tbl_size = 4^k = 64M / 1G entries).
+        // Snapshot the local pointers, then range-partition the tbl_size
+        // dimension across threads — each output cell aggregates across all
+        // thread-local snapshots in parallel without touching extra memory
+        // (parallel_reduce-style identity-vector splitting would push peak
+        // memory to N+log(N) copies of `counts64`, which is intolerable at
+        // these table sizes).
+        std::vector<const std::vector<uint64_t>*> snaps;
+        local_counts.combine_each([&](const std::vector<uint64_t>& lc) {
+            snaps.push_back(&lc);
         });
+
+        tbb::parallel_for(
+            tbb::blocked_range<uint32_t>(0, tbl_size, 64 * 1024),
+            [&](const tbb::blocked_range<uint32_t>& r) {
+                for (uint32_t i = r.begin(); i < r.end(); i++) {
+                    uint64_t s = 0;
+                    for (auto* p : snaps) s += (*p)[i];
+                    counts64[i] = s;
+                }
+            });
     }
 
     // Convert uint64 -> uint32 with overflow check
