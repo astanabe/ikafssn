@@ -281,7 +281,14 @@ static void collect_position_hits(
     }
 }
 
-// Search a single volume using merged coding+optimal ("both" mode).
+// Phase 2: cross-template "both" mode.
+// Stage 1 runs both templates against a *single* shared Stage1Buffer so that
+// the buf's per-(sid, q_pos) dedup (`last_pos[sid] == q_pos`) carries across
+// templates: when coding and optimal both hit the same query position p for
+// the same sequence, the second update is suppressed and the score remains
+// in [0, Nqkmer]. The unified threshold is min(thr_cod, thr_opt) so that a
+// hybrid query (cod-only matches in one region + opt-only in another) is
+// not lost; this matches the spec's "ANY-side reduces" Nhighfreq semantic.
 template <typename KmerInt>
 static std::vector<ChainResult>
 search_one_strand_both(
@@ -296,82 +303,79 @@ search_one_strand_both(
     uint32_t resolved_threshold_cod,
     uint32_t resolved_threshold_opt,
     uint32_t effective_min_score,
-    Stage1Buffer& buf_cod,
-    Stage1Buffer& buf_opt) {
+    Stage1Buffer& buf) {
 
     if (n_cod == 0 && n_opt == 0) return {};
 
-    // Stage 1: run independently on coding and optimal
-    Stage1Config s1cfg = config.stage1;
-    s1cfg.min_stage1_score = 1;     // collect all, merge later
-    s1cfg.stage1_topn = 0;          // no truncation per-template
-
-    std::vector<Stage1Candidate> cand_cod, cand_opt;
-    if (n_cod > 0) {
-        cand_cod = stage1_filter(pos_cod, kmers_cod, n_cod, kix_cod, filter, s1cfg, buf_cod);
+    // Unified threshold: a hybrid match (cod-only in one region, opt-only in
+    // another) should not be lost. A position is counted whenever *either*
+    // template fires at it; dedup happens implicitly via the shared buf.
+    uint32_t unified_threshold = 0;
+    if (resolved_threshold_cod > 0 && resolved_threshold_opt > 0) {
+        unified_threshold = std::min(resolved_threshold_cod, resolved_threshold_opt);
+    } else {
+        unified_threshold = std::max(resolved_threshold_cod, resolved_threshold_opt);
     }
-    if (n_opt > 0) {
-        cand_opt = stage1_filter(pos_opt, kmers_opt, n_opt, kix_opt, filter, s1cfg, buf_opt);
+    if (unified_threshold == 0) return {};
+
+    // Stage 1: accumulate updates from both templates into the shared buf,
+    // walking both streams in q_pos order so per-(sid, q_pos) dedup carries
+    // across templates. Naively running cod-then-opt would leave last_pos[sid]
+    // pinned to cod's *last* q_pos when opt starts, defeating the dedup at
+    // opt's earlier positions and inflating Stage 1 scores up to 2*Nqkmer.
+    //
+    // Both streams are already sorted by q_pos (extract_kmers emits in
+    // increasing pos), so a 2-pointer merge walk is sufficient.
+    Stage1Config s1cfg_acc = config.stage1;
+    s1cfg_acc.min_stage1_score = 1; // not used by accumulate
+    s1cfg_acc.stage1_topn = 0;       // not used by accumulate
+
+    {
+        size_t ic = 0, io = 0;
+        while (ic < n_cod || io < n_opt) {
+            uint32_t p_c = (ic < n_cod) ? pos_cod[ic] : UINT32_MAX;
+            uint32_t p_o = (io < n_opt) ? pos_opt[io] : UINT32_MAX;
+            uint32_t cur = (p_c < p_o) ? p_c : p_o;
+
+            if (p_c == cur) {
+                size_t end = ic;
+                while (end < n_cod && pos_cod[end] == cur) end++;
+                stage1_filter_accumulate(pos_cod + ic, kmers_cod + ic,
+                                         end - ic, kix_cod, filter,
+                                         s1cfg_acc, buf);
+                ic = end;
+            }
+            if (p_o == cur) {
+                size_t end = io;
+                while (end < n_opt && pos_opt[end] == cur) end++;
+                stage1_filter_accumulate(pos_opt + io, kmers_opt + io,
+                                         end - io, kix_opt, filter,
+                                         s1cfg_acc, buf);
+                io = end;
+            }
+        }
     }
 
-    // Merge: sum scores per SeqId
-    std::unordered_map<SeqId, uint32_t> merged_scores;
-    merged_scores.reserve(cand_cod.size() + cand_opt.size());
-    for (const auto& c : cand_cod) merged_scores[c.id] += c.score;
-    for (const auto& c : cand_opt) merged_scores[c.id] += c.score;
+    Stage1Config s1cfg_fin = config.stage1;
+    s1cfg_fin.min_stage1_score = unified_threshold;
+    auto candidates = stage1_filter_finish(buf, s1cfg_fin);
 
-    // Apply combined threshold
-    uint32_t combined_threshold = resolved_threshold_cod + resolved_threshold_opt;
-    if (combined_threshold == 0) return {};
+    if (candidates.empty()) return {};
 
     // Mode 1: Stage 1 only — return merged candidates directly
     if (config.mode == 1) {
-        std::vector<ChainResult> results;
-        for (const auto& [sid, score] : merged_scores) {
-            if (score < combined_threshold) continue;
-            ChainResult cr{};
-            cr.seq_id = sid;
-            cr.chainscore = 0;
-            cr.stage1_score = score;
-            cr.is_reverse = is_reverse;
-            results.push_back(cr);
-        }
-        return results;
-    }
-
-    // Filter candidates
-    std::unordered_map<SeqId, uint32_t> stage1_scores;
-    for (const auto& [sid, score] : merged_scores) {
-        if (score >= combined_threshold) {
-            stage1_scores[sid] = score;
-        }
-    }
-    if (stage1_scores.empty()) return {};
-
-    // Apply stage1_topn if set
-    if (config.stage1.stage1_topn > 0 && stage1_scores.size() > config.stage1.stage1_topn) {
-        std::vector<Stage1Candidate> sorted_cands;
-        sorted_cands.reserve(stage1_scores.size());
-        for (const auto& [sid, score] : stage1_scores) {
-            sorted_cands.push_back({sid, score});
-        }
-        auto cmp = [](const Stage1Candidate& a, const Stage1Candidate& b) {
-            return a.score > b.score;
-        };
-        std::nth_element(sorted_cands.begin(),
-                         sorted_cands.begin() + config.stage1.stage1_topn,
-                         sorted_cands.end(), cmp);
-        sorted_cands.resize(config.stage1.stage1_topn);
-        std::unordered_map<SeqId, uint32_t> filtered;
-        filtered.reserve(sorted_cands.size());
-        for (const auto& c : sorted_cands) filtered[c.id] = c.score;
-        stage1_scores = std::move(filtered);
+        return stage1_only_results(candidates, is_reverse, effective_min_score);
     }
 
     // Build sorted candidate seq_id array for the candidate-set-driven decoder.
     std::vector<SeqId> candidate_sids;
-    candidate_sids.reserve(stage1_scores.size());
-    for (const auto& [sid, score] : stage1_scores) candidate_sids.push_back(sid);
+    candidate_sids.reserve(candidates.size());
+    std::unordered_map<SeqId, uint32_t> stage1_scores;
+    stage1_scores.reserve(candidates.size());
+    for (const auto& c : candidates) {
+        candidate_sids.push_back(c.id);
+        stage1_scores[c.id] = c.score;
+    }
     std::sort(candidate_sids.begin(), candidate_sids.end());
 
     // Stage 2: collect position hits from both indexes
@@ -412,11 +416,19 @@ SearchResult search_volume_both(
     const KsxReader& ksx,
     const OidFilter& filter,
     const SearchConfig& config,
-    Stage1Buffer& buf_cod,
-    Stage1Buffer& buf_opt) {
+    Stage1Buffer& buf) {
 
     SearchResult result;
     result.query_id = query_id;
+
+    // Phase 2: unified effective_min_score for "both" mode.
+    // Both per-strand effective_min_scores are derived from the same Nqkmer
+    // (window count is template-independent), so picking the smaller of the
+    // two non-zero values matches the unified-threshold semantic of Stage 1.
+    auto unify_min = [](uint32_t a, uint32_t b) -> uint32_t {
+        if (a > 0 && b > 0) return std::min(a, b);
+        return std::max(a, b);
+    };
 
     // Search forward strand
     if (config.strand == 2 || config.strand == 1) {
@@ -429,8 +441,9 @@ SearchResult search_volume_both(
             kix_cod, kpx_cod, kix_opt, kpx_opt,
             filter, config,
             qdata_cod.resolved_threshold_fwd, qdata_opt.resolved_threshold_fwd,
-            std::max(qdata_cod.effective_min_score_fwd, qdata_opt.effective_min_score_fwd),
-            buf_cod, buf_opt);
+            unify_min(qdata_cod.effective_min_score_fwd,
+                      qdata_opt.effective_min_score_fwd),
+            buf);
         result.hits.insert(result.hits.end(), fwd_results.begin(), fwd_results.end());
     }
 
@@ -445,8 +458,9 @@ SearchResult search_volume_both(
             kix_cod, kpx_cod, kix_opt, kpx_opt,
             filter, config,
             qdata_cod.resolved_threshold_rc, qdata_opt.resolved_threshold_rc,
-            std::max(qdata_cod.effective_min_score_rc, qdata_opt.effective_min_score_rc),
-            buf_cod, buf_opt);
+            unify_min(qdata_cod.effective_min_score_rc,
+                      qdata_opt.effective_min_score_rc),
+            buf);
         result.hits.insert(result.hits.end(), rc_results.begin(), rc_results.end());
     }
 
@@ -470,13 +484,13 @@ template SearchResult search_volume_both<uint16_t>(
     const KixReader&, const KpxReader&,
     const KixReader&, const KpxReader&,
     const KsxReader&, const OidFilter&, const SearchConfig&,
-    Stage1Buffer&, Stage1Buffer&);
+    Stage1Buffer&);
 template SearchResult search_volume_both<uint32_t>(
     const std::string&,
     const QueryKmerData<uint32_t>&, const QueryKmerData<uint32_t>&, int,
     const KixReader&, const KpxReader&,
     const KixReader&, const KpxReader&,
     const KsxReader&, const OidFilter&, const SearchConfig&,
-    Stage1Buffer&, Stage1Buffer&);
+    Stage1Buffer&);
 
 } // namespace ikafssn

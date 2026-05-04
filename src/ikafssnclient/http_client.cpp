@@ -128,8 +128,22 @@ static bool parse_response_json(const std::string& body,
     for (const auto& qr : results) {
         QueryResult query_result;
         query_result.qseqid = qr.get("qseqid", "").asString();
-        if (qr.get("skipped", false).asBool()) {
-            query_result.skipped = 1;
+        query_result.qlen = qr.get("qlen", 0).asUInt();
+        // New-style skip_reason field; fall back to legacy "skipped" boolean.
+        if (qr.isMember("skip_reason")) {
+            const auto& sr = qr["skip_reason"];
+            if (sr.isString()) {
+                std::string s = sr.asString();
+                if (s == "query_too_short")        query_result.skip_reason = 1;
+                else if (s == "degen_rejected")        query_result.skip_reason = 2;
+                else if (s == "threshold_unreachable") query_result.skip_reason = 3;
+                else if (s == "invalid_char")          query_result.skip_reason = 4;
+            } else if (sr.isInt()) {
+                query_result.skip_reason = static_cast<uint8_t>(sr.asInt());
+            }
+            query_result.skip_detail = qr.get("skip_detail", "").asString();
+        } else if (qr.get("skipped", false).asBool()) {
+            query_result.skip_reason = 2; // legacy: degenerate rejection
         }
         if (qr.isMember("warnings") && qr["warnings"].isArray()) {
             for (const auto& w : qr["warnings"]) {

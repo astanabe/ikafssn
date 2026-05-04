@@ -73,9 +73,11 @@ template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T8>();
 template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T16>();
 template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T32>();
 
-// Internal implementation with KmerInt + Tier template dispatch.
+// Internal: accumulate per-(kix, q_pos) updates into buf without clearing dirty.
+// Used by both stage1_filter (single template) and stage1_filter_accumulate
+// (cross-template "both" mode).
 template <typename KmerInt, Stage1Tier Tier>
-static std::vector<Stage1Candidate> stage1_filter_impl(
+static void stage1_filter_accumulate_impl(
     const uint32_t* positions, const KmerInt* kmers, size_t n,
     const KixReader& kix,
     const OidFilter& filter,
@@ -85,7 +87,7 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     using PosT = typename Stage1TierTraits<Tier>::PosT;
 
     uint32_t num_seqs = kix.num_sequences();
-    if (num_seqs == 0 || n == 0) return {};
+    if (num_seqs == 0 || n == 0) return;
 
     const uint8_t* posting_file = kix.posting_file();
     const bool use_coverscore = (config.stage1_score_type == 1);
@@ -94,18 +96,10 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     auto* scores   = score_ptr<Tier>(buf);
     auto* last_pos = last_pos_ptr<Tier>(buf);
 
-    // Batch sids per (kix, q_pos) so flush_batch_simd<Tier> can apply gather/
-    // scatter SIMD updates in one shot. q_pos changes per qi iteration, so the
-    // partial batch must be flushed at the end of each qi to keep the scalar
-    // semantics of comparing last_pos[sid] against the current q_pos.
     constexpr int kBatch = 16;
     SeqId sid_batch[kBatch];
     int batch_count = 0;
 
-    // Phase 3a: decode varints in batches via SeqIdDecoder::next_batch() so
-    // the inner loop can amortize the per-call dispatch overhead and keep the
-    // input bytes hot in cache. Per-element coverscore / OID-filter skip is
-    // applied scalar-style on the small fixed-size buffer.
     constexpr int kDecBatch = SeqIdDecoder::kMaxBatch;
     static_assert(kDecBatch >= 1, "kDecBatch must be positive");
     SeqId   raw_sids[kDecBatch];
@@ -114,7 +108,6 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     for (size_t qi = 0; qi < n; qi++) {
         auto q_pos = static_cast<PosT>(positions[qi]);
         auto kmer_idx = kmers[qi];
-        // Phase 7d hot-path: one EF access_pair instead of two access calls.
         uint64_t off, byte_len;
         kix.posting_list_range(kmer_idx, off, byte_len);
         if (byte_len == 0) continue;
@@ -141,6 +134,13 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
             batch_count = 0;
         }
     }
+}
+
+// Internal: harvest candidates from buf and clear dirty.
+template <Stage1Tier Tier>
+static std::vector<Stage1Candidate> stage1_filter_finish_impl(
+    Stage1Buffer& buf, const Stage1Config& config) {
+    auto* scores = score_ptr<Tier>(buf);
 
     std::vector<Stage1Candidate> candidates;
     for (uint32_t sid : buf.dirty) {
@@ -166,6 +166,21 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     return candidates;
 }
 
+// Internal implementation with KmerInt + Tier template dispatch.
+template <typename KmerInt, Stage1Tier Tier>
+static std::vector<Stage1Candidate> stage1_filter_impl(
+    const uint32_t* positions, const KmerInt* kmers, size_t n,
+    const KixReader& kix,
+    const OidFilter& filter,
+    const Stage1Config& config,
+    Stage1Buffer& buf) {
+
+    if (n == 0) return {};
+    stage1_filter_accumulate_impl<KmerInt, Tier>(
+        positions, kmers, n, kix, filter, config, buf);
+    return stage1_filter_finish_impl<Tier>(buf, config);
+}
+
 // Public dispatch: selects tier from buffer.
 template <typename KmerInt>
 std::vector<Stage1Candidate> stage1_filter(
@@ -189,12 +204,61 @@ std::vector<Stage1Candidate> stage1_filter(
     }
 }
 
+// Phase 2: cross-template accumulation (no dirty clear).
+template <typename KmerInt>
+void stage1_filter_accumulate(
+    const uint32_t* positions, const KmerInt* kmers, size_t n,
+    const KixReader& kix,
+    const OidFilter& filter,
+    const Stage1Config& config,
+    Stage1Buffer& buf) {
+
+    switch (buf.tier) {
+    case Stage1Tier::T8:
+        stage1_filter_accumulate_impl<KmerInt, Stage1Tier::T8>(
+            positions, kmers, n, kix, filter, config, buf);
+        break;
+    case Stage1Tier::T16:
+        stage1_filter_accumulate_impl<KmerInt, Stage1Tier::T16>(
+            positions, kmers, n, kix, filter, config, buf);
+        break;
+    case Stage1Tier::T32:
+    default:
+        stage1_filter_accumulate_impl<KmerInt, Stage1Tier::T32>(
+            positions, kmers, n, kix, filter, config, buf);
+        break;
+    }
+}
+
+// Phase 2: harvest candidates after one or more accumulate calls.
+std::vector<Stage1Candidate> stage1_filter_finish(
+    Stage1Buffer& buf, const Stage1Config& config) {
+    switch (buf.tier) {
+    case Stage1Tier::T8:
+        return stage1_filter_finish_impl<Stage1Tier::T8>(buf, config);
+    case Stage1Tier::T16:
+        return stage1_filter_finish_impl<Stage1Tier::T16>(buf, config);
+    case Stage1Tier::T32:
+    default:
+        return stage1_filter_finish_impl<Stage1Tier::T32>(buf, config);
+    }
+}
+
 // Explicit template instantiations
 template std::vector<Stage1Candidate> stage1_filter<uint16_t>(
     const uint32_t*, const uint16_t*, size_t,
     const KixReader&, const OidFilter&, const Stage1Config&,
     Stage1Buffer&);
 template std::vector<Stage1Candidate> stage1_filter<uint32_t>(
+    const uint32_t*, const uint32_t*, size_t,
+    const KixReader&, const OidFilter&, const Stage1Config&,
+    Stage1Buffer&);
+
+template void stage1_filter_accumulate<uint16_t>(
+    const uint32_t*, const uint16_t*, size_t,
+    const KixReader&, const OidFilter&, const Stage1Config&,
+    Stage1Buffer&);
+template void stage1_filter_accumulate<uint32_t>(
     const uint32_t*, const uint32_t*, size_t,
     const KixReader&, const OidFilter&, const Stage1Config&,
     Stage1Buffer&);

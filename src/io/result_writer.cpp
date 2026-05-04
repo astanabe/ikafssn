@@ -1,11 +1,20 @@
 #include "io/result_writer.hpp"
+#include "protocol/messages.hpp"
 
 #include <map>
+#include <string>
 
 namespace ikafssn {
 
 static const char* stage1_score_name(uint8_t stage1_score_type) {
     return (stage1_score_type == 2) ? "matchscore" : "coverscore";
+}
+
+// Build the sentinel sseqid for a skipped query, e.g. "*SKIPPED:degen_rejected".
+static std::string skipped_sseqid(uint8_t reason) {
+    std::string s = "*SKIPPED:";
+    s += skip_reason_str(reason);
+    return s;
 }
 
 void write_results_tab(std::ostream& out,
@@ -18,6 +27,16 @@ void write_results_tab(std::ostream& out,
     if (mode == 1) {
         out << "# qseqid\tsseqid\tsstrand\tqlen\tslen\t" << s1name << "\tvolume\n";
         for (const auto& h : hits) {
+            if (h.skip_reason != 0) {
+                out << h.qseqid << '\t'
+                    << skipped_sseqid(h.skip_reason) << '\t'
+                    << '*' << '\t'
+                    << h.qlen << '\t'
+                    << 0 << '\t'
+                    << 0 << '\t'
+                    << 0 << '\n';
+                continue;
+            }
             out << h.qseqid << '\t'
                 << h.sseqid << '\t'
                 << h.sstrand << '\t'
@@ -30,6 +49,18 @@ void write_results_tab(std::ostream& out,
         out << "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t"
             << s1name << "\tchainscore\talnscore\tppositive\tnpositive\tnnegative\tcigar\tqseq\tsseq\tvolume\n";
         for (const auto& h : hits) {
+            if (h.skip_reason != 0) {
+                out << h.qseqid << '\t'
+                    << skipped_sseqid(h.skip_reason) << '\t'
+                    << '*' << '\t'
+                    << 0 << '\t' << 0 << '\t' << h.qlen << '\t'
+                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
+                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
+                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
+                    << "*" << '\t' << "*" << '\t' << "*" << '\t'
+                    << 0 << '\n';
+                continue;
+            }
             out << h.qseqid << '\t'
                 << h.sseqid << '\t'
                 << h.sstrand << '\t'
@@ -54,6 +85,16 @@ void write_results_tab(std::ostream& out,
         out << "# qseqid\tsseqid\tsstrand\tqend\tqlen\tsend\tslen\t"
             << s1name << "\tchainscore\talnscore\tvolume\n";
         for (const auto& h : hits) {
+            if (h.skip_reason != 0) {
+                out << h.qseqid << '\t'
+                    << skipped_sseqid(h.skip_reason) << '\t'
+                    << '*' << '\t'
+                    << 0 << '\t' << h.qlen << '\t'
+                    << 0 << '\t' << 0 << '\t'
+                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
+                    << 0 << '\n';
+                continue;
+            }
             out << h.qseqid << '\t'
                 << h.sseqid << '\t'
                 << h.sstrand << '\t'
@@ -70,6 +111,16 @@ void write_results_tab(std::ostream& out,
         out << "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t"
             << s1name << "\tchainscore\tvolume\n";
         for (const auto& h : hits) {
+            if (h.skip_reason != 0) {
+                out << h.qseqid << '\t'
+                    << skipped_sseqid(h.skip_reason) << '\t'
+                    << '*' << '\t'
+                    << 0 << '\t' << 0 << '\t' << h.qlen << '\t'
+                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
+                    << 0 << '\t' << 0 << '\t'
+                    << 0 << '\n';
+                continue;
+            }
             out << h.qseqid << '\t'
                 << h.sseqid << '\t'
                 << h.sstrand << '\t'
@@ -115,18 +166,42 @@ static void write_results_json_inner(std::ostream& out,
     // Group hits by qseqid (preserve order of first appearance)
     std::vector<std::string> query_order;
     std::map<std::string, std::vector<const OutputHit*>> by_query;
+    std::map<std::string, const OutputHit*> by_query_skip; // first skip marker per query
     for (const auto& h : hits) {
-        if (by_query.find(h.qseqid) == by_query.end()) {
+        if (by_query.find(h.qseqid) == by_query.end() &&
+            by_query_skip.find(h.qseqid) == by_query_skip.end()) {
             query_order.push_back(h.qseqid);
         }
-        by_query[h.qseqid].push_back(&h);
+        if (h.skip_reason != 0) {
+            if (by_query_skip.find(h.qseqid) == by_query_skip.end())
+                by_query_skip[h.qseqid] = &h;
+        } else {
+            by_query[h.qseqid].push_back(&h);
+        }
     }
 
     for (size_t qi = 0; qi < query_order.size(); qi++) {
         const auto& qid = query_order[qi];
+        auto skip_it = by_query_skip.find(qid);
+        if (skip_it != by_query_skip.end() && by_query[qid].empty()) {
+            const OutputHit* sk = skip_it->second;
+            out << "    {\n      \"qseqid\": ";
+            json_escape(out, qid);
+            out << ",\n      \"qlen\": " << sk->qlen;
+            out << ",\n      \"status\": \"skipped\"";
+            out << ",\n      \"skip_reason\": ";
+            json_escape(out, std::string(skip_reason_str(sk->skip_reason)));
+            out << ",\n      \"skip_detail\": ";
+            json_escape(out, sk->skip_detail);
+            out << ",\n      \"hits\": []\n    }";
+            if (is_fragment || qi + 1 < query_order.size()) out << ',';
+            out << '\n';
+            continue;
+        }
         const auto& qhits = by_query[qid];
         out << "    {\n      \"qseqid\": ";
         json_escape(out, qid);
+        out << ",\n      \"status\": \"ok\"";
         out << ",\n      \"hits\": [\n";
         for (size_t hi = 0; hi < qhits.size(); hi++) {
             const auto* h = qhits[hi];

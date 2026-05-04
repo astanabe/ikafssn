@@ -223,7 +223,7 @@ ikafssnsearch [options]
 
 インデックスディレクトリに複数の k-mer サイズのインデックスが含まれる場合 (例: `nt.09mer.kvx` と `nt.11mer.kvx` の両方が存在する場合)、`-k` で使用するサイズを指定する必要があります。k-mer サイズが 1 種類のみの場合は `-k` を省略できます。
 
-`-accept_qdegen` が 0 の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは警告付きでスキップされ、終了コードは 2 になります。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます。1 文字の縮重塩基を含む k-mer は全可能バリアントに展開して検索に使用されます (例: R→A,G で 2 k-mer、N→A,C,G,T で 4 k-mer)。2 文字以上の縮重塩基を含む k-mer はスキップされます。この場合、クエリごとに 1 回、当該クエリ名とスキップされた旨の警告が標準エラーに出力されます。サーバモード (`ikafssnserver`) ではこの警告がプロトコル経由で `ikafssnclient` に伝播され、クライアント側でも同じメッセージが表示されます。この処理はインデックス構築時のサブジェクト配列に対する処理と同等です。
+`-accept_qdegen` が 0 の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは `degen_rejected` のスキップマーカー (TSV: `*SKIPPED:degen_rejected`、JSON: `"status": "skipped"`、SAM: unmapped レコード + `XR:Z:degen_rejected`) と stderr 警告付きでスキップされ、終了コードは 2 になります。詳しい理由一覧と各フォーマットでの表現は下記「スキップ理由」を参照してください。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます。1 文字の縮重塩基を含む k-mer は全可能バリアントに展開して検索に使用されます (例: R→A,G で 2 k-mer、N→A,C,G,T で 4 k-mer)。位置ごとの展開積が `-max_degen_expand` を超える窓は emit されません。この場合、クエリごとに 1 回、当該クエリ名と当該 k-mer がスキップされた旨の警告が標準エラーに出力されます (注: これは窓単位の unemit であり、クエリ全体のスキップではありません — 残りの窓は検索に使われ、emit されなかった位置はフラクショナル閾値の `Nhighfreq` に反映されます)。サーバモード (`ikafssnserver`) ではこの警告がプロトコル経由で `ikafssnclient` に伝播され、クライアント側でも同じメッセージが表示されます。この処理はインデックス構築時のサブジェクト配列に対する処理と同等です。
 
 `-seqidlist` と `-negative_seqidlist` は排他的 (同時指定不可) です。ファイル形式はテキスト (1 行 1 アクセッション) と `blastdb_aliastool -seqid_file_in` で生成されるバイナリ形式の両方を受け付け、先頭のマジックバイトで自動判別します。
 
@@ -786,10 +786,44 @@ threshold = ceil(Nqkmer * P) - Nhighfreq
 ```
 
 各変数の意味:
-- **Nqkmer**: クエリ k-mer の数 (coverscore では種類数、matchscore では総位置数)
-- **Nhighfreq**: 構築時に `.khx` で除外された k-mer の数 (`.khx` が存在する場合のみカウント、それ以外は 0)
+- **Nqkmer**: 純粋な窓カウント `max(0, seq_len - span + 1)`。spaced seed (`-t > 0`) のときは `span = t`、それ以外は `span = k`。クエリ内容には依存しません。
+- **Nhighfreq**: 検索に寄与しない窓位置の総数で、以下 3 ケースの和集合として定義されます:
+  1. **構築時除外**: 当該位置で展開された k-mer のうち**いずれか 1 つでも** `.khx` で除外されている。
+  2. **縮重展開超過**: 当該位置の窓に含まれる IUPAC 縮重塩基の展開積が `-max_degen_expand` を超えるため emit されない。
+  3. **窓内 truly-invalid 文字**: 当該窓に `[ACGT]` ∪ IUPAC 以外の文字が含まれる (注: クエリ全体に invalid 文字があると、閾値計算前に `kSkipInvalidChar` で全体がスキップされます。下記参照)。
 
-解決された閾値が 0 以下の場合、その鎖は警告付きでスキップされます。
+  ikafssn の実装は `Nhighfreq = #{ANY 除外された位置} + (Nqkmer − #emit された位置数)` と等価な計算を行います。
+
+検索対象のすべてのストランドで閾値が `< 1` に落ちる場合、サイレントに 0 ヒットを返すのではなく `kSkipThresholdUnreachable` でクエリ単位スキップになります (下記参照)。
+
+### スキップ理由
+
+クエリが Stage 1〜3 を通せない場合、ikafssn は理由を表すマーカーレコードを各出力フォーマットに emit します:
+
+| 理由 (enum / 文字列) | 意味 |
+|---|---|
+| `kSkipQueryTooShort` / `query_too_short` | `seq_len < span` (k-mer / spaced seed の窓が乗らない)。 |
+| `kSkipDegenRejected` / `degen_rejected` | `-accept_qdegen 0` 指定時に IUPAC 縮重塩基を含む。 |
+| `kSkipInvalidChar` / `invalid_char` | `[ACGT]` ∪ IUPAC 以外の文字を含む。詳細メッセージに位置を含む。 |
+| `kSkipThresholdUnreachable` / `threshold_unreachable` | フラクショナル閾値が検索対象のすべてのストランドで `< 1` になる。 |
+
+各出力フォーマットでの表現:
+
+- **TSV**: 1 行のスキップマーカーが emit され、`sseqid = "*SKIPPED:<reason>"`、`sstrand = '*'`、数値列はすべて 0、`qlen` は元の長さ。`result_reader` はこのマーカー行を silently に読み飛ばすので既存パイプラインへの影響はありません。
+- **JSON**: 該当クエリオブジェクトに `"status": "skipped"`, `"skip_reason": "<reason>"`, `"skip_detail": "<detail>"` が付き、`"hits": []`。通常クエリは `"status": "ok"`。
+- **SAM/BAM**: unmapped レコード (`FLAG = 4`, `RNAME = *`, `POS = 0`, `CIGAR = *`) として出力され、aux タグ `XR:Z:<reason>` と `XD:Z:<detail>` が付く。`samtools view -f 4` で抽出可能。
+- **stderr**: preprocess 時に `Warning: query 'X' skipped: <reason> (<detail>)` が出力されます。
+
+スキップが 1 件以上発生した検索は終了コード `2` を返します。
+
+### `-template_type both`: クロステンプレート統合
+
+spaced seed で `-template_type both` を指定すると、ikafssn は coding と optimal の両インデックスを同時に検索し、Stage 1 スコアを `[0, Nqkmer]` に収まる単一の統合スコアにマージします。これにより、テンプレートごとに独立してスコアリングする素朴な方式の 2 つの問題を回避します:
+
+1. **クロステンプレート二重カウント**: ある配列位置が coding と optimal の両 mask にマッチした場合、素朴な方式では当該クエリ位置に `+2` が加算され、スコアレンジが `[0, 2 × Nqkmer]` に膨らみます。ikafssn は共有の (sid, q_pos) 単位 dedup バッファを通じて両ストリームを `q_pos` 昇順でインターリーブ処理するため、各クエリ位置は最大 `+1` しか寄与しません。
+2. **ハイブリッドクエリの取りこぼし**: クエリの領域 A は coding のみ、領域 B は optimal のみマッチするケースは、加算的な `thr_cod + thr_opt` 閾値では検出を逃します。ikafssn は代わりに `min(thr_cod, thr_opt)` の統合閾値を適用するため、ハイブリッドマッチも保持されます。
+
+これにより、`-template_type both` で報告される Stage 1 スコアの意味は `coding` 単独 / `optimal` 単独と同じです: 構築時 `.khx` 除外を考慮したうえでサブジェクトとマッチしたクエリ窓位置の数で、上限は `Nqkmer`。`Nhighfreq` は各サイドで独立に計算されます。
 
 ### スコア種別
 

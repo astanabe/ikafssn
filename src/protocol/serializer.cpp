@@ -163,7 +163,9 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //   u16  num_queries
 //   for each query:
 //     str16 qseqid
-//     u8    skipped
+//     u8    skip_reason (0 = ok; see SkipReason enum)
+//     str16 skip_detail
+//     u32   qlen
 //     u8    warnings
 //     u16   num_hits
 //     for each hit:
@@ -205,7 +207,9 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
 
     for (const auto& qr : resp.results) {
         w.str16(qr.qseqid);
-        w.u8(qr.skipped);
+        w.u8(qr.skip_reason);
+        w.str16(qr.skip_detail);
+        w.u32(qr.qlen);
         w.u8(qr.warnings);
         w.u16(static_cast<uint16_t>(qr.hits.size()));
         for (const auto& hit : qr.hits) {
@@ -258,7 +262,9 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
     for (uint16_t qi = 0; qi < num_queries; qi++) {
         auto& qr = resp.results[qi];
         if (!r.get_str16(qr.qseqid)) return false;
-        if (!r.get_u8(qr.skipped)) return false;
+        if (!r.get_u8(qr.skip_reason)) return false;
+        if (!r.get_str16(qr.skip_detail)) return false;
+        if (!r.get_u32(qr.qlen)) return false;
         if (!r.get_u8(qr.warnings)) return false;
 
         uint16_t num_hits;

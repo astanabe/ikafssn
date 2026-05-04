@@ -11,6 +11,7 @@ A conference talk on the methods used in ikafssn is available on YouTube: <https
 - Three-stage search pipeline: fast candidate filtering (Stage 1), position-aware collinear chaining (Stage 2), and Parasail pairwise alignment with CIGAR/percent identity output (Stage 3), with configurable mode selection (1/2/3)
 - Client-server architecture with UNIX/TCP socket and HTTP REST API support, with multi-database serving from a single process
 - Handles IUPAC ambiguous bases by expanding degenerate k-mers during indexing and search (configurable expansion limit)
+- Reports queries that cannot be searched as skip-markers in TSV / JSON / SAM (with reason and detail), so no query is silently dropped
 - Parallel indexing and search via Intel TBB
 - Lightweight per-command executables, each linking only its required dependencies
 

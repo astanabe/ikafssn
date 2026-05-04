@@ -93,11 +93,22 @@ static char field_char(
     return s.empty() ? fallback : s[0];
 }
 
+// Returns true if the sseqid is a skip-marker sentinel like "*SKIPPED:..."
+// emitted by result_writer for queries that were not searched.
+static bool is_skip_sseqid(const std::string& s) {
+    return s.size() >= 9 && s.compare(0, 9, "*SKIPPED:") == 0;
+}
+
 // Parse a data line using the column map built from the header.
+// Returns true if the line was consumed; out-param `is_skip_marker` is set
+// when the line is a skip sentinel (caller should drop it without reporting
+// an error).
 static bool parse_line_with_map(
     const std::string& line,
     const std::unordered_map<std::string, size_t>& cmap,
-    OutputHit& hit) {
+    OutputHit& hit,
+    bool& is_skip_marker) {
+    is_skip_marker = false;
     auto fields = split_tabs(line);
 
     // Required columns: qseqid, sseqid, sstrand
@@ -105,6 +116,14 @@ static bool parse_line_with_map(
     const auto& qid = field_str(fields, cmap, "qseqid", empty);
     const auto& acc = field_str(fields, cmap, "sseqid", empty);
     if (qid.empty() || acc.empty()) return false;
+
+    if (is_skip_sseqid(acc)) {
+        // Drop skip-marker rows silently — readers consuming this file
+        // are looking for real hits. The skip information is preserved
+        // in the original file for human inspection.
+        is_skip_marker = true;
+        return true;
+    }
 
     char sstrand = field_char(fields, cmap, "sstrand", '\0');
     if (sstrand != '+' && sstrand != '-') return false;
@@ -253,10 +272,16 @@ std::vector<OutputHit> read_results_tab(std::istream& in) {
     for (const auto& [lnum, dline] : data_lines) {
         OutputHit hit;
         bool ok;
+        bool is_skip_marker = false;
         if (use_header) {
-            ok = parse_line_with_map(dline, cmap, hit);
+            ok = parse_line_with_map(dline, cmap, hit, is_skip_marker);
         } else {
             ok = parse_line_legacy(dline, hit);
+        }
+
+        if (is_skip_marker) {
+            // Silently drop skip sentinel rows.
+            continue;
         }
 
         if (ok) {

@@ -5,6 +5,7 @@
 #include "core/kmer_revcomp_simd.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/config.hpp"
+#include "protocol/messages.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -56,6 +57,18 @@ extract_kmers_spaced(const std::string& seq, int k,
     return kmers;
 }
 
+// Detect first non-IUPAC, non-ATGC character in the sequence.
+// Returns string::npos if none, otherwise the first position.
+static size_t find_invalid_char(const std::string& seq) {
+    for (size_t i = 0; i < seq.size(); i++) {
+        unsigned char c = static_cast<unsigned char>(seq[i]);
+        uint8_t enc = encode_base(static_cast<char>(c));
+        uint8_t ncbi4na = degenerate_ncbi4na_table()[c];
+        if (enc == BASE_ENCODE_INVALID && ncbi4na == 0) return i;
+    }
+    return std::string::npos;
+}
+
 template <typename KmerInt>
 QueryKmerData<KmerInt> preprocess_query(
     const std::string& query_seq, int k,
@@ -65,6 +78,38 @@ QueryKmerData<KmerInt> preprocess_query(
     const std::vector<uint32_t>& masks) {
 
     QueryKmerData<KmerInt> result;
+    result.qlen = static_cast<uint32_t>(query_seq.size());
+
+    // 0. Length check (window-count Nqkmer requires seq_len >= span)
+    const int span = (t > 0) ? static_cast<int>(t) : k;
+    if (static_cast<int>(query_seq.size()) < span) {
+        result.skip_reason = kSkipQueryTooShort;
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "length=%zu < %s=%d",
+                      query_seq.size(), (t > 0) ? "t" : "k", span);
+        result.skip_detail = buf;
+        return result;
+    }
+
+    // 0a. accept_qdegen=0 rejection (centralized here)
+    if (config.accept_qdegen == 0 && contains_degenerate_base(query_seq)) {
+        result.skip_reason = kSkipDegenRejected;
+        result.skip_detail = "query contains IUPAC degenerate bases";
+        return result;
+    }
+
+    // 0b. Truly invalid character detection (e.g. '*', '!')
+    {
+        size_t bad = find_invalid_char(query_seq);
+        if (bad != std::string::npos) {
+            result.skip_reason = kSkipInvalidChar;
+            char buf[160];
+            std::snprintf(buf, sizeof(buf), "first invalid char '%c' at pos %zu",
+                          query_seq[bad], bad);
+            result.skip_detail = buf;
+            return result;
+        }
+    }
 
     // 1. Extract forward k-mers
     std::vector<std::pair<uint32_t, KmerInt>> fwd_kmers;
@@ -76,7 +121,6 @@ QueryKmerData<KmerInt> preprocess_query(
         fwd_kmers = extract_kmers<KmerInt>(query_seq, k, &result.has_multi_degen,
                         static_cast<int>(config.max_degen_expand));
     }
-    if (fwd_kmers.empty()) return result;
 
     // 2. Build reverse complement k-mers
     std::vector<std::pair<uint32_t, KmerInt>> rc_kmers;
@@ -86,18 +130,14 @@ QueryKmerData<KmerInt> preprocess_query(
         auto rc_raw = extract_kmers_spaced<KmerInt>(rc_seq, k, masks,
                           static_cast<int>(t), &result.has_multi_degen,
                           static_cast<int>(config.max_degen_expand));
-        int span = static_cast<int>(t);
         rc_kmers.reserve(rc_raw.size());
         for (const auto& [pos, kmer] : rc_raw) {
             // Remap position: rc position p corresponds to fwd position (len - p - span)
             uint32_t fwd_pos = static_cast<uint32_t>(query_seq.size()) - pos - static_cast<uint32_t>(span);
             rc_kmers.emplace_back(fwd_pos, kmer);
         }
-    } else {
+    } else if (!fwd_kmers.empty()) {
         // Contiguous: SIMD batch revcomp via SoA staging buffers.
-        // The destination is a vector<pair> (AoS), but extracting kmer values
-        // into a contiguous buffer lets the SIMD kernel run on aligned dense
-        // data; the AoS reassembly is a cheap two-vector zip.
         const std::size_t nfwd = fwd_kmers.size();
         std::vector<KmerInt> tmp_in(nfwd), tmp_out(nfwd);
         for (std::size_t i = 0; i < nfwd; i++) tmp_in[i] = fwd_kmers[i].second;
@@ -123,67 +163,80 @@ QueryKmerData<KmerInt> preprocess_query(
     to_soa(fwd_kmers, result.fwd_positions, result.fwd_kmer_values);
     to_soa(rc_kmers, result.rc_positions, result.rc_kmer_values);
 
-    // 4. Resolve per-strand thresholds
+    // 4. Resolve per-strand thresholds.
+    //
+    // Spec (Phase 1 fix):
+    //   Nqkmer    = max(0, seq_len - span + 1)   (pure window count)
+    //   Nhighfreq = #{p : ANY emitted k-mer at p is .khx-excluded}     (case 1)
+    //             + (Nqkmer - #emitted positions)                      (case 2 + case 3)
+    //   threshold = ceil(Nqkmer * P) - Nhighfreq
+    //   threshold < 1 => kSkipThresholdUnreachable
+    const uint32_t Nqkmer = static_cast<uint32_t>(query_seq.size() - span + 1);
+
     // Default thresholds (non-fractional mode)
     result.resolved_threshold_fwd = config.stage1.min_stage1_score;
     result.resolved_threshold_rc = config.stage1.min_stage1_score;
 
     if (config.min_stage1_score_frac > 0) {
-        // Fractional threshold resolution
-
-        // Count Nqkmer per strand: count distinct positions (handles degenerate expansion)
-        auto count_nqkmer = [&](const std::vector<std::pair<uint32_t, KmerInt>>& kmers) -> uint32_t {
-            std::unordered_set<uint32_t> positions;
-            for (const auto& [pos, kmer] : kmers) positions.insert(pos);
-            return static_cast<uint32_t>(positions.size());
-        };
-
-        uint32_t Nqkmer_fwd = count_nqkmer(fwd_kmers);
-        uint32_t Nqkmer_rc = count_nqkmer(rc_kmers);
-
-        // Count Nhighfreq per strand: count position only if ALL expanded
-        // k-mers at that position are excluded by .khx (build-time exclusion).
-        // Adjacency guaranteed by extract_kmers.
-        auto count_nhighfreq = [&](const std::vector<std::pair<uint32_t, KmerInt>>& kmers) -> uint32_t {
-            if (khx == nullptr) return 0;
-            uint32_t count = 0;
+        // Count distinct emitted positions and ANY-excluded positions for each
+        // strand. The rc remap leaves the per-position grouping intact (same
+        // positions, just relabeled to fwd-coords), so the same logic works.
+        auto compute_nhighfreq = [&](const std::vector<std::pair<uint32_t, KmerInt>>& kmers) -> uint32_t {
+            // Sort-merge by position to detect ANY-excluded per cluster.
+            // Inputs from extract_kmers_* are already grouped by emission order
+            // (per-position cluster), so we can scan linearly.
+            std::unordered_set<uint32_t> emitted;
+            uint32_t any_excluded = 0;
             size_t i = 0;
             while (i < kmers.size()) {
                 uint32_t cur_pos = kmers[i].first;
-                bool all_excluded = true;
+                emitted.insert(cur_pos);
+                bool any_ex = false;
                 while (i < kmers.size() && kmers[i].first == cur_pos) {
-                    if (!khx->is_excluded(static_cast<uint32_t>(kmers[i].second)))
-                        all_excluded = false;
+                    if (khx != nullptr &&
+                        khx->is_excluded(static_cast<uint32_t>(kmers[i].second))) {
+                        any_ex = true;
+                    }
                     i++;
                 }
-                if (all_excluded) count++;
+                if (any_ex) any_excluded++;
             }
-            return count;
+            uint32_t emitted_count = static_cast<uint32_t>(emitted.size());
+            uint32_t unemit = (Nqkmer >= emitted_count) ? (Nqkmer - emitted_count) : 0;
+            return any_excluded + unemit;
         };
 
-        uint32_t Nhighfreq_fwd = count_nhighfreq(fwd_kmers);
-        uint32_t Nhighfreq_rc = count_nhighfreq(rc_kmers);
+        uint32_t Nhighfreq_fwd = compute_nhighfreq(fwd_kmers);
+        uint32_t Nhighfreq_rc = compute_nhighfreq(rc_kmers);
 
-        // Compute threshold per strand
-        auto resolve_threshold = [&](uint32_t Nqkmer, uint32_t Nhighfreq,
-                                     const char* strand_name) -> uint32_t {
+        auto resolve_threshold = [&](uint32_t Nhighfreq) -> int32_t {
             int32_t threshold = static_cast<int32_t>(
                 std::ceil(static_cast<double>(Nqkmer) * config.min_stage1_score_frac))
                 - static_cast<int32_t>(Nhighfreq);
-
-            if (threshold <= 0) {
-                std::fprintf(stderr,
-                    "Warning: fractional min_stage1_score threshold <= 0 "
-                    "(strand=%s, Nqkmer=%u, Nhighfreq=%u, P=%.4f)\n",
-                    strand_name, Nqkmer, Nhighfreq,
-                    config.min_stage1_score_frac);
-                return 0; // signals: skip this strand
-            }
-            return static_cast<uint32_t>(threshold);
+            return threshold;
         };
 
-        result.resolved_threshold_fwd = resolve_threshold(Nqkmer_fwd, Nhighfreq_fwd, "fwd");
-        result.resolved_threshold_rc = resolve_threshold(Nqkmer_rc, Nhighfreq_rc, "rc");
+        int32_t th_fwd = resolve_threshold(Nhighfreq_fwd);
+        int32_t th_rc = resolve_threshold(Nhighfreq_rc);
+
+        // If both strands fall below 1, the query as a whole is skipped.
+        // (Single-strand searches collapse one of the two effectively.)
+        bool fwd_ok = (config.strand != -1) && (th_fwd >= 1);
+        bool rc_ok  = (config.strand !=  1) && (th_rc  >= 1);
+        if (!fwd_ok && !rc_ok) {
+            result.skip_reason = kSkipThresholdUnreachable;
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                "Nqkmer=%u Nhighfreq_fwd=%u Nhighfreq_rc=%u P=%.4f "
+                "threshold_fwd=%d threshold_rc=%d",
+                Nqkmer, Nhighfreq_fwd, Nhighfreq_rc, config.min_stage1_score_frac,
+                th_fwd, th_rc);
+            result.skip_detail = buf;
+            return result;
+        }
+
+        result.resolved_threshold_fwd = (th_fwd >= 1) ? static_cast<uint32_t>(th_fwd) : 0;
+        result.resolved_threshold_rc  = (th_rc  >= 1) ? static_cast<uint32_t>(th_rc)  : 0;
     }
 
     // 5. Resolve effective_min_score per strand

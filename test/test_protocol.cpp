@@ -525,12 +525,14 @@ static void test_search_response_skipped() {
 
     QueryResult qr1;
     qr1.qseqid = "q1";
-    qr1.skipped = 1;
+    qr1.skip_reason = kSkipDegenRejected;
+    qr1.skip_detail = "query contains IUPAC degenerate bases";
+    qr1.qlen = 50;
     resp.results.push_back(qr1);
 
     QueryResult qr2;
     qr2.qseqid = "q2";
-    qr2.skipped = 0;
+    qr2.skip_reason = 0;
     ResponseHit hit;
     hit.sseqid = "ACC001";
     hit.sstrand = 0;
@@ -550,10 +552,12 @@ static void test_search_response_skipped() {
 
     assert(resp2.results.size() == 2);
     assert(resp2.results[0].qseqid == "q1");
-    assert(resp2.results[0].skipped == 1);
+    assert(resp2.results[0].skip_reason == kSkipDegenRejected);
+    assert(resp2.results[0].skip_detail == "query contains IUPAC degenerate bases");
+    assert(resp2.results[0].qlen == 50);
     assert(resp2.results[0].hits.empty());
     assert(resp2.results[1].qseqid == "q2");
-    assert(resp2.results[1].skipped == 0);
+    assert(resp2.results[1].skip_reason == 0);
     assert(resp2.results[1].hits.size() == 1);
 
     std::printf(" OK\n");

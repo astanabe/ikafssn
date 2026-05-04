@@ -392,6 +392,23 @@ target_include_directories(test_sam_writer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
 add_test(NAME test_sam_writer COMMAND test_sam_writer)
 
+# Phase 1: query preprocessor spec compliance (Nqkmer/Nhighfreq, skip reasons)
+add_executable(test_query_preprocessor test_query_preprocessor.cpp)
+target_link_libraries(test_query_preprocessor PRIVATE
+    ikafssn_search ikafssn_index ikafssn_io ikafssn_protocol
+    ikafssn_util ikafssn_core)
+target_include_directories(test_query_preprocessor PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+add_test(NAME test_query_preprocessor COMMAND test_query_preprocessor)
+
+# Phase 1: skip-marker output across TSV / JSON / SAM
+add_executable(test_skip_output test_skip_output.cpp)
+target_link_libraries(test_skip_output PRIVATE
+    ikafssn_sam_writer ikafssn_io ikafssn_protocol ikafssn_core hts)
+target_include_directories(test_skip_output PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+add_test(NAME test_skip_output COMMAND test_skip_output)
+
 # Stage 3 integration test (requires NCBI Toolkit + Parasail + BLAST DB)
 add_executable(test_stage3_integration test_stage3_integration.cpp)
 target_link_libraries(test_stage3_integration PRIVATE

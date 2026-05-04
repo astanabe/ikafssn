@@ -4,6 +4,7 @@
 #include "core/version.hpp"
 #include "core/kmer_encoding.hpp"
 #include "io/primer_query.hpp"
+#include "protocol/messages.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
@@ -297,7 +298,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    int accept_qdegen = cli.get_int("-accept_qdegen", 1);
+    config.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
 
     {
         std::string err;
@@ -488,19 +489,10 @@ int main(int argc, char* argv[]) {
         logger.info("Read %zu query sequence(s)", queries.size());
     }
 
-    // Check for degenerate bases if accept_qdegen == 0
-    std::vector<bool> query_skipped(queries.size(), false);
+    // skip_reason / skip_detail per query (filled in by preprocess_query below).
+    std::vector<uint8_t> query_skip_reason(queries.size(), 0);
+    std::vector<std::string> query_skip_detail(queries.size());
     bool has_skipped = false;
-    if (accept_qdegen == 0) {
-        for (size_t qi = 0; qi < queries.size(); qi++) {
-            if (contains_degenerate_base(queries[qi].sequence)) {
-                query_skipped[qi] = true;
-                has_skipped = true;
-                std::fprintf(stderr, "Warning: query '%s' contains degenerate bases, skipping\n",
-                             queries[qi].id.c_str());
-            }
-        }
-    }
 
     // Read seqidlist if specified
     std::vector<std::string> seqidlist;
@@ -661,8 +653,9 @@ int main(int argc, char* argv[]) {
             config.stage2.max_gap = insert_length;
         }
 
-        // Reset query_skipped for the new queries
-        query_skipped.assign(queries.size(), false);
+        // Reset skip tracking for the new queries
+        query_skip_reason.assign(queries.size(), 0);
+        query_skip_detail.assign(queries.size(), std::string());
         has_skipped = false;
 
         logger.info("Generated %zu primer pair queries", primer_pairs.size());
@@ -680,21 +673,41 @@ int main(int argc, char* argv[]) {
     }
 
     for (size_t qi = 0; qi < queries.size(); qi++) {
-        if (query_skipped[qi]) continue;
         query_pp_idx[qi] = use_uint16 ? ctxs[0].pp16.size() : ctxs[0].pp32.size();
         bool any_multi_degen = false;
+        uint8_t skip_reason = 0;
+        std::string skip_detail;
         for (auto& ctx : ctxs) {
             if (use_uint16) {
                 ctx.pp16.push_back({preprocess_query<uint16_t>(
                     queries[qi].sequence, k, ctx.khx_ptr, config,
                     spaced_t, ctx.seed_masks)});
-                if (ctx.pp16.back().qdata.has_multi_degen) any_multi_degen = true;
+                const auto& q = ctx.pp16.back().qdata;
+                if (q.has_multi_degen) any_multi_degen = true;
+                if (q.skip_reason != 0 && skip_reason == 0) {
+                    skip_reason = q.skip_reason;
+                    skip_detail = q.skip_detail;
+                }
             } else {
                 ctx.pp32.push_back({preprocess_query<uint32_t>(
                     queries[qi].sequence, k, ctx.khx_ptr, config,
                     spaced_t, ctx.seed_masks)});
-                if (ctx.pp32.back().qdata.has_multi_degen) any_multi_degen = true;
+                const auto& q = ctx.pp32.back().qdata;
+                if (q.has_multi_degen) any_multi_degen = true;
+                if (q.skip_reason != 0 && skip_reason == 0) {
+                    skip_reason = q.skip_reason;
+                    skip_detail = q.skip_detail;
+                }
             }
+        }
+        if (skip_reason != 0) {
+            query_skip_reason[qi] = skip_reason;
+            query_skip_detail[qi] = skip_detail;
+            has_skipped = true;
+            std::fprintf(stderr, "Warning: query '%s' skipped: %s (%s)\n",
+                         queries[qi].id.c_str(),
+                         skip_reason_str(skip_reason),
+                         skip_detail.c_str());
         }
         if (any_multi_degen) {
             std::fprintf(stderr,
@@ -737,8 +750,6 @@ int main(int argc, char* argv[]) {
         return buf;
     };
     tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(make_tls_buf);
-    // Second buffer set for the optimal side in both-mode.
-    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs_opt(make_tls_buf);
 
     // Thread-local hit collection (no mutex needed)
     tbb::combinable<std::vector<OutputHit>> tls_hits;
@@ -782,7 +793,7 @@ int main(int argc, char* argv[]) {
     // run_one() encapsulates the both-mode vs single-mode dispatch so the
     // outer parallel paths only differ in their work distribution.
     auto run_one = [&](size_t qi, size_t vi,
-                       Stage1Buffer& buf, Stage1Buffer& buf_opt,
+                       Stage1Buffer& buf,
                        std::vector<OutputHit>& local_hits) {
         const auto& query = queries[qi];
         size_t pp_idx = query_pp_idx[qi];
@@ -799,13 +810,13 @@ int main(int argc, char* argv[]) {
                     query.id,
                     ctxs[0].pp16[pp_idx].qdata, ctxs[1].pp16[pp_idx].qdata,
                     k, vd_cod.kix, vd_cod.kpx, vd_opt.kix, vd_opt.kpx,
-                    ksx_primary, filter_primary, config, buf, buf_opt);
+                    ksx_primary, filter_primary, config, buf);
             } else {
                 sr = search_volume_both<uint32_t>(
                     query.id,
                     ctxs[0].pp32[pp_idx].qdata, ctxs[1].pp32[pp_idx].qdata,
                     k, vd_cod.kix, vd_cod.kpx, vd_opt.kix, vd_opt.kpx,
-                    ksx_primary, filter_primary, config, buf, buf_opt);
+                    ksx_primary, filter_primary, config, buf);
             }
         } else {
             const auto& vd = ctxs[0].volumes[vi];
@@ -836,13 +847,12 @@ int main(int argc, char* argv[]) {
                 tbb::blocked_range<size_t>(0, queries.size()),
                 [&](const tbb::blocked_range<size_t>& range) {
                     auto& buf = tls_bufs.local();
-                    auto& buf_opt = tls_bufs_opt.local();
                     auto& local_hits = tls_hits.local();
 
                     for (size_t qi = range.begin(); qi != range.end(); ++qi) {
-                        if (query_skipped[qi]) continue;
+                        if (query_skip_reason[qi] != 0) continue;
                         for (size_t vi = 0; vi < num_volumes; vi++) {
-                            run_one(qi, vi, buf, buf_opt, local_hits);
+                            run_one(qi, vi, buf, local_hits);
                         }
                     }
                 });
@@ -852,7 +862,7 @@ int main(int argc, char* argv[]) {
         std::vector<SearchJob> jobs;
         jobs.reserve(queries.size() * num_volumes);
         for (size_t qi = 0; qi < queries.size(); qi++) {
-            if (query_skipped[qi]) continue;
+            if (query_skip_reason[qi] != 0) continue;
             for (size_t vi = 0; vi < num_volumes; vi++) {
                 jobs.push_back({qi, vi});
             }
@@ -863,9 +873,8 @@ int main(int argc, char* argv[]) {
             tbb::parallel_for_each(jobs.begin(), jobs.end(),
                 [&](const SearchJob& job) {
                     auto& buf = tls_bufs.local();
-                    auto& buf_opt = tls_bufs_opt.local();
                     auto& local_hits = tls_hits.local();
-                    run_one(job.query_idx, job.volume_idx, buf, buf_opt, local_hits);
+                    run_one(job.query_idx, job.volume_idx, buf, local_hits);
                 });
         });
     }
@@ -878,6 +887,20 @@ int main(int argc, char* argv[]) {
             std::make_move_iterator(local.end()));
     });
 
+    // Build skip-marker rows for queries that were not searched. Held aside
+    // so Stage 3 only sees real hits.
+    std::vector<OutputHit> skip_markers;
+    for (size_t qi = 0; qi < queries.size(); qi++) {
+        if (query_skip_reason[qi] == 0) continue;
+        OutputHit oh;
+        oh.qseqid = queries[qi].id;
+        oh.qlen = static_cast<uint32_t>(queries[qi].sequence.size());
+        oh.skip_reason = query_skip_reason[qi];
+        oh.skip_detail = query_skip_detail[qi];
+        oh.sstrand = '*';
+        skip_markers.push_back(std::move(oh));
+    }
+
     // Stage 3 alignment (mode 3 only)
     if (config.mode == 3) {
         logger.info("Running Stage 3 alignment on %zu hits...", all_hits.size());
@@ -886,6 +909,9 @@ int main(int argc, char* argv[]) {
                               logger);
         logger.info("Stage 3 complete: %zu hits after filtering.", all_hits.size());
     }
+
+    // Re-attach skip markers after Stage 3.
+    for (auto& m : skip_markers) all_hits.push_back(std::move(m));
 
     // Sort and truncate final results across volumes (per query)
     if (config.num_results > 0) {

@@ -35,6 +35,13 @@ struct OutputHit {
     std::string sseq;        // aligned subject (with gaps, traceback only)
     uint32_t qlen = 0;       // query full sequence length
     uint32_t slen = 0;       // subject full sequence length (for SAM @SQ)
+
+    // Skip marker: when skip_reason != 0 this OutputHit represents a query
+    // that was not searched (no Stage 1/2/3 ran). It carries qseqid + qlen
+    // and is emitted as a sentinel row in TSV / JSON / SAM so consumers can
+    // see why the query produced no hits.
+    uint8_t     skip_reason = 0;   // ikafssn::SkipReason (0 = normal hit)
+    std::string skip_detail;       // human-readable detail
 };
 
 enum class OutputFormat { kTab, kJson, kSam, kBam };

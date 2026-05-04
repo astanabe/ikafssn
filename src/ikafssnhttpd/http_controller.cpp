@@ -8,6 +8,7 @@
 #include <json/json.h>
 
 #include "protocol/info_format.hpp"
+#include "protocol/messages.hpp"
 
 namespace ikafssn {
 
@@ -248,8 +249,13 @@ void HttpController::search(
                 hits_arr.append(std::move(hobj));
             }
             qobj["hits"] = std::move(hits_arr);
-            if (qr.skipped != 0) {
-                qobj["skipped"] = true;
+            qobj["qlen"] = qr.qlen;
+            if (qr.skip_reason != 0) {
+                qobj["status"] = "skipped";
+                qobj["skip_reason"] = skip_reason_str(qr.skip_reason);
+                qobj["skip_detail"] = qr.skip_detail;
+            } else {
+                qobj["status"] = "ok";
             }
             if (qr.warnings != 0) {
                 Json::Value warn_arr(Json::arrayValue);

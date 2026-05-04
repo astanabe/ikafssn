@@ -102,6 +102,7 @@ SearchResponse process_search_request(
     if (req.max_degen_expand != 0)
         config.max_degen_expand = req.max_degen_expand;
     config.t = t;
+    config.accept_qdegen = req.accept_qdegen;
 
     // Resolve seed masks for spaced seed preprocessing.
     std::vector<uint32_t> seed_masks;
@@ -192,34 +193,22 @@ SearchResponse process_search_request(
     else if (req.seqidlist_mode == SeqidlistMode::kExclude)
         filter_mode = OidFilterMode::kExclude;
 
-    uint8_t accept_qdegen = req.accept_qdegen;
-
-    // Classify queries: skipped (degenerate) vs valid
-    std::vector<size_t> valid_indices;  // original indices of non-skipped queries
-    std::vector<size_t> skipped_indices;
-    for (size_t qi = 0; qi < req.queries.size(); qi++) {
-        if (accept_qdegen == 0 &&
-            contains_degenerate_base(req.queries[qi].sequence)) {
-            skipped_indices.push_back(qi);
-        } else {
-            valid_indices.push_back(qi);
-        }
-    }
-
-    int valid_count = static_cast<int>(valid_indices.size());
+    // All queries are valid for permit acquisition; skip detection happens
+    // inside preprocess_query and is reflected in QueryResult.skip_reason.
+    int valid_count = static_cast<int>(req.queries.size());
 
     // Acquire per-sequence permits
     int acquired = server.try_acquire_sequences(valid_count);
 
-    // First `acquired` valid queries are accepted; rest are rejected
+    // First `acquired` queries are accepted; rest are rejected
     for (int i = acquired; i < valid_count; i++) {
-        resp.rejected_qseqids.push_back(req.queries[valid_indices[i]].qseqid);
+        resp.rejected_qseqids.push_back(req.queries[i].qseqid);
     }
 
-    // Build resp.results for skipped + accepted queries only
+    // Build resp.results for accepted queries only
     std::vector<bool> is_accepted(req.queries.size(), false);
     for (int i = 0; i < acquired; i++) {
-        is_accepted[valid_indices[i]] = true;
+        is_accepted[i] = true;
     }
 
     // KhxReader pointers (used for fractional Stage 1 threshold's Nhighfreq)
@@ -248,22 +237,14 @@ SearchResponse process_search_request(
     std::vector<AcceptedQuery> accepted_queries;
     accepted_queries.reserve(static_cast<size_t>(acquired));
 
-    // Iterate in original order: include skipped and accepted, skip rejected
+    // Iterate in original order: include accepted, skip rejected
     for (size_t qi = 0; qi < req.queries.size(); qi++) {
-        bool skipped = (accept_qdegen == 0 &&
-                        contains_degenerate_base(req.queries[qi].sequence));
-        if (skipped) {
-            QueryResult qr;
-            qr.qseqid = req.queries[qi].qseqid;
-            qr.skipped = 1;
-            resp.results.push_back(std::move(qr));
-            continue;
-        }
-
         if (!is_accepted[qi]) continue; // rejected, skip
 
         // Preprocess this accepted query
         bool multi_degen = false;
+        uint8_t qskip = 0;
+        std::string qskip_detail;
         if (is_both_mode) {
             if (group.kmer_type == 0) {
                 query_pp_idx[qi] = pp16_cod.size();
@@ -275,6 +256,13 @@ SearchResponse process_search_request(
                     t, seed_masks_opt)});
                 multi_degen = pp16_cod.back().qdata.has_multi_degen ||
                               pp16_opt.back().qdata.has_multi_degen;
+                if (pp16_cod.back().qdata.skip_reason != 0) {
+                    qskip = pp16_cod.back().qdata.skip_reason;
+                    qskip_detail = pp16_cod.back().qdata.skip_detail;
+                } else if (pp16_opt.back().qdata.skip_reason != 0) {
+                    qskip = pp16_opt.back().qdata.skip_reason;
+                    qskip_detail = pp16_opt.back().qdata.skip_detail;
+                }
             } else {
                 query_pp_idx[qi] = pp32_cod.size();
                 pp32_cod.push_back({preprocess_query<uint32_t>(
@@ -285,6 +273,13 @@ SearchResponse process_search_request(
                     t, seed_masks_opt)});
                 multi_degen = pp32_cod.back().qdata.has_multi_degen ||
                               pp32_opt.back().qdata.has_multi_degen;
+                if (pp32_cod.back().qdata.skip_reason != 0) {
+                    qskip = pp32_cod.back().qdata.skip_reason;
+                    qskip_detail = pp32_cod.back().qdata.skip_detail;
+                } else if (pp32_opt.back().qdata.skip_reason != 0) {
+                    qskip = pp32_opt.back().qdata.skip_reason;
+                    qskip_detail = pp32_opt.back().qdata.skip_detail;
+                }
             }
         } else {
             if (group.kmer_type == 0) {
@@ -293,24 +288,39 @@ SearchResponse process_search_request(
                     req.queries[qi].sequence, k, khx_ptr, config,
                     t, seed_masks)});
                 multi_degen = pp16.back().qdata.has_multi_degen;
+                qskip = pp16.back().qdata.skip_reason;
+                qskip_detail = pp16.back().qdata.skip_detail;
             } else {
                 query_pp_idx[qi] = pp32.size();
                 pp32.push_back({preprocess_query<uint32_t>(
                     req.queries[qi].sequence, k, khx_ptr, config,
                     t, seed_masks)});
                 multi_degen = pp32.back().qdata.has_multi_degen;
+                qskip = pp32.back().qdata.skip_reason;
+                qskip_detail = pp32.back().qdata.skip_detail;
             }
         }
 
         size_t result_idx = resp.results.size();
         QueryResult qr;
         qr.qseqid = req.queries[qi].qseqid;
+        qr.qlen = static_cast<uint32_t>(req.queries[qi].sequence.size());
+        qr.skip_reason = qskip;
+        qr.skip_detail = std::move(qskip_detail);
         if (multi_degen) {
             qr.warnings |= kWarnMultiDegen;
         }
         resp.results.push_back(std::move(qr));
 
-        accepted_queries.push_back({result_idx, qi});
+        if (qskip == 0) {
+            accepted_queries.push_back({result_idx, qi});
+        } else {
+            // Skipped queries do not run Stage 1/2/3. Release their permit
+            // immediately so queue_depth reflects actual concurrent work and
+            // the next request can claim the slot.
+            server.release_sequences(1);
+            acquired--;
+        }
     }
 
     // Thread-local Stage1Buffer to avoid per-job allocation
@@ -368,15 +378,6 @@ SearchResponse process_search_request(
             return buf;
         });
 
-    // For both mode: second thread-local buffer for optimal template
-    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs_opt(
-        [max_num_seqs, tier]() {
-            Stage1Buffer buf;
-            buf.tier = tier;
-            buf.ensure_capacity(max_num_seqs);
-            return buf;
-        });
-
     // Thread-local hit collection: (result_idx, ResponseHit) pairs
     tbb::combinable<std::vector<std::pair<size_t, ResponseHit>>> tls_hits;
 
@@ -408,7 +409,6 @@ SearchResponse process_search_request(
 
                         SearchResult sr;
                         if (is_both_mode) {
-                            auto& buf_opt = tls_bufs_opt.local();
                             const auto& vd_cod = group_cod->volumes[vol_i];
                             const auto& vd_opt = group_opt->volumes[vol_i];
                             if (group.kmer_type == 0) {
@@ -418,7 +418,7 @@ SearchResponse process_search_request(
                                     k, vd_cod.kix, vd_cod.kpx,
                                     vd_opt.kix, vd_opt.kpx,
                                     vd_cod.ksx, oid_filter, config,
-                                    buf, buf_opt);
+                                    buf);
                             } else {
                                 sr = search_volume_both<uint32_t>(
                                     query.qseqid,
@@ -426,7 +426,7 @@ SearchResponse process_search_request(
                                     k, vd_cod.kix, vd_cod.kpx,
                                     vd_opt.kix, vd_opt.kpx,
                                     vd_cod.ksx, oid_filter, config,
-                                    buf, buf_opt);
+                                    buf);
                             }
                         } else {
                             if (group.kmer_type == 0) {
@@ -573,7 +573,7 @@ SearchResponse process_search_request(
 
         tbb::parallel_for(size_t(0), resp.results.size(), [&](size_t ri) {
             auto& qr = resp.results[ri];
-            if (qr.skipped != 0) return;
+            if (qr.skip_reason != 0) return;
             if (qr.hits.size() <= config.num_results) {
                 std::sort(qr.hits.begin(), qr.hits.end(), cmp);
                 return;

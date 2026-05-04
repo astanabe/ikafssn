@@ -1,5 +1,6 @@
 #include "io/sam_writer.hpp"
 #include "core/version.hpp"
+#include "protocol/messages.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -71,10 +72,14 @@ static void write_sam_bam_impl(const std::string& output_path,
     // @HD
     sam_hdr_add_line(hdr, "HD", "VN", "1.6", "SO", "unsorted", NULL);
 
-    // @SQ: collect unique (sseqid, slen) pairs, ordered by first appearance
+    // @SQ: collect unique (sseqid, slen) pairs, ordered by first appearance.
+    // Skip-marker hits (skip_reason != 0) carry a sentinel sseqid like
+    // "*SKIPPED:..." which is not a real reference; emit them as unmapped
+    // (FLAG=4) instead, so they must not contribute @SQ lines.
     std::vector<std::string> sq_order;
     std::map<std::string, uint32_t> sq_lengths;
     for (const auto& h : hits) {
+        if (h.skip_reason != 0) continue;
         if (sq_lengths.find(h.sseqid) == sq_lengths.end()) {
             sq_order.push_back(h.sseqid);
             sq_lengths[h.sseqid] = h.slen;
@@ -98,6 +103,24 @@ static void write_sam_bam_impl(const std::string& output_path,
     bam1_t* b = bam_init1();
 
     for (const auto& h : hits) {
+        // Skip-marker: emit unmapped record with XR/XD tags (no real reference).
+        if (h.skip_reason != 0) {
+            bam_set1(b,
+                     h.qseqid.size(), h.qseqid.c_str(),
+                     BAM_FUNMAP, -1, 0, 255,
+                     0, nullptr,
+                     -1, -1, 0,
+                     0, nullptr, nullptr,
+                     0);
+            const char* reason = skip_reason_str(h.skip_reason);
+            bam_aux_append(b, "XR", 'Z', static_cast<int>(std::strlen(reason)) + 1,
+                           reinterpret_cast<const uint8_t*>(reason));
+            bam_aux_append(b, "XD", 'Z', static_cast<int>(h.skip_detail.size()) + 1,
+                           reinterpret_cast<const uint8_t*>(h.skip_detail.c_str()));
+            if (sam_write1(fp, hdr, b) < 0) break;
+            continue;
+        }
+
         uint16_t flag = 0;
         if (h.sstrand == '-') flag |= BAM_FREVERSE;
 

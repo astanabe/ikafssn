@@ -13,6 +13,7 @@
 #include "search/volume_searcher.hpp"
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/spaced_seed.hpp"
 #include "util/logger.hpp"
 
 #include <cstdio>
@@ -451,6 +452,86 @@ static void test_search_num_results_zero() {
     ksx.close();
 }
 
+// Phase 2 regression: build coding + optimal indexes for k=9, t=15, run
+// search_volume_both, and verify (1) FJ876973.1 is found via the unified
+// Stage 1 path, and (2) the merged Stage 1 score stays in [0, Nqkmer]
+// (i.e. no double-counting from the two templates).
+static void test_search_both_template() {
+    Stage1Buffer buf;
+    std::fprintf(stderr, "-- test_search_both_template\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+
+    Logger logger(Logger::kError);
+
+    // Build coding-side spaced seed index (k=9, t=15).
+    IndexBuilderConfig bcfg_cod;
+    bcfg_cod.k = 9;
+    bcfg_cod.t = 15;
+    bcfg_cod.template_type = static_cast<uint8_t>(TemplateType::kCoding);
+    std::string prefix_cod = g_test_dir + "/test.00.09mer.15mer.cod";
+    CHECK(build_index<uint32_t>(db, bcfg_cod, prefix_cod, 0, 1, "test", logger));
+
+    // Build optimal-side spaced seed index (k=9, t=15).
+    IndexBuilderConfig bcfg_opt;
+    bcfg_opt.k = 9;
+    bcfg_opt.t = 15;
+    bcfg_opt.template_type = static_cast<uint8_t>(TemplateType::kOptimal);
+    std::string prefix_opt = g_test_dir + "/test.00.09mer.15mer.opt";
+    CHECK(build_index<uint32_t>(db, bcfg_opt, prefix_opt, 0, 1, "test", logger));
+
+    KixReader kix_cod, kix_opt;
+    KpxReader kpx_cod, kpx_opt;
+    KsxReader ksx;
+    CHECK(kix_cod.open(prefix_cod + ".kix"));
+    CHECK(kpx_cod.open(prefix_cod + ".kpx"));
+    CHECK(kix_opt.open(prefix_opt + ".kix"));
+    CHECK(kpx_opt.open(prefix_opt + ".kpx"));
+    CHECK(ksx.open(prefix_cod + ".ksx"));
+
+    OidFilter filter;
+    SearchConfig config;
+    config.stage1.stage1_topn = 100;
+    config.stage1.min_stage1_score = 1;
+    config.stage2.max_gap = 100;
+    config.stage2.min_diag_hits = 1;
+    config.stage2.min_score = 1;
+    config.num_results = 50;
+    config.t = 15;
+
+    const auto masks_cod = get_seed_masks(9, 15, TemplateType::kCoding);
+    const auto masks_opt = get_seed_masks(9, 15, TemplateType::kOptimal);
+
+    auto qdata_cod = preprocess_query<uint32_t>(g_query_seq, 9, nullptr, config,
+                                                15, masks_cod);
+    auto qdata_opt = preprocess_query<uint32_t>(g_query_seq, 9, nullptr, config,
+                                                15, masks_opt);
+
+    auto result = search_volume_both<uint32_t>(
+        "both_query", qdata_cod, qdata_opt, 9,
+        kix_cod, kpx_cod, kix_opt, kpx_opt, ksx, filter, config, buf);
+
+    CHECK(result.query_id == "both_query");
+    CHECK(!result.hits.empty());
+
+    // Phase 2 invariant: per-position dedup keeps Stage 1 score in [0, Nqkmer].
+    // Nqkmer = seq_len - t + 1 (window count). A naive cod-then-opt
+    // accumulation would inflate scores up to 2*Nqkmer; the q_pos-merge walk
+    // in search_one_strand_both keeps the merged score capped at Nqkmer.
+    uint32_t Nqkmer = static_cast<uint32_t>(g_query_seq.size()) - 15 + 1;
+    bool found_fj = false;
+    for (const auto& cr : result.hits) {
+        CHECK(cr.stage1_score <= Nqkmer);
+        if (cr.seq_id == g_fj_oid) found_fj = true;
+    }
+    CHECK(found_fj);
+
+    kix_cod.close(); kpx_cod.close();
+    kix_opt.close(); kpx_opt.close();
+    ksx.close();
+}
+
 int main() {
     check_ssu_available();
 
@@ -480,6 +561,7 @@ int main() {
     test_search_k9();
     test_search_mode1();
     test_search_num_results_zero();
+    test_search_both_template();
 
     std::filesystem::remove_all(g_test_dir);
 

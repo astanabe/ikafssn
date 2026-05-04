@@ -213,10 +213,19 @@ static void collect_results(const SearchResponse& resp,
                              std::vector<OutputHit>& hits,
                              bool& has_skipped) {
     for (const auto& qr : resp.results) {
-        if (qr.skipped != 0) {
+        if (qr.skip_reason != 0) {
             has_skipped = true;
-            std::fprintf(stderr, "Warning: query '%s' was skipped (degenerate bases)\n",
-                         qr.qseqid.c_str());
+            std::fprintf(stderr, "Warning: query '%s' skipped: %s (%s)\n",
+                         qr.qseqid.c_str(),
+                         skip_reason_str(qr.skip_reason),
+                         qr.skip_detail.c_str());
+            OutputHit oh;
+            oh.qseqid = qr.qseqid;
+            oh.qlen = qr.qlen;
+            oh.skip_reason = qr.skip_reason;
+            oh.skip_detail = qr.skip_detail;
+            oh.sstrand = '*';
+            hits.push_back(std::move(oh));
             continue;
         }
         if (qr.warnings & kWarnMultiDegen) {

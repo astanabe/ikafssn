@@ -85,12 +85,33 @@ enum QueryWarning : uint8_t {
     kWarnMultiDegen = 0x01,  // k-mers exceeded max_degen_expand were skipped
 };
 
+// Reasons a query may be skipped (no hits produced).
+enum SkipReason : uint8_t {
+    kSkipNone                 = 0,
+    kSkipQueryTooShort        = 1,  // seq_len < (t > 0 ? t : k)
+    kSkipDegenRejected        = 2,  // accept_qdegen=0 and query has IUPAC degenerates
+    kSkipThresholdUnreachable = 3,  // resolved Stage 1 threshold <= 0
+    kSkipInvalidChar          = 4,  // sequence contained a non-IUPAC character
+};
+
+inline const char* skip_reason_str(uint8_t r) {
+    switch (r) {
+        case kSkipQueryTooShort:        return "query_too_short";
+        case kSkipDegenRejected:        return "degen_rejected";
+        case kSkipThresholdUnreachable: return "threshold_unreachable";
+        case kSkipInvalidChar:          return "invalid_char";
+        default:                        return "ok";
+    }
+}
+
 // Per-query result in the search response
 struct QueryResult {
     std::string qseqid;
     std::vector<ResponseHit> hits;
-    uint8_t skipped = 0;   // 0 = normal, 1 = skipped (degenerate bases)
-    uint8_t warnings = 0;  // bitmask of QueryWarning flags
+    uint8_t     skip_reason = 0;   // SkipReason enum (0 = ok)
+    std::string skip_detail;       // human-readable detail; empty if not skipped
+    uint8_t     warnings = 0;      // bitmask of QueryWarning flags
+    uint32_t    qlen = 0;           // original query length (for skipped output rows)
 };
 
 // Search response message (server -> client)

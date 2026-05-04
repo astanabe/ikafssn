@@ -22,7 +22,10 @@ struct QueryKmerData {
     uint32_t resolved_threshold_rc = 0;   // resolved Stage 1 absolute threshold (rc)
     uint32_t effective_min_score_fwd = 0;  // for Stage 2 (fwd)
     uint32_t effective_min_score_rc = 0;   // for Stage 2 (rc)
-    bool has_multi_degen = false;  // true if any k-mer had 2+ degenerate bases (skipped)
+    bool has_multi_degen = false;  // true if any k-mer had degen expansion exceeding the cap
+    uint8_t skip_reason = 0;       // SkipReason enum (0 = no skip)
+    std::string skip_detail;       // human-readable detail (empty when skip_reason==0)
+    uint32_t qlen = 0;             // original query length (for skip output)
 };
 
 // Pre-process a query sequence: extract k-mers (forward + reverse complement)
