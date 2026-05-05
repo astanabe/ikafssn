@@ -6,10 +6,10 @@
 
 namespace ikafssn {
 
-// One-shot zstd compression/decompression helpers used by ikafssnclient
-// for persisted defline lists and cached result blobs under
-// `.ikafssnclient/<group_id>/`.  Both directions return false on failure
-// and populate `error_msg`.
+// One-shot zstd compression/decompression helpers shared by ikafssnclient
+// (defline cache, cached result blobs) and ikafssnhttpd (per-job result
+// files written by ResultStore, request-body decompression in HttpController).
+// Both directions return false on failure and populate `error_msg`.
 
 bool zstd_compress(const void* data, size_t size,
                    std::vector<uint8_t>& out,

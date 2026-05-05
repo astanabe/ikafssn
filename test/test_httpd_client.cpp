@@ -29,10 +29,12 @@
 #include "ikafssnhttpd/job_store.hpp"
 #include "ikafssnhttpd/job_worker.hpp"
 #include "ikafssnhttpd/job_housekeeper.hpp"
+#include "ikafssnhttpd/result_store.hpp"
 #include "protocol/messages.hpp"
 #include "protocol/serializer.hpp"
 #include "util/socket_utils.hpp"
 #include "util/logger.hpp"
+#include "util/zstd_oneshot.hpp"
 #include "core/config.hpp"
 
 #include <drogon/HttpAppFramework.h>
@@ -115,14 +117,10 @@ static std::string build_test_index(int k) {
     return ix_dir + "/test";
 }
 
-// Submit a job, poll until status leaves 'queued'/'running', then GET
-// /result and parse the binary blob.  Returns true on done, false on
-// failed/timeout.
-static bool async_submit_poll_get(const std::string& base_url,
-                                  const SearchRequest& req,
-                                  const std::string& job_id,
-                                  SearchResponse& out_resp,
-                                  std::string& error_msg) {
+// Build the JSON body that ikafssnclient/curl would normally POST.
+// Extracted so the Content-Type compatibility tests below can reuse it.
+static std::string build_job_body_json(const SearchRequest& req,
+                                       const std::string& job_id) {
     Json::Value body;
     body["job_id"] = job_id;
     body["k"] = req.k;
@@ -149,28 +147,60 @@ static bool async_submit_poll_get(const std::string& base_url,
 
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
-    std::string body_str = Json::writeString(writer, body);
+    return Json::writeString(writer, body);
+}
 
-    // POST /api/v1/jobs
+// POST a body to /api/v1/jobs with the given Content-Type / payload bytes
+// and return (HTTP status code, response body).  On transport failure
+// the status is 0.
+struct PostResult { long http_code = 0; std::string body; };
+static PostResult post_jobs(const std::string& base_url,
+                            const std::string& content_type,
+                            const void* data, size_t size) {
+    PostResult out;
+    CURL* c = curl_easy_init();
+    if (!c) return out;
+    curl_easy_setopt(c, CURLOPT_URL, (base_url + "/api/v1/jobs").c_str());
+    curl_easy_setopt(c, CURLOPT_POST, 1L);
+    curl_easy_setopt(c, CURLOPT_POSTFIELDS, data);
+    curl_easy_setopt(c, CURLOPT_POSTFIELDSIZE, static_cast<long>(size));
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_string);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &out.body);
+    curl_slist* hdrs = nullptr;
+    std::string ct_hdr = "Content-Type: " + content_type;
+    hdrs = curl_slist_append(hdrs, ct_hdr.c_str());
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
+    curl_easy_perform(c);
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &out.http_code);
+    curl_slist_free_all(hdrs);
+    curl_easy_cleanup(c);
+    return out;
+}
+
+// Submit a job (zstd-compressed JSON body, the format real ikafssnclient
+// uses), poll until status leaves 'queued'/'running', then GET /result
+// and decompress + deserialise the binary blob.
+static bool async_submit_poll_get(const std::string& base_url,
+                                  const SearchRequest& req,
+                                  const std::string& job_id,
+                                  SearchResponse& out_resp,
+                                  std::string& error_msg) {
+    std::string body_str = build_job_body_json(req, job_id);
+
+    // POST /api/v1/jobs (zstd-compressed body, application/zstd).
     {
-        CURL* c = curl_easy_init();
-        if (!c) { error_msg = "curl init"; return false; }
-        std::string resp;
-        curl_easy_setopt(c, CURLOPT_URL, (base_url + "/api/v1/jobs").c_str());
-        curl_easy_setopt(c, CURLOPT_POST, 1L);
-        curl_easy_setopt(c, CURLOPT_POSTFIELDS, body_str.c_str());
-        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_string);
-        curl_easy_setopt(c, CURLOPT_WRITEDATA, &resp);
-        curl_slist* hdrs = nullptr;
-        hdrs = curl_slist_append(hdrs, "Content-Type: application/json");
-        curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
-        CURLcode rc = curl_easy_perform(c);
-        long code = 0;
-        curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
-        curl_slist_free_all(hdrs);
-        curl_easy_cleanup(c);
-        if (rc != CURLE_OK || code != 202) {
-            error_msg = "submit: HTTP " + std::to_string(code) + " " + resp;
+        std::vector<uint8_t> compressed;
+        std::string zerr;
+        if (!ikafssn::zstd_compress(body_str.data(), body_str.size(),
+                                    compressed, 3, zerr)) {
+            error_msg = "submit: zstd_compress failed: " + zerr;
+            return false;
+        }
+        auto pr = post_jobs(base_url, "application/zstd",
+                            compressed.data(), compressed.size());
+        if (pr.http_code != 202) {
+            error_msg = "submit: HTTP " + std::to_string(pr.http_code)
+                      + " " + pr.body;
             return false;
         }
     }
@@ -205,7 +235,8 @@ static bool async_submit_poll_get(const std::string& base_url,
         }
     }
 
-    // GET /result
+    // GET /result — body is now a single zstd frame (Content-Type:
+    // application/zstd) so we have to decompress it before deserialise.
     {
         CURL* c = curl_easy_init();
         std::string resp;
@@ -221,8 +252,14 @@ static bool async_submit_poll_get(const std::string& base_url,
             error_msg = "result: HTTP " + std::to_string(code);
             return false;
         }
-        std::vector<uint8_t> blob(resp.begin(), resp.end());
-        if (!deserialize(blob, out_resp)) {
+        std::vector<uint8_t> decoded;
+        std::string zerr;
+        if (!ikafssn::zstd_decompress(resp.data(), resp.size(),
+                                      decoded, zerr)) {
+            error_msg = "result zstd_decompress failed: " + zerr;
+            return false;
+        }
+        if (!deserialize(decoded, out_resp)) {
             error_msg = "result deserialize failed";
             return false;
         }
@@ -289,15 +326,21 @@ static void test_async_submit_poll_get() {
     CHECK(manager->init(10, mgr_logger));
 
     std::string jobs_db = g_test_dir + "/jobs.db";
+    std::string results_dir = g_test_dir + "/results";
+    ResultStore results(results_dir, 3);
+    {
+        std::string err;
+        CHECK(results.init(err));
+    }
     JobStore store;
     {
         std::string err;
         CHECK(store.open(jobs_db, err));
     }
-    JobWorker worker(store, manager, mgr_logger, 3);
+    JobWorker worker(store, results, manager, mgr_logger, 3);
     worker.start(2);
 
-    HttpController controller(manager, store, worker);
+    HttpController controller(manager, store, worker, results);
     controller.register_routes("");
 
     drogon::app()
@@ -319,7 +362,8 @@ static void test_async_submit_poll_get() {
 
     SearchResponse resp;
     std::string error_msg;
-    bool ok = async_submit_poll_get(http_url, req, make_uuidv4(),
+    std::string done_job_id = make_uuidv4();
+    bool ok = async_submit_poll_get(http_url, req, done_job_id,
                                      resp, error_msg);
     if (!ok) {
         std::fprintf(stderr, "  async_submit_poll_get failed: %s\n",
@@ -329,6 +373,46 @@ static void test_async_submit_poll_get() {
     CHECK(resp.status == 0);
     CHECK_EQ(resp.k, static_cast<uint8_t>(k));
     CHECK_EQ(resp.results.size(), local_results.size());
+
+    // Verify the per-job result file actually landed in the ResultStore.
+    CHECK(results.exists(done_job_id));
+    {
+        std::string ferr;
+        std::vector<uint8_t> file_bytes;
+        CHECK(ikafssn::zstd_decompress_file(results.path_for(done_job_id),
+                                             file_bytes, ferr));
+        SearchResponse from_file;
+        CHECK(deserialize(file_bytes, from_file));
+        CHECK_EQ(from_file.results.size(), resp.results.size());
+    }
+
+    // External-tool entry point: ad-hoc HTTP clients (curl, scripts) may
+    // POST plain JSON with Content-Type: application/json so they don't
+    // have to pipe the body through `zstd` first.  Must be accepted (202).
+    {
+        std::string body_str = build_job_body_json(req, make_uuidv4());
+        auto pr = post_jobs(http_url, "application/json",
+                            body_str.data(), body_str.size());
+        CHECK_EQ(pr.http_code, 202L);
+    }
+
+    // Anything other than application/zstd or application/json → 415.
+    {
+        std::string body = "irrelevant";
+        auto pr = post_jobs(http_url, "text/plain",
+                            body.data(), body.size());
+        CHECK_EQ(pr.http_code, 415L);
+        CHECK(pr.body.find("unsupported Content-Type") != std::string::npos);
+    }
+
+    // Garbage body declared as application/zstd → 400 invalid frame.
+    {
+        std::string body = "this is not a zstd frame";
+        auto pr = post_jobs(http_url, "application/zstd",
+                            body.data(), body.size());
+        CHECK_EQ(pr.http_code, 400L);
+        CHECK(pr.body.find("invalid zstd frame") != std::string::npos);
+    }
 
     drogon::app().quit();
     httpd_thread.join();

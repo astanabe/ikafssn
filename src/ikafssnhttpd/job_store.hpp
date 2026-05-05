@@ -24,7 +24,7 @@ bool        job_status_parse(const std::string& s, JobStatus& out);
 
 // In-memory snapshot of a SQLite row (without the heavy blobs).  Used by
 // JobWorker to drive route_search and by HttpController to answer
-// GET /api/v1/jobs/<id> without touching `result_blob`.
+// GET /api/v1/jobs/<id>.
 struct JobMeta {
     std::string job_id;
     JobStatus   status = JobStatus::kQueued;
@@ -46,6 +46,12 @@ struct JobMeta {
 //
 // `fetch_one_queued` uses SQLite 3.35+ `UPDATE ... RETURNING` to pop the
 // oldest queued job atomically (Ubuntu 22.04 ships 3.37, 24.04 ships 3.45).
+//
+// Schema version 2 (current): result blobs are stored in the per-job
+// ResultStore (filesystem), not in the SQLite row.  An older schema
+// that still has a `result_blob BLOB` column or has user_version<2 is
+// rejected by `check_schema()` so the operator must delete jobs.db
+// before starting the new server.
 class JobStore {
 public:
     JobStore() = default;
@@ -56,6 +62,8 @@ public:
 
     // Open the SQLite DB and apply PRAGMAs / DDL.  Creates parent dir and
     // file if needed.  Returns false (with `error_msg` set) on failure.
+    // Existing databases written by the old schema (containing
+    // `result_blob`, or with `user_version < 2`) are rejected here.
     bool open(const std::string& path, std::string& error_msg);
 
     // Close the underlying handle.  Idempotent.
@@ -80,10 +88,9 @@ public:
                           std::vector<uint8_t>& out_request_blob,
                           std::string& error_msg);
 
-    // Mark a job as completed.  Stores `result_blob`.
-    bool mark_done(const std::string& job_id,
-                   const std::vector<uint8_t>& result_blob,
-                   std::string& error_msg);
+    // Mark a job as completed.  The result file is the caller's
+    // responsibility to write before calling this — see ResultStore.
+    bool mark_done(const std::string& job_id, std::string& error_msg);
 
     // Mark a job as terminally failed (no further retries).  Records
     // `error_message` and `fail_reason`.
@@ -99,26 +106,29 @@ public:
                            const std::string& error_message,
                            std::string& error_msg);
 
-    // Read the meta row (no blobs).  Returns false if job_id not found.
+    // Read the meta row.  Returns false if job_id not found.
     bool get_status(const std::string& job_id, JobMeta& out,
-                    std::string& error_msg);
-
-    // Fetch the result blob for a completed job.  Returns false with
-    // `not_found=true` when the row is missing, `wrong_status=true`
-    // when status != 'done' (caller should map to 404 / 409).
-    bool get_result(const std::string& job_id,
-                    std::vector<uint8_t>& out,
-                    bool& not_found,
-                    bool& wrong_status,
                     std::string& error_msg);
 
     // Delete done/failed rows whose `completed_at` is older than
     // `now_unix - retention_seconds`.  Returns number of rows deleted.
-    int64_t delete_expired(int64_t retention_seconds, std::string& error_msg);
+    // The deleted ids are appended to `out_deleted_ids` so the caller
+    // (housekeeper) can also remove the matching ResultStore files.
+    // SELECT and DELETE happen inside a single transaction so a row can
+    // never be reported deleted but still selectable by another thread.
+    int64_t delete_expired(int64_t retention_seconds,
+                           std::vector<std::string>& out_deleted_ids,
+                           std::string& error_msg);
 
     // On startup, flip any leftover `running` rows back to `queued`.
     // Called once before the worker pool starts taking jobs.
     int64_t requeue_orphans(std::string& error_msg);
+
+    // Inspect `PRAGMA user_version` and `PRAGMA table_info(jobs)` and
+    // refuse to run against a schema that predates the file-based
+    // result store (user_version<2 or `result_blob` column present).
+    // Called inside `open()` before any DDL is applied.
+    bool check_schema(std::string& error_msg);
 
 private:
     sqlite3*               db_ = nullptr;

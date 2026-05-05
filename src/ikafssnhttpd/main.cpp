@@ -4,6 +4,7 @@
 #include "ikafssnhttpd/job_store.hpp"
 #include "ikafssnhttpd/job_worker.hpp"
 #include "ikafssnhttpd/job_housekeeper.hpp"
+#include "ikafssnhttpd/result_store.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
 #include "util/common_init.hpp"
@@ -37,6 +38,10 @@ static void print_usage(const char* prog) {
         "Job store (async REST):\n"
         "  -db <path>                  SQLite job DB path\n"
         "                              (default: /var/lib/ikafssnhttpd/jobs.db)\n"
+        "  -result_dir <path>          Per-job result file directory\n"
+        "                              (default: /var/lib/ikafssnhttpd/results)\n"
+        "  -result_compression_level <int>  Zstd level for result files\n"
+        "                              (default: 3, range: 1-22)\n"
         "  -retention_time <int>       Done/failed retention in seconds (default: 86400)\n"
         "  -max_nretry <int>           Per-job retry cap (default: 3)\n"
         "  -nthread_worker <int>       Backend search worker pool size (default: 4)\n"
@@ -106,9 +111,32 @@ int main(int argc, char* argv[]) {
     manager->start_heartbeat(heartbeat_interval, logger);
 
     std::string db_path = cli.get_string("-db", "/var/lib/ikafssnhttpd/jobs.db");
+    std::string result_dir = cli.get_string("-result_dir",
+        "/var/lib/ikafssnhttpd/results");
+    int result_level = cli.get_int("-result_compression_level", 3);
     int retention_time = cli.get_int("-retention_time", 86400);
     int max_nretry     = cli.get_int("-max_nretry", 3);
     int nthread_worker = cli.get_int("-nthread_worker", 4);
+
+    if (result_level < 1 || result_level > 22) {
+        std::fprintf(stderr,
+            "Error: -result_compression_level must be in [1, 22], got %d\n",
+            result_level);
+        manager->stop_heartbeat();
+        return 1;
+    }
+
+    ResultStore results(result_dir, result_level);
+    {
+        std::string err;
+        if (!results.init(err)) {
+            std::fprintf(stderr, "Error: %s\n", err.c_str());
+            manager->stop_heartbeat();
+            return 1;
+        }
+    }
+    logger.info("ResultStore at %s (zstd level=%d)",
+                result_dir.c_str(), result_level);
 
     JobStore store;
     {
@@ -133,13 +161,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    JobWorker worker(store, manager, logger, max_nretry);
+    JobWorker worker(store, results, manager, logger, max_nretry);
     worker.start(nthread_worker);
 
-    JobHousekeeper housekeeper(store, logger);
+    JobHousekeeper housekeeper(store, results, logger);
     housekeeper.start(retention_time);
 
-    HttpController controller(manager, store, worker);
+    HttpController controller(manager, store, worker, results);
     std::string path_prefix = cli.get_string("-path_prefix");
     controller.register_routes(path_prefix);
 

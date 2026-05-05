@@ -1,5 +1,7 @@
 #include "ikafssnhttpd/http_controller.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <climits>
 #include <thread>
@@ -10,13 +12,36 @@
 #include "protocol/info_format.hpp"
 #include "protocol/messages.hpp"
 #include "protocol/serializer.hpp"
+#include "util/zstd_oneshot.hpp"
 
 namespace ikafssn {
 
 HttpController::HttpController(std::shared_ptr<BackendManager> manager,
                                JobStore& store,
-                               JobWorker& worker)
-    : manager_(std::move(manager)), store_(&store), worker_(&worker) {}
+                               JobWorker& worker,
+                               ResultStore& results)
+    : manager_(std::move(manager))
+    , store_(&store)
+    , worker_(&worker)
+    , results_(&results) {}
+
+namespace {
+
+// Lower-cased media-type extracted from a Content-Type header (the part
+// before the first ';').  Leading and trailing whitespace is trimmed.
+std::string extract_media_type(const std::string& header) {
+    size_t end = header.find(';');
+    std::string mt = header.substr(0, end);
+    auto not_space = [](unsigned char c) { return !std::isspace(c); };
+    auto first = std::find_if(mt.begin(), mt.end(), not_space);
+    auto last  = std::find_if(mt.rbegin(), mt.rend(), not_space).base();
+    if (first >= last) return {};
+    std::string out(first, last);
+    for (auto& c : out) c = static_cast<char>(std::tolower(c));
+    return out;
+}
+
+} // namespace
 
 void HttpController::register_routes(const std::string& path_prefix) {
     std::string prefix = path_prefix;
@@ -198,7 +223,37 @@ void HttpController::submit_job(
     const drogon::HttpRequestPtr& req,
     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
 
-    std::string body(req->getBody());
+    std::string raw_body(req->getBody());
+    std::string content_type = req->getHeader("Content-Type");
+    std::string media_type = extract_media_type(content_type);
+
+    // ikafssnclient always sends application/zstd.  application/json (and
+    // an empty Content-Type) is also accepted so external tools — curl
+    // and any one-off scripts — can submit a job without having to pipe
+    // the body through `zstd` first.  This is NOT a back-compat path for
+    // the previous ikafssnclient release; it is a documented entry point
+    // for ad-hoc HTTP clients.
+    std::string body;
+    if (media_type == "application/zstd") {
+        std::vector<uint8_t> decompressed;
+        std::string zerr;
+        if (!zstd_decompress(raw_body.data(), raw_body.size(),
+                             decompressed, zerr)) {
+            callback(make_error_response(drogon::k400BadRequest,
+                "invalid zstd frame: " + zerr));
+            return;
+        }
+        body.assign(reinterpret_cast<const char*>(decompressed.data()),
+                    decompressed.size());
+    } else if (media_type.empty() || media_type == "application/json") {
+        body = std::move(raw_body);
+    } else {
+        callback(make_error_response(drogon::k415UnsupportedMediaType,
+            "unsupported Content-Type: " + content_type
+            + "; expected application/zstd or application/json"));
+        return;
+    }
+
     std::string job_id;
     SearchRequest sreq;
     std::string err;
@@ -283,27 +338,39 @@ void HttpController::get_job_result(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& job_id) {
 
-    std::vector<uint8_t> blob;
-    bool not_found = false;
-    bool wrong_status = false;
+    JobMeta meta;
     std::string err;
-    if (!store_->get_result(job_id, blob, not_found, wrong_status, err)) {
-        if (not_found) {
+    if (!store_->get_status(job_id, meta, err)) {
+        if (err.empty()) {
             callback(make_error_response(drogon::k404NotFound,
                 "Unknown job_id: " + job_id));
-        } else if (wrong_status) {
-            callback(make_error_response(drogon::k409Conflict,
-                "Job not yet complete"));
         } else {
             callback(make_error_response(drogon::k500InternalServerError, err));
         }
         return;
     }
+    if (meta.status != JobStatus::kDone) {
+        callback(make_error_response(drogon::k409Conflict,
+            "Job not yet complete"));
+        return;
+    }
+    if (!results_->exists(job_id)) {
+        // Race with the housekeeper: the SQLite row still says 'done'
+        // but the file has already been swept (or never landed because
+        // mark_done committed before the file was fsynced — extremely
+        // unlikely given the worker order, but possible if an operator
+        // hand-deleted the file).
+        callback(make_error_response(drogon::k404NotFound,
+            "result file missing for job " + job_id
+            + ": housekeeper raced"));
+        return;
+    }
 
-    auto resp = drogon::HttpResponse::newHttpResponse();
-    resp->setContentTypeCode(drogon::CT_APPLICATION_OCTET_STREAM);
-    std::string out(reinterpret_cast<const char*>(blob.data()), blob.size());
-    resp->setBody(std::move(out));
+    auto resp = drogon::HttpResponse::newFileResponse(
+        results_->path_for(job_id),
+        /*attachmentFileName=*/"",
+        drogon::CT_CUSTOM,
+        /*typeString=*/"application/zstd");
     callback(resp);
 }
 

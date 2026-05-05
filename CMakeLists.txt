@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.05")  # cli: rename CLI options & wire identifiers (-nthread/-nresult/-output_format/...), bump msg_version to 11, accept -/-- interchangeably
+set(IKAFSSN_VERSION "0.1.2026.05.05")  # httpd<->client: zstd-compressed POST /api/v1/jobs body and zstd /result response; per-job ResultStore replaces SQLite result_blob (sendfile + mark_done); JobStore schema bumped to user_version=2 (legacy DBs rejected at startup)
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.

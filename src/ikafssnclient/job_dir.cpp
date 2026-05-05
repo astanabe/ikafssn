@@ -1,5 +1,5 @@
 #include "ikafssnclient/job_dir.hpp"
-#include "ikafssnclient/zstd_io.hpp"
+#include "util/zstd_oneshot.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -316,11 +316,15 @@ bool write_job_result(const std::string& root,
                       const std::string& job_id,
                       const std::vector<uint8_t>& blob,
                       std::string& error_msg) {
+    // Server-side ResultStore now hands us the bytes already in a single
+    // zstd frame, so we simply persist them verbatim — re-compressing
+    // would create a zstd-of-zstd file that the existing
+    // zstd_decompress_file in read_job_result could not unpack.
     fs::path p = job_result_path(root, group_id, job_id);
     std::error_code ec;
     fs::create_directories(p.parent_path(), ec);
-    return zstd_compress_to_file(p.string(), blob.data(), blob.size(),
-                                  3, error_msg);
+    std::string body(reinterpret_cast<const char*>(blob.data()), blob.size());
+    return atomic_write_file(p.string(), body, error_msg);
 }
 
 bool read_job_result(const std::string& root,

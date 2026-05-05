@@ -6,6 +6,8 @@
 #include <memory>
 #include <sstream>
 
+#include "util/zstd_oneshot.hpp"
+
 namespace ikafssn {
 
 namespace {
@@ -63,6 +65,19 @@ AsyncHttpOutcome http_submit_job(const std::string& base_url,
     writer["indentation"] = "";
     std::string body = Json::writeString(writer, root);
 
+    // Compress the JSON request body with zstd before POSTing.  ikafssnhttpd
+    // negotiates compression via the Content-Type header (no Content-Encoding
+    // so reverse proxies do not rewrite the body).  Level 3 is a good
+    // throughput/ratio sweet spot for JSON payloads.
+    std::vector<uint8_t> compressed;
+    {
+        std::string zerr;
+        if (!zstd_compress(body.data(), body.size(), compressed, 3, zerr)) {
+            error_msg = "submit_job: zstd_compress failed: " + zerr;
+            return AsyncHttpOutcome::kTransport;
+        }
+    }
+
     CURL* c = curl_easy_init();
     if (!c) {
         error_msg = "Failed to initialize libcurl";
@@ -72,13 +87,14 @@ AsyncHttpOutcome http_submit_job(const std::string& base_url,
     std::string resp;
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_POST, 1L);
-    curl_easy_setopt(c, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(c, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    curl_easy_setopt(c, CURLOPT_POSTFIELDS, compressed.data());
+    curl_easy_setopt(c, CURLOPT_POSTFIELDSIZE,
+                     static_cast<long>(compressed.size()));
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_string);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &resp);
 
     curl_slist* hdrs = nullptr;
-    hdrs = curl_slist_append(hdrs, "Content-Type: application/json");
+    hdrs = curl_slist_append(hdrs, "Content-Type: application/zstd");
     curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdrs);
     apply_auth(c, auth);
 

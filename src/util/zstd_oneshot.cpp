@@ -1,4 +1,4 @@
-#include "ikafssnclient/zstd_io.hpp"
+#include "util/zstd_oneshot.hpp"
 
 #include <cstdio>
 #include <cstdlib>

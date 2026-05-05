@@ -153,6 +153,17 @@ add_library(ikafssn_util STATIC
 )
 target_link_libraries(ikafssn_util PUBLIC ikafssn_core)
 
+# One-shot zstd compress/decompress helpers shared by ikafssnclient
+# (defline + result caches) and ikafssnhttpd (per-job result files,
+# request-body decompression).
+add_library(ikafssn_zstd_oneshot STATIC
+    util/zstd_oneshot.cpp
+)
+target_link_libraries(ikafssn_zstd_oneshot
+    PUBLIC  ikafssn_core
+    PRIVATE PkgConfig::ZSTD
+)
+
 # Protocol library (frame + messages + serializer)
 add_library(ikafssn_protocol STATIC
     protocol/frame.cpp
@@ -226,13 +237,13 @@ target_link_libraries(ikafssn_client_lib PUBLIC
 if(ENABLE_CLIENT_HTTP)
     target_sources(ikafssn_client_lib PRIVATE
         ikafssnclient/http_client.cpp
-        ikafssnclient/zstd_io.cpp
         ikafssnclient/async_http_client.cpp
         ikafssnclient/job_dir.cpp
         ikafssnclient/poll_loop.cpp
         ikafssnclient/failed_writer.cpp
     )
     target_link_libraries(ikafssn_client_lib PUBLIC
+        ikafssn_zstd_oneshot
         CURL::libcurl ${JSONCPP_TARGET} PkgConfig::ZSTD
     )
     target_compile_definitions(ikafssn_client_lib PUBLIC IKAFSSN_ENABLE_HTTP)
@@ -296,9 +307,11 @@ if(BUILD_HTTPD)
         ikafssnhttpd/job_store.cpp
         ikafssnhttpd/job_worker.cpp
         ikafssnhttpd/job_housekeeper.cpp
+        ikafssnhttpd/result_store.cpp
     )
     target_link_libraries(ikafssn_httpd_jobstore PUBLIC
-        ikafssn_httpd_backend ikafssn_protocol ikafssn_util ikafssn_core
+        ikafssn_httpd_backend ikafssn_zstd_oneshot
+        ikafssn_protocol ikafssn_util ikafssn_core
         SQLite::SQLite3
     )
 
@@ -306,7 +319,7 @@ if(BUILD_HTTPD)
         ikafssnhttpd/http_controller.cpp
     )
     target_link_libraries(ikafssn_httpd_controller PUBLIC
-        ikafssn_httpd_backend ikafssn_httpd_jobstore
+        ikafssn_httpd_backend ikafssn_httpd_jobstore ikafssn_zstd_oneshot
         ikafssn_protocol ikafssn_util ikafssn_core
         Drogon::Drogon
     )

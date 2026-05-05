@@ -8,10 +8,12 @@
 namespace ikafssn {
 
 JobWorker::JobWorker(JobStore& store,
+                     ResultStore& results,
                      std::shared_ptr<BackendManager> manager,
                      Logger& logger,
                      int max_nretry)
     : store_(store)
+    , results_(results)
     , manager_(std::move(manager))
     , logger_(logger)
     , max_nretry_(max_nretry > 0 ? max_nretry : 1) {}
@@ -82,9 +84,30 @@ void JobWorker::process_one_(JobMeta& meta,
 
     if (ok) {
         auto blob = serialize(resp);
+        std::string write_err;
+        if (!results_.write(meta.job_id, blob.data(), blob.size(),
+                            write_err)) {
+            // ENOSPC / permission error / etc.: switch to mark_failed
+            // so the client sees a clean failure rather than waiting
+            // forever for a result that will never appear.
+            std::string fail_reason = "result_write_failed: " + write_err;
+            std::string mf_err;
+            if (!store_.mark_failed(meta.job_id, write_err, fail_reason,
+                                    mf_err)) {
+                logger_.error("Job %s: mark_failed (after result_write) "
+                              "failed: %s",
+                              meta.job_id.c_str(), mf_err.c_str());
+            } else {
+                logger_.error("Job %s: result write failed (%s); marked failed",
+                              meta.job_id.c_str(), write_err.c_str());
+            }
+            return;
+        }
         std::string err;
-        if (!store_.mark_done(meta.job_id, blob, err)) {
-            logger_.error("Job %s: mark_done failed: %s",
+        if (!store_.mark_done(meta.job_id, err)) {
+            // The file is now an orphan; the housekeeper's periodic
+            // sweep will clean it up.  Log loudly because this is rare.
+            logger_.error("Job %s: mark_done failed (file written): %s",
                           meta.job_id.c_str(), err.c_str());
         }
         return;

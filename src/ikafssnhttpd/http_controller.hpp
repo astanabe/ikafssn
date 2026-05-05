@@ -11,6 +11,7 @@
 #include "ikafssnhttpd/backend_manager.hpp"
 #include "ikafssnhttpd/job_store.hpp"
 #include "ikafssnhttpd/job_worker.hpp"
+#include "ikafssnhttpd/result_store.hpp"
 #include "protocol/messages.hpp"
 
 namespace ikafssn {
@@ -29,7 +30,8 @@ class HttpController {
 public:
     HttpController(std::shared_ptr<BackendManager> manager,
                    JobStore& store,
-                   JobWorker& worker);
+                   JobWorker& worker,
+                   ResultStore& results);
 
     // Register HTTP routes with Drogon.  Must be called before app().run().
     void register_routes(const std::string& path_prefix);
@@ -60,8 +62,9 @@ public:
 
 private:
     std::shared_ptr<BackendManager> manager_;
-    JobStore*  store_;
-    JobWorker* worker_;
+    JobStore*    store_;
+    JobWorker*   worker_;
+    ResultStore* results_;
 
     static drogon::HttpResponsePtr make_error_response(
         drogon::HttpStatusCode status, const std::string& message);

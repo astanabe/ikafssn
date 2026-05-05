@@ -49,6 +49,60 @@ bool JobStore::exec_(const char* sql, std::string& error_msg) {
     return true;
 }
 
+bool JobStore::check_schema(std::string& error_msg) {
+    // user_version probe.
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, "PRAGMA user_version;", -1,
+                                &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        error_msg = std::string("prepare PRAGMA user_version: ")
+                  + sqlite3_errmsg(db_);
+        return false;
+    }
+    int user_version = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        user_version = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+
+    // Probe whether the jobs table exists at all and whether it carries
+    // the legacy `result_blob` column.
+    bool has_jobs       = false;
+    bool has_result_blob = false;
+    rc = sqlite3_prepare_v2(db_, "PRAGMA table_info(jobs);", -1,
+                            &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        error_msg = std::string("prepare PRAGMA table_info: ")
+                  + sqlite3_errmsg(db_);
+        return false;
+    }
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        has_jobs = true;
+        const unsigned char* name = sqlite3_column_text(stmt, 1);
+        if (name && std::strcmp(reinterpret_cast<const char*>(name),
+                                "result_blob") == 0) {
+            has_result_blob = true;
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    if (!has_jobs) {
+        // Brand-new DB; open() will create the schema and stamp
+        // user_version=2.
+        return true;
+    }
+    if (has_result_blob || user_version < 2) {
+        error_msg = "jobs.db has incompatible schema (user_version="
+                  + std::to_string(user_version)
+                  + (has_result_blob ? ", legacy result_blob column present"
+                                     : "")
+                  + "); please delete jobs.db and restart so the new"
+                    " file-based result store schema can be initialised";
+        return false;
+    }
+    return true;
+}
+
 bool JobStore::open(const std::string& path, std::string& error_msg) {
     std::lock_guard<std::mutex> lock(mu_);
     if (db_) {
@@ -79,7 +133,12 @@ bool JobStore::open(const std::string& path, std::string& error_msg) {
     if (!exec_("PRAGMA journal_mode=WAL;",     error_msg)) return false;
     if (!exec_("PRAGMA synchronous=NORMAL;",   error_msg)) return false;
     if (!exec_("PRAGMA busy_timeout=5000;",    error_msg)) return false;
-    if (!exec_("PRAGMA user_version=1;",       error_msg)) return false;
+
+    if (!check_schema(error_msg)) {
+        sqlite3_close(db_);
+        db_ = nullptr;
+        return false;
+    }
 
     if (!exec_(
         "CREATE TABLE IF NOT EXISTS jobs ("
@@ -87,7 +146,6 @@ bool JobStore::open(const std::string& path, std::string& error_msg) {
         " status        TEXT     NOT NULL CHECK ("
         "   status IN ('queued','running','done','failed')),"
         " request_blob  BLOB     NOT NULL,"
-        " result_blob   BLOB,"
         " error_message TEXT,"
         " fail_reason   TEXT,"
         " attempts      INTEGER  NOT NULL DEFAULT 0,"
@@ -102,6 +160,11 @@ bool JobStore::open(const std::string& path, std::string& error_msg) {
                " ON jobs(status, submitted_at);", error_msg)) return false;
     if (!exec_("CREATE INDEX IF NOT EXISTS idx_jobs_completed_at"
                " ON jobs(completed_at);", error_msg)) return false;
+
+    // Stamp user_version=2 (file-based result store).  Do this last so
+    // a partially-initialised DB still fails check_schema on the next
+    // startup.
+    if (!exec_("PRAGMA user_version=2;", error_msg)) return false;
 
     return true;
 }
@@ -215,25 +278,21 @@ bool JobStore::fetch_one_queued(JobMeta& out_meta,
     return true;
 }
 
-bool JobStore::mark_done(const std::string& job_id,
-                         const std::vector<uint8_t>& result_blob,
-                         std::string& error_msg) {
+bool JobStore::mark_done(const std::string& job_id, std::string& error_msg) {
     std::lock_guard<std::mutex> lock(mu_);
     int64_t now = now_unix();
 
     sqlite3_stmt* stmt = nullptr;
     const char* sql =
-        "UPDATE jobs SET status='done', result_blob=?, completed_at=?"
+        "UPDATE jobs SET status='done', completed_at=?"
         " WHERE job_id=? AND status='running';";
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         error_msg = std::string("prepare mark_done: ") + sqlite3_errmsg(db_);
         return false;
     }
-    sqlite3_bind_blob(stmt, 1, result_blob.data(),
-                      static_cast<int>(result_blob.size()), SQLITE_TRANSIENT);
-    sqlite3_bind_int64(stmt, 2, now);
-    sqlite3_bind_text(stmt, 3, job_id.data(),
+    sqlite3_bind_int64(stmt, 1, now);
+    sqlite3_bind_text(stmt, 2, job_id.data(),
                       static_cast<int>(job_id.size()), SQLITE_TRANSIENT);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -358,77 +417,80 @@ bool JobStore::get_status(const std::string& job_id, JobMeta& out,
     return true;
 }
 
-bool JobStore::get_result(const std::string& job_id,
-                          std::vector<uint8_t>& out,
-                          bool& not_found,
-                          bool& wrong_status,
-                          std::string& error_msg) {
-    std::lock_guard<std::mutex> lock(mu_);
-    not_found = false;
-    wrong_status = false;
-
-    sqlite3_stmt* stmt = nullptr;
-    const char* sql = "SELECT status, result_blob FROM jobs WHERE job_id=?;";
-    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        error_msg = std::string("prepare get_result: ") + sqlite3_errmsg(db_);
-        return false;
-    }
-    sqlite3_bind_text(stmt, 1, job_id.data(),
-                      static_cast<int>(job_id.size()), SQLITE_TRANSIENT);
-
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_DONE) {
-        sqlite3_finalize(stmt);
-        not_found = true;
-        return false;
-    }
-    if (rc != SQLITE_ROW) {
-        error_msg = std::string("get_result step: ") + sqlite3_errmsg(db_);
-        sqlite3_finalize(stmt);
-        return false;
-    }
-
-    const unsigned char* st = sqlite3_column_text(stmt, 0);
-    JobStatus s = JobStatus::kQueued;
-    if (st) job_status_parse(reinterpret_cast<const char*>(st), s);
-    if (s != JobStatus::kDone) {
-        sqlite3_finalize(stmt);
-        wrong_status = true;
-        return false;
-    }
-    const void* blob = sqlite3_column_blob(stmt, 1);
-    int blob_n = sqlite3_column_bytes(stmt, 1);
-    out.assign(reinterpret_cast<const uint8_t*>(blob),
-               reinterpret_cast<const uint8_t*>(blob) + blob_n);
-    sqlite3_finalize(stmt);
-    return true;
-}
-
 int64_t JobStore::delete_expired(int64_t retention_seconds,
+                                 std::vector<std::string>& out_deleted_ids,
                                  std::string& error_msg) {
     std::lock_guard<std::mutex> lock(mu_);
     int64_t cutoff = now_unix() - retention_seconds;
+    int64_t deleted = 0;
 
-    sqlite3_stmt* stmt = nullptr;
-    const char* sql =
-        "DELETE FROM jobs"
-        " WHERE status IN ('done','failed')"
-        "   AND completed_at IS NOT NULL"
-        "   AND completed_at < ?;";
-    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        error_msg = std::string("prepare delete_expired: ") + sqlite3_errmsg(db_);
+    if (!exec_("BEGIN IMMEDIATE;", error_msg)) return 0;
+
+    {
+        sqlite3_stmt* stmt = nullptr;
+        const char* sql =
+            "SELECT job_id FROM jobs"
+            " WHERE status IN ('done','failed')"
+            "   AND completed_at IS NOT NULL"
+            "   AND completed_at < ?;";
+        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            error_msg = std::string("prepare delete_expired select: ")
+                      + sqlite3_errmsg(db_);
+            std::string ignored;
+            exec_("ROLLBACK;", ignored);
+            return 0;
+        }
+        sqlite3_bind_int64(stmt, 1, cutoff);
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            const unsigned char* jid = sqlite3_column_text(stmt, 0);
+            if (jid) out_deleted_ids.emplace_back(
+                reinterpret_cast<const char*>(jid));
+        }
+        sqlite3_finalize(stmt);
+        if (rc != SQLITE_DONE) {
+            error_msg = std::string("delete_expired select step: ")
+                      + sqlite3_errmsg(db_);
+            std::string ignored;
+            exec_("ROLLBACK;", ignored);
+            return 0;
+        }
+    }
+
+    {
+        sqlite3_stmt* stmt = nullptr;
+        const char* sql =
+            "DELETE FROM jobs"
+            " WHERE status IN ('done','failed')"
+            "   AND completed_at IS NOT NULL"
+            "   AND completed_at < ?;";
+        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            error_msg = std::string("prepare delete_expired delete: ")
+                      + sqlite3_errmsg(db_);
+            std::string ignored;
+            exec_("ROLLBACK;", ignored);
+            return 0;
+        }
+        sqlite3_bind_int64(stmt, 1, cutoff);
+        rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (rc != SQLITE_DONE) {
+            error_msg = std::string("delete_expired delete step: ")
+                      + sqlite3_errmsg(db_);
+            std::string ignored;
+            exec_("ROLLBACK;", ignored);
+            return 0;
+        }
+        deleted = sqlite3_changes(db_);
+    }
+
+    if (!exec_("COMMIT;", error_msg)) {
+        std::string ignored;
+        exec_("ROLLBACK;", ignored);
         return 0;
     }
-    sqlite3_bind_int64(stmt, 1, cutoff);
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    if (rc != SQLITE_DONE) {
-        error_msg = std::string("delete_expired step: ") + sqlite3_errmsg(db_);
-        return 0;
-    }
-    return sqlite3_changes(db_);
+    return deleted;
 }
 
 int64_t JobStore::requeue_orphans(std::string& error_msg) {

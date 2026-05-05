@@ -522,9 +522,14 @@ Backend connection (at least one required; order = priority):
 Job store (async REST):
   -db <path>                  SQLite job store path
                               (default: /var/lib/ikafssnhttpd/jobs.db)
+  -result_dir <path>          Per-job result file directory (one zstd file per
+                              completed job, served via sendfile(2) to clients)
+                              (default: /var/lib/ikafssnhttpd/results)
+  -result_compression_level <int>  Zstd compression level for result files
+                              (default: 3, range: 1-22)
   -retention_time <int>       Done/failed job retention in seconds (default: 86400)
                               After this duration the housekeeper purges the row
-                              and any cached defline/result blobs from disk.
+                              and removes the matching result file.
   -max_nretry <int>           Per-job dispatch retry cap (default: 3)
   -nthread_worker <int>       Backend search worker pool size (default: 4)
 
@@ -542,15 +547,15 @@ Options:
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v1/jobs` | Submit a search job (query sequences in JSON body); returns `{job_id, status}` |
+| POST | `/api/v1/jobs` | Submit a search job. Body is a JSON document. `ikafssnclient` always sends it as a single zstd frame with `Content-Type: application/zstd`; ad-hoc HTTP clients (curl, scripts, etc.) may send it uncompressed with `Content-Type: application/json` to skip the pre-compression step. Any other Content-Type is rejected with HTTP 415. Returns `{job_id, status}`. |
 | GET  | `/api/v1/jobs/{job_id}` | Job status (`queued` / `running` / `done` / `failed` / `timeout`) |
-| GET  | `/api/v1/jobs/{job_id}/result` | Fetch the serialized SearchResponse blob (only valid once status = `done`) |
+| GET  | `/api/v1/jobs/{job_id}/result` | Fetch the serialized SearchResponse blob (only valid once status = `done`). Response body is a single zstd frame; `Content-Type: application/zstd`. Decode with `zstd -d` or `ZSTD_decompress` before deserialising. |
 | GET  | `/api/v1/info` | Aggregated index information from all backends |
 | GET  | `/api/v1/health` | Health check (OK if any backend is reachable) |
 
 The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_queue_size`, `queue_depth`, and `max_nseq_per_req` (computed as `sum(min(available_i, per_req_i))` across backends) across all serving backends. A top-level `max_nseq_per_req` field reports the minimum across all modes.
 
-`POST /api/v1/jobs` returns immediately with a generated `job_id`; the worker pool dispatches the request asynchronously to a backend. Clients poll `GET /api/v1/jobs/{job_id}` until status reaches `done`, then download the result blob. Jobs that finish (success or failure) are kept for `-retention_time` seconds; the housekeeper purges expired rows along with cached `*.deflines.zst` / `*.result.bin.zst` artefacts under the job-store directory.
+`POST /api/v1/jobs` returns immediately with a generated `job_id`; the worker pool dispatches the request asynchronously to a backend. When a job finishes successfully the worker writes its serialized `SearchResponse` to a per-job zstd file at `<result_dir>/<ab>/<job_id>.bin.zst` (where `<ab>` is the first two characters of `job_id`, sharded so directories stay small) and stamps the SQLite row to `done`; `GET /api/v1/jobs/{job_id}/result` then streams that file directly via `sendfile(2)` with `Content-Type: application/zstd`, so no in-memory copy of the result is held by `ikafssnhttpd`. Clients poll `GET /api/v1/jobs/{job_id}` until status reaches `done` and download the result. Jobs are kept for `-retention_time` seconds; the housekeeper purges expired rows from SQLite and then removes the matching result files. On startup, leftover `*.bin.zst.tmp` files (from a hard kill mid-write) are swept once. A periodic orphan sweep also removes result files whose SQLite row has already disappeared (rare: only after a failed `mark_done`).
 
 **Examples:**
 
@@ -577,7 +582,7 @@ Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTT
 
 **Socket/TCP mode (synchronous) — checkpointing:** When connected via `-socket` or `-tcp`, the client saves intermediate results to a temporary directory during batch processing. If the process is interrupted (e.g., Ctrl+C, network failure), re-running the same command resumes from where it left off, skipping already-completed queries. The temporary directory is named `{output}.{input}.{ix_name}.{kk}.ikafssn.tmp/` and is automatically cleaned up after successful completion. A directory-based lock prevents concurrent runs with the same parameters. Resume validation checks the search parameters, input file SHA256, and integrity of each batch file.
 
-**HTTP mode (asynchronous, polling-based):** When connected via `-http`, the client splits the input into one job per batch and submits each via `POST /api/v1/jobs` to `ikafssnhttpd`. Each job's metadata is persisted under `~/.ikafssnclient/<group_id>/<job_id>.json` along with a zstd-compressed defline cache (`<job_id>.deflines.zst`); the client then polls `GET /api/v1/jobs/{job_id}` until the job reaches a terminal state, downloads the result blob (`<job_id>.result.bin.zst`), and merges into the user's output file. Because all state is on disk, the client is resumable across reboots — `-resume <id>` re-enters the polling loop for an existing group or job, and `-submit_only` returns the `group_id` immediately after submission so a separate process (or a later invocation of `-resume`) can collect the result.
+**HTTP mode (asynchronous, polling-based):** When connected via `-http`, the client splits the input into one job per batch and submits each via `POST /api/v1/jobs` to `ikafssnhttpd`. The request body is zstd-compressed before being sent (`Content-Type: application/zstd`) so wire bandwidth stays small even for million-base query batches; the server transparently decompresses on receipt. Each job's metadata is persisted under `~/.ikafssnclient/<group_id>/<job_id>.json` along with a zstd-compressed defline cache (`<job_id>.deflines.zst`); the client then polls `GET /api/v1/jobs/{job_id}` until the job reaches a terminal state and downloads the result. The downloaded body is already a single zstd frame so it is written verbatim to `<job_id>.result.bin.zst` (no double-compression), then decoded and merged into the user's output file. Because all state is on disk, the client is resumable across reboots — `-resume <id>` re-enters the polling loop for an existing group or job, and `-submit_only` returns the `group_id` immediately after submission so a separate process (or a later invocation of `-resume`) can collect the result. Note: `*.result.bin.zst` files written by older clients used a doubled-zstd format; they are not compatible with the new code and any partially completed groups should be discarded after upgrade.
 
 ```
 ikafssnclient [options]

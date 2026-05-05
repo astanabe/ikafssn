@@ -10,6 +10,7 @@
 
 #include "ikafssnhttpd/backend_manager.hpp"
 #include "ikafssnhttpd/job_store.hpp"
+#include "ikafssnhttpd/result_store.hpp"
 #include "util/logger.hpp"
 
 namespace ikafssn {
@@ -25,6 +26,7 @@ namespace ikafssn {
 class JobWorker {
 public:
     JobWorker(JobStore& store,
+              ResultStore& results,
               std::shared_ptr<BackendManager> manager,
               Logger& logger,
               int max_nretry);
@@ -46,6 +48,7 @@ public:
 
 private:
     JobStore&                       store_;
+    ResultStore&                    results_;
     std::shared_ptr<BackendManager> manager_;
     Logger&                         logger_;
     int                             max_nretry_;

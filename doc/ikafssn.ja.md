@@ -513,9 +513,15 @@ ikafssnhttpd [options]
 ジョブストア (非同期 REST):
   -db <path>                  SQLite ジョブストアのパス
                               (デフォルト: /var/lib/ikafssnhttpd/jobs.db)
+  -result_dir <path>          ジョブ結果ファイル保存ディレクトリ。完了ジョブごとに
+                              1 つの zstd ファイルを書き、sendfile(2) でクライアントへ
+                              直接送出します
+                              (デフォルト: /var/lib/ikafssnhttpd/results)
+  -result_compression_level <int>  結果ファイルの zstd 圧縮レベル
+                              (デフォルト: 3、許容範囲: 1-22)
   -retention_time <int>       完了/失敗ジョブの保持秒数 (デフォルト: 86400)
-                              これを過ぎるとハウスキーパが該当行と
-                              キャッシュ済みの defline / result blob を削除します
+                              これを過ぎるとハウスキーパが該当行と対応する
+                              結果ファイルを削除します
   -max_nretry <int>           1 ジョブあたりのディスパッチ再試行上限 (デフォルト: 3)
   -nthread_worker <int>       バックエンド検索ワーカープールのスレッド数 (デフォルト: 4)
 
@@ -533,15 +539,15 @@ ikafssnhttpd [options]
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| POST | `/api/v1/jobs` | 検索ジョブの投入 (クエリ配列を JSON ボディで送信)。`{job_id, status}` を即時返却 |
+| POST | `/api/v1/jobs` | 検索ジョブの投入。ボディは JSON ドキュメント。`ikafssnclient` は常に単一 zstd フレームに圧縮し `Content-Type: application/zstd` で送信します。curl やスクリプトなど一時的な HTTP クライアントから直接投入する場合は、事前圧縮を省略するために `Content-Type: application/json` で生 JSON を送ることもできます。それ以外の Content-Type は HTTP 415 で拒否されます。`{job_id, status}` を即時返却 |
 | GET  | `/api/v1/jobs/{job_id}` | ジョブステータス (`queued` / `running` / `done` / `failed` / `timeout`) |
-| GET  | `/api/v1/jobs/{job_id}/result` | シリアライズ済み SearchResponse blob (status = `done` 時のみ有効) |
+| GET  | `/api/v1/jobs/{job_id}/result` | シリアライズ済み SearchResponse blob (status = `done` 時のみ有効)。レスポンスボディは単一 zstd フレームで `Content-Type: application/zstd`。デシリアライズ前に `zstd -d` または `ZSTD_decompress` で展開してください |
 | GET  | `/api/v1/info` | 全バックエンドの統合インデックス情報 |
 | GET  | `/api/v1/health` | ヘルスチェック (いずれかのバックエンドが到達可能なら OK) |
 
 `/api/v1/info` レスポンスは全 healthy バックエンドのデータベースを統合して返します。複数バックエンドで提供されるデータベースの場合、容量情報は kmer_group 内の `modes` 配列にモードごとに集約され、全提供バックエンドの `max_queue_size`、`queue_depth`、および `max_nseq_per_req` (各バックエンドの `min(空きスロット, per_req)` の合計として算出) が表示されます。トップレベルにも全モードの最小値として `max_nseq_per_req` フィールドが出力されます。
 
-`POST /api/v1/jobs` は生成された `job_id` を即座に返し、ワーカープールがバックエンドへ非同期にディスパッチします。クライアントは `GET /api/v1/jobs/{job_id}` を `done` になるまでポーリングし、その後結果 blob を取得します。完了 (成功・失敗) ジョブは `-retention_time` 秒間保持され、ハウスキーパが期限切れ行とジョブストアディレクトリ配下の `*.deflines.zst` / `*.result.bin.zst` キャッシュアーティファクトをまとめて削除します。
+`POST /api/v1/jobs` は生成された `job_id` を即座に返し、ワーカープールがバックエンドへ非同期にディスパッチします。ジョブが正常終了するとワーカーはシリアライズ済み `SearchResponse` を `<result_dir>/<ab>/<job_id>.bin.zst` (ここで `<ab>` は `job_id` 先頭 2 文字。シャーディングによりディレクトリエントリ数を抑える) に zstd ファイルとして書き出し、SQLite 行のステータスを `done` に更新します。`GET /api/v1/jobs/{job_id}/result` はそのファイルを `sendfile(2)` でゼロコピー送出 (`Content-Type: application/zstd`) するため、`ikafssnhttpd` は結果データをメモリに載せません。クライアントは `GET /api/v1/jobs/{job_id}` を `done` になるまでポーリングし、結果を取得します。完了 (成功・失敗) ジョブは `-retention_time` 秒間保持され、ハウスキーパが期限切れ行を SQLite から削除した後、対応する結果ファイルを順に削除します。起動時には強制終了で書きかけ状態だった `*.bin.zst.tmp` を一括スイープし、また定期的なオーファンスイープで SQLite 行が消えた残存結果ファイル (まれ: `mark_done` 失敗後にのみ発生) も回収します。
 
 **使用例:**
 
@@ -568,7 +574,7 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 **ソケット/TCP モード (同期) — チェックポインティング:** `-socket` または `-tcp` で接続した場合、クライアントはバッチ処理中の中間結果を一時ディレクトリに自動保存します。プロセスが中断された場合 (例: Ctrl+C、ネットワーク障害)、同じコマンドを再実行すると中断箇所から再開し、処理済みクエリをスキップします。一時ディレクトリの命名は `{出力}.{入力}.{ix名}.{kk}.ikafssn.tmp/` で、正常完了後に自動削除されます。ディレクトリベースのロックにより同一パラメータでの同時実行を防止します。再開時の検証では検索パラメータ、入力ファイルの SHA256、各バッチファイルの整合性をチェックします。
 
-**HTTP モード (非同期ポーリング型):** `-http` で接続した場合、クライアントは入力をバッチ単位の複数ジョブに分割し、`POST /api/v1/jobs` で `ikafssnhttpd` に投入します。各ジョブのメタデータは `~/.ikafssnclient/<group_id>/<job_id>.json` に永続化され、defline キャッシュ (`<job_id>.deflines.zst`) も併せて保存されます。クライアントは `GET /api/v1/jobs/{job_id}` を終端ステータスに達するまでポーリングし、結果 blob (`<job_id>.result.bin.zst`) を取得後、ユーザの出力ファイルへマージします。状態がすべてディスク上に保持されているため、再起動を跨いでも復帰可能です — `-resume <id>` は既存のグループ/ジョブのポーリングループに再入し、`-submit_only` は投入直後に `group_id` を返して終了するため、別プロセス (または後続の `-resume` 呼び出し) で結果を回収できます。
+**HTTP モード (非同期ポーリング型):** `-http` で接続した場合、クライアントは入力をバッチ単位の複数ジョブに分割し、`POST /api/v1/jobs` で `ikafssnhttpd` に投入します。リクエストボディは送信前に zstd 圧縮され (`Content-Type: application/zstd`)、巨大なクエリバッチでも転送帯域を抑えられます (サーバ側で透過的に展開)。各ジョブのメタデータは `~/.ikafssnclient/<group_id>/<job_id>.json` に永続化され、defline キャッシュ (`<job_id>.deflines.zst`) も併せて保存されます。クライアントは `GET /api/v1/jobs/{job_id}` を終端ステータスに達するまでポーリングし、結果を取得します。サーバから返るレスポンスボディは既に単一 zstd フレームなので、`<job_id>.result.bin.zst` にはそのままバイト列として書き込み (二重圧縮しない)、続いて展開・デシリアライズしてユーザの出力ファイルへマージします。状態がすべてディスク上に保持されているため、再起動を跨いでも復帰可能です — `-resume <id>` は既存のグループ/ジョブのポーリングループに再入し、`-submit_only` は投入直後に `group_id` を返して終了するため、別プロセス (または後続の `-resume` 呼び出し) で結果を回収できます。注意: 旧クライアントが書いた `*.result.bin.zst` は zstd を二重に掛けた旧フォーマットであり、新コードとは互換性がありません。アップグレード時は未完了のグループは破棄してください。
 
 ```
 ikafssnclient [options]

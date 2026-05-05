@@ -1,10 +1,11 @@
-// Round-trip test for src/ikafssnclient/zstd_io.{hpp,cpp}.
+// Round-trip test for src/util/zstd_oneshot.{hpp,cpp}.
 //
 // Exercises both the in-memory compress/decompress path and the
 // `*_to_file` / `*_file` variants used by the async-job persistence
-// (`<job_id>.deflines.zst`, `<job_id>.result.bin.zst`).
+// (`<job_id>.deflines.zst`, `<job_id>.result.bin.zst`) and by the
+// httpd ResultStore.
 
-#include "ikafssnclient/zstd_io.hpp"
+#include "util/zstd_oneshot.hpp"
 
 #include <cstdio>
 #include <cstdlib>
