@@ -96,18 +96,17 @@ static void collect_position_hits(
 }
 
 template <typename KmerInt>
-void phase_a_one_strand_single(
+void stage1_one_strand_single(
     const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
     int k,
     bool is_reverse,
     const KixReader& kix,
-    const KpxReader& kpx,
     const OidFilter& filter,
     const SearchConfig& config,
     uint32_t resolved_threshold,
     uint32_t effective_min_score,
     Stage1Buffer& buf,
-    PhaseAState& state) {
+    JobState& state) {
 
     state.is_reverse = is_reverse;
     state.both_mode = false;
@@ -132,12 +131,25 @@ void phase_a_one_strand_single(
         return;
     }
 
-    std::vector<SeqId> candidate_sids;
-    candidate_sids.reserve(state.candidates.size());
     state.stage1_scores.reserve(state.candidates.size());
     for (const auto& c : state.candidates) {
-        candidate_sids.push_back(c.id);
         state.stage1_scores[c.id] = c.score;
+    }
+}
+
+template <typename KmerInt>
+void stage2a_one_strand_single(
+    const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
+    const KixReader& kix, const KpxReader& kpx,
+    JobState& state) {
+
+    if (state.mode1_only) return;
+    if (state.candidates.empty()) return;
+
+    std::vector<SeqId> candidate_sids;
+    candidate_sids.reserve(state.candidates.size());
+    for (const auto& c : state.candidates) {
+        candidate_sids.push_back(c.id);
     }
     std::sort(candidate_sids.begin(), candidate_sids.end());
 
@@ -146,20 +158,19 @@ void phase_a_one_strand_single(
 }
 
 template <typename KmerInt>
-void phase_a_one_strand_both(
+void stage1_one_strand_both(
     const uint32_t* pos_cod, const KmerInt* kmers_cod, size_t n_cod,
     const uint32_t* pos_opt, const KmerInt* kmers_opt, size_t n_opt,
     int k,
     bool is_reverse,
-    const KixReader& kix_cod, const KpxReader& kpx_cod,
-    const KixReader& kix_opt, const KpxReader& kpx_opt,
+    const KixReader& kix_cod, const KixReader& kix_opt,
     const OidFilter& filter,
     const SearchConfig& config,
     uint32_t resolved_threshold_cod,
     uint32_t resolved_threshold_opt,
     uint32_t effective_min_score,
     Stage1Buffer& buf,
-    PhaseAState& state) {
+    JobState& state) {
 
     state.is_reverse = is_reverse;
     state.both_mode = true;
@@ -229,6 +240,18 @@ void phase_a_one_strand_both(
     }
     std::sort(state.sorted_candidate_sids.begin(),
               state.sorted_candidate_sids.end());
+}
+
+template <typename KmerInt>
+void stage2a_one_strand_both(
+    const uint32_t* pos_cod, const KmerInt* kmers_cod, size_t n_cod,
+    const uint32_t* pos_opt, const KmerInt* kmers_opt, size_t n_opt,
+    const KixReader& kix_cod, const KpxReader& kpx_cod,
+    const KixReader& kix_opt, const KpxReader& kpx_opt,
+    JobState& state) {
+
+    if (state.mode1_only) return;
+    if (state.candidates.empty()) return;
 
     collect_position_hits(pos_cod, kmers_cod, n_cod, kix_cod, kpx_cod,
                           state.sorted_candidate_sids, state.hits_per_seq);
@@ -237,7 +260,7 @@ void phase_a_one_strand_both(
 }
 
 std::vector<ChainResult>
-phase_b_one_subject(SeqId sid, uint32_t stage1_score, const PhaseAState& state) {
+stage2b_one_subject(SeqId sid, uint32_t stage1_score, const JobState& state) {
     auto it = state.hits_per_seq.find(sid);
     if (it == state.hits_per_seq.end()) return {};
     auto chains = chain_hits(it->second, sid, state.span,
@@ -266,182 +289,251 @@ void sort_and_truncate(SearchResult& result, const SearchConfig& config) {
     }
 }
 
-// One element of the flat (job, strand, sid) tuple stream consumed by
-// Phase B's parallel_for.  Stage1 score is captured at flatten time so
-// Phase B does not need to look up `state.stage1_scores` again.
 namespace {
+
+// Fan out one ext_job into the right Stage 1 entry point.  Used by
+// run_stage1_jobs.
+template <typename KmerInt>
+void dispatch_stage1(
+    const ExtJob& ej,
+    const QueryBundle<KmerInt>& qb,
+    const VolumeBundle<KmerInt>& vb,
+    int k, const SearchConfig& config, bool both_mode,
+    Stage1Buffer& buf,
+    JobState& state) {
+
+    const bool is_reverse = (ej.strand_idx != 0);
+
+    if (both_mode) {
+        const auto& qd_cod = *qb.qdata_primary;
+        const auto& qd_opt = *qb.qdata_secondary;
+        if (!is_reverse) {
+            auto unify = [](uint32_t a, uint32_t b) {
+                if (a > 0 && b > 0) return std::min(a, b);
+                return std::max(a, b);
+            };
+            stage1_one_strand_both<KmerInt>(
+                qd_cod.fwd_positions.data(),
+                qd_cod.fwd_kmer_values.data(),
+                qd_cod.fwd_positions.size(),
+                qd_opt.fwd_positions.data(),
+                qd_opt.fwd_kmer_values.data(),
+                qd_opt.fwd_positions.size(),
+                k, false,
+                *vb.kix, *vb.kix_opt,
+                *vb.filter, config,
+                qd_cod.resolved_threshold_fwd,
+                qd_opt.resolved_threshold_fwd,
+                unify(qd_cod.effective_min_score_fwd,
+                      qd_opt.effective_min_score_fwd),
+                buf, state);
+        } else {
+            auto unify = [](uint32_t a, uint32_t b) {
+                if (a > 0 && b > 0) return std::min(a, b);
+                return std::max(a, b);
+            };
+            stage1_one_strand_both<KmerInt>(
+                qd_cod.rc_positions.data(),
+                qd_cod.rc_kmer_values.data(),
+                qd_cod.rc_positions.size(),
+                qd_opt.rc_positions.data(),
+                qd_opt.rc_kmer_values.data(),
+                qd_opt.rc_positions.size(),
+                k, true,
+                *vb.kix, *vb.kix_opt,
+                *vb.filter, config,
+                qd_cod.resolved_threshold_rc,
+                qd_opt.resolved_threshold_rc,
+                unify(qd_cod.effective_min_score_rc,
+                      qd_opt.effective_min_score_rc),
+                buf, state);
+        }
+    } else {
+        const auto& qd = *qb.qdata_primary;
+        if (!is_reverse) {
+            stage1_one_strand_single<KmerInt>(
+                qd.fwd_positions.data(),
+                qd.fwd_kmer_values.data(),
+                qd.fwd_positions.size(),
+                k, false,
+                *vb.kix, *vb.filter, config,
+                qd.resolved_threshold_fwd,
+                qd.effective_min_score_fwd,
+                buf, state);
+        } else {
+            stage1_one_strand_single<KmerInt>(
+                qd.rc_positions.data(),
+                qd.rc_kmer_values.data(),
+                qd.rc_positions.size(),
+                k, true,
+                *vb.kix, *vb.filter, config,
+                qd.resolved_threshold_rc,
+                qd.effective_min_score_rc,
+                buf, state);
+        }
+    }
+}
+
+template <typename KmerInt>
+void dispatch_stage2a(
+    const ExtJob& ej,
+    const QueryBundle<KmerInt>& qb,
+    const VolumeBundle<KmerInt>& vb,
+    bool both_mode,
+    JobState& state) {
+
+    const bool is_reverse = (ej.strand_idx != 0);
+
+    if (both_mode) {
+        const auto& qd_cod = *qb.qdata_primary;
+        const auto& qd_opt = *qb.qdata_secondary;
+        if (!is_reverse) {
+            stage2a_one_strand_both<KmerInt>(
+                qd_cod.fwd_positions.data(),
+                qd_cod.fwd_kmer_values.data(),
+                qd_cod.fwd_positions.size(),
+                qd_opt.fwd_positions.data(),
+                qd_opt.fwd_kmer_values.data(),
+                qd_opt.fwd_positions.size(),
+                *vb.kix, *vb.kpx,
+                *vb.kix_opt, *vb.kpx_opt,
+                state);
+        } else {
+            stage2a_one_strand_both<KmerInt>(
+                qd_cod.rc_positions.data(),
+                qd_cod.rc_kmer_values.data(),
+                qd_cod.rc_positions.size(),
+                qd_opt.rc_positions.data(),
+                qd_opt.rc_kmer_values.data(),
+                qd_opt.rc_positions.size(),
+                *vb.kix, *vb.kpx,
+                *vb.kix_opt, *vb.kpx_opt,
+                state);
+        }
+    } else {
+        const auto& qd = *qb.qdata_primary;
+        if (!is_reverse) {
+            stage2a_one_strand_single<KmerInt>(
+                qd.fwd_positions.data(),
+                qd.fwd_kmer_values.data(),
+                qd.fwd_positions.size(),
+                *vb.kix, *vb.kpx, state);
+        } else {
+            stage2a_one_strand_single<KmerInt>(
+                qd.rc_positions.data(),
+                qd.rc_kmer_values.data(),
+                qd.rc_positions.size(),
+                *vb.kix, *vb.kpx, state);
+        }
+    }
+}
+
+}  // namespace
+
+template <typename KmerInt>
+void run_stage1_jobs(
+    const std::vector<size_t>& batch_indices,
+    const std::vector<ExtJob>& ext_jobs,
+    const std::vector<QueryBundle<KmerInt>>& queries,
+    const std::vector<VolumeBundle<KmerInt>>& volumes,
+    int k,
+    const SearchConfig& config,
+    bool both_mode,
+    std::vector<JobState>& states,
+    tbb::task_arena& arena,
+    tbb::enumerable_thread_specific<Stage1Buffer>& tls_bufs) {
+
+    if (batch_indices.empty()) return;
+
+    arena.execute([&] {
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, batch_indices.size()),
+            [&](const tbb::blocked_range<size_t>& range) {
+                auto& buf = tls_bufs.local();
+                for (size_t idx = range.begin(); idx != range.end(); ++idx) {
+                    size_t ji = batch_indices[idx];
+                    const auto& ej = ext_jobs[ji];
+                    const auto& qb = queries[ej.qi];
+                    const auto& vb = volumes[ej.vi];
+                    dispatch_stage1<KmerInt>(ej, qb, vb, k, config, both_mode,
+                                              buf, states[ji]);
+                }
+            });
+    });
+}
+
+template <typename KmerInt>
+void run_stage2a_jobs(
+    const std::vector<size_t>& batch_indices,
+    const std::vector<ExtJob>& ext_jobs,
+    const std::vector<QueryBundle<KmerInt>>& queries,
+    const std::vector<VolumeBundle<KmerInt>>& volumes,
+    bool both_mode,
+    std::vector<JobState>& states,
+    tbb::task_arena& arena) {
+
+    if (batch_indices.empty()) return;
+
+    arena.execute([&] {
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, batch_indices.size()),
+            [&](const tbb::blocked_range<size_t>& range) {
+                for (size_t idx = range.begin(); idx != range.end(); ++idx) {
+                    size_t ji = batch_indices[idx];
+                    const auto& ej = ext_jobs[ji];
+                    const auto& qb = queries[ej.qi];
+                    const auto& vb = volumes[ej.vi];
+                    dispatch_stage2a<KmerInt>(ej, qb, vb, both_mode, states[ji]);
+                }
+            });
+    });
+}
+
+namespace {
+// One element of the flat (ext_job, sid) tuple stream consumed by Stage 2B's
+// parallel_for.  Stage1 score is captured at flatten time so Stage 2B does
+// not need to look up `state.stage1_scores` again.
 struct FlatBSlot {
-    size_t job_idx;
-    uint8_t strand_idx;  // 0 = fwd, 1 = rc
-    SeqId sid;
+    size_t   ext_job_idx;
+    SeqId    sid;
     uint32_t stage1_score;
 };
 }  // namespace
 
-template <typename KmerInt>
-std::vector<OrchestratorHit> run_search_jobs(
-    const std::vector<QueryBundle<KmerInt>>& queries,
-    const std::vector<VolumeBundle<KmerInt>>& volumes,
-    const std::vector<std::pair<size_t, size_t>>& jobs,
-    int k,
-    const SearchConfig& config,
-    bool both_mode,
-    tbb::task_arena& arena,
-    tbb::enumerable_thread_specific<Stage1Buffer>& tls_bufs) {
+std::vector<OrchestratorHit>
+run_stage2b_jobs(
+    const std::vector<ExtJob>& ext_jobs,
+    const std::vector<JobState>& states,
+    const std::vector<uint16_t>& volume_indices,
+    tbb::task_arena& arena) {
 
-    // Per-job, per-strand Phase A state.  Indexed [job_idx][strand_idx].
-    struct JobStates { PhaseAState fwd; PhaseAState rc; };
-    std::vector<JobStates> job_states(jobs.size());
+    if (ext_jobs.empty()) return {};
 
-    if (jobs.empty()) return {};
-
-    const bool run_fwd = (config.strand == 2 || config.strand == 1);
-    const bool run_rc  = (config.strand == 2 || config.strand == -1);
-
-    auto unify_min = [](uint32_t a, uint32_t b) -> uint32_t {
-        if (a > 0 && b > 0) return std::min(a, b);
-        return std::max(a, b);
-    };
-
-    // Phase A: one task per job.
-    arena.execute([&] {
-        tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, jobs.size()),
-            [&](const tbb::blocked_range<size_t>& range) {
-                auto& buf = tls_bufs.local();
-                for (size_t ji = range.begin(); ji != range.end(); ++ji) {
-                    const auto [qi, vi] = jobs[ji];
-                    const auto& qb = queries[qi];
-                    const auto& vb = volumes[vi];
-                    auto& js = job_states[ji];
-
-                    if (both_mode) {
-                        const auto& qd_cod = *qb.qdata_primary;
-                        const auto& qd_opt = *qb.qdata_secondary;
-                        if (run_fwd) {
-                            phase_a_one_strand_both<KmerInt>(
-                                qd_cod.fwd_positions.data(),
-                                qd_cod.fwd_kmer_values.data(),
-                                qd_cod.fwd_positions.size(),
-                                qd_opt.fwd_positions.data(),
-                                qd_opt.fwd_kmer_values.data(),
-                                qd_opt.fwd_positions.size(),
-                                k, false,
-                                *vb.kix, *vb.kpx, *vb.kix_opt, *vb.kpx_opt,
-                                *vb.filter, config,
-                                qd_cod.resolved_threshold_fwd,
-                                qd_opt.resolved_threshold_fwd,
-                                unify_min(qd_cod.effective_min_score_fwd,
-                                          qd_opt.effective_min_score_fwd),
-                                buf, js.fwd);
-                        }
-                        if (run_rc) {
-                            phase_a_one_strand_both<KmerInt>(
-                                qd_cod.rc_positions.data(),
-                                qd_cod.rc_kmer_values.data(),
-                                qd_cod.rc_positions.size(),
-                                qd_opt.rc_positions.data(),
-                                qd_opt.rc_kmer_values.data(),
-                                qd_opt.rc_positions.size(),
-                                k, true,
-                                *vb.kix, *vb.kpx, *vb.kix_opt, *vb.kpx_opt,
-                                *vb.filter, config,
-                                qd_cod.resolved_threshold_rc,
-                                qd_opt.resolved_threshold_rc,
-                                unify_min(qd_cod.effective_min_score_rc,
-                                          qd_opt.effective_min_score_rc),
-                                buf, js.rc);
-                        }
-                    } else {
-                        const auto& qd = *qb.qdata_primary;
-                        if (run_fwd) {
-                            phase_a_one_strand_single<KmerInt>(
-                                qd.fwd_positions.data(),
-                                qd.fwd_kmer_values.data(),
-                                qd.fwd_positions.size(),
-                                k, false,
-                                *vb.kix, *vb.kpx, *vb.filter, config,
-                                qd.resolved_threshold_fwd,
-                                qd.effective_min_score_fwd,
-                                buf, js.fwd);
-                        }
-                        if (run_rc) {
-                            phase_a_one_strand_single<KmerInt>(
-                                qd.rc_positions.data(),
-                                qd.rc_kmer_values.data(),
-                                qd.rc_positions.size(),
-                                k, true,
-                                *vb.kix, *vb.kpx, *vb.filter, config,
-                                qd.resolved_threshold_rc,
-                                qd.effective_min_score_rc,
-                                buf, js.rc);
-                        }
-                    }
-                }
-            });
-    });
-
-    // Mode 1 fast path: chain_hits is skipped, so collect mode1_results
-    // directly without building the (job, strand, sid) flat list.
-    if (config.mode == 1) {
-        std::vector<OrchestratorHit> results;
-        for (size_t ji = 0; ji < jobs.size(); ++ji) {
-            const auto [qi, vi] = jobs[ji];
-            const auto& vb = volumes[vi];
-            auto& js = job_states[ji];
-            for (auto* st : { &js.fwd, &js.rc }) {
-                for (auto& cr : st->mode1_results) {
-                    OrchestratorHit oh;
-                    oh.query_idx = qi;
-                    oh.volume_idx = vi;
-                    oh.volume_index = vb.volume_index;
-                    oh.cr = std::move(cr);
-                    results.push_back(std::move(oh));
-                }
-                st->mode1_results.clear();
-            }
-        }
-        return results;
-    }
-
-    // Build flat (job, strand, sid) work list for Phase B.  Iteration order
-    // mirrors the wrapper helpers in volume_searcher.cpp: single-template
-    // walks state.candidates in stage1_filter output order; both-mode walks
-    // sorted_candidate_sids in ascending seq_id order.
     std::vector<FlatBSlot> flat;
     {
         size_t reserve = 0;
-        for (auto& js : job_states) {
-            reserve += js.fwd.candidates.size() + js.rc.candidates.size();
-        }
+        for (const auto& st : states) reserve += st.candidates.size();
         flat.reserve(reserve);
     }
-    for (size_t ji = 0; ji < jobs.size(); ++ji) {
-        auto& js = job_states[ji];
-        PhaseAState* arms[2] = { &js.fwd, &js.rc };
-        for (uint8_t s = 0; s < 2; ++s) {
-            const PhaseAState* st = arms[s];
-            if (st->mode1_only) continue;  // mode 1 already handled
-            if (st->candidates.empty()) continue;
-            if (st->both_mode) {
-                for (SeqId sid : st->sorted_candidate_sids) {
-                    auto sit = st->stage1_scores.find(sid);
-                    uint32_t sc = (sit != st->stage1_scores.end()) ? sit->second : 0;
-                    flat.push_back({ ji, s, sid, sc });
-                }
-            } else {
-                for (const auto& c : st->candidates) {
-                    flat.push_back({ ji, s, c.id, c.score });
-                }
+    for (size_t ji = 0; ji < ext_jobs.size(); ++ji) {
+        const JobState& st = states[ji];
+        if (st.mode1_only) continue;
+        if (st.candidates.empty()) continue;
+        if (st.both_mode) {
+            for (SeqId sid : st.sorted_candidate_sids) {
+                auto sit = st.stage1_scores.find(sid);
+                uint32_t sc = (sit != st.stage1_scores.end()) ? sit->second : 0;
+                flat.push_back({ ji, sid, sc });
+            }
+        } else {
+            for (const auto& c : st.candidates) {
+                flat.push_back({ ji, c.id, c.score });
             }
         }
     }
 
     if (flat.empty()) return {};
 
-    // Phase B: flat parallel_for over (job, strand, sid) tuples.  TBB
-    // work-stealing handles fairness across queries with very different
-    // candidate counts.
     tbb::combinable<std::vector<OrchestratorHit>> tls_results;
     arena.execute([&] {
         tbb::parallel_for(
@@ -450,16 +542,14 @@ std::vector<OrchestratorHit> run_search_jobs(
                 auto& local = tls_results.local();
                 for (size_t i = range.begin(); i != range.end(); ++i) {
                     const auto& slot = flat[i];
-                    const auto [qi, vi] = jobs[slot.job_idx];
-                    const auto& vb = volumes[vi];
-                    const auto& js = job_states[slot.job_idx];
-                    const PhaseAState& st = (slot.strand_idx == 0) ? js.fwd : js.rc;
-                    auto chains = phase_b_one_subject(slot.sid, slot.stage1_score, st);
+                    const ExtJob& ej = ext_jobs[slot.ext_job_idx];
+                    const JobState& st = states[slot.ext_job_idx];
+                    auto chains = stage2b_one_subject(slot.sid, slot.stage1_score, st);
                     for (auto& cr : chains) {
                         OrchestratorHit oh;
-                        oh.query_idx = qi;
-                        oh.volume_idx = vi;
-                        oh.volume_index = vb.volume_index;
+                        oh.query_idx = ej.qi;
+                        oh.volume_idx = ej.vi;
+                        oh.volume_index = volume_indices[ej.vi];
                         oh.cr = std::move(cr);
                         local.push_back(std::move(oh));
                     }
@@ -477,45 +567,84 @@ std::vector<OrchestratorHit> run_search_jobs(
 }
 
 // Explicit template instantiations.
-template void phase_a_one_strand_single<uint16_t>(
+template void stage1_one_strand_single<uint16_t>(
     const uint32_t*, const uint16_t*, size_t, int, bool,
-    const KixReader&, const KpxReader&, const OidFilter&,
-    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, PhaseAState&);
-template void phase_a_one_strand_single<uint32_t>(
+    const KixReader&, const OidFilter&,
+    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, JobState&);
+template void stage1_one_strand_single<uint32_t>(
     const uint32_t*, const uint32_t*, size_t, int, bool,
-    const KixReader&, const KpxReader&, const OidFilter&,
-    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, PhaseAState&);
+    const KixReader&, const OidFilter&,
+    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 
-template void phase_a_one_strand_both<uint16_t>(
+template void stage2a_one_strand_single<uint16_t>(
+    const uint32_t*, const uint16_t*, size_t,
+    const KixReader&, const KpxReader&, JobState&);
+template void stage2a_one_strand_single<uint32_t>(
+    const uint32_t*, const uint32_t*, size_t,
+    const KixReader&, const KpxReader&, JobState&);
+
+template void stage1_one_strand_both<uint16_t>(
     const uint32_t*, const uint16_t*, size_t,
     const uint32_t*, const uint16_t*, size_t,
     int, bool,
-    const KixReader&, const KpxReader&,
-    const KixReader&, const KpxReader&,
+    const KixReader&, const KixReader&,
     const OidFilter&, const SearchConfig&,
-    uint32_t, uint32_t, uint32_t, Stage1Buffer&, PhaseAState&);
-template void phase_a_one_strand_both<uint32_t>(
+    uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
+template void stage1_one_strand_both<uint32_t>(
     const uint32_t*, const uint32_t*, size_t,
     const uint32_t*, const uint32_t*, size_t,
     int, bool,
-    const KixReader&, const KpxReader&,
-    const KixReader&, const KpxReader&,
+    const KixReader&, const KixReader&,
     const OidFilter&, const SearchConfig&,
-    uint32_t, uint32_t, uint32_t, Stage1Buffer&, PhaseAState&);
+    uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 
-template std::vector<OrchestratorHit> run_search_jobs<uint16_t>(
+template void stage2a_one_strand_both<uint16_t>(
+    const uint32_t*, const uint16_t*, size_t,
+    const uint32_t*, const uint16_t*, size_t,
+    const KixReader&, const KpxReader&,
+    const KixReader&, const KpxReader&,
+    JobState&);
+template void stage2a_one_strand_both<uint32_t>(
+    const uint32_t*, const uint32_t*, size_t,
+    const uint32_t*, const uint32_t*, size_t,
+    const KixReader&, const KpxReader&,
+    const KixReader&, const KpxReader&,
+    JobState&);
+
+template void run_stage1_jobs<uint16_t>(
+    const std::vector<size_t>&,
+    const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint16_t>>&,
     const std::vector<VolumeBundle<uint16_t>>&,
-    const std::vector<std::pair<size_t, size_t>>&,
     int, const SearchConfig&, bool,
+    std::vector<JobState>&,
     tbb::task_arena&,
     tbb::enumerable_thread_specific<Stage1Buffer>&);
-template std::vector<OrchestratorHit> run_search_jobs<uint32_t>(
+template void run_stage1_jobs<uint32_t>(
+    const std::vector<size_t>&,
+    const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint32_t>>&,
     const std::vector<VolumeBundle<uint32_t>>&,
-    const std::vector<std::pair<size_t, size_t>>&,
     int, const SearchConfig&, bool,
+    std::vector<JobState>&,
     tbb::task_arena&,
     tbb::enumerable_thread_specific<Stage1Buffer>&);
+
+template void run_stage2a_jobs<uint16_t>(
+    const std::vector<size_t>&,
+    const std::vector<ExtJob>&,
+    const std::vector<QueryBundle<uint16_t>>&,
+    const std::vector<VolumeBundle<uint16_t>>&,
+    bool,
+    std::vector<JobState>&,
+    tbb::task_arena&);
+template void run_stage2a_jobs<uint32_t>(
+    const std::vector<size_t>&,
+    const std::vector<ExtJob>&,
+    const std::vector<QueryBundle<uint32_t>>&,
+    const std::vector<VolumeBundle<uint32_t>>&,
+    bool,
+    std::vector<JobState>&,
+    tbb::task_arena&);
 
 } // namespace ikafssn

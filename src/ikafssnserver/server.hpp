@@ -107,11 +107,16 @@ public:
     // Release n permits.
     void release_sequences(int n);
 
+    // Per-request posting budget (residual of -memory_limit after khx/ksx).
+    uint64_t posting_budget() const { return posting_budget_; }
+
 private:
     std::vector<DatabaseEntry> databases_;
     std::unordered_map<std::string, size_t> db_index_;
     std::atomic<bool> shutdown_requested_{false};
     std::vector<int> listen_fds_;
+
+    uint64_t posting_budget_ = 0;
 
     std::mutex seq_mutex_;
     int queue_depth_ = 0;

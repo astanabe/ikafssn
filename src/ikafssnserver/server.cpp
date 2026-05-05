@@ -3,6 +3,8 @@
 #include "core/config.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/version.hpp"
+#include "index/kix_reader.hpp"
+#include "index/kpx_reader.hpp"
 #include "io/volume_discovery.hpp"
 #include "util/common_init.hpp"
 #include "util/socket_utils.hpp"
@@ -10,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <thread>
 
@@ -67,25 +70,46 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
         return g;
     };
 
-    // Group by (k, t, template_type) and open index files
+    // Group by (k, t, template_type), validate kix/kpx headers, capture sizes.
+    // .kix and .kpx are opened only briefly for header validation here;
+    // the search path re-opens them per-request so concurrent requests do
+    // not contend on shared madvise calls against the same mappings.
     for (const auto& dv : discovered) {
         auto& group = find_or_create_group(dv.k, dv.t, dv.template_type);
 
         ServerVolumeData svd;
+        svd.files = dv;
         svd.volume_index = dv.volume_index;
 
-        if (!svd.kix.open(dv.kix_path)) {
-            logger.error("Cannot open %s", dv.kix_path.c_str());
-            return false;
+        {
+            KixReader kix_probe;
+            if (!kix_probe.open(dv.kix_path)) {
+                logger.error("Cannot open %s", dv.kix_path.c_str());
+                return false;
+            }
+            svd.kix_posting_size       = kix_probe.posting_file_size();
+            svd.kix_full_size          = kix_probe.willneed_size_full();
+            svd.num_sequences          = kix_probe.num_sequences();
+            svd.total_distinct_postings = kix_probe.total_distinct_postings();
+            const auto& kix_hdr = kix_probe.header();
+            svd.db_name = std::string(kix_hdr.db,
+                                      strnlen(kix_hdr.db, sizeof(kix_hdr.db)));
+            kix_probe.close();
         }
+
         if (dv.has_kpx) {
-            if (!svd.kpx.open(dv.kpx_path)) {
+            KpxReader kpx_probe;
+            if (!kpx_probe.open(dv.kpx_path)) {
                 logger.error("Cannot open %s", dv.kpx_path.c_str());
                 return false;
             }
+            svd.kpx_posting_size = kpx_probe.posting_file_size();
+            svd.kpx_full_size    = kpx_probe.willneed_size_full();
+            kpx_probe.close();
         } else {
             all_have_kpx = false;
         }
+
         if (!svd.ksx.open(dv.ksx_path)) {
             logger.error("Cannot open %s", dv.ksx_path.c_str());
             return false;
@@ -203,32 +227,28 @@ void Server::apply_madvise_budget(uint64_t budget, const Logger& logger) {
         if (fits) budget -= sz;
     };
 
+    // Persistent madvise covers only khx + ksx (the small per-volume metadata
+    // every search re-walks).  kix / kpx are opened/closed per-request so
+    // concurrent requests do not contend on shared madvise calls; whatever
+    // budget remains becomes the per-request posting_budget the search
+    // orchestrator may spend on kix / kpx posting bodies inside one batch.
+
     // Priority 1: khx (one per k-mer group per DB)
     for (auto& db : databases_)
         for (auto& group : db.kmer_groups)
             try_willneed(group.khx);
 
-    // Priority 2: kix dictionaries
-    for (auto& db : databases_)
-        for (auto& group : db.kmer_groups)
-            for (auto& vol : group.volumes)
-                try_willneed(vol.kix);
-
-    // Priority 3: kpx dictionaries
-    for (auto& db : databases_)
-        for (auto& group : db.kmer_groups)
-            for (auto& vol : group.volumes)
-                try_willneed(vol.kpx);
-
-    // Priority 4: ksx metadata
+    // Priority 2: ksx metadata
     for (auto& db : databases_)
         for (auto& group : db.kmer_groups)
             for (auto& vol : group.volumes)
                 try_willneed(vol.ksx);
 
-    logger.info("madvise budget: %s used / %s total",
+    posting_budget_ = budget;
+    logger.info("madvise budget: %s used / %s total (per-request posting_budget=%s)",
                 format_size(total - budget).c_str(),
-                format_size(total).c_str());
+                format_size(total).c_str(),
+                format_size(posting_budget_).c_str());
 }
 
 void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger& logger) {
@@ -319,18 +339,17 @@ int Server::run(const ServerConfig& config_in) {
                      max_queue_size_, max_nseq_per_req_);
     }
 
-    // Log total mmap count
+    // Log persistent mmap count (.khx + .ksx only; .kix / .kpx are
+    // opened/closed per-request).
     size_t total_mmaps = 0;
     for (const auto& db : databases_) {
         for (const auto& group : db.kmer_groups) {
-            for (const auto& vol : group.volumes) {
-                total_mmaps += 2; // kix + ksx always
-                if (vol.kpx.is_open()) total_mmaps++;
-            }
+            total_mmaps += group.volumes.size();  // ksx
             if (group.khx.is_open()) total_mmaps++;
         }
     }
-    logger.info("Total mmap'd files across %zu DB(s): %zu", databases_.size(), total_mmaps);
+    logger.info("Persistent mmap'd files across %zu DB(s): %zu",
+                databases_.size(), total_mmaps);
 
     // Set up listening sockets
     if (config.unix_socket_path.empty() && config.tcp_addr.empty()) {

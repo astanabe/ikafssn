@@ -6,10 +6,9 @@
 #include <vector>
 
 #include "core/types.hpp"
-#include "index/kix_reader.hpp"
-#include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
 #include "index/khx_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "search/oid_filter.hpp"
 #include "search/volume_searcher.hpp"
 #include "search/stage3_alignment.hpp"
@@ -22,12 +21,22 @@ namespace ikafssn {
 class Server;  // forward declaration
 struct DatabaseEntry;  // forward declaration
 
-// Pre-opened volume data (shared read-only across threads)
+// Per-volume static metadata for one (k, t, template_type) group.  The
+// .kix / .kpx readers are opened/closed per-request inside the search
+// orchestrator (avoids concurrent-request madvise contention on shared
+// readers); only .ksx is held open here for accession / seq_length lookups
+// and OidFilter construction.
 struct ServerVolumeData {
-    KixReader kix;
-    KpxReader kpx;
+    DiscoveredVolume files;
     KsxReader ksx;
-    uint16_t volume_index;
+    size_t kix_posting_size = 0;
+    size_t kpx_posting_size = 0;
+    size_t kix_full_size = 0;
+    size_t kpx_full_size = 0;
+    uint32_t num_sequences = 0;
+    uint64_t total_distinct_postings = 0;
+    std::string db_name;          // KixHeader::db captured at validation
+    uint16_t volume_index = 0;
     uint64_t total_bases = 0;
 };
 

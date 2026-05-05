@@ -96,12 +96,10 @@ void handle_connection(
                 for (const auto& vol : group.volumes) {
                     VolumeInfo vi;
                     vi.volume_index = vol.volume_index;
-                    vi.num_sequences = vol.kix.num_sequences();
-                    vi.total_postings = vol.kix.total_distinct_postings();
+                    vi.num_sequences = vol.num_sequences;
+                    vi.total_postings = vol.total_distinct_postings;
                     vi.total_bases = vol.total_bases;
-                    const auto& kix_hdr = vol.kix.header();
-                    vi.db = std::string(kix_hdr.db,
-                        strnlen(kix_hdr.db, sizeof(kix_hdr.db)));
+                    vi.db = vol.db_name;
                     gi.volumes.push_back(std::move(vi));
                 }
 

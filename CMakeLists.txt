@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.05")  # ikafssnsearch: volume-batched WILLNEED for mode 1 (groups volumes whose posting bodies fit in posting_budget, MADV_WILLNEED before each batch and MADV_DONTNEED after; per-volume oversize falls back to MADV_RANDOM single-template per side)
+set(IKAFSSN_VERSION "0.1.2026.05.06")  # search: stage-split (Stage 1 / Stage 2A / Stage 2B) common run_search orchestrator with volume-batched WILLNEED for both Stage 1 and Stage 2A; ext_jobs upgraded to (qi, vi, strand) so -strand 2 saturates 2N CPU cores; ikafssnserver opens kix/kpx per request (no shared madvise); kSplit fallback removed (both-mode output is byte-identical to single-call)
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.

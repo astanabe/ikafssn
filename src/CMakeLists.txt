@@ -116,6 +116,7 @@ add_library(ikafssn_search STATIC
     search/query_preprocessor.cpp
     search/volume_searcher.cpp
     search/parallel_search.cpp
+    search/search_orchestrator.cpp
     search/result_writer_mode1.cpp
 )
 target_link_libraries(ikafssn_search PUBLIC ikafssn_core ikafssn_index ikafssn_io ikafssn_util TBB::tbb)

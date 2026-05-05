@@ -12,6 +12,7 @@
 #include "search/parallel_search.hpp"
 #include "search/preprocess_runner.hpp"
 #include "search/query_preprocessor.hpp"
+#include "search/search_orchestrator.hpp"
 #include "search/tier_selection.hpp"
 
 #include <algorithm>
@@ -344,17 +345,17 @@ SearchResponse process_search_request(
         }
     }
 
-    // Thread-local Stage1Buffer to avoid per-job allocation
+    // Stage1Buffer sizing inputs (the orchestrator constructs the TLS pool
+    // internally).
     uint32_t max_num_seqs = 0;
     if (is_both_mode) {
         for (const auto& vol : group_cod->volumes)
-            max_num_seqs = std::max(max_num_seqs, vol.kix.num_sequences());
+            max_num_seqs = std::max(max_num_seqs, vol.num_sequences);
     } else {
         for (const auto& vol : group.volumes)
-            max_num_seqs = std::max(max_num_seqs, vol.kix.num_sequences());
+            max_num_seqs = std::max(max_num_seqs, vol.num_sequences);
     }
 
-    // Determine optimal tier from actual preprocessed k-mer counts.
     uint32_t max_kmer_positions = 0;
     if (is_both_mode) {
         max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp16_cod);
@@ -366,14 +367,6 @@ SearchResponse process_search_request(
         max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp32);
     }
     Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
-
-    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(
-        [max_num_seqs, tier]() {
-            Stage1Buffer buf;
-            buf.tier = tier;
-            buf.ensure_capacity(max_num_seqs);
-            return buf;
-        });
 
     // Number of volumes for the search loop
     size_t num_volumes = is_both_mode ? group_cod->volumes.size() : group.volumes.size();
@@ -406,28 +399,55 @@ SearchResponse process_search_request(
         query_to_result[aq.query_idx] = aq.result_idx;
     }
 
+    // Determine the per-request slice of the server's posting_budget.  Today
+    // the admin sizes -memory_limit assuming concurrent-request load (see
+    // doc/ikafssn.{en,ja}.md); per-request value is the residual after the
+    // persistent .khx / .ksx WILLNEED.
+    uint64_t posting_budget = server.posting_budget();
+
     auto run_orchestrated = [&](auto kmer_int_tag) {
         using KmerInt = decltype(kmer_int_tag);
 
-        std::vector<VolumeBundle<KmerInt>> volume_bundles(num_volumes);
+        RunSearchInputs<KmerInt> in;
+        in.both_mode = is_both_mode;
+        in.k = k;
+        in.nthread = static_cast<int>(arena.max_concurrency());
+        in.config = config;
+        in.posting_budget = posting_budget;
+        in.logger = nullptr;  // server avoids per-request stage logs
+        in.max_num_seqs = max_num_seqs;
+        in.tier = tier;
+
+        in.volumes_cod.resize(num_volumes);
+        if (is_both_mode) in.volumes_opt.resize(num_volumes);
+        in.ksx_per_volume.resize(num_volumes);
+        in.oid_filters = std::move(oid_filters);
+
         for (size_t vi = 0; vi < num_volumes; ++vi) {
-            const auto& vol_primary = is_both_mode
+            const auto& vp = is_both_mode
                 ? group_cod->volumes[vi]
                 : group.volumes[vi];
-            volume_bundles[vi].kix    = &vol_primary.kix;
-            volume_bundles[vi].kpx    = &vol_primary.kpx;
-            volume_bundles[vi].ksx    = &vol_primary.ksx;
-            volume_bundles[vi].filter = &oid_filters[vi];
-            volume_bundles[vi].volume_index = vol_primary.volume_index;
+            in.volumes_cod[vi].files            = vp.files;
+            in.volumes_cod[vi].kix_posting_size = vp.kix_posting_size;
+            in.volumes_cod[vi].kpx_posting_size = vp.kpx_posting_size;
+            in.volumes_cod[vi].kix_full_size    = vp.kix_full_size;
+            in.volumes_cod[vi].kpx_full_size    = vp.kpx_full_size;
+            in.volumes_cod[vi].volume_index     = vp.volume_index;
+            in.volumes_cod[vi].num_sequences    = vp.num_sequences;
             if (is_both_mode) {
-                volume_bundles[vi].kix_opt = &group_opt->volumes[vi].kix;
-                volume_bundles[vi].kpx_opt = &group_opt->volumes[vi].kpx;
+                const auto& vo = group_opt->volumes[vi];
+                in.volumes_opt[vi].files            = vo.files;
+                in.volumes_opt[vi].kix_posting_size = vo.kix_posting_size;
+                in.volumes_opt[vi].kpx_posting_size = vo.kpx_posting_size;
+                in.volumes_opt[vi].kix_full_size    = vo.kix_full_size;
+                in.volumes_opt[vi].kpx_full_size    = vo.kpx_full_size;
+                in.volumes_opt[vi].volume_index     = vo.volume_index;
+                in.volumes_opt[vi].num_sequences    = vo.num_sequences;
             }
+            in.ksx_per_volume[vi] = &vp.ksx;
         }
 
         std::vector<QueryBundle<KmerInt>> query_bundles(req.queries.size());
-        std::vector<std::pair<size_t, size_t>> jobs;
-        jobs.reserve(accepted_queries.size() * num_volumes);
         for (const auto& aq : accepted_queries) {
             size_t qi = aq.query_idx;
             size_t pp_idx = query_pp_idx[qi];
@@ -447,13 +467,18 @@ SearchResponse process_search_request(
                     query_bundles[qi].qdata_primary = &pp32[pp_idx].qdata;
                 }
             }
-            for (size_t vi = 0; vi < num_volumes; ++vi) {
-                jobs.emplace_back(qi, vi);
-            }
         }
 
-        return run_search_jobs<KmerInt>(query_bundles, volume_bundles, jobs,
-                                        k, config, is_both_mode, arena, tls_bufs);
+        std::vector<uint8_t> per_q_skip(req.queries.size(), 0);
+        for (size_t qi = 0; qi < req.queries.size(); ++qi) {
+            if (query_to_result[qi] == SIZE_MAX) per_q_skip[qi] = 1;
+            else if (per_q_skip_reason[qi] != 0) per_q_skip[qi] = 1;
+        }
+
+        in.queries = &query_bundles;
+        in.query_skip_reason = &per_q_skip;
+
+        return run_search<KmerInt>(in);
     };
 
     std::vector<OrchestratorHit> orch_hits;

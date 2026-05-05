@@ -12,6 +12,7 @@
 #include "search/oid_filter.hpp"
 #include "search/volume_searcher.hpp"
 #include "search/parallel_search.hpp"
+#include "search/search_orchestrator.hpp"
 #include "search/preprocess_runner.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/stage3_alignment.hpp"
@@ -102,18 +103,25 @@ static void print_usage(const char* prog) {
         prog);
 }
 
-// Pre-opened volume data shared across threads (read-only after init).
+// Per-volume static metadata: paths, posting/full sizes, ksx reader.  The
+// .kix / .kpx readers are opened/closed per-batch inside run_search; only
+// .ksx is held open here for accession / seq_length lookups during
+// OutputHit conversion (and for OidFilter construction).
 struct VolumeData {
-    KixReader kix;
-    KpxReader kpx;
+    DiscoveredVolume files;
     KsxReader ksx;
     OidFilter filter;
-    uint16_t volume_index;
+    size_t kix_posting_size = 0;
+    size_t kpx_posting_size = 0;
+    size_t kix_full_size = 0;
+    size_t kpx_full_size = 0;
+    uint32_t num_sequences = 0;
+    uint16_t volume_index = 0;
 };
 
 // Per-template-side data. For "both" template_type the search holds two
 // contexts (coding + optimal); otherwise a single context is used. Each
-// context owns its own volume readers, KHX bitset, seed masks, and
+// context owns its own volume metadata, KHX bitset, seed masks, and
 // preprocessed query data, so the rest of the pipeline iterates uniformly
 // over `ctxs` rather than duplicating coding/optimal logic.
 template <typename KmerInt>
@@ -520,17 +528,34 @@ int main(int argc, char* argv[]) {
         logger.info("Loaded %zu accessions from seqidlist (exclude mode)", seqidlist.size());
     }
 
-    // Helper lambda: open a set of VolumeData from discovered volume files.
+    // Helper lambda: validate every kix/kpx file and capture posting / full
+    // sizes into VolumeMeta.  Readers are opened once for header validation
+    // and immediately closed; the search orchestrator re-opens kix/kpx
+    // per-batch with explicit MADV_WILLNEED / MADV_RANDOM (.ksx stays open
+    // for accession / seq_length lookups and OidFilter construction).
     auto open_volumes = [&](const std::vector<DiscoveredVolume>& vfiles,
                             std::vector<VolumeData>& vdata,
                             bool need_kpx) -> bool {
         vdata.resize(vfiles.size());
         for (size_t vi = 0; vi < vfiles.size(); vi++) {
             const auto& vf = vfiles[vi];
-            if (!vdata[vi].kix.open(vf.kix_path)) {
-                std::fprintf(stderr, "Error: cannot open %s\n", vf.kix_path.c_str());
-                return false;
+            vdata[vi].files = vf;
+            vdata[vi].volume_index = vf.volume_index;
+
+            // Validate kix and capture sizes.
+            {
+                KixReader kix_probe;
+                if (!kix_probe.open(vf.kix_path)) {
+                    std::fprintf(stderr, "Error: cannot open %s\n",
+                                 vf.kix_path.c_str());
+                    return false;
+                }
+                vdata[vi].kix_posting_size = kix_probe.posting_file_size();
+                vdata[vi].kix_full_size    = kix_probe.willneed_size_full();
+                vdata[vi].num_sequences    = kix_probe.num_sequences();
+                kix_probe.close();
             }
+
             if (need_kpx) {
                 if (!vf.has_kpx) {
                     std::fprintf(stderr,
@@ -539,16 +564,21 @@ int main(int argc, char* argv[]) {
                         config.mode, vf.kpx_path.c_str());
                     return false;
                 }
-                if (!vdata[vi].kpx.open(vf.kpx_path)) {
-                    std::fprintf(stderr, "Error: cannot open %s\n", vf.kpx_path.c_str());
+                KpxReader kpx_probe;
+                if (!kpx_probe.open(vf.kpx_path)) {
+                    std::fprintf(stderr, "Error: cannot open %s\n",
+                                 vf.kpx_path.c_str());
                     return false;
                 }
+                vdata[vi].kpx_posting_size = kpx_probe.posting_file_size();
+                vdata[vi].kpx_full_size    = kpx_probe.willneed_size_full();
+                kpx_probe.close();
             }
+
             if (!vdata[vi].ksx.open(vf.ksx_path)) {
                 std::fprintf(stderr, "Error: cannot open %s\n", vf.ksx_path.c_str());
                 return false;
             }
-            vdata[vi].volume_index = vf.volume_index;
             if (filter_mode != OidFilterMode::kNone) {
                 vdata[vi].filter.build(seqidlist, vdata[vi].ksx, filter_mode);
             }
@@ -558,7 +588,7 @@ int main(int argc, char* argv[]) {
 
     const bool need_kpx = (config.mode != 1);
 
-    // Pre-open volumes for every context.
+    // Pre-open / validate volumes for every context.
     for (auto& ctx : ctxs) {
         if (!open_volumes(ctx.vol_files, ctx.volumes, need_kpx)) return 1;
     }
@@ -572,15 +602,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Persistent madvise: pin the dictionaries / per-volume metadata
-    // (khx + kix dict + kpx dict + ksx) into the page cache for the
-    // entire run.  These are the small structures that every search
-    // re-walks, so we always WILLNEED them up to the budget.  Whatever
-    // budget remains becomes `posting_budget` — used by the mode-1
-    // batching loop to bring per-volume kix posting bodies into memory
-    // a batch at a time, then release them with MADV_DONTNEED before
-    // the next batch.  Non-mode-1 paths leave posting bodies under the
-    // existing dict-WILLNEED + posting-RANDOM hint.
+    // Persistent madvise covers only the small per-volume metadata that
+    // every search re-walks (.khx + .ksx).  The .kix / .kpx mappings live
+    // for one batch at a time inside the search orchestrator, so they are
+    // not pinned here; whatever budget remains after .khx/.ksx becomes
+    // `posting_budget`, the per-batch budget the orchestrator may spend on
+    // kix/kpx posting bodies.
     uint64_t posting_budget = 0;
     {
         uint64_t budget = memory_limit;
@@ -591,10 +618,6 @@ int main(int argc, char* argv[]) {
             if (fits) budget -= sz;
         };
         for (auto& ctx : ctxs) try_willneed(ctx.khx);
-        for (auto& ctx : ctxs)
-            for (auto& vd : ctx.volumes) try_willneed(vd.kix);
-        for (auto& ctx : ctxs)
-            for (auto& vd : ctx.volumes) try_willneed(vd.kpx);
         for (auto& vd : ctxs[0].volumes) try_willneed(vd.ksx);
         posting_budget = budget;
         logger.info("madvise budget: %s used / %s total (posting_budget=%s)",
@@ -758,13 +781,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Thread-local Stage1Buffer to avoid per-job allocation.
-    // For "both" mode we need two buffers per thread (coding + optimal).
+    // Thread-local Stage1Buffer sizing inputs.  num_sequences was captured
+    // at validation time; tier is chosen from actual preprocessed k-mer
+    // counts.  The orchestrator constructs the TLS buffer pool internally.
     uint32_t max_num_seqs = 0;
     for (const auto& vd : ctxs[0].volumes)
-        max_num_seqs = std::max(max_num_seqs, vd.kix.num_sequences());
+        max_num_seqs = std::max(max_num_seqs, vd.num_sequences);
 
-    // Determine optimal tier from actual preprocessed k-mer counts.
     uint32_t max_kmer_positions = 0;
     for (const auto& ctx : ctxs) {
         max_kmer_positions = use_uint16
@@ -773,253 +796,71 @@ int main(int argc, char* argv[]) {
     }
     Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
 
-    auto make_tls_buf = [max_num_seqs, tier]() {
-        Stage1Buffer buf;
-        buf.tier = tier;
-        buf.ensure_capacity(max_num_seqs);
-        return buf;
-    };
-    tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(make_tls_buf);
-
     size_t num_volumes = ctxs[0].volumes.size();
 
-    // Mode-1 volume batching plan.  When the posting body of one or
-    // more volumes fits inside `posting_budget` we group them into a
-    // WILLNEED batch (kFullBoth / kFullSingle) so the kernel pre-faults
-    // the whole batch's payload before query × volume jobs run against
-    // it, then we DONTNEED it for the next batch.  When a single
-    // volume's posting body is larger than `posting_budget` we fall
-    // back to a single-volume MADV_RANDOM batch — both-mode splits
-    // into a kSplitCod batch and a kSplitOpt batch (each driving
-    // single-template Phase A) because no WILLNEED window can cover
-    // both posting files simultaneously; the per-side single-template
-    // search bypasses the both-mode unify threshold and emits the cod
-    // and opt sides independently (see CLAUDE.md).
-    enum class BatchKind { kFullBoth, kFullSingle, kSplitCod, kSplitOpt };
-    struct BatchUnit { uint16_t vol_idx; BatchKind kind; };
-    struct Batch     { std::vector<BatchUnit> units; bool willneed; };
-
-    std::vector<Batch> batches;
-    if (config.mode == 1) {
-        auto vol_cost = [&](size_t vi) -> uint64_t {
-            uint64_t c = ctxs[0].volumes[vi].kix.posting_file_size();
-            if (is_both_mode) c += ctxs[1].volumes[vi].kix.posting_file_size();
-            return c;
-        };
-
-        Batch cur;
-        cur.willneed = true;
-        uint64_t cur_size = 0;
-        size_t n_full = 0, n_split_cod = 0, n_split_opt = 0;
-        for (size_t v = 0; v < num_volumes; ++v) {
-            uint64_t cv = vol_cost(v);
-            if (cv <= posting_budget) {
-                if (cur_size + cv > posting_budget && !cur.units.empty()) {
-                    batches.push_back(std::move(cur));
-                    cur = Batch{};
-                    cur.willneed = true;
-                    cur_size = 0;
-                }
-                cur.units.push_back({static_cast<uint16_t>(v),
-                                      is_both_mode ? BatchKind::kFullBoth
-                                                    : BatchKind::kFullSingle});
-                cur_size += cv;
-                ++n_full;
-            } else {
-                if (!cur.units.empty()) {
-                    batches.push_back(std::move(cur));
-                    cur = Batch{};
-                    cur.willneed = true;
-                    cur_size = 0;
-                }
-                if (is_both_mode) {
-                    Batch bc; bc.willneed = false;
-                    bc.units.push_back({static_cast<uint16_t>(v),
-                                         BatchKind::kSplitCod});
-                    batches.push_back(std::move(bc));
-                    Batch bo; bo.willneed = false;
-                    bo.units.push_back({static_cast<uint16_t>(v),
-                                         BatchKind::kSplitOpt});
-                    batches.push_back(std::move(bo));
-                    ++n_split_cod;
-                    ++n_split_opt;
-                } else {
-                    Batch bs; bs.willneed = false;
-                    bs.units.push_back({static_cast<uint16_t>(v),
-                                         BatchKind::kFullSingle});
-                    batches.push_back(std::move(bs));
-                    ++n_full;  // counted as full single, just RANDOM-hinted
-                }
-            }
-        }
-        if (!cur.units.empty()) batches.push_back(std::move(cur));
-
-        logger.info("Mode 1 batch plan: %zu batch(es) over %zu volume(s) "
-                    "(full=%zu, split_cod=%zu, split_opt=%zu)",
-                    batches.size(), num_volumes,
-                    n_full, n_split_cod, n_split_opt);
-    }
-
-    // Build VolumeBundle / QueryBundle vectors for the orchestrator. Pointers
-    // alias the existing TemplateContext storage; ctxs and pp* must outlive
-    // the call below.  In both-mode we additionally build cod-only and
-    // opt-only bundle views so the kSplit fallback path can run
-    // single-template Phase A against each side.
+    // Build VolumeMeta + ksx / OidFilter inputs and dispatch through the
+    // common search orchestrator.  ctxs[*].volumes outlive the call.
     auto run_orchestrated = [&](auto kmer_int_tag) {
         using KmerInt = decltype(kmer_int_tag);
 
-        std::vector<VolumeBundle<KmerInt>> bundles_both(num_volumes);
-        std::vector<VolumeBundle<KmerInt>> bundles_cod;
-        std::vector<VolumeBundle<KmerInt>> bundles_opt;
-        if (is_both_mode) {
-            bundles_cod.resize(num_volumes);
-            bundles_opt.resize(num_volumes);
-        }
+        RunSearchInputs<KmerInt> in;
+        in.both_mode = is_both_mode;
+        in.k = k;
+        in.nthread = nthread;
+        in.config = config;
+        in.posting_budget = posting_budget;
+        in.logger = &logger;
+        in.max_num_seqs = max_num_seqs;
+        in.tier = tier;
+
+        in.volumes_cod.resize(num_volumes);
+        if (is_both_mode) in.volumes_opt.resize(num_volumes);
+        in.ksx_per_volume.resize(num_volumes);
+        in.oid_filters.resize(num_volumes);
+
         for (size_t vi = 0; vi < num_volumes; ++vi) {
-            bundles_both[vi].kix    = &ctxs[0].volumes[vi].kix;
-            bundles_both[vi].kpx    = &ctxs[0].volumes[vi].kpx;
-            bundles_both[vi].ksx    = &ctxs[0].volumes[vi].ksx;
-            bundles_both[vi].filter = &ctxs[0].volumes[vi].filter;
-            bundles_both[vi].volume_index = ctxs[0].volumes[vi].volume_index;
+            const auto& v0 = ctxs[0].volumes[vi];
+            in.volumes_cod[vi].files             = v0.files;
+            in.volumes_cod[vi].kix_posting_size  = v0.kix_posting_size;
+            in.volumes_cod[vi].kpx_posting_size  = v0.kpx_posting_size;
+            in.volumes_cod[vi].kix_full_size     = v0.kix_full_size;
+            in.volumes_cod[vi].kpx_full_size     = v0.kpx_full_size;
+            in.volumes_cod[vi].volume_index      = v0.volume_index;
+            in.volumes_cod[vi].num_sequences     = v0.num_sequences;
             if (is_both_mode) {
-                bundles_both[vi].kix_opt = &ctxs[1].volumes[vi].kix;
-                bundles_both[vi].kpx_opt = &ctxs[1].volumes[vi].kpx;
-
-                bundles_cod[vi] = bundles_both[vi];
-                bundles_cod[vi].kix_opt = nullptr;
-                bundles_cod[vi].kpx_opt = nullptr;
-
-                bundles_opt[vi].kix    = &ctxs[1].volumes[vi].kix;
-                bundles_opt[vi].kpx    = &ctxs[1].volumes[vi].kpx;
-                bundles_opt[vi].ksx    = &ctxs[1].volumes[vi].ksx;
-                bundles_opt[vi].filter = &ctxs[1].volumes[vi].filter;
-                bundles_opt[vi].volume_index = ctxs[1].volumes[vi].volume_index;
+                const auto& v1 = ctxs[1].volumes[vi];
+                in.volumes_opt[vi].files             = v1.files;
+                in.volumes_opt[vi].kix_posting_size  = v1.kix_posting_size;
+                in.volumes_opt[vi].kpx_posting_size  = v1.kpx_posting_size;
+                in.volumes_opt[vi].kix_full_size     = v1.kix_full_size;
+                in.volumes_opt[vi].kpx_full_size     = v1.kpx_full_size;
+                in.volumes_opt[vi].volume_index      = v1.volume_index;
+                in.volumes_opt[vi].num_sequences     = v1.num_sequences;
             }
+            in.ksx_per_volume[vi] = &ctxs[0].volumes[vi].ksx;
+            in.oid_filters[vi]    = std::move(ctxs[0].volumes[vi].filter);
         }
 
-        std::vector<QueryBundle<KmerInt>> qb_both(queries.size());
-        std::vector<QueryBundle<KmerInt>> qb_cod, qb_opt;
-        if (is_both_mode) {
-            qb_cod.resize(queries.size());
-            qb_opt.resize(queries.size());
-        }
+        std::vector<QueryBundle<KmerInt>> query_bundles(queries.size());
         for (size_t qi = 0; qi < queries.size(); ++qi) {
-            qb_both[qi].query_id = &queries[qi].id;
-            if (is_both_mode) {
-                qb_cod[qi].query_id = &queries[qi].id;
-                qb_opt[qi].query_id = &queries[qi].id;
-            }
+            query_bundles[qi].query_id = &queries[qi].id;
             if (query_skip_reason[qi] != 0) continue;
             size_t pp_idx = query_pp_idx[qi];
             if constexpr (std::is_same_v<KmerInt, uint16_t>) {
-                qb_both[qi].qdata_primary = &ctxs[0].pp16[pp_idx].qdata;
-                if (is_both_mode) {
-                    qb_both[qi].qdata_secondary = &ctxs[1].pp16[pp_idx].qdata;
-                    qb_cod[qi].qdata_primary    = &ctxs[0].pp16[pp_idx].qdata;
-                    qb_opt[qi].qdata_primary    = &ctxs[1].pp16[pp_idx].qdata;
-                }
+                query_bundles[qi].qdata_primary = &ctxs[0].pp16[pp_idx].qdata;
+                if (is_both_mode)
+                    query_bundles[qi].qdata_secondary = &ctxs[1].pp16[pp_idx].qdata;
             } else {
-                qb_both[qi].qdata_primary = &ctxs[0].pp32[pp_idx].qdata;
-                if (is_both_mode) {
-                    qb_both[qi].qdata_secondary = &ctxs[1].pp32[pp_idx].qdata;
-                    qb_cod[qi].qdata_primary    = &ctxs[0].pp32[pp_idx].qdata;
-                    qb_opt[qi].qdata_primary    = &ctxs[1].pp32[pp_idx].qdata;
-                }
+                query_bundles[qi].qdata_primary = &ctxs[0].pp32[pp_idx].qdata;
+                if (is_both_mode)
+                    query_bundles[qi].qdata_secondary = &ctxs[1].pp32[pp_idx].qdata;
             }
         }
 
-        tbb::task_arena arena(nthread);
+        in.queries = &query_bundles;
+        in.query_skip_reason = &query_skip_reason;
 
-        // Non-mode-1 paths run the original single-call orchestrator
-        // (Stage 2 / Stage 3 chaining and alignment dominate, and the
-        // .kpx posting body has its own access pattern that the simple
-        // dict-WILLNEED + posting-RANDOM hint already covers).  Only
-        // mode 1 — where Phase A's kix posting walk dominates — uses
-        // the volume-batched path.
-        if (config.mode != 1) {
-            std::vector<std::pair<size_t,size_t>> jobs;
-            jobs.reserve(queries.size() * num_volumes);
-            for (size_t qi = 0; qi < queries.size(); ++qi) {
-                if (query_skip_reason[qi] != 0) continue;
-                for (size_t vi = 0; vi < num_volumes; ++vi)
-                    jobs.emplace_back(qi, vi);
-            }
-            logger.info("Launching %zu search job(s) (Phase A) and "
-                        "Phase B chain extraction...", jobs.size());
-            return run_search_jobs<KmerInt>(qb_both, bundles_both, jobs,
-                                             k, config, is_both_mode,
-                                             arena, tls_bufs);
-        }
-
-        // Mode 1: batch-driven dispatch.
-        std::vector<OrchestratorHit> all_hits;
-        size_t total_jobs = 0;
-        for (auto& batch : batches) total_jobs += batch.units.size() * queries.size();
-        logger.info("Launching mode 1 batched search (%zu batch(es), "
-                    "up to %zu Phase A job(s))...",
-                    batches.size(), total_jobs);
-
-        for (size_t bi = 0; bi < batches.size(); ++bi) {
-            auto& batch = batches[bi];
-
-            for (auto& u : batch.units) {
-                if (batch.willneed) {
-                    if (u.kind == BatchKind::kFullBoth) {
-                        ctxs[0].volumes[u.vol_idx].kix.apply_madvise_full(true);
-                        ctxs[1].volumes[u.vol_idx].kix.apply_madvise_full(true);
-                    } else if (u.kind == BatchKind::kFullSingle) {
-                        ctxs[0].volumes[u.vol_idx].kix.apply_madvise_full(true);
-                    }
-                } else {
-                    if (u.kind == BatchKind::kSplitCod ||
-                        u.kind == BatchKind::kFullSingle)
-                        ctxs[0].volumes[u.vol_idx].kix.apply_madvise_posting_random();
-                    if (u.kind == BatchKind::kSplitOpt)
-                        ctxs[1].volumes[u.vol_idx].kix.apply_madvise_posting_random();
-                }
-            }
-
-            auto dispatch = [&](BatchKind kind,
-                                 const std::vector<VolumeBundle<KmerInt>>& bundles,
-                                 const std::vector<QueryBundle<KmerInt>>& qbundles,
-                                 bool both_mode_flag) {
-                std::vector<std::pair<size_t,size_t>> jobs_b;
-                for (auto& u : batch.units) {
-                    if (u.kind != kind) continue;
-                    for (size_t qi = 0; qi < queries.size(); ++qi) {
-                        if (query_skip_reason[qi] != 0) continue;
-                        jobs_b.emplace_back(qi, u.vol_idx);
-                    }
-                }
-                if (jobs_b.empty()) return;
-                auto h = run_search_jobs<KmerInt>(qbundles, bundles, jobs_b,
-                                                   k, config, both_mode_flag,
-                                                   arena, tls_bufs);
-                all_hits.insert(all_hits.end(),
-                                std::make_move_iterator(h.begin()),
-                                std::make_move_iterator(h.end()));
-            };
-
-            if (is_both_mode) {
-                dispatch(BatchKind::kFullBoth, bundles_both, qb_both, true);
-                dispatch(BatchKind::kSplitCod, bundles_cod,  qb_cod,  false);
-                dispatch(BatchKind::kSplitOpt, bundles_opt,  qb_opt,  false);
-            } else {
-                dispatch(BatchKind::kFullSingle, bundles_both, qb_both, false);
-            }
-
-            for (auto& u : batch.units) {
-                if (!batch.willneed) continue;
-                if (u.kind == BatchKind::kFullBoth) {
-                    ctxs[0].volumes[u.vol_idx].kix.apply_madvise_full(false);
-                    ctxs[1].volumes[u.vol_idx].kix.apply_madvise_full(false);
-                } else if (u.kind == BatchKind::kFullSingle) {
-                    ctxs[0].volumes[u.vol_idx].kix.apply_madvise_full(false);
-                }
-            }
-        }
-
-        return all_hits;
+        return run_search<KmerInt>(in);
     };
 
     std::vector<OrchestratorHit> orch_hits;

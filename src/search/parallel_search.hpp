@@ -1,19 +1,24 @@
 #pragma once
 
-// Parallel search orchestrator.
+// Stage-split parallel search building blocks.
 //
-// Each (query, volume) job is split into two phases:
-//   Phase A — Stage 1 candidate selection + Stage 2A per-(kmer) hit
-//             collection.  Output is `PhaseAState` per strand.
-//   Phase B — Stage 2B chain_hits().  Pure function over read-only
-//             PhaseAState; runs as a flat parallel_for over all
-//             (job, strand, sid) tuples across the request.
+// Each (query, volume, strand) job runs in three stages:
+//   Stage 1  — candidate selection from the .kix posting file.  Output is
+//              `JobState::candidates` and `JobState::stage1_scores`; in mode 1
+//              the per-strand result list `JobState::mode1_results` is also
+//              produced.
+//   Stage 2A — collect (q_pos, s_pos) hits from the .kpx posting file for
+//              every candidate that survived Stage 1.  Populates
+//              `JobState::hits_per_seq`.
+//   Stage 2B — per-subject chain_hits().  Pure function over read-only
+//              JobState; runs as a flat parallel_for over (ext_job, sid)
+//              tuples.
 //
-// The orchestrator runs Phase A as a parallel_for over jobs and then a
-// second parallel_for over the union of (job, strand, sid) tuples.  TBB
-// work-stealing inside the second phase naturally allocates more threads
-// to queries with more candidates, replacing the prior adaptive
-// query-level vs (query, volume)-level scheduling heuristic.
+// `search_orchestrator.{hpp,cpp}` drives the three stages with a global
+// volume-batched WILLNEED window: Stage 1 and Stage 2A each have their own
+// batch loop, and Stage 2B is one global parallel_for after all batches
+// finish.  The .kix / .kpx readers are opened / closed per batch so the
+// kernel-level page cache is bounded by the configured memory budget.
 
 #include <cstdint>
 #include <string>
@@ -37,10 +42,18 @@ class KpxReader;
 class KsxReader;
 class OidFilter;
 
-// Per-(query, volume, strand) intermediate state populated by Phase A and
-// consumed by Phase B.  When `mode1_only` is true the chain_hits step is
+// One element of the (query, volume, strand) work axis.  `strand_idx` is
+// 0 for the forward strand and 1 for the reverse-complement strand.
+struct ExtJob {
+    size_t  qi = 0;          // index into the QueryBundle vector
+    size_t  vi = 0;          // index into the VolumeBundle vector
+    uint8_t strand_idx = 0;  // 0 = fwd, 1 = rc
+};
+
+// Per-(ext_job) intermediate state populated by Stage 1 / Stage 2A and
+// consumed by Stage 2B.  When `mode1_only` is true the chain_hits step is
 // skipped and `mode1_results` carries the final per-strand results.
-struct PhaseAState {
+struct JobState {
     std::vector<Stage1Candidate> candidates;
     std::vector<SeqId> sorted_candidate_sids;  // populated only in both-mode
     std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
@@ -54,73 +67,108 @@ struct PhaseAState {
     std::vector<ChainResult> mode1_results;
 };
 
-// Phase A — single-template path.  Stage 1 + Stage 2A hit collection.
+// Stage 1 — single-template path.  Populates state.candidates,
+// state.stage1_scores, and (when mode == 1) state.mode1_results.
 template <typename KmerInt>
-void phase_a_one_strand_single(
+void stage1_one_strand_single(
     const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
     int k,
     bool is_reverse,
     const KixReader& kix,
-    const KpxReader& kpx,
     const OidFilter& filter,
     const SearchConfig& config,
     uint32_t resolved_threshold,
     uint32_t effective_min_score,
     Stage1Buffer& buf,
-    PhaseAState& state);
+    JobState& state);
 
-extern template void phase_a_one_strand_single<uint16_t>(
+extern template void stage1_one_strand_single<uint16_t>(
     const uint32_t*, const uint16_t*, size_t, int, bool,
-    const KixReader&, const KpxReader&, const OidFilter&,
-    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, PhaseAState&);
-extern template void phase_a_one_strand_single<uint32_t>(
+    const KixReader&, const OidFilter&,
+    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, JobState&);
+extern template void stage1_one_strand_single<uint32_t>(
     const uint32_t*, const uint32_t*, size_t, int, bool,
-    const KixReader&, const KpxReader&, const OidFilter&,
-    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, PhaseAState&);
+    const KixReader&, const OidFilter&,
+    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 
-// Phase A — both-mode (cross-template) path.  Stage 1 accumulate-then-finish
-// runs against a shared Stage1Buffer so per-(sid, q_pos) dedup carries
-// across templates.  Stage 2A hits from coding and optimal indexes are
-// merged into one hits_per_seq.
+// Stage 2A — single-template path.  Collects (q_pos, s_pos) hits for the
+// candidates produced by stage1_one_strand_single().  Populates
+// state.hits_per_seq.
 template <typename KmerInt>
-void phase_a_one_strand_both(
+void stage2a_one_strand_single(
+    const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
+    const KixReader& kix, const KpxReader& kpx,
+    JobState& state);
+
+extern template void stage2a_one_strand_single<uint16_t>(
+    const uint32_t*, const uint16_t*, size_t,
+    const KixReader&, const KpxReader&, JobState&);
+extern template void stage2a_one_strand_single<uint32_t>(
+    const uint32_t*, const uint32_t*, size_t,
+    const KixReader&, const KpxReader&, JobState&);
+
+// Stage 1 — both-mode (cross-template) path.  Stage 1 accumulate-then-finish
+// runs against a shared Stage1Buffer so per-(sid, q_pos) dedup carries
+// across templates.
+template <typename KmerInt>
+void stage1_one_strand_both(
     const uint32_t* pos_cod, const KmerInt* kmers_cod, size_t n_cod,
     const uint32_t* pos_opt, const KmerInt* kmers_opt, size_t n_opt,
     int k,
     bool is_reverse,
-    const KixReader& kix_cod, const KpxReader& kpx_cod,
-    const KixReader& kix_opt, const KpxReader& kpx_opt,
+    const KixReader& kix_cod, const KixReader& kix_opt,
     const OidFilter& filter,
     const SearchConfig& config,
     uint32_t resolved_threshold_cod,
     uint32_t resolved_threshold_opt,
     uint32_t effective_min_score,
     Stage1Buffer& buf,
-    PhaseAState& state);
+    JobState& state);
 
-extern template void phase_a_one_strand_both<uint16_t>(
+extern template void stage1_one_strand_both<uint16_t>(
     const uint32_t*, const uint16_t*, size_t,
     const uint32_t*, const uint16_t*, size_t,
     int, bool,
-    const KixReader&, const KpxReader&,
-    const KixReader&, const KpxReader&,
+    const KixReader&, const KixReader&,
     const OidFilter&, const SearchConfig&,
-    uint32_t, uint32_t, uint32_t, Stage1Buffer&, PhaseAState&);
-extern template void phase_a_one_strand_both<uint32_t>(
+    uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
+extern template void stage1_one_strand_both<uint32_t>(
     const uint32_t*, const uint32_t*, size_t,
     const uint32_t*, const uint32_t*, size_t,
     int, bool,
-    const KixReader&, const KpxReader&,
-    const KixReader&, const KpxReader&,
+    const KixReader&, const KixReader&,
     const OidFilter&, const SearchConfig&,
-    uint32_t, uint32_t, uint32_t, Stage1Buffer&, PhaseAState&);
+    uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 
-// Phase B — run chain_hits() for one subject in `state`.  Pure function over
+// Stage 2A — both-mode path.  Hits from coding and optimal indexes are
+// merged into one hits_per_seq.
+template <typename KmerInt>
+void stage2a_one_strand_both(
+    const uint32_t* pos_cod, const KmerInt* kmers_cod, size_t n_cod,
+    const uint32_t* pos_opt, const KmerInt* kmers_opt, size_t n_opt,
+    const KixReader& kix_cod, const KpxReader& kpx_cod,
+    const KixReader& kix_opt, const KpxReader& kpx_opt,
+    JobState& state);
+
+extern template void stage2a_one_strand_both<uint16_t>(
+    const uint32_t*, const uint16_t*, size_t,
+    const uint32_t*, const uint16_t*, size_t,
+    const KixReader&, const KpxReader&,
+    const KixReader&, const KpxReader&,
+    JobState&);
+extern template void stage2a_one_strand_both<uint32_t>(
+    const uint32_t*, const uint32_t*, size_t,
+    const uint32_t*, const uint32_t*, size_t,
+    const KixReader&, const KpxReader&,
+    const KixReader&, const KpxReader&,
+    JobState&);
+
+// Stage 2B — run chain_hits() for one subject in `state`.  Pure function over
 // read-only state; safe to call concurrently across distinct (state, sid)
 // pairs.  Returns chain results for the subject (empty if no hits or no
-// chain meets min_score).  The caller assigns sid's stage1 score.
+// chain meets min_score).
 std::vector<ChainResult>
-phase_b_one_subject(SeqId sid, uint32_t stage1_score, const PhaseAState& state);
+stage2b_one_subject(SeqId sid, uint32_t stage1_score, const JobState& state);
 
 // Sort and truncate a SearchResult per the search config.  Exposed so the
 // volume-level wrappers and the orchestrator's per-volume / per-query post
@@ -151,9 +199,9 @@ struct QueryBundle {
     const QueryKmerData<KmerInt>* qdata_secondary = nullptr;
 };
 
-// Boundary representation produced by `run_search_jobs`. Caller maps each
-// element back to its output type (OutputHit for ikafssnsearch,
-// ResponseHit for ikafssnserver).
+// Boundary representation produced by Stage 2B.  Caller maps each element
+// back to its output type (OutputHit for ikafssnsearch, ResponseHit for
+// ikafssnserver).
 struct OrchestratorHit {
     size_t query_idx = 0;     // index into the QueryBundle vector
     size_t volume_idx = 0;    // index into the VolumeBundle vector
@@ -161,36 +209,80 @@ struct OrchestratorHit {
     ChainResult cr;
 };
 
-// Top-level orchestrator: Phase A parallel_for over (q, v), then flat
-// parallel_for over (job, strand, sid).  Returns a flat vector of
-// OrchestratorHit values aggregated across all jobs.
-//
-// `tls_bufs` is shared by reference so the caller controls its lifetime;
-// `arena` is the TBB task arena both phases run inside.
+// Stage 1 orchestrator — runs `stage1_one_strand_*` for every ext_job in
+// `batch_indices` (indices into `ext_jobs`).  States in `states` not
+// referenced by `batch_indices` are left untouched.  `volumes` must have
+// entries populated for every vi referenced by `batch_indices`.
 template <typename KmerInt>
-std::vector<OrchestratorHit> run_search_jobs(
+void run_stage1_jobs(
+    const std::vector<size_t>& batch_indices,
+    const std::vector<ExtJob>& ext_jobs,
     const std::vector<QueryBundle<KmerInt>>& queries,
     const std::vector<VolumeBundle<KmerInt>>& volumes,
-    const std::vector<std::pair<size_t, size_t>>& jobs,
     int k,
     const SearchConfig& config,
     bool both_mode,
+    std::vector<JobState>& states,
     tbb::task_arena& arena,
     tbb::enumerable_thread_specific<Stage1Buffer>& tls_bufs);
 
-extern template std::vector<OrchestratorHit> run_search_jobs<uint16_t>(
+extern template void run_stage1_jobs<uint16_t>(
+    const std::vector<size_t>&,
+    const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint16_t>>&,
     const std::vector<VolumeBundle<uint16_t>>&,
-    const std::vector<std::pair<size_t, size_t>>&,
     int, const SearchConfig&, bool,
+    std::vector<JobState>&,
     tbb::task_arena&,
     tbb::enumerable_thread_specific<Stage1Buffer>&);
-extern template std::vector<OrchestratorHit> run_search_jobs<uint32_t>(
+extern template void run_stage1_jobs<uint32_t>(
+    const std::vector<size_t>&,
+    const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint32_t>>&,
     const std::vector<VolumeBundle<uint32_t>>&,
-    const std::vector<std::pair<size_t, size_t>>&,
     int, const SearchConfig&, bool,
+    std::vector<JobState>&,
     tbb::task_arena&,
     tbb::enumerable_thread_specific<Stage1Buffer>&);
+
+// Stage 2A orchestrator — runs `stage2a_one_strand_*` for every ext_job in
+// `batch_indices`.  Skips ext_jobs whose Stage 1 produced no candidates or
+// that ran in mode 1 only.
+template <typename KmerInt>
+void run_stage2a_jobs(
+    const std::vector<size_t>& batch_indices,
+    const std::vector<ExtJob>& ext_jobs,
+    const std::vector<QueryBundle<KmerInt>>& queries,
+    const std::vector<VolumeBundle<KmerInt>>& volumes,
+    bool both_mode,
+    std::vector<JobState>& states,
+    tbb::task_arena& arena);
+
+extern template void run_stage2a_jobs<uint16_t>(
+    const std::vector<size_t>&,
+    const std::vector<ExtJob>&,
+    const std::vector<QueryBundle<uint16_t>>&,
+    const std::vector<VolumeBundle<uint16_t>>&,
+    bool,
+    std::vector<JobState>&,
+    tbb::task_arena&);
+extern template void run_stage2a_jobs<uint32_t>(
+    const std::vector<size_t>&,
+    const std::vector<ExtJob>&,
+    const std::vector<QueryBundle<uint32_t>>&,
+    const std::vector<VolumeBundle<uint32_t>>&,
+    bool,
+    std::vector<JobState>&,
+    tbb::task_arena&);
+
+// Stage 2B orchestrator — flat parallel_for over (ext_job, sid) tuples.
+// `volume_indices` provides the wire-level volume_index per ext_job so the
+// returned OrchestratorHits carry the correct value.
+std::vector<OrchestratorHit>
+run_stage2b_jobs(
+    const std::vector<ExtJob>& ext_jobs,
+    const std::vector<JobState>& states,
+    const std::vector<uint16_t>& volume_indices,
+    tbb::task_arena& arena);
 
 } // namespace ikafssn
