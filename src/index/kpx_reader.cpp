@@ -1,6 +1,8 @@
 #include "index/kpx_reader.hpp"
 #include "core/config.hpp"
 
+#include <sys/mman.h>
+
 #include <cstring>
 #include <cstdio>
 
@@ -77,6 +79,38 @@ size_t KpxReader::willneed_size() const {
 
 void KpxReader::apply_madvise(bool willneed) {
     mmap_.advise_dict_posting(willneed_size(), willneed);
+}
+
+size_t KpxReader::willneed_size_full() const {
+    if (!mmap_.is_open()) return 0;
+    return mmap_.size();
+}
+
+void KpxReader::apply_madvise_full(bool willneed) {
+    if (!mmap_.is_open()) return;
+    const size_t dict_size = willneed_size();
+    if (willneed) {
+        mmap_.advise(0, dict_size, MADV_WILLNEED);
+#ifdef MADV_HUGEPAGE
+        mmap_.advise(0, dict_size, MADV_HUGEPAGE);
+#endif
+        if (mmap_.size() > dict_size)
+            mmap_.advise(dict_size, mmap_.size() - dict_size, MADV_WILLNEED);
+    } else {
+        if (mmap_.size() > dict_size)
+            mmap_.advise(dict_size, mmap_.size() - dict_size, MADV_DONTNEED);
+    }
+}
+
+void KpxReader::apply_madvise_posting_random() {
+    if (!mmap_.is_open()) return;
+    const size_t dict_size = willneed_size();
+    mmap_.advise(0, dict_size, MADV_WILLNEED);
+#ifdef MADV_HUGEPAGE
+    mmap_.advise(0, dict_size, MADV_HUGEPAGE);
+#endif
+    if (mmap_.size() > dict_size)
+        mmap_.advise(dict_size, mmap_.size() - dict_size, MADV_RANDOM);
 }
 
 } // namespace ikafssn

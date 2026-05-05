@@ -55,6 +55,17 @@ public:
     size_t willneed_size() const;
     void apply_madvise(bool willneed);
 
+    // Full-mapping budget API: counts the pos_offsets dictionary head and
+    // the entire .kpx posting file.  Symmetric to KixReader; reserved for
+    // Stage 2 / Stage 3 batch paths that need the position posting body
+    // pre-faulted as a unit (mode 1 never reads .kpx).
+    size_t willneed_size_full() const;
+    void   apply_madvise_full(bool willneed);
+
+    // Hint that the posting body will be touched at random; pos_offsets
+    // dictionary head stays WILLNEED + HUGEPAGE.
+    void   apply_madvise_posting_random();
+
 private:
     MmapFile mmap_;
     const KpxHeader* header_ = nullptr;

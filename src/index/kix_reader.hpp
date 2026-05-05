@@ -34,6 +34,22 @@ public:
     size_t willneed_size() const;
     void apply_madvise(bool willneed);
 
+    // Full-mapping budget API: counts the dictionary head and the entire
+    // posting file.  Used by ikafssnsearch to charge a per-volume batch
+    // against the madvise WILLNEED budget — including the posting body —
+    // so that the batched search loop pre-faults a whole volume's payload
+    // before issuing query × volume jobs, then releases it for the next
+    // batch.
+    size_t willneed_size_full() const;
+    void   apply_madvise_full(bool willneed);
+
+    // Hint that the posting body will be touched at random (page cache is
+    // preserved but readahead is suppressed).  The dictionary head is
+    // re-pinned WILLNEED + HUGEPAGE.  Used by the fallback batch path
+    // when a single volume's posting body is larger than the WILLNEED
+    // budget allows.
+    void   apply_madvise_posting_random();
+
     // Get posting list byte offset for a k-mer
     uint64_t posting_list_offset(uint32_t kmer) const {
         return dict_.access(kmer);
