@@ -93,9 +93,18 @@ bool ResultStore::write(const std::string& job_id,
         remaining -= static_cast<std::size_t>(w);
     }
 
-    if (::fdatasync(fd) != 0 && errno != EINVAL) {
-        // EINVAL on filesystems that don't support fdatasync — ignore.
-        error_msg = "ResultStore::write: fdatasync " + tmp + ": "
+    // fdatasync(2) is Linux-only; macOS / BSDs only ship fsync(2).
+    // The metadata flush fsync adds is negligible for the small zstd
+    // result blob we just wrote, so the fallback is acceptable.
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) \
+    || defined(__NetBSD__) || defined(__DragonFly__)
+    int sync_rc = ::fsync(fd);
+#else
+    int sync_rc = ::fdatasync(fd);
+#endif
+    if (sync_rc != 0 && errno != EINVAL) {
+        // EINVAL on filesystems that don't support the sync primitive — ignore.
+        error_msg = "ResultStore::write: sync " + tmp + ": "
                   + std::strerror(errno);
         ::close(fd);
         ::unlink(tmp.c_str());
