@@ -499,9 +499,9 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 
 ### ikafssnhttpd
 
-HTTP REST API daemon. Connects to one or more `ikafssnserver` instances and exposes search as an HTTP API. Uses the Drogon framework. Multiple backends can be specified for multi-database support or load balancing of same-database replicas.
+HTTP REST API daemon. Connects to one or more `ikafssnserver` instances and exposes search as an asynchronous, polling-based REST API backed by a SQLite job store and a worker pool. Uses the Drogon framework. Multiple backends can be specified for multi-database support or load balancing of same-database replicas.
 
-On startup, it connects to all configured backends to cache their capabilities (retrying with exponential backoff for up to 30 seconds). If the same database name appears on multiple backends, cross-server validation ensures that for each shared (db, k) pair, total sequence counts and total bases are identical; mismatches cause a startup error. Backends are allowed to have different k-value sets for the same database (e.g., server A has k=10, server B has k=10 and k=11); the merged capabilities expose the union of all k-value groups. Search requests are validated against the merged capabilities (synchronous, no backend round-trip) to reject obviously invalid requests immediately, then routed to the best available backend based on priority and slot availability.
+On startup, it connects to all configured backends to cache their capabilities (retrying with exponential backoff for up to 30 seconds). If the same database name appears on multiple backends, cross-server validation ensures that for each shared (db, k) pair, total sequence counts and total bases are identical; mismatches cause a startup error. Backends are allowed to have different k-value sets for the same database (e.g., server A has k=10, server B has k=10 and k=11); the merged capabilities expose the union of all k-value groups. Search requests are validated against the merged capabilities (synchronous, no backend round-trip) to reject obviously invalid requests immediately. Validated requests are persisted in the job store and then dispatched by the worker pool to the best available backend based on priority and slot availability.
 
 **Routing and health:**
 
@@ -510,7 +510,7 @@ On startup, it connects to all configured backends to cache their capabilities (
 - **Pre-check**: Before each search, a fresh info request is sent to the selected backend to verify connectivity.
 - **Exclusion**: If a backend fails to respond (connection error on info or search), it is excluded for `-exclusion_time` seconds. Excluded backends are automatically re-checked during heartbeat and re-enabled once reachable.
 - **Heartbeat**: A background thread refreshes all backends' info every `-heartbeat_interval` seconds.
-- **No retry in httpd**: If a search request fails after backend selection, the error is returned to the client. `ikafssnclient` handles retry of rejected queries.
+- **Retry in httpd**: A failed dispatch is retried up to `-max_nretry` times by the worker pool before the job is marked `failed`. Per-query rejections returned by a backend are also retried by the worker.
 
 ```
 ikafssnhttpd [options]
@@ -518,6 +518,15 @@ ikafssnhttpd [options]
 Backend connection (at least one required; order = priority):
   -server_socket <path>      UNIX socket path to ikafssnserver
   -server_tcp <host>:<port>  TCP address of ikafssnserver
+
+Job store (async REST):
+  -db <path>                  SQLite job store path
+                              (default: /var/lib/ikafssnhttpd/jobs.db)
+  -retention_time <int>       Done/failed job retention in seconds (default: 86400)
+                              After this duration the housekeeper purges the row
+                              and any cached defline/result blobs from disk.
+  -max_nretry <int>           Per-job dispatch retry cap (default: 3)
+  -worker_threads <int>       Backend search worker pool size (default: 4)
 
 Options:
   -listen <host>:<port>       HTTP listen address (default: 0.0.0.0:8080)
@@ -529,15 +538,19 @@ Options:
   -v, --verbose               Verbose logging
 ```
 
-**REST API endpoints:**
+**REST API endpoints (async, polling-based):**
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v1/search` | Search request (query sequences in JSON body) |
-| GET | `/api/v1/info` | Aggregated index information from all backends |
-| GET | `/api/v1/health` | Health check (OK if any backend is reachable) |
+| POST | `/api/v1/jobs` | Submit a search job (query sequences in JSON body); returns `{job_id, status}` |
+| GET  | `/api/v1/jobs/{job_id}` | Job status (`queued` / `running` / `done` / `failed` / `timeout`) |
+| GET  | `/api/v1/jobs/{job_id}/result` | Fetch the serialized SearchResponse blob (only valid once status = `done`) |
+| GET  | `/api/v1/info` | Aggregated index information from all backends |
+| GET  | `/api/v1/health` | Health check (OK if any backend is reachable) |
 
 The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_queue_size`, `queue_depth`, and `max_seqs_per_req` (computed as `sum(min(available_i, per_req_i))` across backends) across all serving backends. A top-level `max_seqs_per_req` field reports the minimum across all modes.
+
+`POST /api/v1/jobs` returns immediately with a generated `job_id`; the worker pool dispatches the request asynchronously to a backend. Clients poll `GET /api/v1/jobs/{job_id}` until status reaches `done`, then download the result blob. Jobs that finish (success or failure) are kept for `-retention_time` seconds; the housekeeper purges expired rows along with cached `*.deflines.zst` / `*.result.bin.zst` artefacts under the job-store directory.
 
 **Examples:**
 
@@ -562,7 +575,9 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. Invalid parameters produce an error with available database listings before any query data is transmitted. The client uses the server's `max_seqs_per_req` and available slot count to automatically split queries into appropriately-sized batches, avoiding oversized requests that would be partially rejected. Within each batch, if the server still rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
 
-**Checkpointing:** The client automatically saves intermediate results to a temporary directory during batch processing. If the process is interrupted (e.g., Ctrl+C, network failure), re-running the same command resumes from where it left off, skipping already-completed queries. The temporary directory is named `{output}.{input}.{ix_name}.{kk}.ikafssn.tmp/` and is automatically cleaned up after successful completion. A directory-based lock prevents concurrent runs with the same parameters. Resume validation checks the search parameters, input file SHA256, and integrity of each batch file.
+**Socket/TCP mode (synchronous) — checkpointing:** When connected via `-socket` or `-tcp`, the client saves intermediate results to a temporary directory during batch processing. If the process is interrupted (e.g., Ctrl+C, network failure), re-running the same command resumes from where it left off, skipping already-completed queries. The temporary directory is named `{output}.{input}.{ix_name}.{kk}.ikafssn.tmp/` and is automatically cleaned up after successful completion. A directory-based lock prevents concurrent runs with the same parameters. Resume validation checks the search parameters, input file SHA256, and integrity of each batch file.
+
+**HTTP mode (asynchronous, polling-based):** When connected via `-http`, the client splits the input into one job per batch and submits each via `POST /api/v1/jobs` to `ikafssnhttpd`. Each job's metadata is persisted under `~/.ikafssnclient/<group_id>/<job_id>.json` along with a zstd-compressed defline cache (`<job_id>.deflines.zst`); the client then polls `GET /api/v1/jobs/{job_id}` until the job reaches a terminal state, downloads the result blob (`<job_id>.result.bin.zst`), and merges into the user's output file. Because all state is on disk, the client is resumable across reboots — `-resume <id>` re-enters the polling loop for an existing group or job, and `-submit_only` returns the `group_id` immediately after submission so a separate process (or a later invocation of `-resume`) can collect the result.
 
 ```
 ikafssnclient [options]
@@ -571,8 +586,17 @@ Connection (one required):
   -socket <path>           UNIX domain socket path
   -tcp <host>:<port>       TCP server address
   -http <url>              ikafssnhttpd URL (e.g., http://example.com:8080)
+                           HTTP mode uses async REST polling.
 
-Required:
+Async REST job management (HTTP mode only; mutually exclusive with a search):
+  -submit_only             Submit each batch, print the group_id, then exit
+                           without polling.  Use with -resume later to collect.
+  -jobs                    List all locally-tracked job groups under
+                           ~/.ikafssnclient/ (no server contact)
+  -jobdetail <id>          Show jobs in a group, or detail of a single job
+  -resume <id>             Resume polling for an existing group or single job
+
+Required (for a fresh search):
   -query <path>            Query FASTA file (- for stdin)
   -ix <name>               Target database name on server
 
