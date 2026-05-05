@@ -41,7 +41,10 @@ bool check_version(const CliParser& cli, const char* cmd_name,
 }
 
 void print_version_header(const char* cmd_name) {
-    std::fprintf(stderr, "%s: %s\n\n", cmd_name, IKAFSSN_VERSION);
+    // Single trailing \n keeps the title line adjacent to whatever the
+    // caller prints next (typically "Usage: ...").  The caller is in
+    // charge of inserting blank lines between sections.
+    std::fprintf(stderr, "%s: %s\n", cmd_name, IKAFSSN_VERSION);
 }
 
 Logger make_logger(const CliParser& cli) {

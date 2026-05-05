@@ -30,7 +30,9 @@ inline bool check_version(const CliParser& cli, const char* cmd_name) {
     return check_version(cli, cmd_name, __DATE__, __TIME__);
 }
 
-// Print "cmd_name: version\n\n" header for -h / usage display.
+// Print "cmd_name: version\n" header for -h / usage display.  The caller
+// is responsible for any blank line that should follow before the next
+// section (e.g. "Usage: ...").
 void print_version_header(const char* cmd_name);
 
 // Create a Logger from -v / --verbose flags.
