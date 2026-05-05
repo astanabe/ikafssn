@@ -826,6 +826,81 @@ int main(int argc, char* argv[]) {
     if (use_uint16) orch_hits = run_orchestrated(uint16_t{});
     else            orch_hits = run_orchestrated(uint32_t{});
 
+    // ----------------------------------------------------------------
+    // Mode 1 parallel TSV / JSON path.
+    //
+    // Mode 1's hit dump is flat (no Stage 3, no SAM) and the
+    // OrchestratorHit -> OutputHit conversion + serial std::ostream
+    // formatting is the dominant single-thread tail of the run on
+    // large databases.  When the output format is TSV or JSON we
+    // route OrchestratorHit straight into the parallel formatter
+    // and skip the OutputHit pipeline entirely.  Mode 1 SAM/BAM is
+    // rejected at validate_output_format(), and Mode 2/3 still need
+    // the OutputHit path for chain / Stage 3 / SAM fields.
+    // ----------------------------------------------------------------
+    const bool use_parallel_mode1 = (config.mode == 1) &&
+        (outfmt == OutputFormat::kTsv || outfmt == OutputFormat::kJson);
+
+    if (use_parallel_mode1) {
+        // Sort by query_idx (always; JSON groups by query, TSV preserves
+        // input order).  When -nresult > 0 also sort within each query
+        // by stage1_score descending.
+        const bool need_score_sort = (config.nresult > 0);
+        tbb::parallel_sort(orch_hits.begin(), orch_hits.end(),
+            [need_score_sort](const OrchestratorHit& a,
+                              const OrchestratorHit& b) {
+                if (a.query_idx != b.query_idx)
+                    return a.query_idx < b.query_idx;
+                if (need_score_sort)
+                    return a.cr.stage1_score > b.cr.stage1_score;
+                return false;
+            });
+
+        if (need_score_sort) {
+            std::vector<OrchestratorHit> truncated;
+            truncated.reserve(std::min<size_t>(
+                static_cast<size_t>(config.nresult) * queries.size(),
+                orch_hits.size()));
+            size_t cur_q = SIZE_MAX;
+            uint32_t cnt = 0;
+            for (auto& h : orch_hits) {
+                if (h.query_idx != cur_q) { cur_q = h.query_idx; cnt = 0; }
+                if (cnt < config.nresult) {
+                    truncated.push_back(std::move(h));
+                    ++cnt;
+                }
+            }
+            orch_hits = std::move(truncated);
+        }
+
+        // Open compressed output sink.
+        std::string err;
+        auto out = open_output_compressed(output_path, compression_level, err);
+        if (!out) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+
+        Mode1ParallelInputs in;
+        in.hits        = &orch_hits;
+        in.queries     = &queries;
+        in.skip_reason = &query_skip_reason;
+        in.skip_detail = &query_skip_detail;
+        in.stage1_score_type = config.stage1.stage1_score_type;
+        in.nthread     = nthread;
+        in.ksx_per_volume.resize(num_volumes);
+        for (size_t vi = 0; vi < num_volumes; ++vi)
+            in.ksx_per_volume[vi] = &ctxs[0].volumes[vi].ksx;
+
+        logger.info("Writing %zu hit(s)...", orch_hits.size());
+        if (outfmt == OutputFormat::kTsv)
+            write_results_tsv_mode1_parallel(*out.stream, in);
+        else
+            write_results_json_mode1_parallel(*out.stream, in);
+        logger.info("Done. %zu hit(s) reported.", orch_hits.size());
+        return has_skipped ? 2 : 0;
+    }
+
     // Convert OrchestratorHit -> OutputHit at the boundary.
     std::vector<OutputHit> all_hits;
     all_hits.reserve(orch_hits.size());

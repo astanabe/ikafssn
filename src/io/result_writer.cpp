@@ -323,6 +323,11 @@ bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
     return true;
 }
 
+// Mode 1 parallel TSV / JSON writers live in
+// src/search/result_writer_mode1.cpp (ikafssn_search) because they
+// resolve sseqid / slen via KsxReader; ikafssn_io does not depend on
+// ikafssn_index.
+
 bool parse_output_format(const std::string& str, OutputFormat& out,
                          std::string& error_msg) {
     if (str == "tsv") {

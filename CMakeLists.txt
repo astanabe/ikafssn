@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.05")  # KixReader/KpxReader: add apply_madvise_full / apply_madvise_posting_random / willneed_size_full for ikafssnsearch volume-batched WILLNEED/DONTNEED budget management
+set(IKAFSSN_VERSION "0.1.2026.05.05")  # ikafssnsearch: parallel TSV/JSON writer for -mode 1 (formats OrchestratorHit directly into per-thread chunk buffers, avoiding the OutputHit conversion + serial ostream tail); other modes/formats unchanged
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.

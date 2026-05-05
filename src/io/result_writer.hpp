@@ -10,6 +10,8 @@
 namespace ikafssn {
 
 class KsxReader;
+struct FastaRecord;
+struct OrchestratorHit;
 
 struct OutputHit {
     std::string qseqid;
@@ -86,5 +88,47 @@ void write_results(std::ostream& out,
                    uint8_t mode = 2,
                    uint8_t stage1_score_type = 1,
                    bool stage3_traceback = false);
+
+// -------------------------------------------------------------------------
+// Mode 1 parallel TSV / JSON writers.
+//
+// Mode 1's output (k-mer-only "did this query hit this subject" rows) is
+// the only path where the OrchestratorHit -> OutputHit boundary is a
+// dominant single-thread cost: nt_v4-scale runs spend a significant
+// fraction of wall on the dump.  These writers consume OrchestratorHit
+// directly, format per-thread chunk strings via std::to_chars, and let
+// the caller drive the (serial) compressed output sink.
+//
+// Mode 2 / Mode 3 still go through the OutputHit-based writers above —
+// those carry chain / Stage 3 / SAM fields and are unchanged.
+// -------------------------------------------------------------------------
+struct Mode1ParallelInputs {
+    const std::vector<OrchestratorHit>* hits = nullptr;
+    const std::vector<FastaRecord>*     queries = nullptr;
+    // Indexed by OrchestratorHit::volume_idx (the bundle index, not
+    // volume_index).  Each entry resolves accession / seq_length for the
+    // sids produced by that volume.  Caller owns the readers.
+    std::vector<const KsxReader*>       ksx_per_volume;
+    const std::vector<uint8_t>*         skip_reason = nullptr;
+    const std::vector<std::string>*     skip_detail = nullptr;
+    uint8_t  stage1_score_type = 1;
+    int      nthread = 1;
+};
+
+// TSV mode 1 parallel writer: header is emitted serially, hit rows are
+// formatted into per-thread chunk buffers (parallel_for over the hits
+// vector range) and written to `out` in chunk order.  Skip rows are
+// appended after hits.  Caller is responsible for sorting `hits` ahead
+// of time when -nresult > 0 (the mode-1 sort is by query_idx + score).
+void write_results_tsv_mode1_parallel(std::ostream& out,
+                                       const Mode1ParallelInputs& in);
+
+// JSON mode 1 parallel writer: chunk boundaries align to query_idx
+// boundaries (each chunk is a contiguous range of queries).  Caller must
+// have sorted `hits` by query_idx so that all rows for one query land in
+// one chunk.  Skip queries are emitted as objects with "status":
+// "skipped" mirroring the existing OutputHit writer.
+void write_results_json_mode1_parallel(std::ostream& out,
+                                        const Mode1ParallelInputs& in);
 
 } // namespace ikafssn
