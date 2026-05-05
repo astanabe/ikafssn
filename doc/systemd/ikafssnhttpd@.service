@@ -15,7 +15,7 @@
 #   JOBS_DB=/var/lib/ikafssnhttpd/jobs.db
 #   RETENTION_TIME=86400
 #   MAX_NRETRY=3
-#   WORKER_THREADS=4
+#   NTHREAD_WORKER=4
 #   EXTRA_OPTS=
 #
 # The instance name (%i) corresponds to the backend DB name.
@@ -33,11 +33,11 @@ EnvironmentFile=/etc/ikafssn/httpd-%i.conf
 ExecStart=/usr/local/bin/ikafssnhttpd \
     -server_socket ${SERVER_SOCKET} \
     -listen ${LISTEN} \
-    -threads ${THREADS} \
+    -nthread ${THREADS} \
     -db ${JOBS_DB} \
     -retention_time ${RETENTION_TIME} \
     -max_nretry ${MAX_NRETRY} \
-    -worker_threads ${WORKER_THREADS} \
+    -nthread_worker ${NTHREAD_WORKER} \
     -pid /run/ikafssn/httpd-%i.pid \
     ${EXTRA_OPTS}
 

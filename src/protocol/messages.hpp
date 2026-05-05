@@ -25,10 +25,10 @@ struct SearchRequest {
     uint8_t  k = 0;                  // 0 = server default
     uint16_t stage2_min_score = 0;   // 0 = server default (see has_stage2_min_score)
     uint16_t stage2_max_gap = 0;     // 0 = server default
-    uint8_t  stage2_min_diag_hits = 0; // 0 = server default
+    uint8_t  stage2_min_nhit_diag = 0; // 0 = server default
     uint16_t stage1_topn = 0;        // 0 = server default
     uint16_t stage1_min_score = 0;   // 0 = server default
-    uint16_t num_results = 0;        // 0 = server default
+    uint16_t nresult = 0;            // 0 = server default
     uint16_t stage1_min_score_frac_x10000 = 0; // P * 10000, 0 = use integer field
     SeqidlistMode seqidlist_mode = SeqidlistMode::kNone;
     uint8_t  mode = 0;              // 0 = server default, 1 = stage1 only, 2 = stage1+stage2
@@ -185,7 +185,7 @@ struct InfoResponse {
     uint8_t  default_k = 0;       // global default (first DB's)
     int32_t  max_queue_size = 0;
     int32_t  queue_depth = 0; // current in-use
-    int32_t  max_seqs_per_req = 0; // per-request sequence cap (0 = unlimited)
+    int32_t  max_nseq_per_req = 0; // per-request sequence cap (0 = unlimited)
     std::vector<DatabaseInfo> databases;
 };
 

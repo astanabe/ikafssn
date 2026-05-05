@@ -27,7 +27,7 @@ DbStats resolve_db_stats(const InfoResponse& info, const std::string& db_name,
 
 // Build a canonical options text for checkpoint validation.
 std::string build_options_text(const SearchRequest& req, const DbStats& stats,
-                                uint8_t resolved_k, OutputFormat outfmt,
+                                uint8_t resolved_k, OutputFormat output_format,
                                 const std::string& seqidlist_sha256,
                                 const std::string& neg_seqidlist_sha256);
 
@@ -56,7 +56,7 @@ public:
         std::string input_path;    // "-" = stdin
         std::string ix_name;       // -ix value (DB name)
         uint8_t resolved_k;        // actual k value (never 0)
-        OutputFormat outfmt;
+        OutputFormat output_format;
         int compression_level = -1; // CLI -compression_level (kCompressionLevelDefault)
     };
 

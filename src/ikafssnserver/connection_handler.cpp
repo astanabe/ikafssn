@@ -78,7 +78,7 @@ void handle_connection(
         iresp.default_k = static_cast<uint8_t>(server.default_k());
         iresp.max_queue_size = server.max_queue_size();
         iresp.queue_depth = server.queue_depth();
-        iresp.max_seqs_per_req = server.max_seqs_per_req();
+        iresp.max_nseq_per_req = server.max_nseq_per_req();
 
         for (const auto& db : server.databases()) {
             DatabaseInfo dbi;

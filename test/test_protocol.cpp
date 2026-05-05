@@ -127,10 +127,10 @@ static void test_search_request_serialize() {
     req.k = 9;
     req.stage2_min_score = 5;
     req.stage2_max_gap = 100;
-    req.stage2_min_diag_hits = 3;
+    req.stage2_min_nhit_diag = 3;
     req.stage1_topn = 500;
     req.stage1_min_score = 2;
-    req.num_results = 50;
+    req.nresult = 50;
     req.max_degen_expand = 16;
     req.seqidlist_mode = SeqidlistMode::kInclude;
     req.db = "testdb";
@@ -146,10 +146,10 @@ static void test_search_request_serialize() {
     assert(req2.k == 9);
     assert(req2.stage2_min_score == 5);
     assert(req2.stage2_max_gap == 100);
-    assert(req2.stage2_min_diag_hits == 3);
+    assert(req2.stage2_min_nhit_diag == 3);
     assert(req2.stage1_topn == 500);
     assert(req2.stage1_min_score == 2);
-    assert(req2.num_results == 50);
+    assert(req2.nresult == 50);
     assert(req2.max_degen_expand == 16);
     assert(req2.stage2_max_nhit_per_subject == 0);
     assert(req2.db == "testdb");
@@ -357,7 +357,7 @@ static void test_info_response_serialize() {
     resp.default_k = 11;
     resp.max_queue_size = 1024;
     resp.queue_depth = 42;
-    resp.max_seqs_per_req = 16;
+    resp.max_nseq_per_req = 16;
 
     DatabaseInfo db1;
     db1.name = "testdb";
@@ -405,7 +405,7 @@ static void test_info_response_serialize() {
     assert(resp2.default_k == 11);
     assert(resp2.max_queue_size == 1024);
     assert(resp2.queue_depth == 42);
-    assert(resp2.max_seqs_per_req == 16);
+    assert(resp2.max_nseq_per_req == 16);
     assert(resp2.databases.size() == 1);
 
     const auto& rdb = resp2.databases[0];
@@ -444,7 +444,7 @@ static void test_info_response_empty() {
     resp.default_k = 9;
     resp.max_queue_size = 512;
     resp.queue_depth = 0;
-    resp.max_seqs_per_req = 0;
+    resp.max_nseq_per_req = 0;
     // No databases
 
     auto data = serialize(resp);
@@ -455,7 +455,7 @@ static void test_info_response_empty() {
     assert(resp2.default_k == 9);
     assert(resp2.max_queue_size == 512);
     assert(resp2.queue_depth == 0);
-    assert(resp2.max_seqs_per_req == 0);
+    assert(resp2.max_nseq_per_req == 0);
     assert(resp2.databases.empty());
 
     std::printf(" OK\n");

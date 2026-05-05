@@ -47,10 +47,10 @@ static void print_usage(const char* prog) {
 #ifdef IKAFSSN_ENABLE_HTTP
         "\n"
         "Remote HTTP authentication:\n"
-        "  --user <user:password>   Credentials (curl-style)\n"
-        "  --http-user <USER>       Username (wget-style)\n"
-        "  --http-password <PASS>   Password (used with --http-user)\n"
-        "  --netrc-file <path>      .netrc file for credentials\n"
+        "  -user <user:password>    Credentials (curl-style)\n"
+        "  -http_user <USER>        Username (wget-style)\n"
+        "  -http_password <PASS>    Password (used with -http_user)\n"
+        "  -netrc_file <path>       .netrc file for credentials\n"
 #endif
         "\n"
         "Options:\n"
@@ -192,19 +192,19 @@ static int run_remote_info(const CliParser& cli, bool verbose) {
 #ifdef IKAFSSN_ENABLE_HTTP
     else if (cli.has("-http")) {
         HttpAuthConfig auth;
-        if (cli.has("--user") && cli.has("--http-user")) {
-            std::fprintf(stderr, "Error: --user and --http-user are mutually exclusive\n");
+        if (cli.has("-user") && cli.has("-http_user")) {
+            std::fprintf(stderr, "Error: -user and -http_user are mutually exclusive\n");
             return 1;
         }
-        if (cli.has("--user")) {
-            auth.userpwd = cli.get_string("--user");
-        } else if (cli.has("--http-user")) {
-            std::string user = cli.get_string("--http-user");
-            std::string pass = cli.get_string("--http-password", "");
+        if (cli.has("-user")) {
+            auth.userpwd = cli.get_string("-user");
+        } else if (cli.has("-http_user")) {
+            std::string user = cli.get_string("-http_user");
+            std::string pass = cli.get_string("-http_password", "");
             auth.userpwd = user + ":" + pass;
         }
-        if (cli.has("--netrc-file")) {
-            auth.netrc_file = cli.get_string("--netrc-file");
+        if (cli.has("-netrc_file")) {
+            auth.netrc_file = cli.get_string("-netrc_file");
         }
 
         std::string error_msg;
@@ -228,7 +228,7 @@ int main(int argc, char* argv[]) {
 
     if (check_version(cli, "ikafssninfo")) return 0;
 
-    if (cli.has("-h") || cli.has("--help")) {
+    if (cli.has("-h") || cli.has("-help")) {
         print_usage(argv[0]);
         return 0;
     }

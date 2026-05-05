@@ -8,7 +8,7 @@ static void test_single_hit() {
 
     std::vector<Hit> hits = {{10, 100}};
     Stage2Config config;
-    config.min_diag_hits = 1; // don't filter
+    config.min_nhit_diag = 1; // don't filter
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -30,7 +30,7 @@ static void test_perfect_chain() {
         {0, 90}, {7, 97}, {14, 104}, {21, 111}, {28, 118}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -51,7 +51,7 @@ static void test_chain_with_gap() {
         {0, 100}, {10, 110}, {50, 200}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100; // gap_q=40, gap_s=90, diag_diff=50, within 100
 
@@ -68,7 +68,7 @@ static void test_chain_gap_exceeded() {
         {0, 100}, {10, 300} // gap_q=10, gap_s=200, diag_diff=190 > max_gap=100
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -83,7 +83,7 @@ static void test_min_score_filter() {
 
     std::vector<Hit> hits = {{10, 100}};
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 3; // require at least 3
     config.max_gap = 100;
 
@@ -96,7 +96,7 @@ static void test_reverse_strand_flag() {
 
     std::vector<Hit> hits = {{0, 50}, {7, 57}};
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -115,7 +115,7 @@ static void test_non_collinear_hits() {
         {0, 200}, {10, 100}, {20, 50}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -134,7 +134,7 @@ static void test_same_qpos_not_chained() {
         {10, 100}, {10, 110}, {10, 120}, {10, 130}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -154,7 +154,7 @@ static void test_same_qpos_mixed_with_distinct() {
         {20, 200}, {20, 210}, {20, 220}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -172,7 +172,7 @@ static void test_chain_max_lookback_basic() {
         {0, 90}, {7, 97}, {14, 104}, {21, 111}, {28, 118}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
     config.chain_max_lookback = 4;
@@ -193,7 +193,7 @@ static void test_chain_max_lookback_interleaved() {
         {0, 90}, {7, 57}, {14, 104}, {21, 71}, {28, 118}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -227,7 +227,7 @@ static void test_chain_max_lookback_zero_unlimited() {
         {0, 90}, {7, 97}, {14, 104}, {21, 111}, {28, 118}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
     config.chain_max_lookback = 0; // unlimited
@@ -242,7 +242,7 @@ static void test_empty_hits() {
 
     std::vector<Hit> hits;
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -257,7 +257,7 @@ static void test_duplicate_hits_dedup() {
     // should be deduplicated before chaining
     std::vector<Hit> hits = {{10, 100}, {10, 100}, {20, 110}, {20, 110}, {20, 110}};
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 100;
 
@@ -279,7 +279,7 @@ static void test_multi_chain_two_regions() {
         {0, 500}, {7, 507}, {14, 514}, {21, 521}, {28, 528}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 50; // tight gap: prevents cross-region chaining
     config.max_nhit_per_subject = 2;
@@ -300,7 +300,7 @@ static void test_multi_chain_unlimited() {
         {0, 900}, {7, 907}, {14, 914}, {21, 921} // region C: score 4
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 50;
     config.max_nhit_per_subject = 0; // unlimited
@@ -322,7 +322,7 @@ static void test_multi_chain_default_one() {
         {0, 500}, {7, 507}, {14, 514}, {21, 521}
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 50;
     // max_nhit_per_subject = 1 (default)
@@ -342,7 +342,7 @@ static void test_multi_chain_score_order() {
         {0, 900}, {7, 907}, {14, 914}              // region C: score 3
     };
     Stage2Config config;
-    config.min_diag_hits = 1;
+    config.min_nhit_diag = 1;
     config.min_score = 1;
     config.max_gap = 50;
     config.max_nhit_per_subject = 3;

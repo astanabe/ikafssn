@@ -74,7 +74,7 @@ static void print_usage(const char* prog) {
         "Async REST job management (requires -http):\n"
         "  -submit_only             Submit, print group_id, and exit\n"
         "  -jobs                    List all locally-tracked job groups\n"
-        "  -jobdetail <id>          Show jobs in a group, or detail of a single job\n"
+        "  -job_detail <id>         Show jobs in a group, or detail of a single job\n"
         "  -resume <id>             Resume polling for an existing group or job\n"
 #endif
         "(See `ikafssnclient -h` for the full list of search options.)\n",
@@ -124,9 +124,9 @@ static int cmd_jobdetail(const std::string& id) {
         }
         std::printf("group_id=%s db=%s url=%s\n",
                     gm.group_id.c_str(), gm.db.c_str(), gm.httpd_url.c_str());
-        std::printf("query=%s output=%s outfmt=%s\n",
+        std::printf("query=%s output=%s output_format=%s\n",
                     gm.query_file_path_abs.c_str(),
-                    gm.output_path.c_str(), gm.outfmt.c_str());
+                    gm.output_path.c_str(), gm.output_format.c_str());
         std::printf("%-40s  %-10s  %-8s\n", "JOB_ID", "STATUS", "ATTEMPTS");
         for (const auto& job_id : gm.job_ids) {
             JobMeta jm;
@@ -245,10 +245,10 @@ static int finalize_group(const std::string& root,
         }
     }
 
-    OutputFormat fmt = OutputFormat::kTab;
-    if (gm.outfmt == "json") fmt = OutputFormat::kJson;
-    else if (gm.outfmt == "sam") fmt = OutputFormat::kSam;
-    else if (gm.outfmt == "bam") fmt = OutputFormat::kBam;
+    OutputFormat fmt = OutputFormat::kTsv;
+    if (gm.output_format == "json") fmt = OutputFormat::kJson;
+    else if (gm.output_format == "sam") fmt = OutputFormat::kSam;
+    else if (gm.output_format == "bam") fmt = OutputFormat::kBam;
 
     if (!write_all_results(gm.output_path, all_hits, fmt,
                             resp_mode, resp_stage1, resp_traceback,
@@ -426,7 +426,7 @@ int main(int argc, char* argv[]) {
 
     if (check_version(cli, "ikafssnclient")) return 0;
 
-    if (cli.has("-h") || cli.has("--help")) {
+    if (cli.has("-h") || cli.has("-help")) {
         print_usage(argv[0]);
         return 0;
     }
@@ -439,23 +439,23 @@ int main(int argc, char* argv[]) {
 #ifdef IKAFSSN_ENABLE_HTTP
     Logger early_logger = make_logger(cli);
     HttpAuthConfig auth;
-    if (cli.has("--user") && cli.has("--http-user")) {
-        std::fprintf(stderr, "Error: --user and --http-user are mutually exclusive\n");
+    if (cli.has("-user") && cli.has("-http_user")) {
+        std::fprintf(stderr, "Error: -user and -http_user are mutually exclusive\n");
         return 1;
     }
-    if (cli.has("--user")) auth.userpwd = cli.get_string("--user");
-    else if (cli.has("--http-user")) {
-        std::string user = cli.get_string("--http-user");
-        std::string pass = cli.get_string("--http-password", "");
+    if (cli.has("-user")) auth.userpwd = cli.get_string("-user");
+    else if (cli.has("-http_user")) {
+        std::string user = cli.get_string("-http_user");
+        std::string pass = cli.get_string("-http_password", "");
         auth.userpwd = user + ":" + pass;
     }
-    if (cli.has("--netrc-file")) auth.netrc_file = cli.get_string("--netrc-file");
+    if (cli.has("-netrc_file")) auth.netrc_file = cli.get_string("-netrc_file");
 
     if (cli.has("-jobs")) {
         return cmd_jobs();
     }
-    if (cli.has("-jobdetail")) {
-        return cmd_jobdetail(cli.get_string("-jobdetail"));
+    if (cli.has("-job_detail")) {
+        return cmd_jobdetail(cli.get_string("-job_detail"));
     }
     if (cli.has("-resume")) {
         return cmd_resume(cli.get_string("-resume"), early_logger, auth);
@@ -527,7 +527,7 @@ int main(int argc, char* argv[]) {
     OutputFormat outfmt;
     {
         std::string err;
-        if (!parse_output_format(cli.get_string("-outfmt", "tab"), outfmt, err)) {
+        if (!parse_output_format(cli.get_string("-output_format", "tsv"), outfmt, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
@@ -559,7 +559,7 @@ int main(int argc, char* argv[]) {
     base_req.stage2_max_gap = static_cast<uint16_t>(cli.get_int("-stage2_max_gap", 0));
     base_req.stage2_max_lookback = static_cast<uint16_t>(cli.get_int("-stage2_max_lookback", 0));
     base_req.stage2_max_nhit_per_subject = static_cast<uint16_t>(cli.get_int("-stage2_max_nhit_per_subject", 0));
-    base_req.stage2_min_diag_hits = static_cast<uint8_t>(cli.get_int("-stage2_min_diag_hits", 0));
+    base_req.stage2_min_nhit_diag = static_cast<uint8_t>(cli.get_int("-stage2_min_nhit_diag", 0));
     base_req.stage1_topn = static_cast<uint16_t>(cli.get_int("-stage1_topn", 0));
     {
         double min_s1 = cli.get_double("-stage1_min_score", 0.0);
@@ -569,7 +569,7 @@ int main(int argc, char* argv[]) {
             base_req.stage1_min_score = static_cast<uint16_t>(min_s1);
         }
     }
-    base_req.num_results = static_cast<uint16_t>(cli.get_int("-num_results", 0));
+    base_req.nresult = static_cast<uint16_t>(cli.get_int("-nresult", 0));
     base_req.mode = static_cast<uint8_t>(cli.get_int("-mode", 0));
     base_req.stage1_score = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
     base_req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
@@ -618,7 +618,7 @@ int main(int argc, char* argv[]) {
         base_req.score_matrix = score_matrix_code(sm);
     }
     {
-        std::string context_str = cli.get_string("-context", "2.0");
+        std::string context_str = cli.get_string("-context_extend", "2.0");
         if (context_str.find('.') != std::string::npos) {
             double ratio = std::stod(context_str);
             base_req.context_frac_x10000 = static_cast<uint16_t>(ratio * 10000.0);
@@ -761,8 +761,8 @@ int main(int argc, char* argv[]) {
 
         // Determine batch size from server info.
         int batch_size = static_cast<int>(queries.size());
-        if (server_info.max_seqs_per_req > 0)
-            batch_size = std::min(batch_size, server_info.max_seqs_per_req);
+        if (server_info.max_nseq_per_req > 0)
+            batch_size = std::min(batch_size, server_info.max_nseq_per_req);
         if (batch_size < 1) batch_size = 1;
 
         GroupMeta gm;
@@ -777,15 +777,15 @@ int main(int argc, char* argv[]) {
             : input_path;
         if (input_path == "-") gm.query_file_sha256 = sha256_string(stdin_content);
         else                    gm.query_file_sha256 = sha256_file(input_path);
-        gm.max_seqs_per_req = batch_size;
+        gm.max_nseq_per_req = batch_size;
         gm.k             = resolved_k;
         gm.mode          = base_req.mode;
         gm.t             = base_req.t;
         gm.template_type = base_req.template_type;
-        gm.outfmt = (outfmt == OutputFormat::kJson) ? "json"
+        gm.output_format = (outfmt == OutputFormat::kJson) ? "json"
                   : (outfmt == OutputFormat::kSam)  ? "sam"
                   : (outfmt == OutputFormat::kBam)  ? "bam"
-                  : "tab";
+                  : "tsv";
         gm.output_path = output_path;
         gm.compression_level = compression_level;
 
@@ -898,7 +898,7 @@ int main(int argc, char* argv[]) {
     ckpt_cfg.input_path = input_path;
     ckpt_cfg.ix_name = ix_name;
     ckpt_cfg.resolved_k = resolved_k;
-    ckpt_cfg.outfmt = outfmt;
+    ckpt_cfg.output_format = outfmt;
     ckpt_cfg.compression_level = compression_level;
 
     Checkpoint ckpt(ckpt_cfg, logger);
@@ -932,8 +932,8 @@ int main(int argc, char* argv[]) {
 
     int batch_size = static_cast<int>(remaining.size());
     if (batch_size == 0) batch_size = 1;
-    if (server_info.max_seqs_per_req > 0)
-        batch_size = std::min(batch_size, static_cast<int>(server_info.max_seqs_per_req));
+    if (server_info.max_nseq_per_req > 0)
+        batch_size = std::min(batch_size, static_cast<int>(server_info.max_nseq_per_req));
     if (server_info.max_queue_size > 0) {
         int available = server_info.max_queue_size - server_info.queue_depth;
         if (available > 0) batch_size = std::min(batch_size, available);

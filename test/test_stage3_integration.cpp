@@ -69,9 +69,9 @@ static void test_stage3_pipeline() {
     config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 10;
+    config.nresult = 10;
     config.mode = 2;
 
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
@@ -109,7 +109,7 @@ static void test_stage3_pipeline() {
     s3config.traceback = true;
     s3config.gapopen = 10;
     s3config.gapext = 1;
-    s3config.fetch_threads = 1;
+    s3config.nthread_fetch = 1;
 
     auto filtered = run_stage3(all_hits, queries, g_testdb_path, s3config,
                                false, 0.0, 0, logger);
@@ -178,9 +178,9 @@ static void test_stage3_score_only() {
     config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 5;
+    config.nresult = 5;
 
     auto qdata = preprocess_query<uint16_t>(query, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -210,7 +210,7 @@ static void test_stage3_score_only() {
     // Score-only mode (no traceback)
     Stage3Config s3config;
     s3config.traceback = false;
-    s3config.fetch_threads = 1;
+    s3config.nthread_fetch = 1;
 
     auto filtered = run_stage3(all_hits, queries, g_testdb_path, s3config,
                                false, 0.0, 0, logger);
@@ -259,9 +259,9 @@ static void test_stage3_context() {
     config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 5;
+    config.nresult = 5;
 
     auto qdata = preprocess_query<uint16_t>(query, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -295,7 +295,7 @@ static void test_stage3_context() {
     // With integer context
     Stage3Config s3config;
     s3config.traceback = true;
-    s3config.fetch_threads = 1;
+    s3config.nthread_fetch = 1;
 
     auto filtered = run_stage3(all_hits, queries, g_testdb_path, s3config,
                                false, 0.0, 50, logger);  // 50bp context

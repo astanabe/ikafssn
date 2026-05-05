@@ -114,10 +114,10 @@ bool HttpController::parse_search_request_json(
             sreq.stage1_min_score_frac_x10000 = static_cast<uint16_t>(frac * 10000.0);
         }
     }
-    sreq.stage2_min_diag_hits = static_cast<uint8_t>(j.get("stage2_min_diag_hits", 0).asUInt());
+    sreq.stage2_min_nhit_diag = static_cast<uint8_t>(j.get("stage2_min_nhit_diag", 0).asUInt());
     sreq.stage1_topn = static_cast<uint16_t>(j.get("stage1_topn", 0).asUInt());
     sreq.stage1_min_score = static_cast<uint16_t>(j.get("stage1_min_score", 0).asUInt());
-    sreq.num_results = static_cast<uint16_t>(j.get("num_results", 0).asUInt());
+    sreq.nresult = static_cast<uint16_t>(j.get("nresult", 0).asUInt());
     sreq.mode = static_cast<uint8_t>(j.get("mode", 0).asUInt());
     sreq.stage1_score = static_cast<uint8_t>(j.get("stage1_score", 0).asUInt());
     sreq.accept_qdegen = static_cast<uint8_t>(j.get("accept_qdegen", 1).asUInt());

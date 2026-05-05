@@ -240,7 +240,7 @@ static void test_sam_bam_compression_rejection() {
 
     // TSV with .gz is fine
     err.clear();
-    CHECK(validate_output_format(OutputFormat::kTab, /*mode=*/2,
+    CHECK(validate_output_format(OutputFormat::kTsv, /*mode=*/2,
                                   /*traceback=*/false, "out.tsv.gz", err));
 }
 

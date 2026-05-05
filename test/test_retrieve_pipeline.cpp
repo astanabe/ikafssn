@@ -59,9 +59,9 @@ static void test_full_pipeline() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 50;
+    config.nresult = 50;
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
@@ -91,9 +91,9 @@ static void test_full_pipeline() {
 
     // Step 3: Write results as tab, then read back
     std::ostringstream oss;
-    write_results_tab(oss, hits);
+    write_results_tsv(oss, hits);
     std::istringstream iss(oss.str());
-    auto parsed_hits = read_results_tab(iss);
+    auto parsed_hits = read_results_tsv(iss);
     CHECK_EQ(parsed_hits.size(), hits.size());
 
     // Step 4: Retrieve subsequences from local BLAST DB

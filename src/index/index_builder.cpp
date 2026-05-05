@@ -155,7 +155,7 @@ bool build_index(BlastDbReader& db,
             });
 
         // Reduce thread-local counts.  Walking each thread-local vector
-        // sequentially is O(num_threads * tbl_size) on a single thread and
+        // sequentially is O(nthread * tbl_size) on a single thread and
         // becomes a bottleneck at k=13/15 (tbl_size = 4^k = 64M / 1G entries).
         // Snapshot the local pointers, then range-partition the tbl_size
         // dimension across threads — each output cell aggregates across all

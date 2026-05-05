@@ -33,10 +33,10 @@ std::string build_request_json(const SearchRequest& req) {
         root["stage1_min_score_frac"] =
             static_cast<double>(req.stage1_min_score_frac_x10000) / 10000.0;
     }
-    root["stage2_min_diag_hits"] = req.stage2_min_diag_hits;
+    root["stage2_min_nhit_diag"] = req.stage2_min_nhit_diag;
     root["stage1_topn"] = req.stage1_topn;
     root["stage1_min_score"] = req.stage1_min_score;
-    root["num_results"] = req.num_results;
+    root["nresult"] = req.nresult;
     root["mode"] = req.mode;
     root["stage1_score"] = req.stage1_score;
     root["accept_qdegen"] = req.accept_qdegen;
@@ -103,7 +103,7 @@ bool parse_info_json(const std::string& body, InfoResponse& resp,
     resp.default_k = static_cast<uint8_t>(root.get("default_k", 0).asUInt());
     resp.max_queue_size = root.get("max_queue_size", 0).asInt();
     resp.queue_depth = root.get("queue_depth", 0).asInt();
-    resp.max_seqs_per_req = root.get("max_seqs_per_req", 0).asInt();
+    resp.max_nseq_per_req = root.get("max_nseq_per_req", 0).asInt();
 
     if (root.isMember("databases") && root["databases"].isArray()) {
         for (const auto& dbj : root["databases"]) {

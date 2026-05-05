@@ -31,7 +31,7 @@ std::string format_build_timestamp(const char* date, const char* time_str) {
 
 bool check_version(const CliParser& cli, const char* cmd_name,
                    const char* build_date, const char* build_time) {
-    if (cli.has("-version") || cli.has("--version")) {
+    if (cli.has("-version")) {
         std::string ts = format_build_timestamp(build_date, build_time);
         std::fprintf(stderr, "%s: %s\n Package: ikafssn %s, build %s\n",
                      cmd_name, IKAFSSN_VERSION, IKAFSSN_VERSION, ts.c_str());
@@ -48,7 +48,7 @@ void print_version_header(const char* cmd_name) {
 }
 
 Logger make_logger(const CliParser& cli) {
-    bool verbose = cli.has("-v") || cli.has("--verbose");
+    bool verbose = cli.has("-v") || cli.has("-verbose");
     return Logger(verbose ? Logger::kDebug : Logger::kInfo);
 }
 

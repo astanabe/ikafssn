@@ -25,7 +25,7 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
         }), deduped.end());
 
     // Step 2: diagonal filter
-    std::vector<Hit> hits = diagonal_filter(deduped, config.min_diag_hits);
+    std::vector<Hit> hits = diagonal_filter(deduped, config.min_nhit_diag);
     if (hits.empty()) return {};
 
     // Already sorted by (q_pos, s_pos) from dedup step

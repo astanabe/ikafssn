@@ -53,7 +53,7 @@ static void test_tsv_skip_row() {
     hits.push_back(make_normal_hit("q3", "ACC2", 30));
 
     std::ostringstream oss;
-    write_results_tab(oss, hits, /*mode=*/2, /*stage1_score_type=*/1,
+    write_results_tsv(oss, hits, /*mode=*/2, /*stage1_score_type=*/1,
                        /*traceback=*/false);
     std::string out = oss.str();
 
@@ -80,10 +80,10 @@ static void test_tsv_reader_drops_skip_rows() {
     hits.push_back(make_normal_hit("q3", "ACC2", 30));
 
     std::ostringstream oss;
-    write_results_tab(oss, hits, 2, 1, false);
+    write_results_tsv(oss, hits, 2, 1, false);
 
     std::istringstream iss(oss.str());
-    auto parsed = read_results_tab(iss);
+    auto parsed = read_results_tsv(iss);
 
     // Only normal hits round-trip; skip row is dropped.
     CHECK_EQ(parsed.size(), 2u);

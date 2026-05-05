@@ -270,7 +270,7 @@ static void test_async_submit_poll_get() {
     ServerConfig sconfig;
     sconfig.db_entries.push_back({ix_prefix, ix_prefix});
     sconfig.unix_socket_path = sock_path;
-    sconfig.num_threads = 2;
+    sconfig.nthread = 2;
     sconfig.log_level = Logger::kError;
     sconfig.search_config.stage2.min_score = 1;
 

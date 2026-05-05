@@ -44,9 +44,9 @@ struct OutputHit {
     std::string skip_detail;       // human-readable detail
 };
 
-enum class OutputFormat { kTab, kJson, kSam, kBam };
+enum class OutputFormat { kTsv, kJson, kSam, kBam };
 
-// Parse an output format string ("tab", "json", "sam", "bam").
+// Parse an output format string ("tsv", "json", "sam", "bam").
 // Returns true on success. On failure, out is unchanged and error_msg is set.
 bool parse_output_format(const std::string& str, OutputFormat& out,
                          std::string& error_msg);
@@ -57,8 +57,8 @@ bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
                             const std::string& output_path,
                             std::string& error_msg);
 
-// Write results in tab-delimited format.
-void write_results_tab(std::ostream& out,
+// Write results in TSV (tab-delimited) format.
+void write_results_tsv(std::ostream& out,
                        const std::vector<OutputHit>& hits,
                        uint8_t mode = 2,
                        uint8_t stage1_score_type = 1,
@@ -79,7 +79,7 @@ void write_results_json_fragment(std::ostream& out,
                                   uint8_t stage1_score_type = 1,
                                   bool stage3_traceback = false);
 
-// Write results in the specified format (tab or json).
+// Write results in the specified format (tsv or json).
 void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,
                    OutputFormat fmt,

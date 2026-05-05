@@ -206,7 +206,7 @@ static void test_remote_retrieval() {
     EfetchOptions opts;
     opts.context = 0;
     opts.batch_size = 100;
-    opts.retries = 3;
+    opts.max_nretry = 3;
     opts.timeout_sec = 60;
     opts.range_threshold = 100000;
 

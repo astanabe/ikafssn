@@ -61,9 +61,9 @@ static void test_build_and_search() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 50;
+    config.nresult = 50;
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
@@ -106,9 +106,9 @@ static void test_revcomp_search() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 50;
+    config.nresult = 50;
 
     // Compute the reverse complement of the query
     std::string rc_query;
@@ -165,9 +165,9 @@ static void test_seqidlist_filter() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 1;
-    config.num_results = 50;
+    config.nresult = 50;
 
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -205,9 +205,9 @@ static void test_negative_seqidlist() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 1;
-    config.num_results = 50;
+    config.nresult = 50;
 
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -232,7 +232,7 @@ static void test_result_output_tab() {
     };
 
     std::ostringstream oss;
-    write_results_tab(oss, hits);
+    write_results_tsv(oss, hits);
     std::string output = oss.str();
 
     // Check header (mode 2 default: includes coverscore and chainscore)
@@ -253,7 +253,7 @@ static void test_result_output_tab_mode1() {
     };
 
     std::ostringstream oss;
-    write_results_tab(oss, hits, 1, 1);
+    write_results_tsv(oss, hits, 1, 1);
     std::string output = oss.str();
 
     // Mode 1: no qstart/qend/sstart/send/chainscore columns
@@ -328,9 +328,9 @@ static void test_search_k9() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 50;
+    config.nresult = 50;
 
     auto qdata = preprocess_query<uint32_t>(g_query_seq, 9, nullptr, config);
     auto result = search_volume<uint32_t>(
@@ -369,9 +369,9 @@ static void test_search_mode1() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 1;
-    config.num_results = 50;
+    config.nresult = 50;
     config.mode = 1;         // stage1 only
     config.sort_score = 1;   // sort by stage1 score
 
@@ -401,9 +401,9 @@ static void test_search_mode1() {
     ksx.close();
 }
 
-static void test_search_num_results_zero() {
+static void test_search_nresult_zero() {
     Stage1Buffer buf;
-    std::fprintf(stderr, "-- test_search_num_results_zero\n");
+    std::fprintf(stderr, "-- test_search_nresult_zero\n");
 
     std::string prefix = g_test_dir + "/test.00.07mer";
 
@@ -416,27 +416,27 @@ static void test_search_num_results_zero() {
 
     OidFilter filter;
 
-    // num_results=50 (limited)
+    // nresult=50 (limited)
     SearchConfig config_limited;
     config_limited.stage1.stage1_topn = 100;
     config_limited.stage1.min_stage1_score = 1;
     config_limited.stage2.max_gap = 100;
-    config_limited.stage2.min_diag_hits = 1;
+    config_limited.stage2.min_nhit_diag = 1;
     config_limited.stage2.min_score = 1;
-    config_limited.num_results = 2;
+    config_limited.nresult = 2;
 
     auto qdata_lim = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config_limited);
     auto result_limited = search_volume<uint16_t>(
         "q_lim", qdata_lim, 7, kix, kpx, ksx, filter, config_limited, buf);
 
-    // num_results=0 (unlimited)
+    // nresult=0 (unlimited)
     SearchConfig config_unlimited;
     config_unlimited.stage1.stage1_topn = 100;
     config_unlimited.stage1.min_stage1_score = 1;
     config_unlimited.stage2.max_gap = 100;
-    config_unlimited.stage2.min_diag_hits = 1;
+    config_unlimited.stage2.min_nhit_diag = 1;
     config_unlimited.stage2.min_score = 1;
-    config_unlimited.num_results = 0;
+    config_unlimited.nresult = 0;
 
     auto qdata_unlim = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config_unlimited);
     auto result_unlimited = search_volume<uint16_t>(
@@ -495,9 +495,9 @@ static void test_search_both_template() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 1;
-    config.num_results = 50;
+    config.nresult = 50;
     config.t = 15;
 
     const auto masks_cod = get_seed_masks(9, 15, TemplateType::kCoding);
@@ -560,7 +560,7 @@ int main() {
     test_negative_seqidlist();
     test_search_k9();
     test_search_mode1();
-    test_search_num_results_zero();
+    test_search_nresult_zero();
     test_search_both_template();
 
     std::filesystem::remove_all(g_test_dir);

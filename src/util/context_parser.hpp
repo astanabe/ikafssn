@@ -11,7 +11,7 @@ struct ContextParam {
     uint32_t abs = 0;
 };
 
-// Parse -context value.
+// Parse -context_extend value.
 // If the string contains '.', interprets as ratio; otherwise as absolute.
 // Returns false and sets error_msg on negative values.
 inline bool parse_context(const std::string& value, ContextParam& out,
@@ -21,13 +21,13 @@ inline bool parse_context(const std::string& value, ContextParam& out,
         out.is_ratio = true;
         out.ratio = std::stod(value);
         if (out.ratio < 0) {
-            error_msg = "Error: -context ratio must be >= 0";
+            error_msg = "Error: -context_extend ratio must be >= 0";
             return false;
         }
     } else {
         int v = std::stoi(value);
         if (v < 0) {
-            error_msg = "Error: -context must be >= 0";
+            error_msg = "Error: -context_extend must be >= 0";
             return false;
         }
         out.abs = static_cast<uint32_t>(v);

@@ -72,7 +72,7 @@ TSV / JSON / FASTA 出力に対し、透過的なコーデックラッパを通�
   範囲は I/O オープン前にパース時点で検証されます。
 - SAM / BAM 出力は 4 種の圧縮拡張子を **拒否** します — BAM 自体が
   既に BGZF であり、二重ラップを意図的に避けるためです。圧縮された
-  結果ファイルが必要な場合は `-outfmt tab` または `-outfmt json` を
+  結果ファイルが必要な場合は `-output_format tsv` または `-output_format json` を
   指定してください。
 
 ### ikafssnindex
@@ -107,9 +107,9 @@ ikafssnindex [options]
                           独立パーティションとして切り出し、それ以下のクラスタは共有
                           short bucket にまとめる (染色体級配列のブロック幅が絶対位置の
                           大きさに引きずられないようにし、`.kpx` の圧縮率を改善)
-  -highfreq_filter_threads <int>
+  -nthread_highfreq_filter <int>
                           ボリューム横断高頻度フィルタリングのスレッド数
-                          (デフォルト: min(8, threads))
+                          (デフォルト: min(8, nthread))
   -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 4、最大: 16、0/1: 無効)
                           IUPAC 縮重塩基を含む k-mer から生成する非縮重 k-mer の最大数を制御。
                           各位置の変異数の積がこの上限以下の場合に展開を実行。
@@ -121,7 +121,7 @@ ikafssnindex [options]
                           coding: コーディングテンプレートのみ
                           optimal: オプティマルテンプレートのみ
                           both: coding と optimal のインデックスを順次構築
-  -threads <int>          使用スレッド数 (デフォルト: 利用可能な全コア)
+  -nthread <int>          使用スレッド数 (デフォルト: 利用可能な全コア)
                           計数・パーティションスキャン・ソート・
                           ボリューム処理を並列化
   -v, --verbose           詳細ログ出力
@@ -134,7 +134,7 @@ ikafssnindex [options]
 ikafssnindex -db mydb -k 11 -o ./index -memory_limit 128G
 
 # 大規模 DB、メモリ制限、マルチスレッド
-ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -threads 32
+ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -nthread 32
 
 # 高頻度 k-mer を除外して構築 (絶対値指定)
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
@@ -175,7 +175,7 @@ ikafssnsearch [options]
 オプション:
   -k <int>                使用する k-mer サイズ (複数の k 値が存在する場合は必須)
   -o <path>               出力ファイル (デフォルト: 標準出力)
-  -threads <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
+  -nthread <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
   -memory_limit <size>    madvise WILLNEED 予算 (デフォルト: 物理メモリの半分)
                           接尾辞 K, M, G を認識
   -mode <1|2|3>           検索モード (デフォルト: 2)
@@ -194,8 +194,8 @@ ikafssnsearch [options]
   -stage2_max_gap <int>   チェイニング対角線ずれ許容幅 (デフォルト: 100)
   -stage2_max_lookback <int>  チェイニング DP 探索窓サイズ (デフォルト: 64、0=無制限)
   -stage2_max_nhit_per_subject <int>  サブジェクトあたりの最大チェイン数 (デフォルト: 1、0=無制限)
-  -stage2_min_diag_hits <int>  対角線フィルタ最小ヒット数 (デフォルト: 1)
-  -context <value>        モード 3 のコンテクスト拡張 (デフォルト: 2.0)
+  -stage2_min_nhit_diag <int>  対角線フィルタ最小ヒット数 (デフォルト: 1)
+  -context_extend <value>        モード 3 のコンテクスト拡張 (デフォルト: 2.0)
                           整数: 拡張する塩基数; 小数: クエリ長に対する倍率
   -stage3_traceback <0|1> モード 3 でトレースバックを有効化 (デフォルト: 0)
   -stage3_gapopen <int>   モード 3 のギャップオープンペナルティ (デフォルト: 10)
@@ -204,8 +204,8 @@ ikafssnsearch [options]
   -stage3_min_npositive <int>  モード 3 の最小正スコア塩基数フィルタ (デフォルト: 0)
   -stage3_score_matrix <str>  モード 3 のスコア行列 (デフォルト: degmatch)
                           利用可能: degmatch、dnafull、nuc44
-  -stage3_fetch_threads <int>  モード 3 の BLAST DB 取得スレッド数 (デフォルト: min(8, threads); -threads を超えるとエラー)
-  -num_results <int>      最終出力件数、0=無制限 (デフォルト: 0)
+  -stage3_nthread_fetch <int>  モード 3 の BLAST DB 取得スレッド数 (デフォルト: min(8, nthread); -nthread を超えるとエラー)
+  -nresult <int>      最終出力件数、0=無制限 (デフォルト: 0)
   -seqidlist <path>       検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>       検索する鎖 (デフォルト: 2)
@@ -220,7 +220,7 @@ ikafssnsearch [options]
                           coding: coding インデックスのみ使用
                           optimal: optimal インデックスのみ使用
                           both: coding と optimal のインデックスを検索時にマージ
-  -outfmt <tab|json|sam|bam>  出力形式 (デフォルト: tab)
+  -output_format <tsv|json|sam|bam>  出力形式 (デフォルト: tsv)
   -compression_level <int> 出力圧縮レベル (gzip/bzip2/xz/zstd; 既定値: gzip=6, bzip2=9, xz=6, zstd=3)
                           コーデックは -o の拡張子 (.gz/.bz2/.xz/.zst) で選択。SAM/BAM では拒否
   -v, --verbose           詳細ログ出力
@@ -253,7 +253,7 @@ ikafssnsearch [options]
 
 ```bash
 # 基本的な検索
-ikafssnsearch -ix ./index/mydb -query query.fasta -threads 8
+ikafssnsearch -ix ./index/mydb -query query.fasta -nthread 8
 
 # k-mer サイズを指定 (インデックスに複数の k 値が含まれる場合は必須)
 ikafssnsearch -ix ./index/mydb -k 11 -query query.fasta
@@ -272,22 +272,22 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -negative_seqidlist exclude.tx
 ikafssnsearch -ix ./index/mydb -query query.fasta -stage1_min_score 0.5
 
 # モード 3: トレースバック付きペアワイズアライメント
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -num_results 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -nresult 5
 
 # モード 3: SAM 出力
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -output_format sam -o result.sam
 
 # モード 3: BAM 出力
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt bam -o result.bam
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -output_format bam -o result.bam
 
 # モード 3: 正スコア率でフィルタ
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_ppositive 90
 
 # モード 3: コンテクスト拡張 (前後各50塩基)
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 50 -num_results 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context_extend 50 -nresult 5
 
 # モード 3: コンテクスト拡張 (前後各クエリ長の0.1倍)
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 0.1 -num_results 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context_extend 0.1 -nresult 5
 
 # パイプラインで ikafssnretrieve に接続
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -343,7 +343,7 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 300 \
 
 # モード 3 でアライメントまで実行
 ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
-    -mode 3 -stage3_traceback 1 -num_results 10
+    -mode 3 -stage3_traceback 1 -nresult 10
 ```
 
 ### ikafssnretrieve
@@ -358,25 +358,25 @@ ikafssnretrieve [options]
   -remote                 NCBI efetch からリモート取得
 
 入力:
-  -results <path>         検索結果ファイル (tab 形式)
+  -tsv <path>         検索結果ファイル (TSV 形式)
   (指定なし)              標準入力から読み込み
 
 共通オプション:
   -o <path>               出力 FASTA ファイル (デフォルト: 標準出力)
                           拡張子 (.gz/.bz2/.xz/.zst) で出力コーデックを選択
-  -context <value>        コンテクスト拡張 (デフォルト: 2.0)
+  -context_extend <value>        コンテクスト拡張 (デフォルト: 2.0)
                           整数: マッチ領域の前後に付加する塩基数
                           小数: クエリ長 (qlen) に対する倍率
   -compression_level <int> 出力圧縮レベル (既定値: gzip=6, bzip2=9, xz=6, zstd=3)
   -v, --verbose           詳細ログ出力
 
-(注: -results は gzip/bzip2/xz/zstd 圧縮された検索結果ファイルを先頭マジック
+(注: -tsv は gzip/bzip2/xz/zstd 圧縮された検索結果ファイルを先頭マジック
  バイトで自動判定するため、フラグ指定は不要です。)
 
 リモート取得オプション (-remote 時):
   -api_key <key>          NCBI API key (環境変数 NCBI_API_KEY でも可)
   -batch_size <int>       バッチあたりのアクセッション数 (デフォルト: 100)
-  -retries <int>          リトライ回数 (デフォルト: 3)
+  -max_nretry <int>          リトライ回数 (デフォルト: 3)
   -timeout <int>          リクエストタイムアウト秒数 (デフォルト: 30)
   -range_threshold <int>  部分取得に切り替える配列長閾値 (デフォルト: 100000)
 ```
@@ -386,7 +386,7 @@ ikafssnretrieve [options]
 ```bash
 # ローカル BLAST DB から抽出 (ファイル入力)
 ikafssnsearch -ix ./index/mydb -query query.fasta -o results.tsv
-ikafssnretrieve -db nt -results results.tsv -o matches.fasta
+ikafssnretrieve -db nt -tsv results.tsv -o matches.fasta
 
 # ローカル BLAST DB から抽出 (パイプ)
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -402,10 +402,10 @@ ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta \
     | ikafssnretrieve -remote -api_key XXXXXXXX > matches.fasta
 
 # マッチ領域の前後 50bp を含めて抽出
-ikafssnretrieve -db nt -results results.tsv -context 50
+ikafssnretrieve -db nt -tsv results.tsv -context_extend 50
 
 # コンテクストをクエリ長の倍率で指定 (前後各 0.1 倍)
-ikafssnretrieve -db nt -results results.tsv -context 0.1
+ikafssnretrieve -db nt -tsv results.tsv -context_extend 0.1
 ```
 
 ### ikafssnserver
@@ -423,9 +423,9 @@ ikafssnserver [options]
   -tcp <host>:<port>      TCP リスニングアドレス
 
 オプション:
-  -threads <int>          ワーカースレッド数 (デフォルト: 利用可能な全コア)
+  -nthread <int>          ワーカースレッド数 (デフォルト: 利用可能な全コア)
   -max_queue_size <int>   同時処理クエリ配列数のグローバル上限 (デフォルト: 1024)
-  -max_seqs_per_req <int> 1 リクエストあたりの受理配列数上限 (デフォルト: スレッド数)
+  -max_nseq_per_req <int> 1 リクエストあたりの受理配列数上限 (デフォルト: スレッド数)
   -pid <path>             PID ファイルパス
   -db <path>              モード 3 用 BLAST DB パス (繰り返し指定、-ix と対応;
                           デフォルト: 対応する -ix プレフィックスと同じ)
@@ -436,8 +436,8 @@ ikafssnserver [options]
   -stage2_max_gap <int>   デフォルトチェイニング対角線ずれ許容幅 (デフォルト: 100)
   -stage2_max_lookback <int>  デフォルトチェイニング DP 探索窓サイズ (デフォルト: 64、0=無制限)
   -stage2_max_nhit_per_subject <int>  デフォルトサブジェクトあたりの最大チェイン数 (デフォルト: 1、0=無制限)
-  -stage2_min_diag_hits <int> デフォルト対角線フィルタ最小ヒット数 (デフォルト: 1)
-  -context <value>        デフォルトコンテクスト拡張 (デフォルト: 2.0)
+  -stage2_min_nhit_diag <int> デフォルト対角線フィルタ最小ヒット数 (デフォルト: 1)
+  -context_extend <value>        デフォルトコンテクスト拡張 (デフォルト: 2.0)
                           整数: 拡張する塩基数; 小数: クエリ長に対する倍率
   -stage3_traceback <0|1> デフォルトトレースバックモード (デフォルト: 0)
   -stage3_gapopen <int>   デフォルトギャップオープンペナルティ (デフォルト: 10)
@@ -446,8 +446,8 @@ ikafssnserver [options]
   -stage3_min_npositive <int>  デフォルト最小正スコア塩基数 (デフォルト: 0)
   -stage3_score_matrix <str>  デフォルトスコア行列 (デフォルト: degmatch)
                           利用可能: degmatch、dnafull、nuc44
-  -stage3_fetch_threads <int>  BLAST DB 取得スレッド数 (デフォルト: min(8, threads))
-  -num_results <int>      デフォルト最終出力件数 (デフォルト: 0)
+  -stage3_nthread_fetch <int>  BLAST DB 取得スレッド数 (デフォルト: min(8, nthread))
+  -nresult <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
   -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)
   -memory_limit <size>    madvise WILLNEED 予算 (デフォルト: 物理メモリの半分)
@@ -460,10 +460,10 @@ ikafssnserver [options]
 
 ```bash
 # UNIX ソケットで起動
-ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -threads 16
+ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -nthread 16
 
 # TCP で起動 (リモートアクセス用)
-ikafssnserver -ix ./nt_index -tcp 0.0.0.0:9100 -threads 32
+ikafssnserver -ix ./nt_index -tcp 0.0.0.0:9100 -nthread 32
 
 # 両方で同時リスニング
 ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -tcp 0.0.0.0:9100
@@ -473,11 +473,11 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn
 
 # モード 3 対応: BLAST DB と Stage 3 デフォルトを指定
 ikafssnserver -ix ./nt_index -db nt -socket /var/run/ikafssn.sock \
-    -stage3_traceback 1 -context 50
+    -stage3_traceback 1 -context_extend 50
 
 # マルチ DB: 1 プロセスで 2 つのデータベースを同時サーブ
 ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
-    -socket /var/run/ikafssn.sock -threads 32
+    -socket /var/run/ikafssn.sock -nthread 32
 ```
 
 **運用上の特性:**
@@ -486,7 +486,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 - `-db` を指定する場合、その数は `-ix` の数と一致する必要があります (順番に対応)。`-db` を省略した DB は `-ix` プレフィックスを BLAST DB パスとして使用します。`-db` パスが未指定の DB はモード 1-2 のみ対応 (max_mode=2)、`-db` を指定するとモード 3 も利用可能 (max_mode=3) になります。
 - `-ix` プレフィックスに対応する異なる k-mer サイズのインデックスが存在する場合、全て読み込み、クライアントのリクエストで k を指定できます。
 - SIGTERM/SIGINT 受信時はグレースフルシャットダウンを行います。新規接続の受付を停止し、実行中のリクエストの完了を最大 `-shutdown_timeout` 秒待ちます。
-- **配列単位の同時実行制御:** サーバは接続単位ではなく、配列単位で同時実行数を制御します。リクエストが到着すると、有効なクエリ配列ごとにパーミットの取得を試みます。グローバル上限 (`-max_queue_size`) に達した場合、超過分の配列はリトライ用に「拒否」としてクライアントに返されます。`-max_seqs_per_req` は 1 リクエストが取得できるパーミット数の上限を設定し、大量配列を含む単一リクエストによるスロットの独占を防ぎます。
+- **配列単位の同時実行制御:** サーバは接続単位ではなく、配列単位で同時実行数を制御します。リクエストが到着すると、有効なクエリ配列ごとにパーミットの取得を試みます。グローバル上限 (`-max_queue_size`) に達した場合、超過分の配列はリトライ用に「拒否」としてクライアントに返されます。`-max_nseq_per_req` は 1 リクエストが取得できるパーミット数の上限を設定し、大量配列を含む単一リクエストによるスロットの独占を防ぎます。
 
 ### ikafssnhttpd
 
@@ -497,7 +497,7 @@ HTTP REST API デーモンです。1 つ以上の `ikafssnserver` インスタ�
 **ルーティングとヘルスチェック:**
 
 - **優先度**: バックエンドは CLI 引数の順序で優先度が決まります (先 = 最高優先度)。
-- **選択**: 検索リクエストごとに、最高優先度かつ有効な空き容量があるバックエンドを選択します。有効な空き容量は、スロット空き数 (`max_queue_size - queue_depth`) とリクエストあたり上限 (`max_seqs_per_req`) の小さい方で決まります。全バックエンドが満杯の場合は、最高優先度のバックエンドが使用されます。
+- **選択**: 検索リクエストごとに、最高優先度かつ有効な空き容量があるバックエンドを選択します。有効な空き容量は、スロット空き数 (`max_queue_size - queue_depth`) とリクエストあたり上限 (`max_nseq_per_req`) の小さい方で決まります。全バックエンドが満杯の場合は、最高優先度のバックエンドが使用されます。
 - **事前チェック**: 検索前に選択されたバックエンドへ最新の info リクエストを送信し、接続を確認します。
 - **除外**: バックエンドが応答しない場合 (info/search の接続エラー)、`-exclusion_time` 秒間除外されます。除外されたバックエンドはハートビート時に自動的に再チェックされ、到達可能になれば再有効化されます。
 - **ハートビート**: バックグラウンドスレッドが `-heartbeat_interval` 秒ごとにすべてのバックエンドの info を更新します。
@@ -517,12 +517,12 @@ ikafssnhttpd [options]
                               これを過ぎるとハウスキーパが該当行と
                               キャッシュ済みの defline / result blob を削除します
   -max_nretry <int>           1 ジョブあたりのディスパッチ再試行上限 (デフォルト: 3)
-  -worker_threads <int>       バックエンド検索ワーカープールのスレッド数 (デフォルト: 4)
+  -nthread_worker <int>       バックエンド検索ワーカープールのスレッド数 (デフォルト: 4)
 
 オプション:
   -listen <host>:<port>       HTTP リスニングアドレス (デフォルト: 0.0.0.0:8080)
   -path_prefix <prefix>       API パスプレフィックス (例: /nt)
-  -threads <int>              Drogon I/O スレッド数 (デフォルト: 利用可能な全コア)
+  -nthread <int>              Drogon I/O スレッド数 (デフォルト: 利用可能な全コア)
   -heartbeat_interval <int>   ハートビート間隔 (秒、デフォルト: 3600)
   -exclusion_time <int>       バックエンド除外時間 (秒、デフォルト: 3600)
   -pid <path>                 PID ファイルパス
@@ -539,7 +539,7 @@ ikafssnhttpd [options]
 | GET  | `/api/v1/info` | 全バックエンドの統合インデックス情報 |
 | GET  | `/api/v1/health` | ヘルスチェック (いずれかのバックエンドが到達可能なら OK) |
 
-`/api/v1/info` レスポンスは全 healthy バックエンドのデータベースを統合して返します。複数バックエンドで提供されるデータベースの場合、容量情報は kmer_group 内の `modes` 配列にモードごとに集約され、全提供バックエンドの `max_queue_size`、`queue_depth`、および `max_seqs_per_req` (各バックエンドの `min(空きスロット, per_req)` の合計として算出) が表示されます。トップレベルにも全モードの最小値として `max_seqs_per_req` フィールドが出力されます。
+`/api/v1/info` レスポンスは全 healthy バックエンドのデータベースを統合して返します。複数バックエンドで提供されるデータベースの場合、容量情報は kmer_group 内の `modes` 配列にモードごとに集約され、全提供バックエンドの `max_queue_size`、`queue_depth`、および `max_nseq_per_req` (各バックエンドの `min(空きスロット, per_req)` の合計として算出) が表示されます。トップレベルにも全モードの最小値として `max_nseq_per_req` フィールドが出力されます。
 
 `POST /api/v1/jobs` は生成された `job_id` を即座に返し、ワーカープールがバックエンドへ非同期にディスパッチします。クライアントは `GET /api/v1/jobs/{job_id}` を `done` になるまでポーリングし、その後結果 blob を取得します。完了 (成功・失敗) ジョブは `-retention_time` 秒間保持され、ハウスキーパが期限切れ行とジョブストアディレクトリ配下の `*.deflines.zst` / `*.result.bin.zst` キャッシュアーティファクトをまとめて削除します。
 
@@ -564,7 +564,7 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 ### ikafssnclient
 
-クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。クエリ送信前にサーバの能力情報を取得し、指定されたデータベース名・k-mer サイズ・モードの妥当性を事前検証 (プリフライトチェック) します。無効なパラメータが指定された場合は、クエリデータの送信前に利用可能なデータベース一覧を含むエラーメッセージが表示されます。クライアントはサーバの `max_seqs_per_req` と空きスロット数に基づいてクエリを適切なサイズのバッチに自動分割し、部分的に拒否されるような過大なリクエストを回避します。各バッチ内でサーバが同時実行制限によりクエリ配列を拒否した場合、拒否された配列を指数バックオフ (30 秒、60 秒、120 秒、120 秒、…) で自動リトライし、全配列の処理が完了するまで繰り返します。
+クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。クエリ送信前にサーバの能力情報を取得し、指定されたデータベース名・k-mer サイズ・モードの妥当性を事前検証 (プリフライトチェック) します。無効なパラメータが指定された場合は、クエリデータの送信前に利用可能なデータベース一覧を含むエラーメッセージが表示されます。クライアントはサーバの `max_nseq_per_req` と空きスロット数に基づいてクエリを適切なサイズのバッチに自動分割し、部分的に拒否されるような過大なリクエストを回避します。各バッチ内でサーバが同時実行制限によりクエリ配列を拒否した場合、拒否された配列を指数バックオフ (30 秒、60 秒、120 秒、120 秒、…) で自動リトライし、全配列の処理が完了するまで繰り返します。
 
 **ソケット/TCP モード (同期) — チェックポインティング:** `-socket` または `-tcp` で接続した場合、クライアントはバッチ処理中の中間結果を一時ディレクトリに自動保存します。プロセスが中断された場合 (例: Ctrl+C、ネットワーク障害)、同じコマンドを再実行すると中断箇所から再開し、処理済みクエリをスキップします。一時ディレクトリの命名は `{出力}.{入力}.{ix名}.{kk}.ikafssn.tmp/` で、正常完了後に自動削除されます。ディレクトリベースのロックにより同一パラメータでの同時実行を防止します。再開時の検証では検索パラメータ、入力ファイルの SHA256、各バッチファイルの整合性をチェックします。
 
@@ -584,7 +584,7 @@ ikafssnclient [options]
                            回収は後で -resume を使用
   -jobs                    ~/.ikafssnclient/ 配下のローカル管理ジョブグループを一覧
                            (サーバとは通信しない)
-  -jobdetail <id>          グループ内のジョブ一覧、または単一ジョブの詳細を表示
+  -job_detail <id>          グループ内のジョブ一覧、または単一ジョブの詳細を表示
   -resume <id>             既存グループ/単一ジョブのポーリングを再開
 
 必須 (新規検索時):
@@ -610,8 +610,8 @@ ikafssnclient [options]
   -stage2_max_gap <int>    チェイニング対角線ずれ許容幅 (デフォルト: サーバ側デフォルト)
   -stage2_max_lookback <int>  チェイニング DP 探索窓サイズ (デフォルト: サーバ側デフォルト)
   -stage2_max_nhit_per_subject <int>  サブジェクトあたりの最大チェイン数 (デフォルト: サーバ側デフォルト)
-  -stage2_min_diag_hits <int> 対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
-  -context <value>         コンテクスト拡張 (デフォルト: 2.0)
+  -stage2_min_nhit_diag <int> 対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
+  -context_extend <value>         コンテクスト拡張 (デフォルト: 2.0)
                            整数: 拡張する塩基数; 小数: クエリ長に対する倍率
   -stage3_traceback <0|1>  トレースバック有効化 (デフォルト: サーバ側デフォルト)
   -stage3_gapopen <int>    ギャップオープンペナルティ (デフォルト: サーバ側デフォルト)
@@ -620,7 +620,7 @@ ikafssnclient [options]
   -stage3_min_npositive <int> 最小正スコア塩基数フィルタ (デフォルト: サーバ側デフォルト)
   -stage3_score_matrix <str> スコア行列 (デフォルト: サーバ側デフォルト)
                            利用可能: degmatch、dnafull、nuc44
-  -num_results <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
+  -nresult <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
@@ -632,7 +632,7 @@ ikafssnclient [options]
                            coding: coding インデックスのみ使用
                            optimal: optimal インデックスのみ使用
                            both: coding と optimal のインデックスを検索時にマージ
-  -outfmt <tab|json|sam|bam>  出力形式 (デフォルト: tab)
+  -output_format <tsv|json|sam|bam>  出力形式 (デフォルト: tsv)
   -compression_level <int> 出力圧縮レベル (既定値: gzip=6, bzip2=9, xz=6, zstd=3)
                            コーデックは -o の拡張子 (.gz/.bz2/.xz/.zst) で選択。SAM/BAM では拒否
   -v, --verbose            詳細ログ出力
@@ -641,10 +641,10 @@ ikafssnclient [options]
  先頭マジックバイトで自動判定するため、フラグ指定は不要です。)
 
 HTTP 認証 (HTTP モード専用):
-  --user <user:password>   認証情報 (curl 形式)
-  --http-user <USER>       ユーザー名 (wget 形式)
-  --http-password <PASS>   パスワード (--http-user と併用)
-  --netrc-file <path>      .netrc ファイルのパス
+  -user <user:password>   認証情報 (curl 形式)
+  -http_user <USER>       ユーザー名 (wget 形式)
+  -http_password <PASS>   パスワード (-http_user と併用)
+  -netrc_file <path>      .netrc ファイルのパス
 ```
 
 **使用例:**
@@ -669,19 +669,19 @@ ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta | ikafssnr
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -k 9
 
 # HTTP Basic 認証 (curl 形式)
-ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --user admin:secret
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta -user admin:secret
 
 # HTTP Basic 認証 (wget 形式)
-ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --http-user=admin --http-password=secret
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta -http_user=admin -http_password=secret
 
 # .netrc ファイルによる認証
-ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --netrc-file ~/.netrc
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta -netrc_file ~/.netrc
 
 # モード 3: トレースバック付きペアワイズアライメント
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1
 
 # モード 3: SAM 出力
-ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1 -output_format sam -o result.sam
 
 # In-Silico PCR (プライマーモード)
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500
@@ -692,7 +692,7 @@ ikafssnclient -tcp 10.0.1.5:9100 -ix nt -primer primers.fasta -insert_length 300
 
 # プライマーモードでモード 3 アライメント
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500 \
-    -mode 3 -stage3_traceback 1 -num_results 10
+    -mode 3 -stage3_traceback 1 -nresult 10
 ```
 
 ### ikafssninfo
@@ -712,10 +712,10 @@ ikafssninfo [options]
   -db <path>               BLAST DB プレフィックス (デフォルト: -ix から自動検出)
 
 リモート HTTP 認証:
-  --user <user:password>   認証情報 (curl 形式)
-  --http-user <USER>       ユーザー名 (wget 形式)
-  --http-password <PASS>   パスワード (--http-user と併用)
-  --netrc-file <path>      .netrc ファイルのパス
+  -user <user:password>   認証情報 (curl 形式)
+  -http_user <USER>       ユーザー名 (wget 形式)
+  -http_password <PASS>   パスワード (-http_user と併用)
+  -netrc_file <path>      .netrc ファイルのパス
 
 オプション:
   -v, --verbose            詳細出力
@@ -767,20 +767,20 @@ ikafssninfo -http http://search.example.com:8080
 ikafssninfo -socket /var/run/ikafssn.sock -v
 
 # リモート: HTTP 認証付き
-ikafssninfo -http http://search.example.com:8080 --user admin:secret
+ikafssninfo -http http://search.example.com:8080 -user admin:secret
 ```
 
 ## 検索パイプライン
 
 ikafssn は 3 段階の検索パイプラインを使用します。
 
-デフォルトパラメータはスループットを優先しています。`stage1_topn=0` と `num_results=0` によりソートを省略し、`stage1_min_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。ランク付けされた出力が必要な場合は `-stage1_topn` や `-num_results` に正の値を設定してください。ソートが有効になりますが、結果件数が多い場合は速度が低下する可能性があります。
+デフォルトパラメータはスループットを優先しています。`stage1_topn=0` と `nresult=0` によりソートを省略し、`stage1_min_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。ランク付けされた出力が必要な場合は `-stage1_topn` や `-nresult` に正の値を設定してください。ソートが有効になりますが、結果件数が多い場合は速度が低下する可能性があります。
 
 1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとにスコアを集計します。スコア種別は 2 種類あります: **coverscore** (配列にマッチしたクエリ k-mer の種類数) と **matchscore** (クエリ k-mer と参照配列位置の総マッチ数)。`stage1_min_score` 以上のスコアを持つ配列を候補として選出します。`stage1_topn > 0` の場合はスコア順にソートして切り詰めます。`stage1_topn = 0` (デフォルト) の場合は全候補をソートせずに返します。
 
 2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。`-stage2_max_nhit_per_subject` が 1 より大きい値 (または 0 で無制限) の場合、貪欲な最良チェイン除去により同一サブジェクトから重複のない複数のチェインを抽出します: 最良チェインを見つけてそのヒットを除去し、残りのヒットで DP を再実行する処理を、制限に達するか `min_score` を満たすチェインがなくなるまで繰り返します。
 
-3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context` による拡張オプション付き)、Parasail ライブラリを使って半大域ペアワイズアライメントを実行します (`-stage3_score_matrix` で指定されたスコア行列を使用、デフォルト: DEGMATCH)。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、正スコア率、正スコア塩基数、負スコア数、ギャップ付きアライメント配列も計算されます。`-stage3_min_ppositive` と `-stage3_min_npositive` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト配列は `-stage3_fetch_threads` で制御されるボリューム並列プリフェッチで取得されます。
+3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context_extend` による拡張オプション付き)、Parasail ライブラリを使って半大域ペアワイズアライメントを実行します (`-stage3_score_matrix` で指定されたスコア行列を使用、デフォルト: DEGMATCH)。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、正スコア率、正スコア塩基数、負スコア数、ギャップ付きアライメント配列も計算されます。`-stage3_min_ppositive` と `-stage3_min_npositive` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト配列は `-stage3_nthread_fetch` で制御されるボリューム並列プリフェッチで取得されます。
 
 **適応的 `-stage2_min_score` (デフォルト):** `-stage2_min_score 0` (デフォルト) の場合、最小チェインスコアはクエリごとに適応的に設定され、解決済みの Stage 1 閾値が使用されます。割合指定の `-stage1_min_score` (例: `0.5`) との組み合わせでは、各クエリの k-mer 構成に基づくクエリごとの適応的閾値が設定されます。絶対値指定の `-stage1_min_score` の場合は、その設定値がそのまま使用されます。固定閾値を使用する場合は `-stage2_min_score` に正の整数を指定してください。
 
@@ -1091,7 +1091,7 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
 
 ### SAM/BAM 形式
 
-SAM/BAM 出力には `-mode 3 -stage3_traceback 1` が必要です。`-outfmt sam` で SAM、`-outfmt bam` で BAM を出力します (BAM は `-o <path>` が必須)。
+SAM/BAM 出力には `-mode 3 -stage3_traceback 1` が必要です。`-output_format sam` で SAM、`-output_format bam` で BAM を出力します (BAM は `-o <path>` が必須)。
 
 SAM レコードの構成:
 - **QNAME**: qseqid
@@ -1154,7 +1154,7 @@ ikafssnserver -ix ./rs_index -db refseq -socket /var/run/rs.sock
 ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
 ```
 
-同じデータベース名が複数バックエンドに存在する場合、`ikafssnhttpd` は起動時に共通する (db, k) の組み合わせについて合計配列数・合計塩基数の一致を検証します。バックエンド間で k 値セットが異なることは許容されます。統合された能力情報には全バックエンドの k 値グループの和集合が含まれるため、一部のバックエンドのみが持つ k 値へのリクエストは自然にそのバックエンドにルーティングされます。リクエストは有効な空き容量 (スロット空き数と `max_seqs_per_req` の小さい方) がある最高優先度のバックエンドにルーティングされます。容量値 (`max_queue_size`、`queue_depth`、`max_seqs_per_req`) はサーバ単位で共有されるため、同一サーバ上の複数データベース間で共有される点に注意してください。
+同じデータベース名が複数バックエンドに存在する場合、`ikafssnhttpd` は起動時に共通する (db, k) の組み合わせについて合計配列数・合計塩基数の一致を検証します。バックエンド間で k 値セットが異なることは許容されます。統合された能力情報には全バックエンドの k 値グループの和集合が含まれるため、一部のバックエンドのみが持つ k 値へのリクエストは自然にそのバックエンドにルーティングされます。リクエストは有効な空き容量 (スロット空き数と `max_nseq_per_req` の小さい方) がある最高優先度のバックエンドにルーティングされます。容量値 (`max_queue_size`、`queue_depth`、`max_nseq_per_req`) はサーバ単位で共有されるため、同一サーバ上の複数データベース間で共有される点に注意してください。
 
 代替構成: 別プロセスで HTTP パスベースルーティング:
 

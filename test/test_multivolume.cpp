@@ -171,7 +171,7 @@ static std::vector<OutputHit> search_parallel(
         const std::string& db_base, int k,
         const std::vector<FastaRecord>& queries,
         const SearchConfig& config,
-        int num_threads) {
+        int nthread) {
     char kk_str[8];
     std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
 
@@ -206,7 +206,7 @@ static std::vector<OutputHit> search_parallel(
     std::vector<OutputHit> all_hits;
     std::mutex mutex;
 
-    tbb::task_arena arena(num_threads);
+    tbb::task_arena arena(nthread);
     arena.execute([&] {
         tbb::parallel_for_each(jobs.begin(), jobs.end(),
             [&](const Job& job) {
@@ -285,9 +285,9 @@ static void test_multivolume_search() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 50;
+    config.nresult = 50;
 
     auto results = search_sequential(db_base, k, queries, config);
 
@@ -322,9 +322,9 @@ static void test_parallel_equals_sequential() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 50;
+    config.nresult = 50;
 
     auto seq_results = search_sequential(db_base, k, queries, config);
     auto par_results = search_parallel(db_base, k, queries, config, 4);
@@ -356,9 +356,9 @@ static void test_result_merge_ordering() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 50;
+    config.nresult = 50;
 
     auto results = search_parallel(db_base, k, queries, config, 2);
 
@@ -436,9 +436,9 @@ static void test_parallel_counting_pass() {
     sconfig.stage1.stage1_topn = 100;
     sconfig.stage1.min_stage1_score = 1;
     sconfig.stage2.max_gap = 100;
-    sconfig.stage2.min_diag_hits = 1;
+    sconfig.stage2.min_nhit_diag = 1;
     sconfig.stage2.min_score = 2;
-    sconfig.num_results = 50;
+    sconfig.nresult = 50;
 
     auto qdata_st = preprocess_query<uint16_t>(g_query_fj, 7, nullptr, sconfig);
     auto sr_st = search_volume<uint16_t>(
@@ -474,9 +474,9 @@ static void test_multivolume_k9() {
     config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
-    config.stage2.min_diag_hits = 1;
+    config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.num_results = 50;
+    config.nresult = 50;
 
     auto seq_results = search_sequential(db_base, k, queries, config);
     auto par_results = search_parallel(db_base, k, queries, config, 2);

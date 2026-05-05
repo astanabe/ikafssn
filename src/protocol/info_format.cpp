@@ -122,8 +122,8 @@ std::string format_server_info(const InfoResponse& info, bool verbose) {
     out += "=== ikafssn Server Information ===\n\n";
     out += "Active sequences:  " + std::to_string(info.queue_depth)
          + "/" + std::to_string(info.max_queue_size) + "\n";
-    if (info.max_seqs_per_req > 0) {
-        out += "Max sequences/request: " + std::to_string(info.max_seqs_per_req) + "\n";
+    if (info.max_nseq_per_req > 0) {
+        out += "Max sequences/request: " + std::to_string(info.max_nseq_per_req) + "\n";
     }
     out += "\n";
     out += "--- Databases ---\n";

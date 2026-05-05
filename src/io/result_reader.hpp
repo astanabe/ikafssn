@@ -7,13 +7,13 @@
 
 namespace ikafssn {
 
-// Parse search results from tab-delimited format.
+// Parse search results from TSV (tab-delimited) format.
 // Handles both file input and stdin ("-").
 // Skips header lines (starting with '#') and blank lines.
 // Returns empty vector on error.
-std::vector<OutputHit> read_results_tab(const std::string& path);
+std::vector<OutputHit> read_results_tsv(const std::string& path);
 
 // Parse search results from an input stream.
-std::vector<OutputHit> read_results_tab(std::istream& in);
+std::vector<OutputHit> read_results_tsv(std::istream& in);
 
 } // namespace ikafssn

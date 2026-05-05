@@ -353,8 +353,8 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         A (k-mer, seq_id) cluster with occurrence count > threshold\n"
         "                         is split into its own partition group; lower-multiplicity\n"
         "                         clusters merge into a shared short bucket\n"
-        "  -highfreq_filter_threads <int>\n"
-        "                         Threads for cross-volume filtering (default: min(8, threads))\n"
+        "  -nthread_highfreq_filter <int>\n"
+        "                         Threads for cross-volume filtering (default: min(8, nthread))\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)\n"
         "  -t <int>               Template length for spaced seeds\n"
         "                         0: contiguous k-mers (default)\n"
@@ -362,8 +362,8 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         16, 18, 21: requires -k 11 or 12\n"
         "  -template_type <str>   Template type: coding, optimal, or both (required with -t)\n"
         "                         both: builds coding and optimal indexes sequentially\n"
-        "  -threads <int>         Number of threads (default: all cores)\n"
-        "  -no-validate           Skip the post-build structural validation pass\n"
+        "  -nthread <int>         Number of threads (default: all cores)\n"
+        "  -no_validate           Skip the post-build structural validation pass\n"
         "                         (Phase 7d default-on validation walks each\n"
         "                         k-mer's .kpx posting list and checks the\n"
         "                         byte length against the EF dictionary)\n"
@@ -381,7 +381,7 @@ int main(int argc, char* argv[]) {
     if (check_version(cli, "ikafssnindex")) return 0;
 
     // Check for help
-    if (cli.has("-h") || cli.has("--help") || argc < 2) {
+    if (cli.has("-h") || cli.has("-help") || argc < 2) {
         print_usage(argv[0], default_mem_str);
         return (argc < 2) ? 1 : 0;
     }
@@ -435,9 +435,9 @@ int main(int argc, char* argv[]) {
         mem_limit_str = default_mem_str;
     }
 
-    // Phase 7d: post-build structural validation is on by default; -no-validate
+    // Phase 7d: post-build structural validation is on by default; -no_validate
     // opts out (e.g. when building a known-good index for benchmarking).
-    const bool run_validate = !cli.has("-no-validate");
+    const bool run_validate = !cli.has("-no_validate");
 
     double max_freq_build = 1.0; // default: disabled (no exclusion)
     if (cli.has("-max_freq_build")) {
@@ -475,21 +475,21 @@ int main(int argc, char* argv[]) {
 
     int threads = resolve_threads(cli);
 
-    int highfreq_filter_threads;
-    if (cli.has("-highfreq_filter_threads")) {
-        highfreq_filter_threads = cli.get_int("-highfreq_filter_threads", 8);
-        if (highfreq_filter_threads < 1) {
-            std::fprintf(stderr, "Error: -highfreq_filter_threads must be >= 1\n");
+    int nthread_highfreq_filter;
+    if (cli.has("-nthread_highfreq_filter")) {
+        nthread_highfreq_filter = cli.get_int("-nthread_highfreq_filter", 8);
+        if (nthread_highfreq_filter < 1) {
+            std::fprintf(stderr, "Error: -nthread_highfreq_filter must be >= 1\n");
             return 1;
         }
-        if (highfreq_filter_threads > threads) {
+        if (nthread_highfreq_filter > threads) {
             std::fprintf(stderr,
-                "Error: -highfreq_filter_threads (%d) exceeds -threads (%d)\n",
-                highfreq_filter_threads, threads);
+                "Error: -nthread_highfreq_filter (%d) exceeds -nthread (%d)\n",
+                nthread_highfreq_filter, threads);
             return 1;
         }
     } else {
-        highfreq_filter_threads = std::min(8, threads);
+        nthread_highfreq_filter = std::min(8, threads);
     }
 
     int rebuild_mode = cli.get_int("-rebuild", 0);
@@ -828,7 +828,7 @@ int main(int argc, char* argv[]) {
             std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, cur_tt);
 
             if (!filter_volumes_cross_volume(vol_prefixes, khx_path, k,
-                                             freq_threshold, highfreq_filter_threads,
+                                             freq_threshold, nthread_highfreq_filter,
                                              logger)) {
                 std::fprintf(stderr, "Error: cross-volume filtering failed\n");
                 return 1;

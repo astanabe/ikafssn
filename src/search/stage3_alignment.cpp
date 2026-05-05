@@ -99,11 +99,11 @@ std::vector<OutputHit> run_stage3(
     std::vector<std::string> subject_subseqs(hits.size());
     std::vector<uint32_t> ext_starts(hits.size(), 0);
 
-    int actual_fetch_threads = std::min(config.fetch_threads,
+    int actual_nthread_fetch = std::min(config.nthread_fetch,
                                          static_cast<int>(readers.size()));
-    if (actual_fetch_threads < 1) actual_fetch_threads = 1;
+    if (actual_nthread_fetch < 1) actual_nthread_fetch = 1;
 
-    tbb::task_arena fetch_arena(actual_fetch_threads);
+    tbb::task_arena fetch_arena(actual_nthread_fetch);
     fetch_arena.execute([&] {
         tbb::parallel_for(size_t(0), readers.size(), [&](size_t ri) {
             for (size_t hit_idx : hits_by_reader[ri]) {

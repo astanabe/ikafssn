@@ -66,7 +66,7 @@ static void print_usage(const char* prog) {
         "Options:\n"
         "  -k <int>                 K-mer size to use (required if multiple k values exist)\n"
         "  -o <path>                Output file (default: stdout)\n"
-        "  -threads <int>           Parallel search threads (default: all cores)\n"
+        "  -nthread <int>           Parallel search threads (default: all cores)\n"
         "  -memory_limit <size>     madvise WILLNEED budget (default: half of RAM)\n"
         "                           Accepts K, M, G suffixes\n"
         "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: 2)\n"
@@ -77,26 +77,26 @@ static void print_usage(const char* prog) {
         "  -stage2_max_gap <int>    Chaining diagonal gap tolerance (default: 100)\n"
         "  -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: 1, 0=unlimited)\n"
-        "  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: 1)\n"
+        "  -stage2_min_nhit_diag <int>  Diagonal filter min hits (default: 1)\n"
         "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
         "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
-        "  -num_results <int>       Max results per query, 0=unlimited (default: 0)\n"
+        "  -nresult <int>           Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: 2)\n"
         "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
-        "  -context <value>         Context extension for mode 3 (int=bases, decimal=query length multiplier, default: 2.0)\n"
+        "  -context_extend <value>  Context extension for mode 3 (int=bases, decimal=query length multiplier, default: 2.0)\n"
         "  -stage3_traceback <0|1>  Enable traceback in mode 3 (default: 0)\n"
         "  -stage3_gapopen <int>    Gap open penalty for mode 3 (default: 10)\n"
         "  -stage3_gapext <int>     Gap extension penalty for mode 3 (default: 1)\n"
         "  -stage3_min_ppositive <num> Min percent positive filter for mode 3 (default: 0)\n"
         "  -stage3_min_npositive <int> Min positive-scoring positions filter for mode 3 (default: 0)\n"
         "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
-        "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, threads))\n"
+        "  -stage3_nthread_fetch <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, nthread))\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -t <int>                 Template length for spaced seeds (0=contiguous, 13/15/18 for k=8-9, 16/18/21 for k=11-12; default: 0)\n"
         "  -template_type <string>  Template type: coding, optimal, both (default: both)\n"
-        "  -outfmt <tab|json|sam|bam>  Output format (default: tab)\n"
+        "  -output_format <tsv|json|sam|bam>  Output format (default: tsv)\n"
         "  -compression_level <int>    Output compression level (default per codec: gzip=6, bzip2=9, xz=6, zstd=3)\n"
         "  -v, --verbose            Verbose logging\n",
         prog);
@@ -135,7 +135,7 @@ int main(int argc, char* argv[]) {
 
     if (check_version(cli, "ikafssnsearch")) return 0;
 
-    if (cli.has("-h") || cli.has("--help")) {
+    if (cli.has("-h") || cli.has("-help")) {
         print_usage(argv[0]);
         return 0;
     }
@@ -173,7 +173,7 @@ int main(int argc, char* argv[]) {
     std::string primer_path = has_primer ? cli.get_string("-primer") : "";
     int filter_k = cli.get_int("-k", 0);
     std::string output_path = cli.get_string("-o");
-    int num_threads = resolve_threads(cli);
+    int nthread = resolve_threads(cli);
     Logger logger = make_logger(cli);
     init_simd_dispatch(&logger);
 
@@ -197,9 +197,9 @@ int main(int argc, char* argv[]) {
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-stage2_max_gap", 100));
     config.stage2.chain_max_lookback = static_cast<uint32_t>(cli.get_int("-stage2_max_lookback", 64));
     config.stage2.max_nhit_per_subject = static_cast<uint32_t>(cli.get_int("-stage2_max_nhit_per_subject", 1));
-    config.stage2.min_diag_hits = static_cast<uint32_t>(cli.get_int("-stage2_min_diag_hits", 1));
+    config.stage2.min_nhit_diag = static_cast<uint32_t>(cli.get_int("-stage2_min_nhit_diag", 1));
     config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-stage2_min_score", 0));
-    config.num_results = static_cast<uint32_t>(cli.get_int("-num_results", 0));
+    config.nresult = static_cast<uint32_t>(cli.get_int("-nresult", 0));
     config.mode = static_cast<uint8_t>(cli.get_int("-mode", 2));
     config.strand = static_cast<int8_t>(cli.get_int("-strand", 2));
     if (config.strand != -1 && config.strand != 1 && config.strand != 2) {
@@ -234,23 +234,23 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-    if (cli.has("-stage3_fetch_threads")) {
-        stage3_config.fetch_threads = cli.get_int("-stage3_fetch_threads", 8);
-        if (stage3_config.fetch_threads > num_threads) {
+    if (cli.has("-stage3_nthread_fetch")) {
+        stage3_config.nthread_fetch = cli.get_int("-stage3_nthread_fetch", 8);
+        if (stage3_config.nthread_fetch > nthread) {
             std::fprintf(stderr,
-                "Error: -stage3_fetch_threads (%d) exceeds -threads (%d)\n",
-                stage3_config.fetch_threads, num_threads);
+                "Error: -stage3_nthread_fetch (%d) exceeds -nthread (%d)\n",
+                stage3_config.nthread_fetch, nthread);
             return 1;
         }
     } else {
-        stage3_config.fetch_threads = std::min(8, num_threads);
+        stage3_config.nthread_fetch = std::min(8, nthread);
     }
 
-    // Parse -context: integer (bases) or decimal (query length multiplier)
+    // Parse -context_extend: integer (bases) or decimal (query length multiplier)
     ContextParam ctx_param;
     {
         std::string err;
-        if (!parse_context(cli.get_string("-context", "2.0"), ctx_param, err)) {
+        if (!parse_context(cli.get_string("-context_extend", "2.0"), ctx_param, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
@@ -338,7 +338,7 @@ int main(int argc, char* argv[]) {
     OutputFormat outfmt;
     {
         std::string err;
-        if (!parse_output_format(cli.get_string("-outfmt", "tab"), outfmt, err)) {
+        if (!parse_output_format(cli.get_string("-output_format", "tsv"), outfmt, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
@@ -458,7 +458,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    logger.info("Found %zu volume(s), k=%d, threads=%d", vol_files.size(), k, num_threads);
+    logger.info("Found %zu volume(s), k=%d, threads=%d", vol_files.size(), k, nthread);
 
     // Read query FASTA or primer FASTA
     std::vector<FastaRecord> queries;
@@ -690,7 +690,7 @@ int main(int argc, char* argv[]) {
     std::vector<uint8_t> any_multi_degen_per_q(queries.size(), 0);
 
     {
-        tbb::task_arena arena_pp(num_threads);
+        tbb::task_arena arena_pp(nthread);
         arena_pp.execute([&] {
             tbb::parallel_for(
                 tbb::blocked_range<size_t>(0, queries.size()),
@@ -817,7 +817,7 @@ int main(int argc, char* argv[]) {
         logger.info("Launching %zu search job(s) (Phase A) and Phase B chain extraction...",
                     jobs.size());
 
-        tbb::task_arena arena(num_threads);
+        tbb::task_arena arena(nthread);
         return run_search_jobs<KmerInt>(query_bundles, volume_bundles, jobs,
                                         k, config, is_both_mode, arena, tls_bufs);
     };
@@ -879,7 +879,7 @@ int main(int argc, char* argv[]) {
     for (auto& m : skip_markers) all_hits.push_back(std::move(m));
 
     // Sort and truncate final results across volumes (per query)
-    if (config.num_results > 0) {
+    if (config.nresult > 0) {
         // Sort by (query_id, sort_score desc)
         if (config.sort_score == 1) {
             tbb::parallel_sort(all_hits.begin(), all_hits.end(),
@@ -910,14 +910,14 @@ int main(int argc, char* argv[]) {
                 cur_qid = h.qseqid;
                 cur_count = 0;
             }
-            if (cur_count < config.num_results) {
+            if (cur_count < config.nresult) {
                 truncated.push_back(h);
                 cur_count++;
             }
         }
         all_hits = std::move(truncated);
     }
-    // num_results == 0: unlimited, skip sort and truncation
+    // nresult == 0: unlimited, skip sort and truncation
 
     // Write output
     if (!write_all_results(output_path, all_hits, outfmt,

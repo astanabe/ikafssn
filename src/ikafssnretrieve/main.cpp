@@ -33,12 +33,12 @@ static void print_usage(const char* prog) {
 #endif
         "\n"
         "Input:\n"
-        "  -results <path>         Search results file (tab format)\n"
+        "  -tsv <path>             Search results file (TSV format)\n"
         "  (none)                  Read from stdin\n"
         "\n"
         "Common options:\n"
         "  -o <path>               Output FASTA file (default: stdout)\n"
-        "  -context <value>        Context extension: integer=bases, decimal=multiplier of q_len (default: 2.0)\n"
+        "  -context_extend <value> Context extension: integer=bases, decimal=multiplier of q_len (default: 2.0)\n"
         "  -compression_level <int> Output compression level (default per codec: gzip=6, bzip2=9, xz=6, zstd=3)\n"
         "  -v, --verbose           Verbose logging\n"
 #ifdef IKAFSSN_ENABLE_REMOTE
@@ -46,7 +46,7 @@ static void print_usage(const char* prog) {
         "Remote options (-remote):\n"
         "  -api_key <key>          NCBI API key (or NCBI_API_KEY env var)\n"
         "  -batch_size <int>       Accessions per batch (default: 100)\n"
-        "  -retries <int>          Max retries (default: 3)\n"
+        "  -max_nretry <int>       Max retries (default: 3)\n"
         "  -timeout <int>          Request timeout in seconds (default: 30)\n"
         "  -range_threshold <int>  Seq length for individual fetch (default: 100000)\n"
 #endif
@@ -59,7 +59,7 @@ int main(int argc, char* argv[]) {
 
     if (check_version(cli, "ikafssnretrieve")) return 0;
 
-    if (cli.has("-h") || cli.has("--help")) {
+    if (cli.has("-h") || cli.has("-help")) {
         print_usage(argv[0]);
         return 0;
     }
@@ -87,22 +87,22 @@ int main(int argc, char* argv[]) {
     Logger logger = make_logger(cli);
     init_simd_dispatch(&logger);
 
-    // Parse -context: integer (bases) or decimal (query length multiplier)
+    // Parse -context_extend: integer (bases) or decimal (query length multiplier)
     ContextParam ctx_param;
     {
         std::string err;
-        if (!parse_context(cli.get_string("-context", "2.0"), ctx_param, err)) {
+        if (!parse_context(cli.get_string("-context_extend", "2.0"), ctx_param, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
     }
 
     // Read search results
-    std::string results_path = cli.get_string("-results", "-");
+    std::string tsv_path = cli.get_string("-tsv", "-");
     logger.info("Reading search results from %s",
-                results_path == "-" ? "stdin" : results_path.c_str());
+                tsv_path == "-" ? "stdin" : tsv_path.c_str());
 
-    auto hits = read_results_tab(results_path);
+    auto hits = read_results_tsv(tsv_path);
     if (hits.empty()) {
         std::fprintf(stderr, "Error: no valid search results found\n");
         return 1;
@@ -180,7 +180,7 @@ int main(int argc, char* argv[]) {
             opts.context = ctx_param.abs;
         }
         opts.batch_size = static_cast<uint32_t>(cli.get_int("-batch_size", 100));
-        opts.retries = static_cast<uint32_t>(cli.get_int("-retries", 3));
+        opts.max_nretry = static_cast<uint32_t>(cli.get_int("-max_nretry", 3));
         opts.timeout_sec = static_cast<uint32_t>(cli.get_int("-timeout", 30));
         opts.range_threshold = static_cast<uint32_t>(cli.get_int("-range_threshold", 100000));
 

@@ -235,7 +235,7 @@ static bool parse_line_legacy(const std::string& line, OutputHit& hit) {
     return true;
 }
 
-std::vector<OutputHit> read_results_tab(std::istream& in) {
+std::vector<OutputHit> read_results_tsv(std::istream& in) {
     std::vector<OutputHit> results;
     std::string line;
     int line_num = 0;
@@ -299,14 +299,14 @@ std::vector<OutputHit> read_results_tab(std::istream& in) {
     return results;
 }
 
-std::vector<OutputHit> read_results_tab(const std::string& path) {
+std::vector<OutputHit> read_results_tsv(const std::string& path) {
     std::string err;
     auto in = open_input_compressed(path, err);
     if (!in) {
         std::fprintf(stderr, "result_reader: %s\n", err.c_str());
         return {};
     }
-    return read_results_tab(*in.stream);
+    return read_results_tsv(*in.stream);
 }
 
 } // namespace ikafssn

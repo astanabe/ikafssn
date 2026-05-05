@@ -17,15 +17,15 @@ struct Stage3Config {
     double min_ppositive = 0.0;
     uint32_t min_npositive = 0;
     std::string score_matrix = "degmatch";
-    int fetch_threads = 8;   // threads for BLAST DB sequence fetch
+    int nthread_fetch = 8;   // threads for BLAST DB sequence fetch
 };
 
 // Run Stage 3 alignment on merged OutputHits.
 // - hits: Stage 2 results (modified in-place with alignment data)
 // - queries: original FASTA query sequences
 // - db_path: BLAST DB path for subject sequence retrieval
-// - context_is_ratio/context_ratio/context_abs: -context option values
-// - Fetch thread count is controlled by config.fetch_threads
+// - context_is_ratio/context_ratio/context_abs: -context_extend option values
+// - Fetch thread count is controlled by config.nthread_fetch
 // Returns filtered hits (min_ppositive/min_npositive applied).
 std::vector<OutputHit> run_stage3(
     std::vector<OutputHit>& hits,

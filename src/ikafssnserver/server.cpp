@@ -175,7 +175,7 @@ void Server::request_shutdown() {
 
 int Server::try_acquire_sequences(int n) {
     std::lock_guard<std::mutex> lock(seq_mutex_);
-    int capped = std::min(n, max_seqs_per_req_);
+    int capped = std::min(n, max_nseq_per_req_);
     int available = max_queue_size_ - queue_depth_;
     int acquired = std::min(capped, std::max(0, available));
     queue_depth_ += acquired;
@@ -232,13 +232,13 @@ void Server::apply_madvise_budget(uint64_t budget, const Logger& logger) {
 }
 
 void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger& logger) {
-    int num_threads = config.num_threads;
-    if (num_threads <= 0) {
-        num_threads = static_cast<int>(std::thread::hardware_concurrency());
-        if (num_threads <= 0) num_threads = 1;
+    int nthread = config.nthread;
+    if (nthread <= 0) {
+        nthread = static_cast<int>(std::thread::hardware_concurrency());
+        if (nthread <= 0) nthread = 1;
     }
 
-    tbb::task_arena arena(num_threads);
+    tbb::task_arena arena(nthread);
     tbb::task_group tg;
 
     while (!shutdown_requested_.load(std::memory_order_acquire)) {
@@ -308,15 +308,15 @@ int Server::run(const ServerConfig& config_in) {
 
     // Resolve per-sequence concurrency limits
     {
-        int num_threads = config.num_threads;
-        if (num_threads <= 0) {
-            num_threads = static_cast<int>(std::thread::hardware_concurrency());
-            if (num_threads <= 0) num_threads = 1;
+        int nthread = config.nthread;
+        if (nthread <= 0) {
+            nthread = static_cast<int>(std::thread::hardware_concurrency());
+            if (nthread <= 0) nthread = 1;
         }
         max_queue_size_ = config.max_queue_size > 0 ? config.max_queue_size : 1024;
-        max_seqs_per_req_ = config.max_seqs_per_req > 0 ? config.max_seqs_per_req : num_threads;
+        max_nseq_per_req_ = config.max_nseq_per_req > 0 ? config.max_nseq_per_req : nthread;
         logger.info("Max concurrent sequences: %d, max per request: %d",
-                     max_queue_size_, max_seqs_per_req_);
+                     max_queue_size_, max_nseq_per_req_);
     }
 
     // Log total mmap count

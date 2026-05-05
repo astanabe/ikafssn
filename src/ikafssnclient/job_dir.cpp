@@ -94,12 +94,12 @@ bool write_group_meta(const std::string& root, const GroupMeta& meta,
     root_j["db"]                  = meta.db;
     root_j["query_file_path_abs"] = meta.query_file_path_abs;
     root_j["query_file_sha256"]   = meta.query_file_sha256;
-    root_j["max_seqs_per_req"]    = meta.max_seqs_per_req;
+    root_j["max_nseq_per_req"]    = meta.max_nseq_per_req;
     root_j["k"]                   = meta.k;
     root_j["mode"]                = meta.mode;
     root_j["t"]                   = meta.t;
     root_j["template_type"]       = meta.template_type;
-    root_j["outfmt"]              = meta.outfmt;
+    root_j["output_format"]       = meta.output_format;
     root_j["output_path"]         = meta.output_path;
     root_j["compression_level"]   = meta.compression_level;
     Json::Value jids(Json::arrayValue);
@@ -152,12 +152,12 @@ bool read_group_meta(const std::string& root, const std::string& group_id,
     out.db                  = j.get("db", "").asString();
     out.query_file_path_abs = j.get("query_file_path_abs", "").asString();
     out.query_file_sha256   = j.get("query_file_sha256", "").asString();
-    out.max_seqs_per_req    = j.get("max_seqs_per_req", 0).asInt();
+    out.max_nseq_per_req    = j.get("max_nseq_per_req", 0).asInt();
     out.k                   = static_cast<uint8_t>(j.get("k", 0).asUInt());
     out.mode                = static_cast<uint8_t>(j.get("mode", 0).asUInt());
     out.t                   = static_cast<uint8_t>(j.get("t", 0).asUInt());
     out.template_type       = static_cast<uint8_t>(j.get("template_type", 0).asUInt());
-    out.outfmt              = j.get("outfmt", "").asString();
+    out.output_format       = j.get("output_format", "").asString();
     out.output_path         = j.get("output_path", "").asString();
     out.compression_level   = j.get("compression_level", -1).asInt();
     if (j.isMember("job_ids") && j["job_ids"].isArray()) {

@@ -53,9 +53,9 @@ struct ServerConfig {
     std::string unix_socket_path;
     std::string tcp_addr;           // "host:port"
     std::string pid_file;
-    int num_threads = 0;            // 0 = auto-detect
+    int nthread = 0;            // 0 = auto-detect
     int max_queue_size = 0;         // 0 = default (1024). Max total in-flight sequences globally
-    int max_seqs_per_req = 0;       // 0 = default (same as resolved thread count). Per-request cap
+    int max_nseq_per_req = 0;       // 0 = default (same as resolved thread count). Per-request cap
     int shutdown_timeout = 30;      // seconds
     uint64_t memory_limit = 0;     // 0 = auto (half of RAM)
     SearchConfig search_config;
@@ -95,12 +95,12 @@ public:
     int max_queue_size() const { return max_queue_size_; }
 
     // Get per-request sequence cap.
-    int max_seqs_per_req() const { return max_seqs_per_req_; }
+    int max_nseq_per_req() const { return max_nseq_per_req_; }
 
     // Get current queue depth.
     int queue_depth() const { return queue_depth_; }
 
-    // Non-blocking: try to acquire up to n permits (capped by max_seqs_per_req_).
+    // Non-blocking: try to acquire up to n permits (capped by max_nseq_per_req_).
     // Returns count actually acquired.
     int try_acquire_sequences(int n);
 
@@ -116,7 +116,7 @@ private:
     std::mutex seq_mutex_;
     int queue_depth_ = 0;
     int max_queue_size_ = 1024;  // from -max_queue_size, default 1024; overridden in run()
-    int max_seqs_per_req_ = 1024;      // from -max_seqs_per_req, default = threads; overridden in run()
+    int max_nseq_per_req_ = 1024;      // from -max_nseq_per_req, default = threads; overridden in run()
 
     void apply_madvise_budget(uint64_t budget, const Logger& logger);
     void accept_loop(int listen_fd, const ServerConfig& config, const Logger& logger);

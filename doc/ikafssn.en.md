@@ -75,8 +75,8 @@ wrappers:
   `ZSTD_minCLevel()..ZSTD_maxCLevel()` (default 3).  The level is
   validated against the codec at parse time, before any I/O is opened.
 - SAM and BAM **reject** the four compressed suffixes — BAM is already
-  BGZF and we deliberately do not double-wrap.  Use `-outfmt tab` /
-  `-outfmt json` if you want a compressed result file.
+  BGZF and we deliberately do not double-wrap.  Use `-output_format tsv` /
+  `-output_format json` if you want a compressed result file.
 
 ### ikafssnindex
 
@@ -111,9 +111,9 @@ Options:
                           merge into a shared short bucket (improves chromosome-class
                           subject compression by decoupling per-block bit-width from
                           absolute position magnitude)
-  -highfreq_filter_threads <int>
+  -nthread_highfreq_filter <int>
                           Threads for cross-volume high-frequency filtering
-                          (default: min(8, threads))
+                          (default: min(8, nthread))
   -max_degen_expand <int> Max degenerate expansion per k-mer (default: 4, max: 16, 0/1: disable)
                           Controls how many non-degenerate k-mers are generated from
                           a k-mer containing IUPAC degenerate bases. Expansion occurs
@@ -126,7 +126,7 @@ Options:
                           coding: coding template only
                           optimal: optimal template only
                           both: build coding and optimal indexes sequentially
-  -threads <int>          Number of threads (default: all cores)
+  -nthread <int>          Number of threads (default: all cores)
                           Parallelizes counting, partition scan, sort,
                           and volume processing
   -v, --verbose           Verbose output
@@ -139,7 +139,7 @@ Options:
 ikafssnindex -db mydb -k 11 -o ./index -memory_limit 128G
 
 # Large DB, limited memory, multi-threaded
-ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -threads 32
+ikafssnindex -db nt -k 11 -o ./nt_index -memory_limit 32G -nthread 32
 
 # Exclude high-frequency k-mers during build (absolute)
 ikafssnindex -db nt -k 11 -o ./nt_index -max_freq_build 50000
@@ -180,7 +180,7 @@ Required:
 Options:
   -k <int>                K-mer size to use (required if multiple k values exist)
   -o <path>               Output file (default: stdout)
-  -threads <int>          Parallel search threads (default: all cores)
+  -nthread <int>          Parallel search threads (default: all cores)
   -memory_limit <size>    madvise WILLNEED budget (default: half of RAM)
                           Accepts K, M, G suffixes
   -mode <1|2|3>           Search mode (default: 2)
@@ -199,8 +199,8 @@ Options:
   -stage2_max_gap <int>   Chaining diagonal gap tolerance (default: 100)
   -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)
   -stage2_max_nhit_per_subject <int>  Max chains per subject (default: 1, 0=unlimited)
-  -stage2_min_diag_hits <int>  Diagonal filter min hits (default: 1)
-  -context <value>        Context extension for mode 3 (default: 2.0)
+  -stage2_min_nhit_diag <int>  Diagonal filter min hits (default: 1)
+  -context_extend <value>        Context extension for mode 3 (default: 2.0)
                           Integer: bases to extend; Decimal: query length multiplier
   -stage3_traceback <0|1> Enable traceback in mode 3 (default: 0)
   -stage3_gapopen <int>   Gap open penalty for mode 3 (default: 10)
@@ -208,8 +208,8 @@ Options:
   -stage3_min_ppositive <num>  Min percent positive filter for mode 3 (default: 0)
   -stage3_min_npositive <int>  Min positive-scoring positions filter for mode 3 (default: 0)
   -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: degmatch)
-  -stage3_fetch_threads <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, threads); error if exceeds -threads)
-  -num_results <int>      Max results per query, 0=unlimited (default: 0)
+  -stage3_nthread_fetch <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, nthread); error if exceeds -nthread)
+  -nresult <int>      Max results per query, 0=unlimited (default: 0)
   -seqidlist <path>       Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
   -strand <-1|1|2>       Strand to search (default: 2)
@@ -224,7 +224,7 @@ Options:
                           coding: use coding index only
                           optimal: use optimal index only
                           both: merge coding and optimal indexes at search time
-  -outfmt <tab|json|sam|bam>  Output format (default: tab)
+  -output_format <tsv|json|sam|bam>  Output format (default: tsv)
   -compression_level <int> Output compression level (gzip/bzip2/xz/zstd; default per codec: gzip=6, bzip2=9, xz=6, zstd=3)
                           Codec is selected by -o suffix (.gz/.bz2/.xz/.zst); SAM/BAM reject all four
   -v, --verbose           Verbose logging
@@ -263,7 +263,7 @@ When `-accept_qdegen` is 0, queries containing IUPAC degenerate bases (R, Y, S, 
 
 ```bash
 # Basic search
-ikafssnsearch -ix ./index/mydb -query query.fasta -threads 8
+ikafssnsearch -ix ./index/mydb -query query.fasta -nthread 8
 
 # Specify k-mer size (required if index contains multiple k values)
 ikafssnsearch -ix ./index/mydb -k 11 -query query.fasta
@@ -282,22 +282,22 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -negative_seqidlist exclude.tx
 ikafssnsearch -ix ./index/mydb -query query.fasta -stage1_min_score 0.5
 
 # Mode 3: pairwise alignment with traceback
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -num_results 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -nresult 5
 
 # Mode 3: SAM output
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -output_format sam -o result.sam
 
 # Mode 3: BAM output
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -outfmt bam -o result.bam
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -output_format bam -o result.bam
 
 # Mode 3: filter by percent positive
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_ppositive 90
 
 # Mode 3: with context extension (50 bases each side)
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 50 -num_results 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context_extend 50 -nresult 5
 
 # Mode 3: with context extension (0.1x query length each side)
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context 0.1 -num_results 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context_extend 0.1 -nresult 5
 
 # Pipe to ikafssnretrieve
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -353,7 +353,7 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 300 \
 
 # Mode 3: alignment with traceback
 ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
-    -mode 3 -stage3_traceback 1 -num_results 10
+    -mode 3 -stage3_traceback 1 -nresult 10
 ```
 
 ### ikafssnretrieve
@@ -368,25 +368,25 @@ Sequence source (one required):
   -remote                 Retrieve from NCBI efetch
 
 Input:
-  -results <path>         Search results file (tab format)
+  -tsv <path>             Search results file (TSV format)
   (none)                  Read from stdin
 
 Common options:
   -o <path>               Output FASTA file (default: stdout)
                           Suffix (.gz/.bz2/.xz/.zst) selects an output codec
-  -context <value>        Context extension (default: 2.0)
+  -context_extend <value>        Context extension (default: 2.0)
                           Integer: bases to add before/after match region
                           Decimal: multiplier of query length (qlen)
   -compression_level <int> Output compression level (defaults: gzip=6, bzip2=9, xz=6, zstd=3)
   -v, --verbose           Verbose logging
 
-(Note: -results auto-detects gzip/bzip2/xz/zstd-compressed result files from
+(Note: -tsv auto-detects gzip/bzip2/xz/zstd-compressed result files from
  their leading magic bytes; no flag is required.)
 
 Remote options (-remote):
   -api_key <key>          NCBI API key (or NCBI_API_KEY env var)
   -batch_size <int>       Accessions per batch (default: 100)
-  -retries <int>          Max retries (default: 3)
+  -max_nretry <int>          Max retries (default: 3)
   -timeout <int>          Request timeout in seconds (default: 30)
   -range_threshold <int>  Seq length threshold for individual fetch (default: 100000)
 ```
@@ -396,7 +396,7 @@ Remote options (-remote):
 ```bash
 # Local BLAST DB extraction (file input)
 ikafssnsearch -ix ./index/mydb -query query.fasta -o results.tsv
-ikafssnretrieve -db nt -results results.tsv -o matches.fasta
+ikafssnretrieve -db nt -tsv results.tsv -o matches.fasta
 
 # Local BLAST DB extraction (pipe)
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -412,10 +412,10 @@ ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta \
     | ikafssnretrieve -remote -api_key XXXXXXXX > matches.fasta
 
 # Include 50bp of context around match region
-ikafssnretrieve -db nt -results results.tsv -context 50
+ikafssnretrieve -db nt -tsv results.tsv -context_extend 50
 
 # Context as fraction of query length (0.1x each side)
-ikafssnretrieve -db nt -results results.tsv -context 0.1
+ikafssnretrieve -db nt -tsv results.tsv -context_extend 0.1
 ```
 
 ### ikafssnserver
@@ -433,9 +433,9 @@ Listener (at least one required):
   -tcp <host>:<port>      TCP listen address
 
 Options:
-  -threads <int>          Worker threads (default: all cores)
+  -nthread <int>          Worker threads (default: all cores)
   -max_queue_size <int>   Max concurrent query sequences globally (default: 1024)
-  -max_seqs_per_req <int> Max sequences accepted per request (default: thread count)
+  -max_nseq_per_req <int> Max sequences accepted per request (default: thread count)
   -pid <path>             PID file path
   -db <path>              BLAST DB path for mode 3 (repeatable, paired with -ix;
                           default: same as corresponding -ix prefix)
@@ -446,8 +446,8 @@ Options:
   -stage2_max_gap <int>   Default chaining gap tolerance (default: 100)
   -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)
   -stage2_max_nhit_per_subject <int>  Default max chains per subject (default: 1, 0=unlimited)
-  -stage2_min_diag_hits <int> Default diagonal filter min hits (default: 1)
-  -context <value>        Default context extension (default: 2.0)
+  -stage2_min_nhit_diag <int> Default diagonal filter min hits (default: 1)
+  -context_extend <value>        Default context extension (default: 2.0)
                           Integer: bases to extend; Decimal: query length multiplier
   -stage3_traceback <0|1> Default traceback mode (default: 0)
   -stage3_gapopen <int>   Default gap open penalty (default: 10)
@@ -455,8 +455,8 @@ Options:
   -stage3_min_ppositive <num>  Default min percent positive (default: 0)
   -stage3_min_npositive <int>  Default min positive-scoring positions (default: 0)
   -stage3_score_matrix <name>  Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)
-  -stage3_fetch_threads <int>  Threads for BLAST DB fetch (default: min(8, threads))
-  -num_results <int>      Default max results per query (default: 0)
+  -stage3_nthread_fetch <int>  Threads for BLAST DB fetch (default: min(8, nthread))
+  -nresult <int>      Default max results per query (default: 0)
   -accept_qdegen <0|1>    Default accept queries with degenerate bases (default: 1)
   -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
   -memory_limit <size>    madvise WILLNEED budget (default: half of RAM)
@@ -469,10 +469,10 @@ Options:
 
 ```bash
 # Listen on UNIX socket
-ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -threads 16
+ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -nthread 16
 
 # Listen on TCP (remote access)
-ikafssnserver -ix ./nt_index -tcp 0.0.0.0:9100 -threads 32
+ikafssnserver -ix ./nt_index -tcp 0.0.0.0:9100 -nthread 32
 
 # Both simultaneously
 ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -tcp 0.0.0.0:9100
@@ -482,11 +482,11 @@ ikafssnserver -ix ./nt_index -socket /var/run/ikafssn.sock -pid /var/run/ikafssn
 
 # Mode 3 support: specify BLAST DB and Stage 3 defaults
 ikafssnserver -ix ./nt_index -db nt -socket /var/run/ikafssn.sock \
-    -stage3_traceback 1 -context 50
+    -stage3_traceback 1 -context_extend 50
 
 # Multi-DB: serve two databases in one process
 ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
-    -socket /var/run/ikafssn.sock -threads 32
+    -socket /var/run/ikafssn.sock -nthread 32
 ```
 
 **Operational characteristics:**
@@ -495,7 +495,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 - If `-db` is specified, the count must match the number of `-ix` flags (paired in order). Databases without a `-db` override default to the `-ix` prefix as the BLAST DB path. A database with no `-db` path supports modes 1-2 only (max_mode=2); providing `-db` enables mode 3 (max_mode=3).
 - If the index prefix matches indexes for multiple k-mer sizes, all are loaded and clients can specify k per request.
 - On SIGTERM/SIGINT, performs graceful shutdown: stops accepting new connections, waits for in-flight requests to complete (up to `-shutdown_timeout` seconds), then exits.
-- **Per-sequence concurrency control:** The server limits concurrency at the per-sequence level, not per-connection. When a request arrives, the server attempts to acquire permits for each valid query sequence. If the global limit (`-max_queue_size`) is reached, excess sequences are returned to the client as "rejected" for retry. The `-max_seqs_per_req` option caps how many permits a single request can acquire, preventing one large request from monopolizing all slots.
+- **Per-sequence concurrency control:** The server limits concurrency at the per-sequence level, not per-connection. When a request arrives, the server attempts to acquire permits for each valid query sequence. If the global limit (`-max_queue_size`) is reached, excess sequences are returned to the client as "rejected" for retry. The `-max_nseq_per_req` option caps how many permits a single request can acquire, preventing one large request from monopolizing all slots.
 
 ### ikafssnhttpd
 
@@ -506,7 +506,7 @@ On startup, it connects to all configured backends to cache their capabilities (
 **Routing and health:**
 
 - **Priority**: Backends are prioritized by CLI argument order (first = highest priority).
-- **Selection**: For each search request, the backend with the highest priority and available effective capacity is selected. Effective capacity considers both slot availability (`max_queue_size - queue_depth`) and per-request cap (`max_seqs_per_req`), taking the minimum of the two. If all backends are full, the highest-priority one is used.
+- **Selection**: For each search request, the backend with the highest priority and available effective capacity is selected. Effective capacity considers both slot availability (`max_queue_size - queue_depth`) and per-request cap (`max_nseq_per_req`), taking the minimum of the two. If all backends are full, the highest-priority one is used.
 - **Pre-check**: Before each search, a fresh info request is sent to the selected backend to verify connectivity.
 - **Exclusion**: If a backend fails to respond (connection error on info or search), it is excluded for `-exclusion_time` seconds. Excluded backends are automatically re-checked during heartbeat and re-enabled once reachable.
 - **Heartbeat**: A background thread refreshes all backends' info every `-heartbeat_interval` seconds.
@@ -526,12 +526,12 @@ Job store (async REST):
                               After this duration the housekeeper purges the row
                               and any cached defline/result blobs from disk.
   -max_nretry <int>           Per-job dispatch retry cap (default: 3)
-  -worker_threads <int>       Backend search worker pool size (default: 4)
+  -nthread_worker <int>       Backend search worker pool size (default: 4)
 
 Options:
   -listen <host>:<port>       HTTP listen address (default: 0.0.0.0:8080)
   -path_prefix <prefix>       API path prefix (e.g., /nt)
-  -threads <int>              Drogon I/O threads (default: all cores)
+  -nthread <int>              Drogon I/O threads (default: all cores)
   -heartbeat_interval <int>   Heartbeat interval in seconds (default: 3600)
   -exclusion_time <int>       Backend exclusion time in seconds (default: 3600)
   -pid <path>                 PID file path
@@ -548,7 +548,7 @@ Options:
 | GET  | `/api/v1/info` | Aggregated index information from all backends |
 | GET  | `/api/v1/health` | Health check (OK if any backend is reachable) |
 
-The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_queue_size`, `queue_depth`, and `max_seqs_per_req` (computed as `sum(min(available_i, per_req_i))` across backends) across all serving backends. A top-level `max_seqs_per_req` field reports the minimum across all modes.
+The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_queue_size`, `queue_depth`, and `max_nseq_per_req` (computed as `sum(min(available_i, per_req_i))` across backends) across all serving backends. A top-level `max_nseq_per_req` field reports the minimum across all modes.
 
 `POST /api/v1/jobs` returns immediately with a generated `job_id`; the worker pool dispatches the request asynchronously to a backend. Clients poll `GET /api/v1/jobs/{job_id}` until status reaches `done`, then download the result blob. Jobs that finish (success or failure) are kept for `-retention_time` seconds; the housekeeper purges expired rows along with cached `*.deflines.zst` / `*.result.bin.zst` artefacts under the job-store directory.
 
@@ -573,7 +573,7 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 ### ikafssnclient
 
-Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. Invalid parameters produce an error with available database listings before any query data is transmitted. The client uses the server's `max_seqs_per_req` and available slot count to automatically split queries into appropriately-sized batches, avoiding oversized requests that would be partially rejected. Within each batch, if the server still rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
+Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. Invalid parameters produce an error with available database listings before any query data is transmitted. The client uses the server's `max_nseq_per_req` and available slot count to automatically split queries into appropriately-sized batches, avoiding oversized requests that would be partially rejected. Within each batch, if the server still rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
 
 **Socket/TCP mode (synchronous) — checkpointing:** When connected via `-socket` or `-tcp`, the client saves intermediate results to a temporary directory during batch processing. If the process is interrupted (e.g., Ctrl+C, network failure), re-running the same command resumes from where it left off, skipping already-completed queries. The temporary directory is named `{output}.{input}.{ix_name}.{kk}.ikafssn.tmp/` and is automatically cleaned up after successful completion. A directory-based lock prevents concurrent runs with the same parameters. Resume validation checks the search parameters, input file SHA256, and integrity of each batch file.
 
@@ -593,7 +593,7 @@ Async REST job management (HTTP mode only; mutually exclusive with a search):
                            without polling.  Use with -resume later to collect.
   -jobs                    List all locally-tracked job groups under
                            ~/.ikafssnclient/ (no server contact)
-  -jobdetail <id>          Show jobs in a group, or detail of a single job
+  -job_detail <id>          Show jobs in a group, or detail of a single job
   -resume <id>             Resume polling for an existing group or single job
 
 Required (for a fresh search):
@@ -619,8 +619,8 @@ Options:
   -stage2_max_gap <int>    Chaining gap tolerance (default: server default)
   -stage2_max_lookback <int>  Chaining DP lookback window (default: server default)
   -stage2_max_nhit_per_subject <int>  Max chains per subject (default: server default)
-  -stage2_min_diag_hits <int> Diagonal filter min hits (default: server default)
-  -context <value>         Context extension (default: 2.0)
+  -stage2_min_nhit_diag <int> Diagonal filter min hits (default: server default)
+  -context_extend <value>         Context extension (default: 2.0)
                            Integer: bases to extend; Decimal: query length multiplier
   -stage3_traceback <0|1>  Enable traceback (default: server default)
   -stage3_gapopen <int>    Gap open penalty (default: server default)
@@ -628,7 +628,7 @@ Options:
   -stage3_min_ppositive <num> Min percent positive filter (default: server default)
   -stage3_min_npositive <int> Min positive-scoring positions filter (default: server default)
   -stage3_score_matrix <name> Score matrix: degmatch, dnafull, nuc44 (default: server default)
-  -num_results <int>       Max results per query (default: server default)
+  -nresult <int>       Max results per query (default: server default)
   -seqidlist <path>        Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
   -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
@@ -640,7 +640,7 @@ Options:
                            coding: use coding index only
                            optimal: use optimal index only
                            both: merge coding and optimal indexes at search time
-  -outfmt <tab|json|sam|bam>  Output format (default: tab)
+  -output_format <tsv|json|sam|bam>  Output format (default: tsv)
   -compression_level <int> Output compression level (defaults: gzip=6, bzip2=9, xz=6, zstd=3)
                            Codec is selected by -o suffix (.gz/.bz2/.xz/.zst); SAM/BAM reject all four
   -v, --verbose            Verbose logging
@@ -649,10 +649,10 @@ Options:
  inputs from their leading magic bytes; no flag is required.)
 
 HTTP Authentication (HTTP mode only):
-  --user <user:password>   Credentials (curl-style)
-  --http-user <USER>       Username (wget-style)
-  --http-password <PASS>   Password (used with --http-user)
-  --netrc-file <path>      .netrc file for credentials
+  -user <user:password>   Credentials (curl-style)
+  -http_user <USER>       Username (wget-style)
+  -http_password <PASS>   Password (used with -http_user)
+  -netrc_file <path>      .netrc file for credentials
 ```
 
 **Examples:**
@@ -677,19 +677,19 @@ ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta | ikafssnr
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -k 9
 
 # HTTP with Basic Auth (curl-style)
-ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --user admin:secret
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta -user admin:secret
 
 # HTTP with Basic Auth (wget-style)
-ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --http-user=admin --http-password=secret
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta -http_user=admin -http_password=secret
 
 # HTTP with .netrc credentials
-ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta --netrc-file ~/.netrc
+ikafssnclient -http http://search.example.com:8080 -ix nt -query query.fasta -netrc_file ~/.netrc
 
 # Mode 3: pairwise alignment with traceback
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1
 
 # Mode 3: SAM output
-ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1 -outfmt sam -o result.sam
+ikafssnclient -socket /var/run/ikafssn.sock -ix nt -query query.fasta -mode 3 -stage3_traceback 1 -output_format sam -o result.sam
 
 # In-Silico PCR (primer mode)
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500
@@ -700,7 +700,7 @@ ikafssnclient -tcp 10.0.1.5:9100 -ix nt -primer primers.fasta -insert_length 300
 
 # In-Silico PCR with mode 3 alignment
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500 \
-    -mode 3 -stage3_traceback 1 -num_results 10
+    -mode 3 -stage3_traceback 1 -nresult 10
 ```
 
 ### ikafssninfo
@@ -720,10 +720,10 @@ Local mode options:
   -db <path>               BLAST DB prefix (default: auto-detect from -ix)
 
 Remote HTTP authentication:
-  --user <user:password>   Credentials (curl-style)
-  --http-user <USER>       Username (wget-style)
-  --http-password <PASS>   Password (used with --http-user)
-  --netrc-file <path>      .netrc file for credentials
+  -user <user:password>   Credentials (curl-style)
+  -http_user <USER>       Username (wget-style)
+  -http_password <PASS>   Password (used with -http_user)
+  -netrc_file <path>      .netrc file for credentials
 
 Options:
   -v, --verbose            Verbose output
@@ -775,20 +775,20 @@ ikafssninfo -http http://search.example.com:8080
 ikafssninfo -socket /var/run/ikafssn.sock -v
 
 # Remote: HTTP with authentication
-ikafssninfo -http http://search.example.com:8080 --user admin:secret
+ikafssninfo -http http://search.example.com:8080 -user admin:secret
 ```
 
 ## Search Pipeline
 
 ikafssn uses a three-stage search pipeline:
 
-The default parameters prioritize throughput: `stage1_topn=0` and `num_results=0` disable sorting, and `stage1_min_score=0.5` (fractional) filters candidates by requiring at least 50% of query k-mers to match. To get ranked output, set positive values for `-stage1_topn` and/or `-num_results`, which triggers sorting but may reduce speed for large result sets.
+The default parameters prioritize throughput: `stage1_topn=0` and `nresult=0` disable sorting, and `stage1_min_score=0.5` (fractional) filters candidates by requiring at least 50% of query k-mers to match. To get ranked output, set positive values for `-stage1_topn` and/or `-nresult`, which triggers sorting but may reduce speed for large result sets.
 
 1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `stage1_min_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0` (default), all qualifying candidates are returned without sorting.
 
 2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= stage2_min_score` are reported. The DP inner loop is limited by `-stage2_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior). When `-stage2_max_nhit_per_subject` is greater than 1 (or 0 for unlimited), multiple non-overlapping chains are extracted per subject using greedy best-chain removal: the best chain is found and its hits are removed, then the DP is re-run on the remaining hits, repeating until the limit is reached or no chain meets `min_score`.
 
-3. **Stage 3 (Pairwise Alignment):** For each Stage 2 hit, retrieves the subject subsequence from the BLAST DB (with optional context extension via `-context`), and performs semi-global pairwise alignment using the Parasail library (using the score matrix specified by `-stage3_score_matrix`, default: DEGMATCH). The alignment score (**alnscore**) is computed for all hits. When `-stage3_traceback 1` is enabled, CIGAR strings, percent positive (ppositive), positive-scoring position count (npositive), negative-scoring count (nnegative), and aligned sequences (with gaps) are also computed. Hits can be filtered by `-stage3_min_ppositive` and `-stage3_min_npositive` (traceback mode only). Subject sequences are pre-fetched in parallel across BLAST DB volumes controlled by `-stage3_fetch_threads`.
+3. **Stage 3 (Pairwise Alignment):** For each Stage 2 hit, retrieves the subject subsequence from the BLAST DB (with optional context extension via `-context_extend`), and performs semi-global pairwise alignment using the Parasail library (using the score matrix specified by `-stage3_score_matrix`, default: DEGMATCH). The alignment score (**alnscore**) is computed for all hits. When `-stage3_traceback 1` is enabled, CIGAR strings, percent positive (ppositive), positive-scoring position count (npositive), negative-scoring count (nnegative), and aligned sequences (with gaps) are also computed. Hits can be filtered by `-stage3_min_ppositive` and `-stage3_min_npositive` (traceback mode only). Subject sequences are pre-fetched in parallel across BLAST DB volumes controlled by `-stage3_nthread_fetch`.
 
 **Adaptive `-stage2_min_score` (default):** When `-stage2_min_score 0` (the default), the minimum chain score is set adaptively per query to the resolved Stage 1 threshold. With fractional `-stage1_min_score` (e.g. `0.5`), this means each query gets a per-query adaptive threshold based on its k-mer composition. With absolute `-stage1_min_score`, the configured value is used. Set `-stage2_min_score` to a positive integer to override this behavior with a fixed threshold.
 
@@ -1099,7 +1099,7 @@ Note: `qstart` and `sstart` are omitted because accurate alignment start positio
 
 ### SAM/BAM Format
 
-SAM/BAM output requires `-mode 3 -stage3_traceback 1`. Use `-outfmt sam` for SAM or `-outfmt bam` for BAM (BAM requires `-o <path>`).
+SAM/BAM output requires `-mode 3 -stage3_traceback 1`. Use `-output_format sam` for SAM or `-output_format bam` for BAM (BAM requires `-o <path>`).
 
 SAM records contain:
 - **QNAME**: qseqid
@@ -1162,7 +1162,7 @@ ikafssnserver -ix ./rs_index -db refseq -socket /var/run/rs.sock
 ikafssnhttpd -server_socket /var/run/nt.sock -server_socket /var/run/rs.sock -listen :8080
 ```
 
-When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that for each shared (db, k) pair, total sequence counts and total bases are identical. Backends may have different k-value sets for the same database; the merged capabilities expose the union of all k-value groups, so requests for a k-value available on only some backends are naturally routed to those backends. Requests are routed to the highest-priority backend with available effective capacity (considering both slot availability and `max_seqs_per_req`). Note that capacity values (`max_queue_size`, `queue_depth`, `max_seqs_per_req`) are shared per server across all databases served by that server.
+When the same database name appears on multiple backends, `ikafssnhttpd` verifies at startup that for each shared (db, k) pair, total sequence counts and total bases are identical. Backends may have different k-value sets for the same database; the merged capabilities expose the union of all k-value groups, so requests for a k-value available on only some backends are naturally routed to those backends. Requests are routed to the highest-priority backend with available effective capacity (considering both slot availability and `max_nseq_per_req`). Note that capacity values (`max_queue_size`, `queue_depth`, `max_nseq_per_req`) are shared per server across all databases served by that server.
 
 Alternatively, separate processes with path-based HTTP routing:
 

@@ -169,15 +169,15 @@ static bool http_get(const std::string& url, std::string& response_body,
 
     uint32_t backoff_ms = 1000;
 
-    for (uint32_t attempt = 0; attempt <= opts.retries; attempt++) {
+    for (uint32_t attempt = 0; attempt <= opts.max_nretry; attempt++) {
         response_body.clear();
         CURLcode res = curl_easy_perform(curl);
 
         if (res != CURLE_OK) {
             std::fprintf(stderr, "efetch: request failed: %s\n", curl_easy_strerror(res));
-            if (attempt < opts.retries) {
+            if (attempt < opts.max_nretry) {
                 std::fprintf(stderr, "efetch: retrying in %u ms (attempt %u/%u)\n",
-                             backoff_ms, attempt + 1, opts.retries);
+                             backoff_ms, attempt + 1, opts.max_nretry);
                 std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
                 backoff_ms *= 2;
                 continue;
@@ -193,9 +193,9 @@ static bool http_get(const std::string& url, std::string& response_body,
             return true;
         }
 
-        if (is_retryable_http_status(http_status) && attempt < opts.retries) {
+        if (is_retryable_http_status(http_status) && attempt < opts.max_nretry) {
             std::fprintf(stderr, "efetch: HTTP %ld, retrying in %u ms (attempt %u/%u)\n",
-                         http_status, backoff_ms, attempt + 1, opts.retries);
+                         http_status, backoff_ms, attempt + 1, opts.max_nretry);
             std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
             backoff_ms *= 2;
             continue;

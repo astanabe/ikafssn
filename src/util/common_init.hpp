@@ -40,7 +40,7 @@ Logger make_logger(const CliParser& cli);
 
 // Resolve thread count from CLI (0 or negative → hardware_concurrency).
 inline int resolve_threads(const CliParser& cli,
-                           const std::string& key = "-threads") {
+                           const std::string& key = "-nthread") {
     int n = cli.get_int(key, 0);
     if (n <= 0) {
         n = static_cast<int>(std::thread::hardware_concurrency());

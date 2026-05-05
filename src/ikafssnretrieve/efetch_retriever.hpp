@@ -12,7 +12,7 @@ namespace ikafssn {
 struct EfetchOptions {
     std::string api_key;           // NCBI API key (empty = none)
     uint32_t batch_size = 100;     // accessions per batch request
-    uint32_t retries = 3;          // max retry count
+    uint32_t max_nretry = 3;       // max retry count
     uint32_t timeout_sec = 30;     // request timeout
     uint32_t range_threshold = 100000;  // seq_length threshold for individual fetch
     uint32_t context = 0;          // bases to add before/after match region

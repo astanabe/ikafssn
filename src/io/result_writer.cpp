@@ -22,7 +22,7 @@ static std::string skipped_sseqid(uint8_t reason, const std::string& detail) {
     return std::string("*SKIPPED:") + skip_reason_str(reason);
 }
 
-void write_results_tab(std::ostream& out,
+void write_results_tsv(std::ostream& out,
                        const std::vector<OutputHit>& hits,
                        uint8_t mode,
                        uint8_t stage1_score_type,
@@ -287,8 +287,8 @@ void write_results(std::ostream& out,
                    uint8_t stage1_score_type,
                    bool stage3_traceback) {
     switch (fmt) {
-        case OutputFormat::kTab:
-            write_results_tab(out, hits, mode, stage1_score_type, stage3_traceback);
+        case OutputFormat::kTsv:
+            write_results_tsv(out, hits, mode, stage1_score_type, stage3_traceback);
             break;
         case OutputFormat::kJson:
             write_results_json(out, hits, mode, stage1_score_type, stage3_traceback);
@@ -316,7 +316,7 @@ bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
         if (detect_format_from_extension(output_path) != CompressionFormat::kNone) {
             error_msg = "Error: SAM/BAM output does not support compression "
                         "suffix; remove .gz/.bz2/.xz/.zst or switch to "
-                        "-outfmt tab/json";
+                        "-output_format tsv/json";
             return false;
         }
     }
@@ -325,8 +325,8 @@ bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
 
 bool parse_output_format(const std::string& str, OutputFormat& out,
                          std::string& error_msg) {
-    if (str == "tab") {
-        out = OutputFormat::kTab;
+    if (str == "tsv") {
+        out = OutputFormat::kTsv;
     } else if (str == "json") {
         out = OutputFormat::kJson;
     } else if (str == "sam") {

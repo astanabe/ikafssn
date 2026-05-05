@@ -26,7 +26,7 @@ static void test_basic_parse() {
         "query1\tACC002\t-\t10\t39\t500\t200\t229\t3000\t3\t10\t1\n"
     );
 
-    auto results = read_results_tab(path);
+    auto results = read_results_tsv(path);
     CHECK_EQ(results.size(), 2u);
 
     CHECK(results[0].qseqid == "query1");
@@ -68,7 +68,7 @@ static void test_skip_header_and_blank() {
         "\n"
     );
 
-    auto results = read_results_tab(path);
+    auto results = read_results_tsv(path);
     CHECK_EQ(results.size(), 1u);
     CHECK(results[0].sseqid == "ACC001");
 }
@@ -86,7 +86,7 @@ static void test_invalid_lines() {
         "query4\tACC005\t-\t5\t55\t500\t300\t350\t2000\t8\t20\t2\n"
     );
 
-    auto results = read_results_tab(path);
+    auto results = read_results_tsv(path);
     CHECK_EQ(results.size(), 2u);
     CHECK(results[0].sseqid == "ACC001");
     CHECK(results[1].sseqid == "ACC005");
@@ -98,7 +98,7 @@ static void test_empty_input() {
     std::string path = g_test_dir + "/empty.tsv";
     write_file(path, "");
 
-    auto results = read_results_tab(path);
+    auto results = read_results_tsv(path);
     CHECK_EQ(results.size(), 0u);
 }
 
@@ -110,7 +110,7 @@ static void test_header_only() {
         "# qseqid\tsseqid\tsstrand\tqstart\tqend\tsstart\tsend\tscore\tvolume\n"
     );
 
-    auto results = read_results_tab(path);
+    auto results = read_results_tsv(path);
     CHECK_EQ(results.size(), 0u);
 }
 
@@ -123,7 +123,7 @@ static void test_stream_interface() {
         "q2\tA2\t-\t5\t15\t100\t25\t35\t200\t4\t8\t1\n"
     );
 
-    auto results = read_results_tab(iss);
+    auto results = read_results_tsv(iss);
     CHECK_EQ(results.size(), 2u);
     CHECK(results[0].qseqid == "q1");
     CHECK(results[1].qseqid == "q2");
@@ -139,10 +139,10 @@ static void test_roundtrip() {
     hits.push_back({"queryB", "ACC300", '+', 0, 49, 0, 49, 12, 3, 0});
 
     std::ostringstream oss;
-    write_results_tab(oss, hits);
+    write_results_tsv(oss, hits);
 
     std::istringstream iss(oss.str());
-    auto read_back = read_results_tab(iss);
+    auto read_back = read_results_tsv(iss);
 
     CHECK_EQ(read_back.size(), 3u);
     for (size_t i = 0; i < 3; i++) {
@@ -181,7 +181,7 @@ static void test_roundtrip_mode3_no_traceback() {
     hits.push_back(h);
 
     std::ostringstream oss;
-    write_results_tab(oss, hits, /*mode=*/3, /*stage1_score_type=*/1, /*stage3_traceback=*/false);
+    write_results_tsv(oss, hits, /*mode=*/3, /*stage1_score_type=*/1, /*stage3_traceback=*/false);
 
     // Verify qstart/sstart are not in header
     std::string output = oss.str();
@@ -192,7 +192,7 @@ static void test_roundtrip_mode3_no_traceback() {
 
     // Read back
     std::istringstream iss(output);
-    auto read_back = read_results_tab(iss);
+    auto read_back = read_results_tsv(iss);
     CHECK_EQ(read_back.size(), 1u);
     CHECK(read_back[0].qseqid == "qryM3");
     CHECK(read_back[0].sseqid == "ACC_M3");
@@ -237,14 +237,14 @@ static void test_roundtrip_mode3_traceback() {
     hits.push_back(h);
 
     std::ostringstream oss;
-    write_results_tab(oss, hits, /*mode=*/3, /*stage1_score_type=*/1, /*stage3_traceback=*/true);
+    write_results_tsv(oss, hits, /*mode=*/3, /*stage1_score_type=*/1, /*stage3_traceback=*/true);
 
     std::string output = oss.str();
     CHECK(output.find("qstart") != std::string::npos);
     CHECK(output.find("sstart") != std::string::npos);
 
     std::istringstream iss(output);
-    auto read_back = read_results_tab(iss);
+    auto read_back = read_results_tsv(iss);
     CHECK_EQ(read_back.size(), 1u);
     CHECK_EQ(read_back[0].qstart, 3u);
     CHECK_EQ(read_back[0].qend, 97u);
@@ -267,7 +267,7 @@ static void test_header_reordered_columns() {
         "ACC_R2\tqR2\t0\t-\t8\t300\t4000\n"
     );
 
-    auto results = read_results_tab(path);
+    auto results = read_results_tsv(path);
     CHECK_EQ(results.size(), 2u);
 
     CHECK(results[0].qseqid == "qR1");
@@ -299,7 +299,7 @@ static void test_header_matchscore() {
         "qM1\tACC_MS\t+\t100\t2000\t42\t0\n"
     );
 
-    auto results = read_results_tab(path);
+    auto results = read_results_tsv(path);
     CHECK_EQ(results.size(), 1u);
     CHECK_EQ(results[0].matchscore, 42u);
 }
@@ -313,7 +313,7 @@ static void test_legacy_no_header() {
         "q2\tA2\t-\t5\t15\t100\t25\t35\t200\t4\t8\t1\n"
     );
 
-    auto results = read_results_tab(iss);
+    auto results = read_results_tsv(iss);
     CHECK_EQ(results.size(), 2u);
     CHECK(results[0].qseqid == "q1");
     CHECK_EQ(results[0].qstart, 0u);
@@ -332,7 +332,7 @@ static void test_windows_line_endings() {
         "q1\tA1\t+\t0\t10\t100\t20\t30\t200\t3\t5\t0\r\n"
     );
 
-    auto results = read_results_tab(path);
+    auto results = read_results_tsv(path);
     CHECK_EQ(results.size(), 1u);
     CHECK(results[0].qseqid == "q1");
     CHECK(results[0].sseqid == "A1");

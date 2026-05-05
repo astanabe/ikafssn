@@ -11,10 +11,10 @@ namespace ikafssn {
 //   u8   k
 //   u16  stage2_min_score
 //   u16  stage2_max_gap
-//   u8   stage2_min_diag_hits
+//   u8   stage2_min_nhit_diag
 //   u16  stage1_topn
 //   u16  stage1_min_score
-//   u16  num_results
+//   u16  nresult
 //   u16  stage1_min_score_frac_x10000
 //   u8   seqidlist_mode
 //   u8   mode
@@ -49,10 +49,10 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     w.u8(req.k);
     w.u16(req.stage2_min_score);
     w.u16(req.stage2_max_gap);
-    w.u8(req.stage2_min_diag_hits);
+    w.u8(req.stage2_min_nhit_diag);
     w.u16(req.stage1_topn);
     w.u16(req.stage1_min_score);
-    w.u16(req.num_results);
+    w.u16(req.nresult);
     w.u16(req.stage1_min_score_frac_x10000);
     w.u8(static_cast<uint8_t>(req.seqidlist_mode));
     w.u8(req.mode);
@@ -96,10 +96,10 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u8(req.k)) return false;
     if (!r.get_u16(req.stage2_min_score)) return false;
     if (!r.get_u16(req.stage2_max_gap)) return false;
-    if (!r.get_u8(req.stage2_min_diag_hits)) return false;
+    if (!r.get_u8(req.stage2_min_nhit_diag)) return false;
     if (!r.get_u16(req.stage1_topn)) return false;
     if (!r.get_u16(req.stage1_min_score)) return false;
-    if (!r.get_u16(req.num_results)) return false;
+    if (!r.get_u16(req.nresult)) return false;
     if (!r.get_u16(req.stage1_min_score_frac_x10000)) return false;
 
     uint8_t seqidlist_mode;
@@ -364,7 +364,7 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 //   u8   default_k
 //   i32  max_queue_size
 //   i32  queue_depth
-//   i32  max_seqs_per_req
+//   i32  max_nseq_per_req
 //   u16  num_databases
 //   for each database:
 //     str16 name
@@ -393,7 +393,7 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
     w.u8(resp.default_k);
     w.i32(resp.max_queue_size);
     w.i32(resp.queue_depth);
-    w.i32(resp.max_seqs_per_req);
+    w.i32(resp.max_nseq_per_req);
     w.u16(static_cast<uint16_t>(resp.databases.size()));
 
     for (const auto& db : resp.databases) {
@@ -429,7 +429,7 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
     if (!r.get_u8(resp.default_k)) return false;
     if (!r.get_i32(resp.max_queue_size)) return false;
     if (!r.get_i32(resp.queue_depth)) return false;
-    if (!r.get_i32(resp.max_seqs_per_req)) return false;
+    if (!r.get_i32(resp.max_nseq_per_req)) return false;
 
     uint16_t num_databases;
     if (!r.get_u16(num_databases)) return false;

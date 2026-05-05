@@ -20,7 +20,7 @@ class OidFilter;
 struct SearchConfig {
     Stage1Config stage1;
     Stage2Config stage2;
-    uint32_t num_results = 0;   // max results per query (0 = unlimited)
+    uint32_t nresult = 0;       // max results per query (0 = unlimited)
     uint8_t  mode = 2;          // 1 = stage1 only, 2 = stage1+stage2, 3 = stage1+stage2+stage3
     uint8_t  sort_score = 2;    // 1 = stage1 score, 2 = chainscore, 3 = alnscore
     int8_t   strand = 2;       // 1 = plus only, -1 = minus only, 2 = both

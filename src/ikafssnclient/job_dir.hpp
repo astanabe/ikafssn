@@ -34,12 +34,12 @@ struct GroupMeta {
     std::string db;
     std::string query_file_path_abs;
     std::string query_file_sha256;
-    int32_t     max_seqs_per_req = 0;
+    int32_t     max_nseq_per_req = 0;
     uint8_t     k = 0;
     uint8_t     mode = 0;
     uint8_t     t = 0;
     uint8_t     template_type = 0;
-    std::string outfmt;
+    std::string output_format;
     std::string output_path;
     int32_t     compression_level = -1;  // -1 = codec default
     std::vector<std::string> job_ids;
@@ -75,7 +75,7 @@ std::vector<std::string> list_groups(const std::string& root);
 std::vector<std::string> list_jobs(const std::string& root,
                                    const std::string& group_id);
 
-// Given an arbitrary id supplied to -resume / -jobdetail, work out
+// Given an arbitrary id supplied to -resume / -job_detail, work out
 // whether it names a group or a job (and if a job, which group).  On
 // success returns true; sets `is_group=true` and `group_id=id` for a
 // group, or `is_group=false` + group_id of the parent for a job.

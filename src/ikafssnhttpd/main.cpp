@@ -39,12 +39,12 @@ static void print_usage(const char* prog) {
         "                              (default: /var/lib/ikafssnhttpd/jobs.db)\n"
         "  -retention_time <int>       Done/failed retention in seconds (default: 86400)\n"
         "  -max_nretry <int>           Per-job retry cap (default: 3)\n"
-        "  -worker_threads <int>       Backend search worker pool size (default: 4)\n"
+        "  -nthread_worker <int>       Backend search worker pool size (default: 4)\n"
         "\n"
         "Options:\n"
         "  -listen <host>:<port>       HTTP listen address (default: 0.0.0.0:8080)\n"
         "  -path_prefix <prefix>       API path prefix (e.g., /nt)\n"
-        "  -threads <int>              Drogon I/O threads (default: all cores)\n"
+        "  -nthread <int>              Drogon I/O threads (default: all cores)\n"
         "  -heartbeat_interval <int>   Heartbeat interval in seconds (default: 3600)\n"
         "  -exclusion_time <int>       Backend exclusion time in seconds (default: 3600)\n"
         "  -pid <path>                 PID file path\n"
@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
 
     if (check_version(cli, "ikafssnhttpd")) return 0;
 
-    if (cli.has("-h") || cli.has("--help")) {
+    if (cli.has("-h") || cli.has("-help")) {
         print_usage(argv[0]);
         return 0;
     }
@@ -108,7 +108,7 @@ int main(int argc, char* argv[]) {
     std::string db_path = cli.get_string("-db", "/var/lib/ikafssnhttpd/jobs.db");
     int retention_time = cli.get_int("-retention_time", 86400);
     int max_nretry     = cli.get_int("-max_nretry", 3);
-    int worker_threads = cli.get_int("-worker_threads", 4);
+    int nthread_worker = cli.get_int("-nthread_worker", 4);
 
     JobStore store;
     {
@@ -120,7 +120,7 @@ int main(int argc, char* argv[]) {
         }
     }
     logger.info("JobStore opened at %s (retention=%ds, max_nretry=%d, workers=%d)",
-                db_path.c_str(), retention_time, max_nretry, worker_threads);
+                db_path.c_str(), retention_time, max_nretry, nthread_worker);
 
     {
         std::string err;
@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
     }
 
     JobWorker worker(store, manager, logger, max_nretry);
-    worker.start(worker_threads);
+    worker.start(nthread_worker);
 
     JobHousekeeper housekeeper(store, logger);
     housekeeper.start(retention_time);

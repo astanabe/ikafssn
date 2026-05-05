@@ -85,8 +85,8 @@ SearchResponse process_search_request(
         config.stage2.chain_max_lookback = req.stage2_max_lookback;
     if (req.stage2_max_nhit_per_subject != 0)
         config.stage2.max_nhit_per_subject = req.stage2_max_nhit_per_subject;
-    if (req.stage2_min_diag_hits != 0)
-        config.stage2.min_diag_hits = req.stage2_min_diag_hits;
+    if (req.stage2_min_nhit_diag != 0)
+        config.stage2.min_nhit_diag = req.stage2_min_nhit_diag;
     if (req.stage1_topn != 0)
         config.stage1.stage1_topn = req.stage1_topn;
     if (req.stage1_min_score_frac_x10000 != 0) {
@@ -95,8 +95,8 @@ SearchResponse process_search_request(
     } else if (req.stage1_min_score != 0) {
         config.stage1.min_stage1_score = req.stage1_min_score;
     }
-    if (req.num_results != 0)
-        config.num_results = req.num_results;
+    if (req.nresult != 0)
+        config.nresult = req.nresult;
     if (req.mode != 0)
         config.mode = req.mode;
     if (req.stage1_score != 0)
@@ -570,7 +570,7 @@ SearchResponse process_search_request(
     server.release_sequences(acquired);
 
     // Post-process: sort/truncate per accepted query (parallel across queries)
-    if (config.num_results > 0) {
+    if (config.nresult > 0) {
         std::function<bool(const ResponseHit&, const ResponseHit&)> cmp;
         if (config.sort_score == 1) {
             cmp = [](const ResponseHit& a, const ResponseHit& b) {
@@ -589,14 +589,14 @@ SearchResponse process_search_request(
         tbb::parallel_for(size_t(0), resp.results.size(), [&](size_t ri) {
             auto& qr = resp.results[ri];
             if (qr.skip_reason != 0) return;
-            if (qr.hits.size() <= config.num_results) {
+            if (qr.hits.size() <= config.nresult) {
                 std::sort(qr.hits.begin(), qr.hits.end(), cmp);
                 return;
             }
             std::nth_element(qr.hits.begin(),
-                             qr.hits.begin() + config.num_results,
+                             qr.hits.begin() + config.nresult,
                              qr.hits.end(), cmp);
-            qr.hits.resize(config.num_results);
+            qr.hits.resize(config.nresult);
             std::sort(qr.hits.begin(), qr.hits.end(), cmp);
         });
     }

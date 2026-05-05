@@ -90,7 +90,7 @@ DbStats resolve_db_stats(const InfoResponse& info, const std::string& db_name,
 // ---------------------------------------------------------------------------
 
 std::string build_options_text(const SearchRequest& req, const DbStats& stats,
-                                uint8_t resolved_k, OutputFormat outfmt,
+                                uint8_t resolved_k, OutputFormat output_format,
                                 const std::string& seqidlist_sha256,
                                 const std::string& neg_seqidlist_sha256) {
     std::ostringstream oss;
@@ -106,8 +106,8 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "stage2_max_gap=" << req.stage2_max_gap << "\n";
     oss << "stage2_max_lookback=" << req.stage2_max_lookback << "\n";
     oss << "stage2_max_nhit_per_subject=" << req.stage2_max_nhit_per_subject << "\n";
-    oss << "stage2_min_diag_hits=" << static_cast<int>(req.stage2_min_diag_hits) << "\n";
-    oss << "num_results=" << req.num_results << "\n";
+    oss << "stage2_min_nhit_diag=" << static_cast<int>(req.stage2_min_nhit_diag) << "\n";
+    oss << "nresult=" << req.nresult << "\n";
     oss << "accept_qdegen=" << static_cast<int>(req.accept_qdegen) << "\n";
     oss << "strand=" << static_cast<int>(req.strand) << "\n";
     oss << "stage3_traceback=" << static_cast<int>(req.stage3_traceback) << "\n";
@@ -122,14 +122,14 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "db=" << req.db << "\n";
     oss << "db_total_sequences=" << stats.total_sequences << "\n";
     oss << "db_total_bases=" << stats.total_bases << "\n";
-    const char* fmt_str = "tab";
-    switch (outfmt) {
-        case OutputFormat::kTab:  fmt_str = "tab";  break;
+    const char* fmt_str = "tsv";
+    switch (output_format) {
+        case OutputFormat::kTsv:  fmt_str = "tsv";  break;
         case OutputFormat::kJson: fmt_str = "json"; break;
         case OutputFormat::kSam:  fmt_str = "sam";  break;
         case OutputFormat::kBam:  fmt_str = "bam";  break;
     }
-    oss << "outfmt=" << fmt_str << "\n";
+    oss << "output_format=" << fmt_str << "\n";
     oss << "seqidlist_sha256=" << seqidlist_sha256 << "\n";
     oss << "neg_seqidlist_sha256=" << neg_seqidlist_sha256 << "\n";
     return oss.str();
@@ -261,7 +261,7 @@ std::string Checkpoint::meta_sha_path() const { return temp_dir_ + "/meta.txt.sh
 std::string Checkpoint::lock_dir_path() const { return temp_dir_ + "/lock"; }
 
 std::string Checkpoint::result_extension() const {
-    switch (cfg_.outfmt) {
+    switch (cfg_.output_format) {
         case OutputFormat::kJson: return ".json";
         case OutputFormat::kSam:
         case OutputFormat::kBam:  return ".sam";
@@ -457,7 +457,7 @@ bool Checkpoint::write_batch_results(int batch_num,
                                       bool stage3_traceback) {
     std::string path = batch_result_path(batch_num);
 
-    if (cfg_.outfmt == OutputFormat::kSam || cfg_.outfmt == OutputFormat::kBam) {
+    if (cfg_.output_format == OutputFormat::kSam || cfg_.output_format == OutputFormat::kBam) {
         // Write SAM text (always text for intermediate)
         write_results_sam(path, hits, stage1_score);
         // Compute and write SHA256
@@ -467,12 +467,12 @@ bool Checkpoint::write_batch_results(int batch_num,
     }
 
     std::ostringstream oss;
-    if (cfg_.outfmt == OutputFormat::kJson) {
+    if (cfg_.output_format == OutputFormat::kJson) {
         write_results_json_fragment(oss, hits, mode, stage1_score,
                                      stage3_traceback);
     } else {
         // Tab format: write with header for each batch
-        write_results_tab(oss, hits, mode, stage1_score, stage3_traceback);
+        write_results_tsv(oss, hits, mode, stage1_score, stage3_traceback);
     }
     return write_with_sha(path, oss.str());
 }
@@ -517,14 +517,14 @@ bool Checkpoint::merge_results(const std::string& output_path,
         batch_paths.push_back(path);
     }
 
-    if (cfg_.outfmt == OutputFormat::kSam || cfg_.outfmt == OutputFormat::kBam) {
+    if (cfg_.output_format == OutputFormat::kSam || cfg_.output_format == OutputFormat::kBam) {
         // SAM/BAM merging is delegated to htslib (compression of SAM/BAM
         // by external suffix is rejected at CLI parse time).
         if (batch_paths.empty()) {
             logger_.info("No batch results to merge");
             return true;
         }
-        bool as_bam = (cfg_.outfmt == OutputFormat::kBam);
+        bool as_bam = (cfg_.output_format == OutputFormat::kBam);
         std::string out_path = output_path.empty() ? "-" : output_path;
         return merge_sam_files(batch_paths, out_path, as_bam);
     }
@@ -543,12 +543,12 @@ bool Checkpoint::merge_results(const std::string& output_path,
     if (batch_paths.empty()) {
         logger_.info("No batch results to merge");
         std::vector<OutputHit> empty;
-        write_results(os, empty, cfg_.outfmt, mode, stage1_score,
+        write_results(os, empty, cfg_.output_format, mode, stage1_score,
                       stage3_traceback);
         return true;
     }
 
-    if (cfg_.outfmt == OutputFormat::kJson) {
+    if (cfg_.output_format == OutputFormat::kJson) {
         os << "{\n  \"results\": [\n";
         for (size_t i = 0; i < batch_paths.size(); i++) {
             std::string content = read_file_string(batch_paths[i]);

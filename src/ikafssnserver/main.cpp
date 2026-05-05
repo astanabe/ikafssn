@@ -35,9 +35,9 @@ static void print_usage(const char* prog) {
         "  -tcp <host>:<port>       TCP listen address\n"
         "\n"
         "Options:\n"
-        "  -threads <int>           Worker threads (default: all cores)\n"
+        "  -nthread <int>           Worker threads (default: all cores)\n"
         "  -max_queue_size <int>    Max concurrent query sequences globally (default: 1024)\n"
-        "  -max_seqs_per_req <int>  Max sequences accepted per request (default: thread count)\n"
+        "  -max_nseq_per_req <int>  Max sequences accepted per request (default: thread count)\n"
         "  -pid <path>              PID file path\n"
         "  -db <path>               BLAST DB path for mode 3 (repeatable, paired with -ix;\n"
         "                           default: same as corresponding -ix prefix)\n"
@@ -45,12 +45,12 @@ static void print_usage(const char* prog) {
         "  -stage2_max_gap <int>    Default chaining gap tolerance (default: 100)\n"
         "  -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject <int>  Default max chains per subject (default: 1, 0=unlimited)\n"
-        "  -stage2_min_diag_hits <int>  Default diagonal filter min hits (default: 1)\n"
+        "  -stage2_min_nhit_diag <int>  Default diagonal filter min hits (default: 1)\n"
         "  -stage1_topn <int>       Default Stage 1 candidate limit (default: 0)\n"
         "  -stage1_min_score <num>  Default Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
-        "  -num_results <int>       Default max results per query (default: 0)\n"
+        "  -nresult <int>           Default max results per query (default: 0)\n"
         "  -accept_qdegen <0|1>     Default accept queries with degenerate bases (default: 1)\n"
-        "  -context <value>         Default context extension (int=bases, decimal=ratio, default: 2.0)\n"
+        "  -context_extend <value>  Default context extension (int=bases, decimal=ratio, default: 2.0)\n"
         "  -stage3_traceback <0|1>  Default traceback mode (default: 0)\n"
         "  -stage3_gapopen <int>    Default gap open penalty (default: 10)\n"
         "  -stage3_gapext <int>     Default gap extension penalty (default: 1)\n"
@@ -58,7 +58,7 @@ static void print_usage(const char* prog) {
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -stage3_min_npositive <int> Default min positive-scoring positions (default: 0)\n"
         "  -stage3_score_matrix <name> Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
-        "  -stage3_fetch_threads <int>  Threads for BLAST DB fetch (default: min(8, threads))\n"
+        "  -stage3_nthread_fetch <int>  Threads for BLAST DB fetch (default: min(8, nthread))\n"
         "  -memory_limit <size>     madvise WILLNEED budget (default: half of RAM)\n"
         "                           Accepts K, M, G suffixes\n"
         "  -shutdown_timeout <int>  Graceful shutdown timeout in seconds (default: 30)\n"
@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
 
     if (check_version(cli, "ikafssnserver")) return 0;
 
-    if (cli.has("-h") || cli.has("--help")) {
+    if (cli.has("-h") || cli.has("-help")) {
         print_usage(argv[0]);
         return 0;
     }
@@ -124,15 +124,15 @@ int main(int argc, char* argv[]) {
     config.unix_socket_path = cli.get_string("-socket");
     config.tcp_addr = cli.get_string("-tcp");
     config.pid_file = cli.get_string("-pid");
-    config.num_threads = cli.get_int("-threads", 0);
+    config.nthread = cli.get_int("-nthread", 0);
     config.max_queue_size = cli.get_int("-max_queue_size", 0);
     if (config.max_queue_size < 0) {
         std::fprintf(stderr, "Error: -max_queue_size must be >= 0\n");
         return 1;
     }
-    config.max_seqs_per_req = cli.get_int("-max_seqs_per_req", 0);
-    if (config.max_seqs_per_req < 0) {
-        std::fprintf(stderr, "Error: -max_seqs_per_req must be >= 0\n");
+    config.max_nseq_per_req = cli.get_int("-max_nseq_per_req", 0);
+    if (config.max_nseq_per_req < 0) {
+        std::fprintf(stderr, "Error: -max_nseq_per_req must be >= 0\n");
         return 1;
     }
     config.shutdown_timeout = cli.get_int("-shutdown_timeout", 30);
@@ -167,12 +167,12 @@ int main(int argc, char* argv[]) {
         static_cast<uint32_t>(cli.get_int("-stage2_max_lookback", 64));
     config.search_config.stage2.max_nhit_per_subject =
         static_cast<uint32_t>(cli.get_int("-stage2_max_nhit_per_subject", 1));
-    config.search_config.stage2.min_diag_hits =
-        static_cast<uint32_t>(cli.get_int("-stage2_min_diag_hits", 1));
+    config.search_config.stage2.min_nhit_diag =
+        static_cast<uint32_t>(cli.get_int("-stage2_min_nhit_diag", 1));
     config.search_config.stage2.min_score =
         static_cast<uint32_t>(cli.get_int("-stage2_min_score", 0));
-    config.search_config.num_results =
-        static_cast<uint32_t>(cli.get_int("-num_results", 0));
+    config.search_config.nresult =
+        static_cast<uint32_t>(cli.get_int("-nresult", 0));
     config.search_config.accept_qdegen =
         static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
     {
@@ -198,25 +198,25 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Resolve fetch_threads after num_threads is known
-    int num_threads_resolved = resolve_threads(cli);
-    if (cli.has("-stage3_fetch_threads")) {
-        config.stage3_config.fetch_threads = cli.get_int("-stage3_fetch_threads", 8);
-        if (config.stage3_config.fetch_threads > num_threads_resolved) {
+    // Resolve nthread_fetch after nthread is known
+    int nthread_resolved = resolve_threads(cli);
+    if (cli.has("-stage3_nthread_fetch")) {
+        config.stage3_config.nthread_fetch = cli.get_int("-stage3_nthread_fetch", 8);
+        if (config.stage3_config.nthread_fetch > nthread_resolved) {
             std::fprintf(stderr,
-                "Error: -stage3_fetch_threads (%d) exceeds -threads (%d)\n",
-                config.stage3_config.fetch_threads, num_threads_resolved);
+                "Error: -stage3_nthread_fetch (%d) exceeds -nthread (%d)\n",
+                config.stage3_config.nthread_fetch, nthread_resolved);
             return 1;
         }
     } else {
-        config.stage3_config.fetch_threads = std::min(8, num_threads_resolved);
+        config.stage3_config.nthread_fetch = std::min(8, nthread_resolved);
     }
 
-    // Parse -context: integer (bases) or decimal (query length multiplier)
+    // Parse -context_extend: integer (bases) or decimal (query length multiplier)
     {
         ContextParam ctx_param;
         std::string err;
-        if (!parse_context(cli.get_string("-context", "2.0"), ctx_param, err)) {
+        if (!parse_context(cli.get_string("-context_extend", "2.0"), ctx_param, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }

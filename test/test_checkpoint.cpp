@@ -99,16 +99,16 @@ static void test_build_options_text_deterministic() {
     stats.total_sequences = 1000;
     stats.total_bases = 500000;
 
-    std::string text1 = build_options_text(req, stats, 9, OutputFormat::kTab,
+    std::string text1 = build_options_text(req, stats, 9, OutputFormat::kTsv,
                                             "abc123", "");
-    std::string text2 = build_options_text(req, stats, 9, OutputFormat::kTab,
+    std::string text2 = build_options_text(req, stats, 9, OutputFormat::kTsv,
                                             "abc123", "");
     assert(text1 == text2);
     assert(!text1.empty());
 
     // Different parameter produces different text
     req.mode = 3;
-    std::string text3 = build_options_text(req, stats, 9, OutputFormat::kTab,
+    std::string text3 = build_options_text(req, stats, 9, OutputFormat::kTsv,
                                             "abc123", "");
     assert(text3 != text1);
 
@@ -166,7 +166,7 @@ static void test_checkpoint_roundtrip() {
     stats.total_bases = 50000;
 
     std::string options_text = build_options_text(req, stats, 9,
-                                                   OutputFormat::kTab, "", "");
+                                                   OutputFormat::kTsv, "", "");
     std::string input_sha = sha256_file(input_path);
 
     // Use test_dir as working directory prefix
@@ -175,7 +175,7 @@ static void test_checkpoint_roundtrip() {
     cfg.input_path = input_path;
     cfg.ix_name = "testdb";
     cfg.resolved_k = 9;
-    cfg.outfmt = OutputFormat::kTab;
+    cfg.output_format = OutputFormat::kTsv;
 
     Checkpoint ckpt(cfg, logger);
 
@@ -278,7 +278,7 @@ static void test_tab_merge_header_dedup() {
     cfg.input_path = test_dir + "/dummy.fasta";
     cfg.ix_name = "db";
     cfg.resolved_k = 9;
-    cfg.outfmt = OutputFormat::kTab;
+    cfg.output_format = OutputFormat::kTsv;
 
     // Create dummy input
     {
@@ -297,7 +297,7 @@ static void test_tab_merge_header_dedup() {
     stats.total_bases = 1000;
 
     std::string options_text = build_options_text(req, stats, 9,
-                                                   OutputFormat::kTab, "", "");
+                                                   OutputFormat::kTsv, "", "");
     std::string input_sha = sha256_file(cfg.input_path);
 
     Checkpoint ckpt(cfg, logger);
@@ -365,7 +365,7 @@ static void test_json_fragment_merge() {
     cfg.input_path = test_dir + "/dummy2.fasta";
     cfg.ix_name = "db";
     cfg.resolved_k = 9;
-    cfg.outfmt = OutputFormat::kJson;
+    cfg.output_format = OutputFormat::kJson;
 
     // Create dummy input
     {

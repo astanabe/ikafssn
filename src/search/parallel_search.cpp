@@ -247,7 +247,7 @@ phase_b_one_subject(SeqId sid, uint32_t stage1_score, const PhaseAState& state) 
 }
 
 void sort_and_truncate(SearchResult& result, const SearchConfig& config) {
-    if (config.num_results > 0) {
+    if (config.nresult > 0) {
         auto cmp = (config.sort_score == 1)
             ? [](const ChainResult& a, const ChainResult& b) {
                   return a.stage1_score > b.stage1_score;
@@ -256,11 +256,11 @@ void sort_and_truncate(SearchResult& result, const SearchConfig& config) {
                   return a.chainscore > b.chainscore;
               };
 
-        if (result.hits.size() > config.num_results) {
+        if (result.hits.size() > config.nresult) {
             std::nth_element(result.hits.begin(),
-                             result.hits.begin() + config.num_results,
+                             result.hits.begin() + config.nresult,
                              result.hits.end(), cmp);
-            result.hits.resize(config.num_results);
+            result.hits.resize(config.nresult);
         }
         std::sort(result.hits.begin(), result.hits.end(), cmp);
     }
