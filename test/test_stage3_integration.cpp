@@ -16,6 +16,7 @@
 #include "core/kmer_encoding.hpp"
 #include "util/logger.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
