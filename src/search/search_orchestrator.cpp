@@ -395,6 +395,13 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                      s2a_batches.size(), num_volumes, n4, n2, n3, n1);
     }
 
+    // Stage 2A and Stage 2B share this batch loop: Stage 2B runs immediately
+    // after Stage 2A for the same batch and the per-ext_job transient state
+    // is freed before the next batch starts, so peak memory tracks
+    // `posting_budget` rather than the total volume × query fan-out.
+    std::vector<OrchestratorHit> results;
+    size_t total_stage2a_hits = 0;
+
     for (auto& batch : s2a_batches) {
         for (uint16_t vi : batch.vols) {
             if (!kix_cod[vi].open(in.volumes_cod[vi].files.kix_path)) {
@@ -431,6 +438,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         run_stage2a_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
                                    in.both_mode, states, arena);
 
+        // Close .kix/.kpx readers before Stage 2B — Stage 2B reads only
+        // JobState and does not need the posting files.
         for (uint16_t vi : batch.vols) {
             release_stage2a_madvise(kix_cod[vi], kpx_cod[vi], batch.tier);
             kpx_cod[vi].close();
@@ -445,21 +454,40 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 bundles[vi].kpx_opt = nullptr;
             }
         }
-    }
 
-    if (logger) {
-        size_t total_hits = 0;
-        for (auto& st : states) {
-            for (auto& kv : st.hits_per_seq) total_hits += kv.second.size();
+        if (logger) {
+            size_t batch_hits = 0;
+            for (size_t ji : idxs) {
+                for (auto& kv : states[ji].hits_per_seq)
+                    batch_hits += kv.second.size();
+            }
+            total_stage2a_hits += batch_hits;
+            logger->info("Stage 2A batch (%zu vol(s), %zu ext_job(s)): %zu hit(s)",
+                         batch.vols.size(), idxs.size(), batch_hits);
         }
-        logger->info("Stage 2A complete: %zu hit(s) collected", total_hits);
+
+        size_t chains_before = results.size();
+        run_stage2b_jobs(idxs, ext_jobs, states, volume_indices, arena, results);
+        if (logger) {
+            logger->info("Stage 2B batch: %zu chain(s)",
+                         results.size() - chains_before);
+        }
+
+        // Release this batch's per-ext_job transient state to bound peak
+        // memory.  Move-assign from {} (instead of clear()) so the bucket
+        // arrays / vector capacity are actually returned to the allocator.
+        for (size_t ji : idxs) {
+            JobState& st = states[ji];
+            st.hits_per_seq  = {};
+            st.stage1_scores = {};
+            std::vector<SeqId>().swap(st.sorted_candidate_sids);
+            std::vector<Stage1Candidate>().swap(st.candidates);
+        }
     }
 
-    // ----------------------------------------------------------------
-    // Stage 2B — global parallel_for
-    // ----------------------------------------------------------------
-    auto results = run_stage2b_jobs(ext_jobs, states, volume_indices, arena);
     if (logger) {
+        logger->info("Stage 2A complete: %zu hit(s) collected (aggregated)",
+                     total_stage2a_hits);
         logger->info("Stage 2B complete: %zu chain(s)", results.size());
     }
     return results;

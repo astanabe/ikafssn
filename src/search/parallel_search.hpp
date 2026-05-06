@@ -15,10 +15,13 @@
 //              tuples.
 //
 // `search_orchestrator.{hpp,cpp}` drives the three stages with a global
-// volume-batched WILLNEED window: Stage 1 and Stage 2A each have their own
-// batch loop, and Stage 2B is one global parallel_for after all batches
-// finish.  The .kix / .kpx readers are opened / closed per batch so the
-// kernel-level page cache is bounded by the configured memory budget.
+// volume-batched WILLNEED window: Stage 1 has its own batch loop, and Stage
+// 2A and Stage 2B share a batch loop — Stage 2B runs immediately after each
+// Stage 2A batch and the batch's per-ext_job transient state (hits_per_seq
+// etc.) is freed before the next batch begins, so peak memory tracks
+// `posting_budget` rather than the total volume × query fan-out.  The
+// .kix / .kpx readers are opened / closed per batch so the kernel-level
+// page cache is bounded by the configured memory budget.
 
 #include <cstdint>
 #include <string>
@@ -275,14 +278,18 @@ extern template void run_stage2a_jobs<uint32_t>(
     std::vector<JobState>&,
     tbb::task_arena&);
 
-// Stage 2B orchestrator — flat parallel_for over (ext_job, sid) tuples.
-// `volume_indices` provides the wire-level volume_index per ext_job so the
-// returned OrchestratorHits carry the correct value.
-std::vector<OrchestratorHit>
-run_stage2b_jobs(
+// Stage 2B orchestrator — flat parallel_for over (ext_job, sid) tuples for
+// the ext_jobs in `batch_indices`.  `volume_indices` provides the wire-level
+// volume_index per ext_job so the returned OrchestratorHits carry the
+// correct value.  Chains are appended to `out_results` (caller-owned
+// accumulator) so per-batch invocations can fold into a single result vector
+// without intermediate copies.
+void run_stage2b_jobs(
+    const std::vector<size_t>& batch_indices,
     const std::vector<ExtJob>& ext_jobs,
     const std::vector<JobState>& states,
     const std::vector<uint16_t>& volume_indices,
-    tbb::task_arena& arena);
+    tbb::task_arena& arena,
+    std::vector<OrchestratorHit>& out_results);
 
 } // namespace ikafssn

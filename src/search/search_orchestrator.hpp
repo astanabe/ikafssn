@@ -6,7 +6,11 @@
 //
 //   Stage 1   — one batch loop over volumes (.kix only).
 //   Stage 2A  — one batch loop over volumes (.kix + .kpx).  Only mode 2/3.
-//   Stage 2B  — one global parallel_for over (ext_job, sid) tuples.
+//   Stage 2B  — runs immediately after each Stage 2A batch (in the same
+//               loop) and the batch's per-ext_job transient JobState
+//               (hits_per_seq etc.) is freed before the next batch begins,
+//               so peak heap usage tracks `posting_budget` rather than the
+//               total volume × query fan-out.
 //
 // .kix / .kpx readers are opened / closed per batch so the kernel-level
 // page cache footprint is bounded by the configured posting_budget.

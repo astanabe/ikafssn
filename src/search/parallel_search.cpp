@@ -500,22 +500,23 @@ struct FlatBSlot {
 };
 }  // namespace
 
-std::vector<OrchestratorHit>
-run_stage2b_jobs(
+void run_stage2b_jobs(
+    const std::vector<size_t>& batch_indices,
     const std::vector<ExtJob>& ext_jobs,
     const std::vector<JobState>& states,
     const std::vector<uint16_t>& volume_indices,
-    tbb::task_arena& arena) {
+    tbb::task_arena& arena,
+    std::vector<OrchestratorHit>& out_results) {
 
-    if (ext_jobs.empty()) return {};
+    if (batch_indices.empty()) return;
 
     std::vector<FlatBSlot> flat;
     {
         size_t reserve = 0;
-        for (const auto& st : states) reserve += st.candidates.size();
+        for (size_t ji : batch_indices) reserve += states[ji].candidates.size();
         flat.reserve(reserve);
     }
-    for (size_t ji = 0; ji < ext_jobs.size(); ++ji) {
+    for (size_t ji : batch_indices) {
         const JobState& st = states[ji];
         if (st.mode1_only) continue;
         if (st.candidates.empty()) continue;
@@ -532,7 +533,7 @@ run_stage2b_jobs(
         }
     }
 
-    if (flat.empty()) return {};
+    if (flat.empty()) return;
 
     tbb::combinable<std::vector<OrchestratorHit>> tls_results;
     arena.execute([&] {
@@ -557,13 +558,11 @@ run_stage2b_jobs(
             });
     });
 
-    std::vector<OrchestratorHit> results;
-    tls_results.combine_each([&results](std::vector<OrchestratorHit>& local) {
-        results.insert(results.end(),
-                       std::make_move_iterator(local.begin()),
-                       std::make_move_iterator(local.end()));
+    tls_results.combine_each([&out_results](std::vector<OrchestratorHit>& local) {
+        out_results.insert(out_results.end(),
+                           std::make_move_iterator(local.begin()),
+                           std::make_move_iterator(local.end()));
     });
-    return results;
 }
 
 // Explicit template instantiations.
