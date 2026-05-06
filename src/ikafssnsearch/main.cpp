@@ -985,6 +985,7 @@ int main(int argc, char* argv[]) {
     // Stage 3 alignment (mode 3 only)
     if (config.mode == 3) {
         logger.info("Running Stage 3 alignment on %zu hits...", all_hits.size());
+        stage3_config.posting_budget = posting_budget;
         all_hits = run_stage3(all_hits, queries, db_path, stage3_config,
                               ctx_param.is_ratio, ctx_param.ratio, ctx_param.abs,
                               logger);

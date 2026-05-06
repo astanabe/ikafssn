@@ -307,6 +307,206 @@ static void test_stage3_context() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 batching regression: a small posting_budget should partition hits
+// into multiple batches without changing the filtered output.
+// ---------------------------------------------------------------------------
+static void build_hits_for_batching(std::vector<OutputHit>& all_hits,
+                                    std::vector<FastaRecord>& queries,
+                                    std::string& query_str,
+                                    Logger& logger,
+                                    const std::string& prefix_suffix)
+{
+    Stage1Buffer buf;
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t fj_oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(fj_oid != UINT32_MAX);
+    std::string fj_seq = db.get_sequence(fj_oid);
+    CHECK(fj_seq.size() >= 200);
+    query_str = fj_seq.substr(50, 100);
+    db.close();
+
+    IndexBuilderConfig bconfig;
+    bconfig.k = 7;
+    BlastDbReader db2;
+    CHECK(db2.open(g_testdb_path));
+    std::string prefix = g_test_dir + "/" + prefix_suffix + ".00.07mer";
+    CHECK(build_index<uint16_t>(db2, bconfig, prefix, 0, 1, "test", logger));
+    db2.close();
+
+    KixReader kix;
+    KpxReader kpx;
+    KsxReader ksx;
+    CHECK(kix.open(prefix + ".kix"));
+    CHECK(kpx.open(prefix + ".kpx"));
+    CHECK(ksx.open(prefix + ".ksx"));
+
+    OidFilter filter;
+    SearchConfig config;
+    config.stage1.stage1_topn = 200;
+    config.stage1.min_stage1_score = 1;
+    config.stage2.max_gap = 100;
+    config.stage2.min_nhit_diag = 1;
+    config.stage2.min_score = 2;
+    config.nresult = 100;
+    config.mode = 2;
+
+    auto qdata = preprocess_query<uint16_t>(query_str, 7, nullptr, config);
+    auto result = search_volume<uint16_t>(
+        "query1", qdata, 7, kix, kpx, ksx, filter, config, buf);
+
+    CHECK(!result.hits.empty());
+
+    for (const auto& cr : result.hits) {
+        OutputHit oh;
+        oh.qseqid = result.query_id;
+        oh.sseqid = std::string(ksx.accession(cr.seq_id));
+        oh.sstrand = cr.is_reverse ? '-' : '+';
+        oh.qstart = cr.q_start;
+        oh.qend = cr.q_end;
+        oh.sstart = cr.s_start;
+        oh.send = cr.s_end;
+        oh.chainscore = cr.chainscore;
+        oh.coverscore = cr.stage1_score;
+        oh.volume = 0;
+        oh.oid = cr.seq_id;
+        oh.qlen = static_cast<uint32_t>(query_str.size());
+        all_hits.push_back(oh);
+    }
+
+    queries.push_back({"query1", query_str});
+}
+
+namespace {
+struct BatchingHitKey {
+    std::string qseqid;
+    std::string sseqid;
+    char        sstrand;
+    uint32_t    sstart;
+    uint32_t    send;
+    int32_t     alnscore;
+
+    bool operator<(const BatchingHitKey& o) const {
+        if (qseqid != o.qseqid) return qseqid < o.qseqid;
+        if (sseqid != o.sseqid) return sseqid < o.sseqid;
+        if (sstrand != o.sstrand) return sstrand < o.sstrand;
+        if (sstart != o.sstart) return sstart < o.sstart;
+        if (send != o.send) return send < o.send;
+        return alnscore < o.alnscore;
+    }
+    bool operator==(const BatchingHitKey& o) const {
+        return qseqid == o.qseqid && sseqid == o.sseqid && sstrand == o.sstrand
+            && sstart == o.sstart && send == o.send && alnscore == o.alnscore;
+    }
+};
+} // namespace
+
+static std::vector<BatchingHitKey> to_keys(const std::vector<OutputHit>& hits) {
+    std::vector<BatchingHitKey> keys;
+    keys.reserve(hits.size());
+    for (const auto& h : hits) {
+        keys.push_back({h.qseqid, h.sseqid, h.sstrand, h.sstart, h.send, h.alnscore});
+    }
+    std::sort(keys.begin(), keys.end());
+    return keys;
+}
+
+static void test_stage3_batching_equivalence() {
+    std::fprintf(stderr, "-- test_stage3_batching_equivalence (small budget == unbatched)\n");
+    Logger logger(Logger::kError);
+
+    std::vector<OutputHit> hits_a;
+    std::vector<FastaRecord> queries_a;
+    std::string query_a;
+    build_hits_for_batching(hits_a, queries_a, query_a, logger, "s3batch_a");
+
+    std::vector<OutputHit> hits_b = hits_a;  // independent copy for second run
+    std::vector<FastaRecord> queries_b = queries_a;
+
+    Stage3Config cfg;
+    cfg.traceback = true;
+    cfg.gapopen = 10;
+    cfg.gapext = 1;
+    cfg.nthread_fetch = 1;
+
+    // Unbatched run.
+    cfg.posting_budget = 0;
+    auto filtered_a = run_stage3(hits_a, queries_a, g_testdb_path, cfg,
+                                 false, 0.0, 0, logger);
+
+    // Force >=3 batches: pick a budget that holds roughly one third of the
+    // groups.  Since all hits share (qseqid, sseqid) only when sseqid
+    // matches, with SSU SSU the result mostly has many distinct sseqids =>
+    // many groups => budget = (sum / 3) splits them.
+    uint64_t total_cost = 0;
+    for (const auto& h : hits_b) {
+        uint64_t subseq = static_cast<uint64_t>(h.send - h.sstart + 1);
+        uint64_t tb = 2ull * std::max<uint64_t>(h.qlen, subseq);
+        total_cost += subseq + tb + 256;
+    }
+    cfg.posting_budget = total_cost / 4;  // small enough to force splitting
+    if (cfg.posting_budget == 0) cfg.posting_budget = 1024;
+
+    auto filtered_b = run_stage3(hits_b, queries_b, g_testdb_path, cfg,
+                                 false, 0.0, 0, logger);
+
+    CHECK(filtered_a.size() == filtered_b.size());
+    auto ka = to_keys(filtered_a);
+    auto kb = to_keys(filtered_b);
+    CHECK(ka == kb);
+    if (ka != kb) {
+        std::fprintf(stderr, "  filtered_a: %zu hits, filtered_b: %zu hits\n",
+                     filtered_a.size(), filtered_b.size());
+    }
+}
+
+static void test_stage3_oversize_group_tier1() {
+    std::fprintf(stderr, "-- test_stage3_oversize_group_tier1 (single group exceeds budget)\n");
+    Logger logger(Logger::kError);
+
+    std::vector<OutputHit> hits;
+    std::vector<FastaRecord> queries;
+    std::string query;
+    build_hits_for_batching(hits, queries, query, logger, "s3oversize");
+
+    // Find a (qseqid, sseqid, sstrand) with at least one hit and copy that
+    // group repeatedly so the group cost dwarfs the budget.  The
+    // overlap-resolution loop expects sstart-sorted hits within a group,
+    // which the planner normalizes anyway.
+    if (hits.empty()) {
+        std::fprintf(stderr, "  (no hits, skipping oversize test)\n");
+        return;
+    }
+    // All synthesized clones share qseqid/sseqid/sstrand of hits[0].  We
+    // make the group dominant by adding many copies with identical
+    // coordinates — they will collide in overlap resolution but that is
+    // exactly what should also happen in the unbatched path, and what we
+    // care about here is that the planner emits a tier-1 solo batch.
+    OutputHit base = hits[0];
+    std::vector<OutputHit> baseline = hits;  // for equivalence comparison
+    for (int i = 0; i < 8; i++) hits.push_back(base);
+    baseline = hits;  // baseline now matches the inflated input
+
+    Stage3Config cfg;
+    cfg.traceback = false;
+    cfg.gapopen = 10;
+    cfg.gapext = 1;
+    cfg.nthread_fetch = 1;
+
+    cfg.posting_budget = 0;
+    auto unbatched = run_stage3(hits, queries, g_testdb_path, cfg,
+                                false, 0.0, 0, logger);
+
+    cfg.posting_budget = 1;  // any positive group cost > 1 forces tier-1
+    auto batched = run_stage3(baseline, queries, g_testdb_path, cfg,
+                              false, 0.0, 0, logger);
+
+    CHECK(unbatched.size() == batched.size());
+    CHECK(to_keys(unbatched) == to_keys(batched));
+}
+
 int main() {
     check_ssu_available();
 
@@ -317,6 +517,8 @@ int main() {
     test_stage3_pipeline();
     test_stage3_score_only();
     test_stage3_context();
+    test_stage3_batching_equivalence();
+    test_stage3_oversize_group_tier1();
 
     // Cleanup
     std::filesystem::remove_all(g_test_dir);

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.06")  # ikafssnserver: inter-request posting-budget pool (-max_concurrent_search). Default 0 = pass-through (unchanged behaviour). When N>=1, concurrent requests share -memory_limit's residual posting_budget through a lease/release pool so in-flight heap stays bounded.
+set(IKAFSSN_VERSION "0.1.2026.05.06")  # ikafssnserver: inter-request posting-budget pool (-max_concurrent_search; default 0 = pass-through). When N>=1, concurrent requests share -memory_limit's residual posting_budget through a lease/release pool so in-flight heap stays bounded. Stage 3: per-batch hit grouping by (qseqid, sseqid, sstrand) and bin-packing against Stage3Config::posting_budget so the alignment loop heap stays bounded; oversize groups fall back to a tier-1 solo batch.
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
