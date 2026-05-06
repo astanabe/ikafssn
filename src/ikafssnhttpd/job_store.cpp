@@ -66,9 +66,11 @@ bool JobStore::check_schema(std::string& error_msg) {
     sqlite3_finalize(stmt);
 
     // Probe whether the jobs table exists at all and whether it carries
-    // the legacy `result_blob` column.
-    bool has_jobs       = false;
-    bool has_result_blob = false;
+    // any legacy column that places the request or result body inside
+    // the SQLite row.
+    bool has_jobs         = false;
+    bool has_result_blob  = false;
+    bool has_request_blob = false;
     rc = sqlite3_prepare_v2(db_, "PRAGMA table_info(jobs);", -1,
                             &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -79,25 +81,31 @@ bool JobStore::check_schema(std::string& error_msg) {
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         has_jobs = true;
         const unsigned char* name = sqlite3_column_text(stmt, 1);
-        if (name && std::strcmp(reinterpret_cast<const char*>(name),
-                                "result_blob") == 0) {
+        if (!name) continue;
+        const char* cname = reinterpret_cast<const char*>(name);
+        if (std::strcmp(cname, "result_blob") == 0) {
             has_result_blob = true;
+        } else if (std::strcmp(cname, "request_blob") == 0) {
+            has_request_blob = true;
         }
     }
     sqlite3_finalize(stmt);
 
     if (!has_jobs) {
         // Brand-new DB; open() will create the schema and stamp
-        // user_version=2.
+        // user_version=3.
         return true;
     }
-    if (has_result_blob || user_version < 2) {
+    if (has_result_blob || has_request_blob || user_version < 3) {
+        std::string detail;
+        if (has_result_blob)  detail += ", legacy result_blob column present";
+        if (has_request_blob) detail += ", legacy request_blob column present";
         error_msg = "jobs.db has incompatible schema (user_version="
                   + std::to_string(user_version)
-                  + (has_result_blob ? ", legacy result_blob column present"
-                                     : "")
-                  + "); please delete jobs.db and restart so the new"
-                    " file-based result store schema can be initialised";
+                  + detail
+                  + "); please delete jobs.db and empty the -query_dir"
+                    " directory, then restart so the new file-based"
+                    " query+result store schema can be initialised";
         return false;
     }
     return true;
@@ -145,7 +153,6 @@ bool JobStore::open(const std::string& path, std::string& error_msg) {
         " job_id        TEXT     PRIMARY KEY,"
         " status        TEXT     NOT NULL CHECK ("
         "   status IN ('queued','running','done','failed')),"
-        " request_blob  BLOB     NOT NULL,"
         " error_message TEXT,"
         " fail_reason   TEXT,"
         " attempts      INTEGER  NOT NULL DEFAULT 0,"
@@ -161,10 +168,10 @@ bool JobStore::open(const std::string& path, std::string& error_msg) {
     if (!exec_("CREATE INDEX IF NOT EXISTS idx_jobs_completed_at"
                " ON jobs(completed_at);", error_msg)) return false;
 
-    // Stamp user_version=2 (file-based result store).  Do this last so
-    // a partially-initialised DB still fails check_schema on the next
-    // startup.
-    if (!exec_("PRAGMA user_version=2;", error_msg)) return false;
+    // Stamp user_version=3 (file-based query+result stores).  Do this
+    // last so a partially-initialised DB still fails check_schema on
+    // the next startup.
+    if (!exec_("PRAGMA user_version=3;", error_msg)) return false;
 
     return true;
 }
@@ -180,7 +187,6 @@ void JobStore::close() {
 bool JobStore::insert_job(const std::string& job_id,
                           const std::string& db,
                           int32_t n_seqs,
-                          const std::vector<uint8_t>& request_blob,
                           int64_t& submitted_at,
                           bool& duplicate,
                           std::string& error_msg) {
@@ -190,9 +196,9 @@ bool JobStore::insert_job(const std::string& job_id,
 
     sqlite3_stmt* stmt = nullptr;
     const char* sql =
-        "INSERT INTO jobs(job_id, status, request_blob, attempts,"
+        "INSERT INTO jobs(job_id, status, attempts,"
         "                 submitted_at, db, n_seqs)"
-        " VALUES(?, 'queued', ?, 0, ?, ?, ?);";
+        " VALUES(?, 'queued', 0, ?, ?, ?);";
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         error_msg = std::string("prepare insert: ") + sqlite3_errmsg(db_);
@@ -200,12 +206,10 @@ bool JobStore::insert_job(const std::string& job_id,
     }
     sqlite3_bind_text(stmt, 1, job_id.data(),
                       static_cast<int>(job_id.size()), SQLITE_TRANSIENT);
-    sqlite3_bind_blob(stmt, 2, request_blob.data(),
-                      static_cast<int>(request_blob.size()), SQLITE_TRANSIENT);
-    sqlite3_bind_int64(stmt, 3, submitted_at);
-    sqlite3_bind_text(stmt, 4, db.data(),
+    sqlite3_bind_int64(stmt, 2, submitted_at);
+    sqlite3_bind_text(stmt, 3, db.data(),
                       static_cast<int>(db.size()), SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 5, n_seqs);
+    sqlite3_bind_int(stmt, 4, n_seqs);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
@@ -221,7 +225,6 @@ bool JobStore::insert_job(const std::string& job_id,
 }
 
 bool JobStore::fetch_one_queued(JobMeta& out_meta,
-                                std::vector<uint8_t>& out_request_blob,
                                 std::string& error_msg) {
     std::lock_guard<std::mutex> lock(mu_);
 
@@ -233,7 +236,7 @@ bool JobStore::fetch_one_queued(JobMeta& out_meta,
         "   SELECT job_id FROM jobs"
         "    WHERE status='queued'"
         "    ORDER BY submitted_at ASC LIMIT 1)"
-        " RETURNING job_id, request_blob, attempts, submitted_at,"
+        " RETURNING job_id, attempts, submitted_at,"
         "          started_at, db, n_seqs, error_message;";
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -259,18 +262,13 @@ bool JobStore::fetch_one_queued(JobMeta& out_meta,
     const unsigned char* jid = sqlite3_column_text(stmt, 0);
     if (jid) out_meta.job_id.assign(reinterpret_cast<const char*>(jid));
 
-    const void* blob = sqlite3_column_blob(stmt, 1);
-    int blob_n = sqlite3_column_bytes(stmt, 1);
-    out_request_blob.assign(reinterpret_cast<const uint8_t*>(blob),
-                            reinterpret_cast<const uint8_t*>(blob) + blob_n);
-
-    out_meta.attempts     = sqlite3_column_int(stmt, 2);
-    out_meta.submitted_at = sqlite3_column_int64(stmt, 3);
-    out_meta.started_at   = sqlite3_column_int64(stmt, 4);
-    const unsigned char* db_text = sqlite3_column_text(stmt, 5);
+    out_meta.attempts     = sqlite3_column_int(stmt, 1);
+    out_meta.submitted_at = sqlite3_column_int64(stmt, 2);
+    out_meta.started_at   = sqlite3_column_int64(stmt, 3);
+    const unsigned char* db_text = sqlite3_column_text(stmt, 4);
     if (db_text) out_meta.db.assign(reinterpret_cast<const char*>(db_text));
-    out_meta.n_seqs       = sqlite3_column_int(stmt, 6);
-    const unsigned char* em_text = sqlite3_column_text(stmt, 7);
+    out_meta.n_seqs       = sqlite3_column_int(stmt, 5);
+    const unsigned char* em_text = sqlite3_column_text(stmt, 6);
     if (em_text) out_meta.error_message.assign(
         reinterpret_cast<const char*>(em_text));
 

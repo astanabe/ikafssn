@@ -2,10 +2,10 @@
 //
 // Covers insert -> fetch -> mark_done round-trip, mark_failed,
 // requeue_for_retry (attempts++), delete_expired boundary, and
-// requeue_orphans on startup recovery.  Schema-version 2 (file-based
-// result store) leaves result blobs out of the SQLite row entirely;
-// these tests therefore only verify status transitions and do not
-// assert on result_blob content.
+// requeue_orphans on startup recovery.  Schema-version 3 (file-based
+// query+result stores) leaves request and result bodies out of the
+// SQLite row entirely; these tests therefore only verify metadata
+// transitions and do not assert on body content.
 
 #include "ikafssnhttpd/job_store.hpp"
 
@@ -34,10 +34,6 @@ static std::string tmp_db_path() {
     return (dir / "jobs.db").string();
 }
 
-static std::vector<uint8_t> blob(const std::string& s) {
-    return std::vector<uint8_t>(s.begin(), s.end());
-}
-
 static void test_insert_fetch_done() {
     JobStore s;
     std::string err;
@@ -45,22 +41,18 @@ static void test_insert_fetch_done() {
 
     int64_t submitted_at = 0;
     bool dup = false;
-    CHECK(s.insert_job("job-A", "nt", 3, blob("REQA"),
-                       submitted_at, dup, err));
+    CHECK(s.insert_job("job-A", "nt", 3, submitted_at, dup, err));
     CHECK(!dup);
     CHECK(submitted_at > 0);
 
     JobMeta meta;
-    std::vector<uint8_t> req;
-    CHECK(s.fetch_one_queued(meta, req, err));
+    CHECK(s.fetch_one_queued(meta, err));
     CHECK(meta.job_id == "job-A");
     CHECK(meta.status == JobStatus::kRunning);
-    CHECK(req.size() == 4);
 
     // No more queued jobs.
     JobMeta meta2;
-    std::vector<uint8_t> req2;
-    CHECK(!s.fetch_one_queued(meta2, req2, err));
+    CHECK(!s.fetch_one_queued(meta2, err));
 
     CHECK(s.mark_done("job-A", err));
 
@@ -77,8 +69,8 @@ static void test_duplicate_insert() {
 
     int64_t at = 0;
     bool dup = false;
-    CHECK(s.insert_job("dup", "db", 1, blob("X"), at, dup, err));
-    CHECK(!s.insert_job("dup", "db", 1, blob("X"), at, dup, err));
+    CHECK(s.insert_job("dup", "db", 1, at, dup, err));
+    CHECK(!s.insert_job("dup", "db", 1, at, dup, err));
     CHECK(dup);
 }
 
@@ -89,21 +81,20 @@ static void test_requeue_retry() {
 
     int64_t at = 0;
     bool dup = false;
-    CHECK(s.insert_job("retry", "db", 2, blob("R"), at, dup, err));
+    CHECK(s.insert_job("retry", "db", 2, at, dup, err));
 
     JobMeta meta;
-    std::vector<uint8_t> req;
-    CHECK(s.fetch_one_queued(meta, req, err));
+    CHECK(s.fetch_one_queued(meta, err));
     CHECK(meta.attempts == 0);
 
     CHECK(s.requeue_for_retry("retry", "transient", err));
 
-    CHECK(s.fetch_one_queued(meta, req, err));
+    CHECK(s.fetch_one_queued(meta, err));
     CHECK(meta.attempts == 1);
     CHECK(meta.error_message == "transient");
 
     CHECK(s.requeue_for_retry("retry", "again", err));
-    CHECK(s.fetch_one_queued(meta, req, err));
+    CHECK(s.fetch_one_queued(meta, err));
     CHECK(meta.attempts == 2);
 
     CHECK(s.mark_failed("retry", "final", "backend_unreachable: x", err));
@@ -120,9 +111,9 @@ static void test_delete_expired() {
 
     int64_t at = 0;
     bool dup = false;
-    CHECK(s.insert_job("old", "db", 1, blob("o"), at, dup, err));
-    JobMeta meta; std::vector<uint8_t> req;
-    CHECK(s.fetch_one_queued(meta, req, err));
+    CHECK(s.insert_job("old", "db", 1, at, dup, err));
+    JobMeta meta;
+    CHECK(s.fetch_one_queued(meta, err));
     CHECK(s.mark_done("old", err));
 
     // Sleep past the retention window.  now_unix() has 1-second
@@ -147,9 +138,9 @@ static void test_requeue_orphans() {
         std::string err;
         CHECK(s.open(path, err));
         int64_t at = 0; bool dup = false;
-        CHECK(s.insert_job("orphan", "db", 1, blob("o"), at, dup, err));
-        JobMeta meta; std::vector<uint8_t> req;
-        CHECK(s.fetch_one_queued(meta, req, err)); // status=running
+        CHECK(s.insert_job("orphan", "db", 1, at, dup, err));
+        JobMeta meta;
+        CHECK(s.fetch_one_queued(meta, err)); // status=running
         // Simulate crash: do not mark_done / mark_failed.
     }
     {
@@ -159,19 +150,19 @@ static void test_requeue_orphans() {
         int64_t n = s.requeue_orphans(err);
         CHECK(n >= 1);
 
-        JobMeta meta; std::vector<uint8_t> req;
-        CHECK(s.fetch_one_queued(meta, req, err));
+        JobMeta meta;
+        CHECK(s.fetch_one_queued(meta, err));
         CHECK(meta.job_id == "orphan");
         CHECK(meta.status == JobStatus::kRunning);
     }
 }
 
-// Verifies check_schema() rejects a database that still carries the
-// legacy result_blob column.  Synthesises one with raw sqlite3 calls
-// (we cannot use JobStore::open since that's exactly what we're
-// testing).
-static void test_legacy_schema_rejected() {
-    auto dir = fs::temp_directory_path() / "ikafssn_job_store_legacy";
+// Verifies check_schema() rejects a database that still carries either
+// legacy column (result_blob from <v2 or request_blob from v2).
+// Synthesises one with raw sqlite3 calls (we cannot use JobStore::open
+// since that's exactly what we're testing).
+static void test_legacy_schema_rejected_result_blob() {
+    auto dir = fs::temp_directory_path() / "ikafssn_job_store_legacy_v1";
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
@@ -201,13 +192,49 @@ static void test_legacy_schema_rejected() {
     CHECK(err.find("incompatible schema") != std::string::npos);
 }
 
+static void test_legacy_schema_rejected_request_blob() {
+    auto dir = fs::temp_directory_path() / "ikafssn_job_store_legacy_v2";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    std::string path = (dir / "legacy.db").string();
+
+    sqlite3* h = nullptr;
+    int rc = sqlite3_open_v2(path.c_str(), &h,
+                             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+                                 | SQLITE_OPEN_FULLMUTEX, nullptr);
+    CHECK(rc == SQLITE_OK);
+    char* eptr = nullptr;
+    sqlite3_exec(h,
+        "CREATE TABLE jobs ("
+        "  job_id TEXT PRIMARY KEY,"
+        "  status TEXT NOT NULL,"
+        "  request_blob BLOB NOT NULL,"
+        "  submitted_at INTEGER NOT NULL"
+        ");",
+        nullptr, nullptr, &eptr);
+    if (eptr) sqlite3_free(eptr);
+    // user_version=2 corresponds to the previous (request_blob in row)
+    // schema; with user_version=2 + has_request_blob the new code must
+    // still reject it.
+    sqlite3_exec(h, "PRAGMA user_version=2;", nullptr, nullptr, nullptr);
+    sqlite3_close(h);
+
+    JobStore s;
+    std::string err;
+    CHECK(!s.open(path, err));
+    CHECK(err.find("incompatible schema") != std::string::npos);
+    CHECK(err.find("request_blob") != std::string::npos);
+}
+
 int main() {
     test_insert_fetch_done();
     test_duplicate_insert();
     test_requeue_retry();
     test_delete_expired();
     test_requeue_orphans();
-    test_legacy_schema_rejected();
+    test_legacy_schema_rejected_result_blob();
+    test_legacy_schema_rejected_request_blob();
     TEST_SUMMARY();
     return g_fail_count == 0 ? 0 : 1;
 }

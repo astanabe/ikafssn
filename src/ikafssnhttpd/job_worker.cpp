@@ -3,16 +3,19 @@
 #include <chrono>
 #include <utility>
 
+#include "ikafssnhttpd/search_request_json.hpp"
 #include "protocol/serializer.hpp"
 
 namespace ikafssn {
 
 JobWorker::JobWorker(JobStore& store,
+                     QueryStore& queries,
                      ResultStore& results,
                      std::shared_ptr<BackendManager> manager,
                      Logger& logger,
                      int max_nretry)
     : store_(store)
+    , queries_(queries)
     , results_(results)
     , manager_(std::move(manager))
     , logger_(logger)
@@ -45,9 +48,8 @@ void JobWorker::stop() {
 void JobWorker::worker_loop_() {
     while (!stop_flag_.load()) {
         JobMeta meta;
-        std::vector<uint8_t> request_blob;
         std::string err;
-        bool got = store_.fetch_one_queued(meta, request_blob, err);
+        bool got = store_.fetch_one_queued(meta, err);
         if (!got) {
             if (!err.empty()) {
                 logger_.error("JobWorker fetch failed: %s", err.c_str());
@@ -60,22 +62,50 @@ void JobWorker::worker_loop_() {
             continue;
         }
 
-        process_one_(meta, request_blob);
+        process_one_(meta);
     }
 }
 
-void JobWorker::process_one_(JobMeta& meta,
-                             std::vector<uint8_t>& request_blob) {
+void JobWorker::process_one_(JobMeta& meta) {
+    // Read the JSON body persisted by HttpController::submit_job.  The
+    // file should always be present for a row in 'running' state; a
+    // missing or unreadable file indicates an operator/race anomaly
+    // (e.g. someone hand-deleted the file under -query_dir, or the
+    // housekeeper's orphan sweep raced a slow filesystem).
+    std::string json_body;
+    {
+        std::string read_err;
+        if (!queries_.read(meta.job_id, json_body, read_err)) {
+            std::string ignored;
+            queries_.unlink(meta.job_id, ignored);
+            std::string mf_err;
+            store_.mark_failed(meta.job_id,
+                               read_err,
+                               "query_file_missing",
+                               mf_err);
+            logger_.error("Job %s: query_store read failed: %s",
+                          meta.job_id.c_str(), read_err.c_str());
+            return;
+        }
+    }
+
     SearchRequest req;
-    if (!deserialize(request_blob, req)) {
-        std::string err;
-        store_.mark_failed(meta.job_id,
-                           "request_blob deserialize failed",
-                           "request_blob_corrupt",
-                           err);
-        logger_.error("Job %s: request_blob deserialise failed",
-                      meta.job_id.c_str());
-        return;
+    {
+        std::string parsed_job_id;
+        std::string parse_err;
+        if (!parse_search_request_json(json_body, parsed_job_id, req,
+                                       parse_err)) {
+            std::string ignored;
+            queries_.unlink(meta.job_id, ignored);
+            std::string mf_err;
+            store_.mark_failed(meta.job_id,
+                               parse_err,
+                               "query_parse_failed",
+                               mf_err);
+            logger_.error("Job %s: query JSON parse failed: %s",
+                          meta.job_id.c_str(), parse_err.c_str());
+            return;
+        }
     }
 
     SearchResponse resp;
@@ -101,6 +131,8 @@ void JobWorker::process_one_(JobMeta& meta,
                 logger_.error("Job %s: result write failed (%s); marked failed",
                               meta.job_id.c_str(), write_err.c_str());
             }
+            std::string ignored;
+            queries_.unlink(meta.job_id, ignored);
             return;
         }
         std::string err;
@@ -109,6 +141,11 @@ void JobWorker::process_one_(JobMeta& meta,
             // sweep will clean it up.  Log loudly because this is rare.
             logger_.error("Job %s: mark_done failed (file written): %s",
                           meta.job_id.c_str(), err.c_str());
+        }
+        std::string uerr;
+        if (!queries_.unlink(meta.job_id, uerr)) {
+            logger_.error("Job %s: query_store unlink failed: %s",
+                          meta.job_id.c_str(), uerr.c_str());
         }
         return;
     }
@@ -146,6 +183,11 @@ void JobWorker::process_one_(JobMeta& meta,
     } else {
         logger_.info("Job %s: failed (%s)",
                      meta.job_id.c_str(), fail_reason.c_str());
+    }
+    std::string uerr;
+    if (!queries_.unlink(meta.job_id, uerr)) {
+        logger_.error("Job %s: query_store unlink failed: %s",
+                      meta.job_id.c_str(), uerr.c_str());
     }
 }
 

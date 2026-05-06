@@ -4,6 +4,7 @@
 #include "ikafssnhttpd/job_store.hpp"
 #include "ikafssnhttpd/job_worker.hpp"
 #include "ikafssnhttpd/job_housekeeper.hpp"
+#include "ikafssnhttpd/query_store.hpp"
 #include "ikafssnhttpd/result_store.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
@@ -38,6 +39,12 @@ static void print_usage(const char* prog) {
         "Job store (async REST):\n"
         "  -db <path>                  SQLite job DB path\n"
         "                              (default: /var/lib/ikafssnhttpd/jobs.db)\n"
+        "  -query_dir <path>           Per-job query file directory\n"
+        "                              (default: /var/lib/ikafssnhttpd/queries)\n"
+        "  -query_compression_level <int>   Zstd level for plaintext-JSON\n"
+        "                              query files (default: 3, range: 1-22).\n"
+        "                              Bodies uploaded as application/zstd are\n"
+        "                              stored verbatim and ignore this level.\n"
         "  -result_dir <path>          Per-job result file directory\n"
         "                              (default: /var/lib/ikafssnhttpd/results)\n"
         "  -result_compression_level <int>  Zstd level for result files\n"
@@ -111,6 +118,9 @@ int main(int argc, char* argv[]) {
     manager->start_heartbeat(heartbeat_interval, logger);
 
     std::string db_path = cli.get_string("-db", "/var/lib/ikafssnhttpd/jobs.db");
+    std::string query_dir = cli.get_string("-query_dir",
+        "/var/lib/ikafssnhttpd/queries");
+    int query_level = cli.get_int("-query_compression_level", 3);
     std::string result_dir = cli.get_string("-result_dir",
         "/var/lib/ikafssnhttpd/results");
     int result_level = cli.get_int("-result_compression_level", 3);
@@ -122,6 +132,13 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr,
             "Error: -result_compression_level must be in [1, 22], got %d\n",
             result_level);
+        manager->stop_heartbeat();
+        return 1;
+    }
+    if (query_level < 1 || query_level > 22) {
+        std::fprintf(stderr,
+            "Error: -query_compression_level must be in [1, 22], got %d\n",
+            query_level);
         manager->stop_heartbeat();
         return 1;
     }
@@ -137,6 +154,18 @@ int main(int argc, char* argv[]) {
     }
     logger.info("ResultStore at %s (zstd level=%d)",
                 result_dir.c_str(), result_level);
+
+    QueryStore queries(query_dir, query_level);
+    {
+        std::string err;
+        if (!queries.init(err)) {
+            std::fprintf(stderr, "Error: %s\n", err.c_str());
+            manager->stop_heartbeat();
+            return 1;
+        }
+    }
+    logger.info("QueryStore at %s (zstd level=%d)",
+                query_dir.c_str(), query_level);
 
     JobStore store;
     {
@@ -161,13 +190,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    JobWorker worker(store, results, manager, logger, max_nretry);
+    JobWorker worker(store, queries, results, manager, logger, max_nretry);
     worker.start(nthread_worker);
 
-    JobHousekeeper housekeeper(store, results, logger);
+    JobHousekeeper housekeeper(store, queries, results, logger);
     housekeeper.start(retention_time);
 
-    HttpController controller(manager, store, worker, results);
+    HttpController controller(manager, store, worker, queries, results);
     std::string path_prefix = cli.get_string("-path_prefix");
     controller.register_routes(path_prefix);
 

@@ -29,6 +29,7 @@
 #include "ikafssnhttpd/job_store.hpp"
 #include "ikafssnhttpd/job_worker.hpp"
 #include "ikafssnhttpd/job_housekeeper.hpp"
+#include "ikafssnhttpd/query_store.hpp"
 #include "ikafssnhttpd/result_store.hpp"
 #include "protocol/messages.hpp"
 #include "protocol/serializer.hpp"
@@ -327,20 +328,26 @@ static void test_async_submit_poll_get() {
 
     std::string jobs_db = g_test_dir + "/jobs.db";
     std::string results_dir = g_test_dir + "/results";
+    std::string queries_dir = g_test_dir + "/queries";
     ResultStore results(results_dir, 3);
     {
         std::string err;
         CHECK(results.init(err));
+    }
+    QueryStore query_store(queries_dir, 3);
+    {
+        std::string err;
+        CHECK(query_store.init(err));
     }
     JobStore store;
     {
         std::string err;
         CHECK(store.open(jobs_db, err));
     }
-    JobWorker worker(store, results, manager, mgr_logger, 3);
+    JobWorker worker(store, query_store, results, manager, mgr_logger, 3);
     worker.start(2);
 
-    HttpController controller(manager, store, worker, results);
+    HttpController controller(manager, store, worker, query_store, results);
     controller.register_routes("");
 
     drogon::app()
@@ -385,6 +392,10 @@ static void test_async_submit_poll_get() {
         CHECK(deserialize(file_bytes, from_file));
         CHECK_EQ(from_file.results.size(), resp.results.size());
     }
+
+    // The query file must already be gone — JobWorker unlinks it on
+    // mark_done so QueryStore only ever holds queued / running jobs.
+    CHECK(!query_store.exists(done_job_id));
 
     // External-tool entry point: ad-hoc HTTP clients (curl, scripts) may
     // POST plain JSON with Content-Type: application/json so they don't

@@ -526,6 +526,17 @@ Backend connection (at least one required; order = priority):
 Job store (async REST):
   -db <path>                  SQLite job store path
                               (default: /var/lib/ikafssnhttpd/jobs.db)
+  -query_dir <path>           Per-job query file directory.  Each queued or
+                              running job's request body is persisted here as
+                              one zstd file; the file is removed when the job
+                              reaches a terminal status.
+                              (default: /var/lib/ikafssnhttpd/queries)
+  -query_compression_level <int>  Zstd compression level applied to plaintext
+                              JSON uploads (Content-Type: application/json).
+                              Bodies uploaded as application/zstd are stored
+                              verbatim (their client-chosen level is
+                              preserved) and ignore this option.
+                              (default: 3, range: 1-22)
   -result_dir <path>          Per-job result file directory (one zstd file per
                               completed job, served via sendfile(2) to clients)
                               (default: /var/lib/ikafssnhttpd/results)
@@ -559,7 +570,9 @@ Options:
 
 The `/api/v1/info` response aggregates databases from all healthy backends. For databases served by multiple backends, capacity is reported per mode in a `modes` array within each kmer_group, showing the sum of `max_queue_size`, `queue_depth`, and `max_nseq_per_req` (computed as `sum(min(available_i, per_req_i))` across backends) across all serving backends. A top-level `max_nseq_per_req` field reports the minimum across all modes.
 
-`POST /api/v1/jobs` returns immediately with a generated `job_id`; the worker pool dispatches the request asynchronously to a backend. When a job finishes successfully the worker writes its serialized `SearchResponse` to a per-job zstd file at `<result_dir>/<ab>/<job_id>.bin.zst` (where `<ab>` is the first two characters of `job_id`, sharded so directories stay small) and stamps the SQLite row to `done`; `GET /api/v1/jobs/{job_id}/result` then streams that file directly via `sendfile(2)` with `Content-Type: application/zstd`, so no in-memory copy of the result is held by `ikafssnhttpd`. Clients poll `GET /api/v1/jobs/{job_id}` until status reaches `done` and download the result. Jobs are kept for `-retention_time` seconds; the housekeeper purges expired rows from SQLite and then removes the matching result files. On startup, leftover `*.bin.zst.tmp` files (from a hard kill mid-write) are swept once. A periodic orphan sweep also removes result files whose SQLite row has already disappeared (rare: only after a failed `mark_done`).
+`POST /api/v1/jobs` validates the body and persists it to the per-job query store at `<query_dir>/<ab>/<job_id>.json.zst` (sharded by the first two characters of `job_id`) before inserting the SQLite row. Bodies uploaded as `application/zstd` are stored verbatim — the client's compression level is preserved and the daemon never re-compresses; plaintext JSON uploads (`application/json`) are compressed at `-query_compression_level` before they hit disk. The worker pool then dispatches the request asynchronously to a backend. When a job finishes successfully the worker writes its serialized `SearchResponse` to a per-job zstd file at `<result_dir>/<ab>/<job_id>.bin.zst` and stamps the SQLite row to `done`; `GET /api/v1/jobs/{job_id}/result` then streams that file directly via `sendfile(2)` with `Content-Type: application/zstd`, so no in-memory copy of the result is held by `ikafssnhttpd`. The matching query file is unlinked at the same point — only queued / running jobs occupy `-query_dir`, so a backlog never inflates `jobs.db` (which now carries metadata only). Clients poll `GET /api/v1/jobs/{job_id}` until status reaches `done` and download the result. Jobs are kept for `-retention_time` seconds; the housekeeper purges expired rows from SQLite and then removes the matching result file (and any leftover query file as insurance). On startup, leftover `*.bin.zst.tmp` and `*.json.zst.tmp` files (from a hard kill mid-write) are swept once. A periodic orphan sweep also removes result and query files whose SQLite row has already disappeared (rare: only after a failed `mark_done` or a worker crash between `mark_done` and the query unlink).
+
+> **Breaking change (v0.1.2026.05.06):** The SQLite schema for `jobs.db` was bumped from `user_version=2` to `user_version=3` — the request body now lives in `-query_dir`, not in the row's `request_blob` column. Existing `jobs.db` files are rejected at startup with a clear error message; delete `jobs.db` (and empty `-query_dir` if you previously seeded it) before upgrading.
 
 **Examples:**
 

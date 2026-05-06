@@ -518,6 +518,18 @@ ikafssnhttpd [options]
 ジョブストア (非同期 REST):
   -db <path>                  SQLite ジョブストアのパス
                               (デフォルト: /var/lib/ikafssnhttpd/jobs.db)
+  -query_dir <path>           ジョブクエリファイル保存ディレクトリ。queued/running
+                              ジョブのリクエストボディを 1 ジョブ 1 ファイル
+                              (zstd 圧縮) として保持し、ジョブが終局状態へ
+                              遷移した時点で削除します
+                              (デフォルト: /var/lib/ikafssnhttpd/queries)
+  -query_compression_level <int>  プレーンテキスト JSON
+                              (Content-Type: application/json) アップロード時に
+                              適用する zstd 圧縮レベル。Content-Type:
+                              application/zstd で送られたボディはクライアント
+                              選択の圧縮レベルを保ったままそのまま保存され、
+                              本オプションの影響を受けません
+                              (デフォルト: 3、許容範囲: 1-22)
   -result_dir <path>          ジョブ結果ファイル保存ディレクトリ。完了ジョブごとに
                               1 つの zstd ファイルを書き、sendfile(2) でクライアントへ
                               直接送出します
@@ -552,7 +564,9 @@ ikafssnhttpd [options]
 
 `/api/v1/info` レスポンスは全 healthy バックエンドのデータベースを統合して返します。複数バックエンドで提供されるデータベースの場合、容量情報は kmer_group 内の `modes` 配列にモードごとに集約され、全提供バックエンドの `max_queue_size`、`queue_depth`、および `max_nseq_per_req` (各バックエンドの `min(空きスロット, per_req)` の合計として算出) が表示されます。トップレベルにも全モードの最小値として `max_nseq_per_req` フィールドが出力されます。
 
-`POST /api/v1/jobs` は生成された `job_id` を即座に返し、ワーカープールがバックエンドへ非同期にディスパッチします。ジョブが正常終了するとワーカーはシリアライズ済み `SearchResponse` を `<result_dir>/<ab>/<job_id>.bin.zst` (ここで `<ab>` は `job_id` 先頭 2 文字。シャーディングによりディレクトリエントリ数を抑える) に zstd ファイルとして書き出し、SQLite 行のステータスを `done` に更新します。`GET /api/v1/jobs/{job_id}/result` はそのファイルを `sendfile(2)` でゼロコピー送出 (`Content-Type: application/zstd`) するため、`ikafssnhttpd` は結果データをメモリに載せません。クライアントは `GET /api/v1/jobs/{job_id}` を `done` になるまでポーリングし、結果を取得します。完了 (成功・失敗) ジョブは `-retention_time` 秒間保持され、ハウスキーパが期限切れ行を SQLite から削除した後、対応する結果ファイルを順に削除します。起動時には強制終了で書きかけ状態だった `*.bin.zst.tmp` を一括スイープし、また定期的なオーファンスイープで SQLite 行が消えた残存結果ファイル (まれ: `mark_done` 失敗後にのみ発生) も回収します。
+`POST /api/v1/jobs` はリクエストボディを検証した後、まず `<query_dir>/<ab>/<job_id>.json.zst` (ここで `<ab>` は `job_id` 先頭 2 文字。シャーディングによりディレクトリエントリ数を抑える) に zstd ファイルとして書き出し、その後 SQLite 行を INSERT します。`Content-Type: application/zstd` でアップロードされたボディはクライアントが選んだ圧縮レベルを保ったまま検証後そのまま保存され (再圧縮は行いません)、`Content-Type: application/json` のプレーンテキスト JSON は `-query_compression_level` で圧縮してから保存します。その後ワーカープールがバックエンドへ非同期にディスパッチします。ジョブが正常終了するとワーカーはシリアライズ済み `SearchResponse` を `<result_dir>/<ab>/<job_id>.bin.zst` に書き出し、SQLite 行のステータスを `done` に更新します。`GET /api/v1/jobs/{job_id}/result` はそのファイルを `sendfile(2)` でゼロコピー送出 (`Content-Type: application/zstd`) するため、`ikafssnhttpd` は結果データをメモリに載せません。同じタイミングで対応するクエリファイルも削除されるため、`-query_dir` 配下に残るのは queued / running 中のジョブのみとなり、滞留が `jobs.db` の容量へ波及しません (新スキーマで `jobs.db` はメタデータのみ)。クライアントは `GET /api/v1/jobs/{job_id}` を `done` になるまでポーリングし、結果を取得します。完了 (成功・失敗) ジョブは `-retention_time` 秒間保持され、ハウスキーパが期限切れ行を SQLite から削除した後、対応する結果ファイルおよび残存クエリファイル (保険) を順に削除します。起動時には強制終了で書きかけ状態だった `*.bin.zst.tmp` および `*.json.zst.tmp` を一括スイープし、また定期的なオーファンスイープで SQLite 行が消えた残存結果ファイル・クエリファイル (まれ: `mark_done` 失敗後、または `mark_done` とクエリ unlink の間でのワーカークラッシュ後のみ発生) も回収します。
+
+> **破壊的変更 (v0.1.2026.05.06):** `jobs.db` のスキーマは `user_version=2` → `user_version=3` に更新されました。リクエストボディは行内 `request_blob` 列ではなく `-query_dir` のファイルへ移動しました。旧 `jobs.db` は起動時に明示エラーで拒否されますので、アップグレード前に `jobs.db` を削除し、`-query_dir` を事前に配置していた場合はその中身も空にしてから再起動してください。
 
 **使用例:**
 

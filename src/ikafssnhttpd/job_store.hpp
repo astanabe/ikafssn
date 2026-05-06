@@ -47,11 +47,13 @@ struct JobMeta {
 // `fetch_one_queued` uses SQLite 3.35+ `UPDATE ... RETURNING` to pop the
 // oldest queued job atomically (Ubuntu 22.04 ships 3.37, 24.04 ships 3.45).
 //
-// Schema version 2 (current): result blobs are stored in the per-job
-// ResultStore (filesystem), not in the SQLite row.  An older schema
-// that still has a `result_blob BLOB` column or has user_version<2 is
-// rejected by `check_schema()` so the operator must delete jobs.db
-// before starting the new server.
+// Schema version 3 (current): the SQLite row carries only metadata.
+// Both the result body (in ResultStore) and the request body (in
+// QueryStore) live as per-job files on disk.  An older schema that
+// still has a `result_blob` or `request_blob` column, or has
+// user_version<3, is rejected by `check_schema()` so the operator must
+// delete jobs.db (and empty the QueryStore directory) before starting
+// the new server.
 class JobStore {
 public:
     JobStore() = default;
@@ -63,29 +65,30 @@ public:
     // Open the SQLite DB and apply PRAGMAs / DDL.  Creates parent dir and
     // file if needed.  Returns false (with `error_msg` set) on failure.
     // Existing databases written by the old schema (containing
-    // `result_blob`, or with `user_version < 2`) are rejected here.
+    // `result_blob` or `request_blob`, or with `user_version < 3`) are
+    // rejected here.
     bool open(const std::string& path, std::string& error_msg);
 
     // Close the underlying handle.  Idempotent.
     void close();
 
-    // Insert a new job.  `request_blob` is the protocol::serialize(SearchRequest)
-    // output.  Returns false if `job_id` already exists (caller should map
-    // that to HTTP 409).  On success, fills `submitted_at` with the row's
+    // Insert a new job.  The query body is persisted by the caller into
+    // the QueryStore before this call (and unlinked on insert failure).
+    // Returns false if `job_id` already exists (caller should map that
+    // to HTTP 409).  On success, fills `submitted_at` with the row's
     // server-side timestamp.
     bool insert_job(const std::string& job_id,
                     const std::string& db,
                     int32_t n_seqs,
-                    const std::vector<uint8_t>& request_blob,
                     int64_t& submitted_at,
                     bool& duplicate,
                     std::string& error_msg);
 
     // Atomic-pop one queued job (oldest by submitted_at) and flip its
-    // status to 'running'.  Sets `out_meta` and `out_request_blob`.
+    // status to 'running'.  Sets `out_meta`.  The query body is read
+    // from the QueryStore by the caller using `out_meta.job_id`.
     // Returns false (with empty error_msg) when there is no queued job.
     bool fetch_one_queued(JobMeta& out_meta,
-                          std::vector<uint8_t>& out_request_blob,
                           std::string& error_msg);
 
     // Mark a job as completed.  The result file is the caller's
@@ -126,8 +129,9 @@ public:
 
     // Inspect `PRAGMA user_version` and `PRAGMA table_info(jobs)` and
     // refuse to run against a schema that predates the file-based
-    // result store (user_version<2 or `result_blob` column present).
-    // Called inside `open()` before any DDL is applied.
+    // query+result stores (user_version<3, or `result_blob` /
+    // `request_blob` column present).  Called inside `open()` before
+    // any DDL is applied.
     bool check_schema(std::string& error_msg);
 
 private:

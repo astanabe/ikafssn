@@ -11,6 +11,7 @@
 #include "ikafssnhttpd/backend_manager.hpp"
 #include "ikafssnhttpd/job_store.hpp"
 #include "ikafssnhttpd/job_worker.hpp"
+#include "ikafssnhttpd/query_store.hpp"
 #include "ikafssnhttpd/result_store.hpp"
 #include "protocol/messages.hpp"
 
@@ -23,14 +24,15 @@ namespace ikafssn {
 //   GET    /api/v1/jobs/<id>          poll status JSON
 //   GET    /api/v1/jobs/<id>/result   download serialized SearchResponse
 //
-// The controller owns no worker pool of its own; every POST simply
-// inserts a row into JobStore and notifies the (separately-owned)
-// JobWorker pool.
+// The controller owns no worker pool of its own; every POST validates
+// the request and persists the body to QueryStore, then inserts a row
+// into JobStore and notifies the (separately-owned) JobWorker pool.
 class HttpController {
 public:
     HttpController(std::shared_ptr<BackendManager> manager,
                    JobStore& store,
                    JobWorker& worker,
+                   QueryStore& queries,
                    ResultStore& results);
 
     // Register HTTP routes with Drogon.  Must be called before app().run().
@@ -53,17 +55,11 @@ public:
     void info(const drogon::HttpRequestPtr& req,
               std::function<void(const drogon::HttpResponsePtr&)>&& callback);
 
-    // Parse the JSON body of POST /api/v1/jobs into (job_id, SearchRequest).
-    // On failure, sets `error_msg` and returns false.  Exposed for tests.
-    static bool parse_search_request_json(const std::string& body,
-                                          std::string& job_id,
-                                          SearchRequest& req,
-                                          std::string& error_msg);
-
 private:
     std::shared_ptr<BackendManager> manager_;
     JobStore*    store_;
     JobWorker*   worker_;
+    QueryStore*  queries_;
     ResultStore* results_;
 
     static drogon::HttpResponsePtr make_error_response(

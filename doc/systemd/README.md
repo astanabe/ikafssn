@@ -38,6 +38,14 @@ SERVER_SOCKET=/run/ikafssn/nt.sock
 LISTEN=0.0.0.0:8080
 THREADS=4
 PATH_PREFIX=
+JOBS_DB=/var/lib/ikafssnhttpd/jobs.db
+QUERY_DIR=/var/lib/ikafssnhttpd/queries
+QUERY_COMPRESSION_LEVEL=3
+RESULT_DIR=/var/lib/ikafssnhttpd/results
+RESULT_COMPRESSION_LEVEL=3
+RETENTION_TIME=86400
+MAX_NRETRY=3
+NTHREAD_WORKER=4
 EXTRA_OPTS=
 ```
 
@@ -97,6 +105,14 @@ SERVER_SOCKET=
 LISTEN=0.0.0.0:8080
 THREADS=4
 PATH_PREFIX=
+JOBS_DB=/var/lib/ikafssnhttpd/jobs.db
+QUERY_DIR=/var/lib/ikafssnhttpd/queries
+QUERY_COMPRESSION_LEVEL=3
+RESULT_DIR=/var/lib/ikafssnhttpd/results
+RESULT_COMPRESSION_LEVEL=3
+RETENTION_TIME=86400
+MAX_NRETRY=3
+NTHREAD_WORKER=4
 EXTRA_OPTS=-server_tcp 127.0.0.1:9100
 ```
 

@@ -305,12 +305,16 @@ if(BUILD_HTTPD)
     # Async REST job persistence (SQLite-backed, with worker pool +
     # TTL housekeeper).  Lives in its own library so test_job_store
     # and test_httpd_client can pull just this layer without dragging
-    # in the HTTP controller.
+    # in the HTTP controller.  search_request_json is compiled into
+    # this library because JobWorker re-parses the queued JSON body
+    # before dispatch; the controller links it transitively.
     add_library(ikafssn_httpd_jobstore STATIC
         ikafssnhttpd/job_store.cpp
         ikafssnhttpd/job_worker.cpp
         ikafssnhttpd/job_housekeeper.cpp
+        ikafssnhttpd/query_store.cpp
         ikafssnhttpd/result_store.cpp
+        ikafssnhttpd/search_request_json.cpp
     )
     target_link_libraries(ikafssn_httpd_jobstore PUBLIC
         ikafssn_httpd_backend ikafssn_zstd_oneshot

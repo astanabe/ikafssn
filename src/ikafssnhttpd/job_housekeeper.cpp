@@ -5,9 +5,11 @@
 
 namespace ikafssn {
 
-JobHousekeeper::JobHousekeeper(JobStore& store, ResultStore& results,
+JobHousekeeper::JobHousekeeper(JobStore& store,
+                               QueryStore& queries,
+                               ResultStore& results,
                                Logger& logger)
-    : store_(store), results_(results), logger_(logger) {}
+    : store_(store), queries_(queries), results_(results), logger_(logger) {}
 
 JobHousekeeper::~JobHousekeeper() { stop(); }
 
@@ -47,12 +49,21 @@ void JobHousekeeper::loop_(int interval_seconds) {
             logger_.info("Housekeeper: removed %lld expired job(s)",
                          static_cast<long long>(n));
         }
-        // Remove the matching result files (best effort; log only).
+        // Remove the matching result and (best-effort) query files.
+        // The query file is normally already gone — JobWorker unlinks
+        // it on mark_done / terminal mark_failed — but we still try
+        // here as insurance against a worker crash between mark_done
+        // and unlink.
         for (const auto& jid : deleted_ids) {
             std::string uerr;
             if (!results_.unlink(jid, uerr)) {
                 logger_.error("Housekeeper: unlink result for %s: %s",
                               jid.c_str(), uerr.c_str());
+            }
+            std::string qerr;
+            if (!queries_.unlink(jid, qerr)) {
+                logger_.error("Housekeeper: unlink query for %s: %s",
+                              jid.c_str(), qerr.c_str());
             }
         }
 
@@ -63,36 +74,81 @@ void JobHousekeeper::loop_(int interval_seconds) {
 }
 
 void JobHousekeeper::orphan_sweep_() {
-    std::string err;
-    auto ids = results_.list_job_ids(err);
-    if (!err.empty()) {
-        logger_.error("Housekeeper orphan sweep: list_job_ids: %s",
-                      err.c_str());
-        return;
-    }
-    int removed = 0;
-    for (const auto& jid : ids) {
-        JobMeta meta;
-        std::string gerr;
-        if (store_.get_status(jid, meta, gerr)) continue;  // row exists
-        if (!gerr.empty()) {
-            // Transient SQLite error — skip this id, will retry next sweep.
-            logger_.error("Housekeeper orphan sweep: get_status %s: %s",
-                          jid.c_str(), gerr.c_str());
-            continue;
-        }
-        // Row absent: file is orphaned.
-        std::string uerr;
-        if (results_.unlink(jid, uerr)) {
-            removed++;
+    // Result store sweep.
+    {
+        std::string err;
+        auto ids = results_.list_job_ids(err);
+        if (!err.empty()) {
+            logger_.error("Housekeeper orphan sweep (results): list_job_ids: %s",
+                          err.c_str());
         } else {
-            logger_.error("Housekeeper orphan sweep: unlink %s: %s",
-                          jid.c_str(), uerr.c_str());
+            int removed = 0;
+            for (const auto& jid : ids) {
+                JobMeta meta;
+                std::string gerr;
+                if (store_.get_status(jid, meta, gerr)) continue;
+                if (!gerr.empty()) {
+                    logger_.error("Housekeeper orphan sweep (results): "
+                                  "get_status %s: %s",
+                                  jid.c_str(), gerr.c_str());
+                    continue;
+                }
+                std::string uerr;
+                if (results_.unlink(jid, uerr)) {
+                    removed++;
+                } else {
+                    logger_.error("Housekeeper orphan sweep (results): "
+                                  "unlink %s: %s",
+                                  jid.c_str(), uerr.c_str());
+                }
+            }
+            if (removed > 0) {
+                logger_.info("Housekeeper: orphan sweep removed %d "
+                             "result file(s)", removed);
+            }
         }
     }
-    if (removed > 0) {
-        logger_.info("Housekeeper: orphan sweep removed %d result file(s)",
-                     removed);
+
+    // Query store sweep.  An entry whose SQLite row reports 'done' or
+    // 'failed' is also orphaned (the worker should have unlinked it on
+    // terminal status, but a crash between mark_done and unlink leaves
+    // the file behind).
+    {
+        std::string err;
+        auto ids = queries_.list_job_ids(err);
+        if (!err.empty()) {
+            logger_.error("Housekeeper orphan sweep (queries): list_job_ids: %s",
+                          err.c_str());
+            return;
+        }
+        int removed = 0;
+        for (const auto& jid : ids) {
+            JobMeta meta;
+            std::string gerr;
+            bool has_row = store_.get_status(jid, meta, gerr);
+            if (!gerr.empty()) {
+                logger_.error("Housekeeper orphan sweep (queries): "
+                              "get_status %s: %s",
+                              jid.c_str(), gerr.c_str());
+                continue;
+            }
+            bool should_remove = !has_row
+                              || meta.status == JobStatus::kDone
+                              || meta.status == JobStatus::kFailed;
+            if (!should_remove) continue;
+            std::string uerr;
+            if (queries_.unlink(jid, uerr)) {
+                removed++;
+            } else {
+                logger_.error("Housekeeper orphan sweep (queries): "
+                              "unlink %s: %s",
+                              jid.c_str(), uerr.c_str());
+            }
+        }
+        if (removed > 0) {
+            logger_.info("Housekeeper: orphan sweep removed %d "
+                         "query file(s)", removed);
+        }
     }
 }
 

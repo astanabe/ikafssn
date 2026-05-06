@@ -472,6 +472,17 @@ if(BUILD_HTTPD)
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src"
     )
     add_test(NAME test_result_store COMMAND test_result_store)
+
+    # QueryStore unit test: per-job zstd request body storage,
+    # passthrough vs plain write, sweep_tmp, list_job_ids, shard layout.
+    add_executable(test_query_store test_query_store.cpp)
+    target_link_libraries(test_query_store PRIVATE
+        ikafssn_httpd_jobstore ikafssn_zstd_oneshot ikafssn_core
+    )
+    target_include_directories(test_query_store PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src"
+    )
+    add_test(NAME test_query_store COMMAND test_query_store)
 endif()
 
 # Checkpoint test (requires OpenSSL)

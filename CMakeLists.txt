@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.06")  # search_orchestrator: fold Stage 2B into the Stage 2A batch loop and free the batch's per-ext_job transient JobState (hits_per_seq etc.) before the next batch begins, so peak heap usage tracks -posting_budget rather than the total volume * query fan-out.
+set(IKAFSSN_VERSION "0.1.2026.05.06")  # ikafssnhttpd: move queued query bodies out of jobs.db (BLOB column) into a per-job filesystem store (`-query_dir`, default /var/lib/ikafssnhttpd/queries) using the same atomic-write + zstd recipe as ResultStore.  Bodies uploaded as application/zstd are stored verbatim (no re-compression); plaintext JSON uploads use `-query_compression_level` (default 3).  Schema bumped to user_version=3; legacy DBs with `request_blob`/`result_blob` columns or user_version<3 are rejected at startup.
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.

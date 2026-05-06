@@ -13,6 +13,8 @@
 #   THREADS=4
 #   PATH_PREFIX=
 #   JOBS_DB=/var/lib/ikafssnhttpd/jobs.db
+#   QUERY_DIR=/var/lib/ikafssnhttpd/queries
+#   QUERY_COMPRESSION_LEVEL=3
 #   RESULT_DIR=/var/lib/ikafssnhttpd/results
 #   RESULT_COMPRESSION_LEVEL=3
 #   RETENTION_TIME=86400
@@ -37,6 +39,8 @@ ExecStart=/usr/local/bin/ikafssnhttpd \
     -listen ${LISTEN} \
     -nthread ${THREADS} \
     -db ${JOBS_DB} \
+    -query_dir ${QUERY_DIR} \
+    -query_compression_level ${QUERY_COMPRESSION_LEVEL} \
     -result_dir ${RESULT_DIR} \
     -result_compression_level ${RESULT_COMPRESSION_LEVEL} \
     -retention_time ${RETENTION_TIME} \
