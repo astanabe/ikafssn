@@ -38,7 +38,7 @@ struct Stage1Batch {
     Stage1Tier4 tier = Stage1Tier4::kTier4;
 };
 
-struct Stage2ABatch {
+struct Stage2Batch {
     std::vector<uint16_t> vols;
     Stage2ATier tier = Stage2ATier::kTier4;
 };
@@ -95,20 +95,20 @@ plan_stage1_batches(const std::vector<VolumeMeta>& vols_cod,
     return batches;
 }
 
-std::vector<Stage2ABatch>
-plan_stage2a_batches(const std::vector<VolumeMeta>& vols_cod,
+std::vector<Stage2Batch>
+plan_stage2_batches(const std::vector<VolumeMeta>& vols_cod,
                      const std::vector<VolumeMeta>& vols_opt,
                      uint64_t posting_budget,
                      bool both_mode) {
-    std::vector<Stage2ABatch> batches;
-    Stage2ABatch cur;
+    std::vector<Stage2Batch> batches;
+    Stage2Batch cur;
     cur.tier = Stage2ATier::kTier4;
     uint64_t cur_size = 0;
 
     auto flush = [&]() {
         if (!cur.vols.empty()) {
             batches.push_back(std::move(cur));
-            cur = Stage2ABatch{};
+            cur = Stage2Batch{};
             cur.tier = Stage2ATier::kTier4;
             cur_size = 0;
         }
@@ -125,7 +125,7 @@ plan_stage2a_batches(const std::vector<VolumeMeta>& vols_cod,
             cur_size += c_full;
         } else {
             flush();
-            Stage2ABatch single;
+            Stage2Batch single;
             single.vols.push_back(static_cast<uint16_t>(vi));
 
             uint64_t c_kpx = kpx_cost(vols_cod[vi], opt);
@@ -376,13 +376,13 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     }
 
     // ----------------------------------------------------------------
-    // Stage 2A
+    // Stage 2 (Stage 2A + Stage 2B fused into one batch loop)
     // ----------------------------------------------------------------
-    auto s2a_batches = plan_stage2a_batches(in.volumes_cod, in.volumes_opt,
-                                            in.posting_budget, in.both_mode);
+    auto s2_batches = plan_stage2_batches(in.volumes_cod, in.volumes_opt,
+                                          in.posting_budget, in.both_mode);
     if (logger) {
         size_t n4 = 0, n3 = 0, n2 = 0, n1 = 0;
-        for (auto& b : s2a_batches) {
+        for (auto& b : s2_batches) {
             switch (b.tier) {
                 case Stage2ATier::kTier4: ++n4; break;
                 case Stage2ATier::kTier2: ++n2; break;
@@ -390,9 +390,9 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 case Stage2ATier::kTier1: ++n1; break;
             }
         }
-        logger->info("Stage 2A batch plan: %zu batch(es) over %zu volume(s) "
+        logger->info("Stage 2 batch plan: %zu batch(es) over %zu volume(s) "
                      "(tier4=%zu, tier2=%zu, tier3=%zu, tier1=%zu)",
-                     s2a_batches.size(), num_volumes, n4, n2, n3, n1);
+                     s2_batches.size(), num_volumes, n4, n2, n3, n1);
     }
 
     // Stage 2A and Stage 2B share this batch loop: Stage 2B runs immediately
@@ -402,7 +402,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     std::vector<OrchestratorHit> results;
     size_t total_stage2a_hits = 0;
 
-    for (auto& batch : s2a_batches) {
+    for (auto& batch : s2_batches) {
         for (uint16_t vi : batch.vols) {
             if (!kix_cod[vi].open(in.volumes_cod[vi].files.kix_path)) {
                 if (logger) logger->error("Cannot open %s",

@@ -4,13 +4,13 @@
 // ikafssnserver (per-request).  Drives the three search stages with a
 // global volume-batched WILLNEED window:
 //
-//   Stage 1   — one batch loop over volumes (.kix only).
-//   Stage 2A  — one batch loop over volumes (.kix + .kpx).  Only mode 2/3.
-//   Stage 2B  — runs immediately after each Stage 2A batch (in the same
-//               loop) and the batch's per-ext_job transient JobState
-//               (hits_per_seq etc.) is freed before the next batch begins,
-//               so peak heap usage tracks `posting_budget` rather than the
-//               total volume × query fan-out.
+//   Stage 1  — one batch loop over volumes (.kix only).
+//   Stage 2  — one batch loop over volumes (.kix + .kpx).  Only mode 2/3.
+//              Each iteration runs Stage 2A then Stage 2B for the batch
+//              and frees the batch's per-ext_job transient JobState
+//              (hits_per_seq etc.) before the next batch begins, so peak
+//              heap usage tracks `posting_budget` rather than the total
+//              volume × query fan-out.
 //
 // .kix / .kpx readers are opened / closed per batch so the kernel-level
 // page cache footprint is bounded by the configured posting_budget.

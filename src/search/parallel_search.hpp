@@ -15,13 +15,13 @@
 //              tuples.
 //
 // `search_orchestrator.{hpp,cpp}` drives the three stages with a global
-// volume-batched WILLNEED window: Stage 1 has its own batch loop, and Stage
-// 2A and Stage 2B share a batch loop — Stage 2B runs immediately after each
-// Stage 2A batch and the batch's per-ext_job transient state (hits_per_seq
-// etc.) is freed before the next batch begins, so peak memory tracks
-// `posting_budget` rather than the total volume × query fan-out.  The
-// .kix / .kpx readers are opened / closed per batch so the kernel-level
-// page cache is bounded by the configured memory budget.
+// volume-batched WILLNEED window: Stage 1 has its own batch loop, and
+// Stage 2 has a single batch loop where each iteration runs Stage 2A then
+// Stage 2B for the batch — the batch's per-ext_job transient state
+// (hits_per_seq etc.) is freed before the next batch begins, so peak
+// memory tracks `posting_budget` rather than the total volume × query
+// fan-out.  The .kix / .kpx readers are opened / closed per batch so the
+// kernel-level page cache is bounded by the configured memory budget.
 
 #include <cstdint>
 #include <string>
