@@ -16,6 +16,7 @@ Ubuntu 24.04 (x86_64 / aarch64):
   zlib1g
   libbz2-1.0
   liblzma5
+  libzstd1
   libdeflate0
 
 Ubuntu 22.04 (x86_64 / aarch64):
@@ -30,6 +31,7 @@ Ubuntu 22.04 (x86_64 / aarch64):
   zlib1g
   libbz2-1.0
   liblzma5
+  libzstd1
   libdeflate0
 
 EL 9 / EL 10 (x86_64 / aarch64):
@@ -44,6 +46,7 @@ EL 9 / EL 10 (x86_64 / aarch64):
   zlib
   bzip2-libs
   xz-libs
+  libzstd
   libdeflate
 
 macOS 26 (aarch64, Homebrew):
@@ -54,6 +57,7 @@ macOS 26 (aarch64, Homebrew):
   curl
   jsoncpp
   xz
+  zstd
   libdeflate
   openssl@3
 
@@ -74,6 +78,7 @@ Conda channel (https://conda.ikafssn.org; runtime deps from conda-forge):
     zlib
     bzip2
     xz
+    zstd
     libdeflate
 
   Linux baseline: glibc 2.34 (RHEL 9 / Ubuntu 22.04 / Debian 12 and newer).
@@ -95,10 +100,10 @@ Compiler and tools:
 
 System packages — Ubuntu 22.04 / 24.04 (x86_64 / aarch64):
 
-  build-essential cmake
+  build-essential cmake pkg-config
   libtbb-dev liblmdb-dev libsqlite3-dev
   libcurl4-openssl-dev libjsoncpp-dev
-  zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf
+  zlib1g-dev libbz2-dev liblzma-dev libzstd-dev libdeflate-dev autoconf
   libssl-dev uuid-dev
 
   libssl-dev and uuid-dev are required for building the NCBI C++ Toolkit
@@ -107,10 +112,10 @@ System packages — Ubuntu 22.04 / 24.04 (x86_64 / aarch64):
 
 System packages — EL 9 / EL 10 (x86_64 / aarch64):
 
-  gcc-c++ cmake make
+  gcc-c++ cmake make pkgconfig
   tbb-devel lmdb-devel sqlite-devel
   libcurl-devel jsoncpp-devel
-  zlib-devel bzip2-devel xz-devel libdeflate-devel
+  zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel
   openssl-devel libuuid-devel
   autoconf automake libtool
 
@@ -119,8 +124,8 @@ System packages — EL 9 / EL 10 (x86_64 / aarch64):
 
 System packages — macOS (Homebrew):
 
-  cmake tbb lmdb sqlite3 curl jsoncpp
-  xz libdeflate autoconf automake libtool openssl@3
+  cmake pkg-config tbb lmdb sqlite3 curl jsoncpp
+  xz zstd libdeflate autoconf automake libtool openssl@3
 
   openssl@3 is required for both the NCBI C++ Toolkit and Drogon source
   builds. uuid is provided by libSystem.
@@ -133,7 +138,7 @@ Conda packaging (recipe/, conda-forge channel):
 
   Host environment:
     tbb-devel lmdb libsqlite libcurl jsoncpp openssl
-    libuuid (linux only) zlib bzip2 xz libdeflate
+    libuuid (linux only) zlib bzip2 xz zstd libdeflate
 
   Linux baseline: c_stdlib_version 2.34 (sysroot_linux-{64,aarch64}).
   osx-arm64 baseline: MACOSX_DEPLOYMENT_TARGET 11.0.

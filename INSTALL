@@ -113,10 +113,10 @@ B. Building from source
 Ubuntu 22.04 / 24.04 (x86_64 / aarch64):
 
   sudo apt-get install -y \
-    build-essential cmake \
+    build-essential cmake pkg-config \
     libtbb-dev liblmdb-dev libsqlite3-dev \
     libcurl4-openssl-dev libjsoncpp-dev \
-    zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
+    zlib1g-dev libbz2-dev liblzma-dev libzstd-dev libdeflate-dev autoconf \
     libssl-dev uuid-dev
 
   libssl-dev and uuid-dev are required for building the NCBI C++ Toolkit
@@ -129,10 +129,10 @@ EL 9 / EL 10 (x86_64 / aarch64):
   sudo dnf install -y 'dnf-command(config-manager)' || true
   sudo dnf config-manager --set-enabled crb || true
   sudo dnf install -y \
-    gcc-c++ cmake make \
+    gcc-c++ cmake make pkgconfig \
     tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel \
-    zlib-devel bzip2-devel xz-devel libdeflate-devel \
+    zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel \
     openssl-devel libuuid-devel \
     autoconf automake libtool
 
@@ -142,8 +142,8 @@ EL 9 / EL 10 (x86_64 / aarch64):
 
 macOS (Homebrew):
 
-  brew install cmake tbb lmdb sqlite3 curl jsoncpp \
-    xz libdeflate autoconf automake libtool openssl@3
+  brew install cmake pkg-config tbb lmdb sqlite3 curl jsoncpp \
+    xz zstd libdeflate autoconf automake libtool openssl@3
 
   openssl@3 is required for building the NCBI C++ Toolkit and Drogon
   from source. uuid is provided by libSystem on macOS.
