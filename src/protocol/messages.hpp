@@ -126,6 +126,11 @@ struct QueryResult {
 // Search response message (server -> client)
 struct SearchResponse {
     uint8_t  status = 0;  // 0 = success
+                          // 1 = unknown / missing k-mer group
+                          // 2 = parameter conflict (mode 1)
+                          // 3 = mode 3 requires BLAST DB
+                          // 4 = mode exceeds max_mode for this DB
+                          // 5 = posting-budget pool shutdown during acquire
     uint8_t  k = 0;
     uint8_t  mode = 2;              // 1 = stage1 only, 2 = stage1+stage2, 3 = stage1+stage2+stage3
     uint8_t  stage1_score = 1;      // 1 = coverscore, 2 = matchscore
