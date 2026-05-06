@@ -1349,6 +1349,7 @@ ikafssnindex -version
 - Intel TBB (for parallelization)
 - Parasail >= 2.6 (for Stage 3 pairwise alignment)
 - htslib >= 1.17 (for SAM/BAM output)
+- zlib, libbz2, liblzma, libzstd (for transparent compressed I/O); pkg-config required for libzstd discovery
 - Drogon (for ikafssnhttpd, optional)
 - libcurl (for HTTP client mode and remote retrieval, optional)
 
@@ -1364,13 +1365,13 @@ Install the required packages (excluding NCBI C++ Toolkit) with the following co
 **Ubuntu Server 22.04 / 24.04:**
 
 ```bash
-sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
+sudo apt install build-essential cmake pkg-config libtbb-dev liblmdb-dev libsqlite3-dev \
     libcurl4-openssl-dev libjsoncpp-dev
-sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
+sudo apt install zlib1g-dev libbz2-dev liblzma-dev libzstd-dev libdeflate-dev autoconf \
     libssl-dev uuid-dev
 ```
 
-The second line installs dependencies required for building Parasail and htslib from source, plus `libssl-dev` and `uuid-dev` which are needed for building the NCBI C++ Toolkit and Drogon from source. If ikafssnhttpd is not needed, build with `-DBUILD_HTTPD=OFF` and `uuid-dev` may be omitted (`libssl-dev` is still required by the NCBI C++ Toolkit).
+`pkg-config` is required by CMake's `pkg_check_modules` call for libzstd. The second line installs dependencies required for building Parasail and htslib from source, plus `libssl-dev` and `uuid-dev` which are needed for building the NCBI C++ Toolkit and Drogon from source. If ikafssnhttpd is not needed, build with `-DBUILD_HTTPD=OFF` and `uuid-dev` may be omitted (`libssl-dev` is still required by the NCBI C++ Toolkit).
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
@@ -1378,9 +1379,9 @@ The second line installs dependencies required for building Parasail and htslib 
 sudo dnf config-manager --set-enabled crb
 sudo dnf install -y epel-release
 sudo dnf group install -y "Development Tools"
-sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+sudo dnf install -y cmake gcc-c++ pkgconfig tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
@@ -1390,9 +1391,9 @@ sudo dnf install -y libuuid-devel openssl-devel
 sudo dnf config-manager --set-enabled crb
 sudo dnf install -y oracle-epel-release-el9
 sudo dnf group install -y "Development Tools"
-sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+sudo dnf install -y cmake gcc-c++ pkgconfig tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
@@ -1401,9 +1402,9 @@ sudo dnf install -y libuuid-devel openssl-devel
 ```bash
 sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
-sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+sudo dnf install -y cmake gcc-c++ pkgconfig tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
@@ -1412,19 +1413,19 @@ sudo dnf install -y libuuid-devel openssl-devel
 ```bash
 sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
-sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+sudo dnf install -y cmake gcc-c++ pkgconfig tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
-On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. The second-to-last line of each block installs dependencies required for building Parasail and htslib from source. The last line installs dependencies needed to build the NCBI C++ Toolkit and Drogon from source. If ikafssnhttpd is not needed, build with `-DBUILD_HTTPD=OFF` and `libuuid-devel` may be omitted (`openssl-devel` is still required by the NCBI C++ Toolkit).
+On EL9, `jsoncpp-devel` requires EPEL and `lmdb-devel` requires CRB. On EL10, both are in CRB so EPEL is not needed for these packages. `pkgconfig` is required by CMake's `pkg_check_modules` call for libzstd. The second-to-last line of each block installs dependencies required for building Parasail and htslib from source. The last line installs dependencies needed to build the NCBI C++ Toolkit and Drogon from source. If ikafssnhttpd is not needed, build with `-DBUILD_HTTPD=OFF` and `libuuid-devel` may be omitted (`openssl-devel` is still required by the NCBI C++ Toolkit).
 
 **macOS (Homebrew):**
 
 ```bash
-brew install cmake tbb lmdb sqlite3 curl jsoncpp \
-    xz libdeflate autoconf automake libtool openssl@3
+brew install cmake pkg-config tbb lmdb sqlite3 curl jsoncpp \
+    xz zstd libdeflate autoconf automake libtool openssl@3
 ```
 
 `openssl@3` is required for building the NCBI C++ Toolkit and Drogon from source (Drogon is built separately, see below). On macOS, use `make -j$(sysctl -n hw.ncpu)` instead of `make -j$(nproc)` in the build steps below.

@@ -1343,6 +1343,7 @@ ikafssnindex -version
 - Intel TBB (並列化用)
 - Parasail >= 2.6 (Stage 3 ペアワイズアライメント用)
 - htslib >= 1.17 (SAM/BAM 出力用)
+- zlib, libbz2, liblzma, libzstd (透過的な圧縮 I/O 用); libzstd の検出に pkg-config が必要
 - Drogon (ikafssnhttpd 用、オプション)
 - libcurl (HTTP クライアントモードおよびリモート取得用、オプション)
 
@@ -1358,13 +1359,13 @@ NCBI C++ Toolkit 以外の依存パッケージを以下のコマンドでイン
 **Ubuntu Server 22.04 / 24.04:**
 
 ```bash
-sudo apt install build-essential cmake libtbb-dev liblmdb-dev libsqlite3-dev \
+sudo apt install build-essential cmake pkg-config libtbb-dev liblmdb-dev libsqlite3-dev \
     libcurl4-openssl-dev libjsoncpp-dev
-sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
+sudo apt install zlib1g-dev libbz2-dev liblzma-dev libzstd-dev libdeflate-dev autoconf \
     libssl-dev uuid-dev
 ```
 
-2 行目は Parasail および htslib のソースビルドに必要な依存パッケージに加え、NCBI C++ Toolkit と Drogon のソースビルドに必要な `libssl-dev` と `uuid-dev` です。ikafssnhttpd が不要な場合は `-DBUILD_HTTPD=OFF` を指定してビルドし、`uuid-dev` は省略可能です (`libssl-dev` は NCBI C++ Toolkit が必要とします)。
+`pkg-config` は CMake の `pkg_check_modules` が libzstd を検出するのに必要です。2 行目は Parasail および htslib のソースビルドに必要な依存パッケージに加え、NCBI C++ Toolkit と Drogon のソースビルドに必要な `libssl-dev` と `uuid-dev` です。ikafssnhttpd が不要な場合は `-DBUILD_HTTPD=OFF` を指定してビルドし、`uuid-dev` は省略可能です (`libssl-dev` は NCBI C++ Toolkit が必要とします)。
 
 **AlmaLinux 9 / Rocky Linux 9:**
 
@@ -1372,9 +1373,9 @@ sudo apt install zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
 sudo dnf config-manager --set-enabled crb
 sudo dnf install -y epel-release
 sudo dnf group install -y "Development Tools"
-sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+sudo dnf install -y cmake gcc-c++ pkgconfig tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
@@ -1384,9 +1385,9 @@ sudo dnf install -y libuuid-devel openssl-devel
 sudo dnf config-manager --set-enabled crb
 sudo dnf install -y oracle-epel-release-el9
 sudo dnf group install -y "Development Tools"
-sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+sudo dnf install -y cmake gcc-c++ pkgconfig tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
@@ -1395,9 +1396,9 @@ sudo dnf install -y libuuid-devel openssl-devel
 ```bash
 sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
-sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+sudo dnf install -y cmake gcc-c++ pkgconfig tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
@@ -1406,19 +1407,19 @@ sudo dnf install -y libuuid-devel openssl-devel
 ```bash
 sudo dnf config-manager --set-enabled crb
 sudo dnf group install -y "Development Tools"
-sudo dnf install -y cmake gcc-c++ tbb-devel lmdb-devel sqlite-devel \
+sudo dnf install -y cmake gcc-c++ pkgconfig tbb-devel lmdb-devel sqlite-devel \
     libcurl-devel jsoncpp-devel
-sudo dnf install -y zlib-devel bzip2-devel xz-devel libdeflate-devel autoconf
+sudo dnf install -y zlib-devel bzip2-devel xz-devel libzstd-devel libdeflate-devel autoconf
 sudo dnf install -y libuuid-devel openssl-devel
 ```
 
-EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。各ブロックの最後から 2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。最終行は NCBI C++ Toolkit と Drogon のソースビルドに必要な依存パッケージです。ikafssnhttpd が不要な場合は `-DBUILD_HTTPD=OFF` を指定してビルドし、`libuuid-devel` は省略可能です (`openssl-devel` は NCBI C++ Toolkit が必要とします)。
+EL9 では `jsoncpp-devel` に EPEL、`lmdb-devel` に CRB リポジトリが必要です。EL10 ではいずれも CRB に収録されているため EPEL は不要です。`pkgconfig` は CMake の `pkg_check_modules` が libzstd を検出するのに必要です。各ブロックの最後から 2 行目は Parasail および htslib のソースビルドに必要な依存パッケージです。最終行は NCBI C++ Toolkit と Drogon のソースビルドに必要な依存パッケージです。ikafssnhttpd が不要な場合は `-DBUILD_HTTPD=OFF` を指定してビルドし、`libuuid-devel` は省略可能です (`openssl-devel` は NCBI C++ Toolkit が必要とします)。
 
 **macOS (Homebrew):**
 
 ```bash
-brew install cmake tbb lmdb sqlite3 curl jsoncpp \
-    xz libdeflate autoconf automake libtool openssl@3
+brew install cmake pkg-config tbb lmdb sqlite3 curl jsoncpp \
+    xz zstd libdeflate autoconf automake libtool openssl@3
 ```
 
 `openssl@3` は NCBI C++ Toolkit と Drogon のソースビルドに必要です (Drogon は別途ソースからビルドします、後述)。macOS では以下のビルド手順中の `make -j$(nproc)` を `make -j$(sysctl -n hw.ncpu)` に読み替えてください。
