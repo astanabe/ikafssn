@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "ikafssnserver/budget_pool.hpp"
 #include "ikafssnserver/request_processor.hpp"
 #include "search/stage3_alignment.hpp"
 #include "search/volume_searcher.hpp"
@@ -56,6 +57,8 @@ struct ServerConfig {
     int nthread = 0;            // 0 = auto-detect
     int max_queue_size = 0;         // 0 = default (1024). Max total in-flight sequences globally
     int max_nseq_per_req = 0;       // 0 = default (same as resolved thread count). Per-request cap
+    int max_concurrent_search = 0;  // 0 = unlimited (pass-through). When >= 1, requests share
+                                    // posting_budget so at most N run the budget-bound stages.
     int shutdown_timeout = 30;      // seconds
     uint64_t memory_limit = 0;     // 0 = auto (half of RAM)
     SearchConfig search_config;
@@ -110,6 +113,23 @@ public:
     // Per-request posting budget (residual of -memory_limit after khx/ksx).
     uint64_t posting_budget() const { return posting_budget_; }
 
+    // Acquire a lease against the inter-request posting-budget pool.  The
+    // pool is configured by run() based on -max_concurrent_search.  In
+    // pass-through mode (default) this returns lease(posting_budget())
+    // immediately and never blocks.
+    BudgetLease acquire_posting_budget(uint64_t min, uint64_t max) {
+        return pool_.acquire(min, max);
+    }
+
+    BudgetPool&       pool()       { return pool_; }
+    const BudgetPool& pool() const { return pool_; }
+
+    // Apply persistent madvise WILLNEED for .khx + .ksx within `budget` and
+    // expose the residual as posting_budget_.  Normally invoked by run(),
+    // public so tests can prime the budget without standing up an accept
+    // loop.
+    void apply_madvise_budget(uint64_t budget, const Logger& logger);
+
 private:
     std::vector<DatabaseEntry> databases_;
     std::unordered_map<std::string, size_t> db_index_;
@@ -117,13 +137,13 @@ private:
     std::vector<int> listen_fds_;
 
     uint64_t posting_budget_ = 0;
+    BudgetPool pool_;
 
     std::mutex seq_mutex_;
     int queue_depth_ = 0;
     int max_queue_size_ = 1024;  // from -max_queue_size, default 1024; overridden in run()
     int max_nseq_per_req_ = 1024;      // from -max_nseq_per_req, default = threads; overridden in run()
 
-    void apply_madvise_budget(uint64_t budget, const Logger& logger);
     void accept_loop(int listen_fd, const ServerConfig& config, const Logger& logger);
     void write_pid_file(const std::string& path);
 };

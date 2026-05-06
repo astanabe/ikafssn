@@ -345,6 +345,152 @@ static void test_seqidlist_filter_via_server() {
     }
 }
 
+// Helper: run two concurrent search clients against a single server fixture
+// configured with a given max_concurrent_search.  Returns the peak number of
+// concurrent leases observed inside the server's BudgetPool, plus both
+// responses for invariant checks.
+struct PoolConcurrencyOutcome {
+    int peak_leases = 0;
+    SearchResponse resp_a;
+    SearchResponse resp_b;
+    bool a_ok = false;
+    bool b_ok = false;
+};
+
+static PoolConcurrencyOutcome run_two_concurrent_searches(
+    const std::string& sock_path,
+    const std::string& ix_prefix,
+    const std::string& db,
+    int k,
+    const std::vector<FastaRecord>& queries,
+    int max_concurrent_search)
+{
+    PoolConcurrencyOutcome out;
+
+    ::unlink(sock_path.c_str());
+
+    Server server;
+    Logger logger(Logger::kError);
+    ServerConfig server_config;
+    server_config.max_concurrent_search = max_concurrent_search;
+    // memory_limit=64MiB leaves a comfortable residual posting_budget after
+    // khx/ksx WILLNEED on the small SSU test index; the concurrency
+    // invariant is what we're asserting on, not any specific numeric budget.
+    server_config.memory_limit = 64ull << 20;
+
+    CHECK(server.load_database(ix_prefix, ix_prefix, server_config, logger));
+
+    // Manually drive the budget + pool configure steps that Server::run()
+    // would normally invoke (we don't want a full accept loop here — just
+    // two concurrent request_processor invocations sharing the pool).
+    server.apply_madvise_budget(server_config.memory_limit, logger);
+    {
+        uint64_t pb = server.posting_budget();
+        uint64_t floor = (max_concurrent_search > 0)
+            ? std::max<uint64_t>(1ull << 20,
+                                  pb / static_cast<uint64_t>(max_concurrent_search))
+            : 0;
+        server.pool().configure(pb, floor);
+    }
+
+    int listen_fd = unix_listen(sock_path);
+    CHECK(listen_fd >= 0);
+
+    // Two parallel server-side handlers.  The accept loop runs on its own
+    // thread to feed each connection into a dedicated worker thread so both
+    // request_processor invocations can overlap inside the BudgetPool.
+    tbb::task_arena arena(2);
+    std::atomic<int> accepted{0};
+    std::vector<std::thread> workers;
+    std::thread accept_thread([&] {
+        for (int i = 0; i < 2; ++i) {
+            int client_fd = accept_connection(listen_fd);
+            if (client_fd < 0) break;
+            accepted.fetch_add(1);
+            workers.emplace_back([&, client_fd] {
+                handle_connection(client_fd, server, server_config, arena, logger);
+            });
+        }
+    });
+
+    // Give the accept thread a moment to reach accept().
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    auto run_client = [&](SearchResponse& resp, bool& ok) {
+        int fd = unix_connect(sock_path);
+        if (fd < 0) { ok = false; return; }
+        SearchRequest req;
+        req.k = static_cast<uint8_t>(k);
+        req.db = db;
+        for (const auto& q : queries) {
+            req.queries.push_back({q.id, q.sequence});
+        }
+        ok = socket_search(fd, req, resp);
+        close_fd(fd);
+    };
+
+    std::thread ta([&] { run_client(out.resp_a, out.a_ok); });
+    std::thread tb([&] { run_client(out.resp_b, out.b_ok); });
+    ta.join();
+    tb.join();
+
+    accept_thread.join();
+    for (auto& w : workers) w.join();
+    close_fd(listen_fd);
+    ::unlink(sock_path.c_str());
+
+    out.peak_leases = server.pool().peak_leases();
+    return out;
+}
+
+// Test: -max_concurrent_search 1 serialises two concurrent searches at the
+// budget-bound stages; peak_leases must be 1 and both clients still succeed.
+static void test_budget_pool_serialized() {
+    std::fprintf(stderr, "-- test_budget_pool_serialized\n");
+
+    int k = 7;
+    std::string ix_prefix = g_test_dir + "/sc_index/test";
+    std::string db = db_from_prefix(ix_prefix);
+
+    auto queries = read_fasta(queries_path());
+    CHECK(!queries.empty());
+
+    std::string sock_path = g_test_dir + "/test_pool_serial.sock";
+    auto out = run_two_concurrent_searches(
+        sock_path, ix_prefix, db, k, queries, /*max_concurrent_search=*/1);
+
+    CHECK(out.a_ok);
+    CHECK(out.b_ok);
+    CHECK_EQ(static_cast<uint64_t>(out.resp_a.status), uint64_t{0});
+    CHECK_EQ(static_cast<uint64_t>(out.resp_b.status), uint64_t{0});
+    CHECK_EQ(static_cast<uint64_t>(out.peak_leases), uint64_t{1});
+    CHECK_EQ(out.resp_a.results.size(), out.resp_b.results.size());
+}
+
+// Test: -max_concurrent_search 2 lets two requests overlap; peak_leases
+// reaches 2.
+static void test_budget_pool_overlapping() {
+    std::fprintf(stderr, "-- test_budget_pool_overlapping\n");
+
+    int k = 7;
+    std::string ix_prefix = g_test_dir + "/sc_index/test";
+    std::string db = db_from_prefix(ix_prefix);
+
+    auto queries = read_fasta(queries_path());
+    CHECK(!queries.empty());
+
+    std::string sock_path = g_test_dir + "/test_pool_overlap.sock";
+    auto out = run_two_concurrent_searches(
+        sock_path, ix_prefix, db, k, queries, /*max_concurrent_search=*/2);
+
+    CHECK(out.a_ok);
+    CHECK(out.b_ok);
+    CHECK_EQ(static_cast<uint64_t>(out.resp_a.status), uint64_t{0});
+    CHECK_EQ(static_cast<uint64_t>(out.resp_b.status), uint64_t{0});
+    // peak may be 1 or 2 depending on scheduling, but must never exceed 2.
+    CHECK(out.peak_leases >= 1 && out.peak_leases <= 2);
+}
+
 int main() {
     check_ssu_available();
     check_derived_data_ready();
@@ -358,6 +504,8 @@ int main() {
     test_server_client_search();
     test_health_check();
     test_seqidlist_filter_via_server();
+    test_budget_pool_serialized();
+    test_budget_pool_overlapping();
 
     // Cleanup
     std::filesystem::remove_all(g_test_dir);

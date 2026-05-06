@@ -262,6 +262,18 @@ target_link_libraries(test_protocol PRIVATE
 target_include_directories(test_protocol PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME test_protocol COMMAND test_protocol)
 
+# Inter-request posting-budget pool unit test (no server, no BLAST DB)
+find_package(Threads REQUIRED)
+add_executable(test_budget_pool test_budget_pool.cpp
+    "${CMAKE_SOURCE_DIR}/src/ikafssnserver/budget_pool.cpp"
+)
+target_include_directories(test_budget_pool PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_link_libraries(test_budget_pool PRIVATE Threads::Threads)
+add_test(NAME test_budget_pool COMMAND test_budget_pool)
+
 # Server-client integration test (requires NCBI Toolkit + TBB)
 add_executable(test_server_client test_server_client.cpp)
 target_link_libraries(test_server_client PRIVATE

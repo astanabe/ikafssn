@@ -38,6 +38,10 @@ static void print_usage(const char* prog) {
         "  -nthread <int>           Worker threads (default: all cores)\n"
         "  -max_queue_size <int>    Max concurrent query sequences globally (default: 1024)\n"
         "  -max_nseq_per_req <int>  Max sequences accepted per request (default: thread count)\n"
+        "  -max_concurrent_search <int>  Limit concurrent requests at budget-bound stages\n"
+        "                           (Stage 1 / 2A / 3). 0 = unlimited (default, current\n"
+        "                           behavior). When N >= 1, requests share -memory_limit's\n"
+        "                           residual posting_budget so in-flight heap stays bounded.\n"
         "  -pid <path>              PID file path\n"
         "  -db <path>               BLAST DB path for mode 3 (repeatable, paired with -ix;\n"
         "                           default: same as corresponding -ix prefix)\n"
@@ -133,6 +137,11 @@ int main(int argc, char* argv[]) {
     config.max_nseq_per_req = cli.get_int("-max_nseq_per_req", 0);
     if (config.max_nseq_per_req < 0) {
         std::fprintf(stderr, "Error: -max_nseq_per_req must be >= 0\n");
+        return 1;
+    }
+    config.max_concurrent_search = cli.get_int("-max_concurrent_search", 0);
+    if (config.max_concurrent_search < 0) {
+        std::fprintf(stderr, "Error: -max_concurrent_search must be >= 0\n");
         return 1;
     }
     config.shutdown_timeout = cli.get_int("-shutdown_timeout", 30);

@@ -399,11 +399,21 @@ SearchResponse process_search_request(
         query_to_result[aq.query_idx] = aq.result_idx;
     }
 
-    // Determine the per-request slice of the server's posting_budget.  Today
-    // the admin sizes -memory_limit assuming concurrent-request load (see
-    // doc/ikafssn.{en,ja}.md); per-request value is the residual after the
-    // persistent .khx / .ksx WILLNEED.
-    uint64_t posting_budget = server.posting_budget();
+    // Determine the per-request slice of the server's posting_budget.  In
+    // pass-through mode (default) this returns the full residual immediately,
+    // matching legacy behaviour.  When -max_concurrent_search >= 1 the pool
+    // serialises requests at the budget-bound stages so in-flight heap stays
+    // bounded.  Lease lives at function scope and is released by RAII on
+    // every return path below (including the early-return Stage 3 failures).
+    BudgetLease budget_lease = server.acquire_posting_budget(
+        /*min=*/0,
+        /*max=*/server.posting_budget());
+    if (!budget_lease.valid()) {
+        server.release_sequences(acquired);
+        resp.status = 5;  // pool shutdown during acquire
+        return resp;
+    }
+    const uint64_t posting_budget = budget_lease.value();
 
     auto run_orchestrated = [&](auto kmer_int_tag) {
         using KmerInt = decltype(kmer_int_tag);
@@ -554,6 +564,7 @@ SearchResponse process_search_request(
         }
 
         Logger logger(Logger::kInfo);
+        stage3_config.posting_budget = posting_budget;
         output_hits = run_stage3(output_hits, fasta_queries, db.db_path,
                                  stage3_config, ctx_is_ratio, ctx_ratio, ctx_abs, logger);
 

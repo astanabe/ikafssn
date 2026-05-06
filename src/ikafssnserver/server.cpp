@@ -195,6 +195,7 @@ int Server::default_k() const {
 
 void Server::request_shutdown() {
     shutdown_requested_.store(true, std::memory_order_release);
+    pool_.shutdown();
 }
 
 int Server::try_acquire_sequences(int n) {
@@ -319,6 +320,23 @@ int Server::run(const ServerConfig& config_in) {
     {
         uint64_t budget = config.memory_limit > 0 ? config.memory_limit : default_memory_limit();
         apply_madvise_budget(budget, logger);
+    }
+
+    // Configure the inter-request posting-budget pool.  floor == 0 disables
+    // blocking entirely (pass-through mode = historical behaviour: every
+    // request sees the full posting_budget).  When -max_concurrent_search
+    // is >= 1, residual posting_budget is divided into N slices floored at
+    // 1 MiB so at most N concurrent requests run the budget-bound stages.
+    {
+        uint64_t floor = 0;
+        if (config.max_concurrent_search > 0) {
+            floor = std::max<uint64_t>(
+                1ull << 20,
+                posting_budget_ / static_cast<uint64_t>(config.max_concurrent_search));
+            logger.info("BudgetPool: max_concurrent_search=%d, floor=%s",
+                        config.max_concurrent_search, format_size(floor).c_str());
+        }
+        pool_.configure(posting_budget_, floor);
     }
 
     // Write PID file if requested

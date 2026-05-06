@@ -211,6 +211,7 @@ add_library(ikafssn_server_lib STATIC
     ikafssnserver/server.cpp
     ikafssnserver/connection_handler.cpp
     ikafssnserver/request_processor.cpp
+    ikafssnserver/budget_pool.cpp
 )
 target_include_directories(ikafssn_server_lib PRIVATE
     "${NCBI_TOOLKIT_INCLUDE}"

@@ -436,6 +436,9 @@ Options:
   -nthread <int>          Worker threads (default: all cores)
   -max_queue_size <int>   Max concurrent query sequences globally (default: 1024)
   -max_nseq_per_req <int> Max sequences accepted per request (default: thread count)
+  -max_concurrent_search <int>  Limit concurrent requests at budget-bound stages
+                          (Stage 1 / 2A / 3) so they share -memory_limit's residual
+                          posting_budget (default: 0 = unlimited)
   -pid <path>             PID file path
   -db <path>              BLAST DB path for mode 3 (repeatable, paired with -ix;
                           default: same as corresponding -ix prefix)
@@ -496,6 +499,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 - If the index prefix matches indexes for multiple k-mer sizes, all are loaded and clients can specify k per request.
 - On SIGTERM/SIGINT, performs graceful shutdown: stops accepting new connections, waits for in-flight requests to complete (up to `-shutdown_timeout` seconds), then exits.
 - **Per-sequence concurrency control:** The server limits concurrency at the per-sequence level, not per-connection. When a request arrives, the server attempts to acquire permits for each valid query sequence. If the global limit (`-max_queue_size`) is reached, excess sequences are returned to the client as "rejected" for retry. The `-max_nseq_per_req` option caps how many permits a single request can acquire, preventing one large request from monopolizing all slots.
+- **Inter-request posting budget pool (`-max_concurrent_search`):** The default value `0` preserves the historical behaviour where every concurrent request independently consumes the full residual `posting_budget` (the leftover of `-memory_limit` after `.khx` / `.ksx` `WILLNEED`). When set to `N >= 1`, requests share that budget through a lease/release pool: each request takes a single lease covering Stages 1 / 2A / 3, and at most `N` requests can hold a lease simultaneously. This bounds in-flight heap to `posting_budget` regardless of how many connections are open, at the cost of serialising additional requests at the budget-bound stages until a lease is released. Use this when sizing `-memory_limit` for a single request would be undesirable but operators still want a hard cap on per-process posting RAM.
 
 ### ikafssnhttpd
 
