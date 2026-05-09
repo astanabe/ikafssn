@@ -76,6 +76,18 @@ struct VolumeStats {
     bool has_kpx;
     // Per-volume counts array (for verbose stats)
     std::vector<uint32_t> counts;
+    // v10 (Phase 4): two-stage KSX surface area.  num_sequences above is
+    // the fragment count (= internal SeqId count); num_parents records
+    // the parent BLAST OID count behind those fragments.  The two are
+    // equal in degenerate (min_length_split == 0) indices and diverge
+    // once fragment splitting is enabled.
+    uint32_t num_parents = 0;
+    // Fragment length distribution (frag_end - frag_start + 1 per
+    // internal SeqId).  Empty unless num_sequences > 0.
+    uint32_t frag_len_min  = 0;
+    uint32_t frag_len_max  = 0;
+    double   frag_len_mean = 0.0;
+    double   frag_len_median = 0.0;
 };
 
 struct FrequencyStats {
@@ -325,6 +337,13 @@ int main(int argc, char* argv[]) {
     // Aggregated counts across all volumes (for frequency distribution)
     std::vector<uint64_t> aggregated_counts(tbl_size, 0);
 
+    // v10 (Phase 4): aggregated parent OID count + fragment-length
+    // distribution across all volumes.  Per-volume slices are emitted
+    // first (under each "Volume N:" block) and the cross-volume rollup
+    // is printed in the overall statistics section.
+    uint64_t total_parents = 0;
+    std::vector<uint32_t> all_frag_lengths;
+
     for (const auto& vf : vol_files) {
         KixReader kix;
         if (!kix.open(vf.kix_path)) {
@@ -347,6 +366,55 @@ int main(int argc, char* argv[]) {
         for (uint32_t i = 0; i < tbl_size; i++) {
             aggregated_counts[i] += vs.counts[i];
         }
+
+        // v10 (Phase 4): open the volume's .ksx to surface the parent /
+        // fragment split and the per-volume fragment-length distribution.
+        // The KSX reader owns the parent table and per-fragment
+        // (start, end) arrays even when the index is degenerate (1 parent
+        // == 1 fragment).
+        {
+            KsxReader ksx;
+            if (!ksx.open(vf.ksx_path)) {
+                std::fprintf(stderr, "Error: cannot open %s\n", vf.ksx_path.c_str());
+                return 1;
+            }
+            vs.num_parents = ksx.num_parents();
+
+            const uint32_t nseq = ksx.num_sequences();
+            if (nseq > 0) {
+                std::vector<uint32_t> frag_lens(nseq);
+                uint64_t sum_lens = 0;
+                vs.frag_len_min = UINT32_MAX;
+                vs.frag_len_max = 0;
+                for (uint32_t sid = 0; sid < nseq; sid++) {
+                    const uint32_t flen =
+                        ksx.fragment_end(sid) - ksx.fragment_start(sid) + 1u;
+                    frag_lens[sid] = flen;
+                    sum_lens += flen;
+                    if (flen < vs.frag_len_min) vs.frag_len_min = flen;
+                    if (flen > vs.frag_len_max) vs.frag_len_max = flen;
+                }
+                vs.frag_len_mean = static_cast<double>(sum_lens) /
+                                   static_cast<double>(nseq);
+
+                std::vector<uint32_t> sorted_lens = frag_lens;
+                std::sort(sorted_lens.begin(), sorted_lens.end());
+                const size_t mid = sorted_lens.size() / 2;
+                if (sorted_lens.size() % 2 == 0 && !sorted_lens.empty()) {
+                    vs.frag_len_median =
+                        (static_cast<double>(sorted_lens[mid - 1]) +
+                         static_cast<double>(sorted_lens[mid])) / 2.0;
+                } else {
+                    vs.frag_len_median =
+                        static_cast<double>(sorted_lens[mid]);
+                }
+
+                all_frag_lengths.insert(all_frag_lengths.end(),
+                                        frag_lens.begin(), frag_lens.end());
+            }
+            ksx.close();
+        }
+        total_parents += vs.num_parents;
 
         total_sequences += vs.num_sequences;
         total_postings += vs.total_postings;
@@ -378,7 +446,21 @@ int main(int argc, char* argv[]) {
     std::printf("--- Per-Volume Statistics ---\n\n");
     for (const auto& vs : vol_stats) {
         std::printf("Volume %u:\n", vs.volume_index);
-        std::printf("  Sequences:       %u\n", vs.num_sequences);
+        // v10 (Phase 4): Sequences == fragment count (= internal SeqId
+        // count); Parents == parent BLAST OID count.  In a degenerate
+        // (min_length_split == 0) index the two are equal.
+        std::printf("  Parents:         %u\n", vs.num_parents);
+        std::printf("  Fragments:       %u\n", vs.num_sequences);
+        if (vs.num_sequences > 0 && vs.num_parents > 0) {
+            std::printf("  Frag/Parent:     %.2f\n",
+                        static_cast<double>(vs.num_sequences) /
+                        static_cast<double>(vs.num_parents));
+        }
+        if (vs.num_sequences > 0) {
+            std::printf("  Fragment length: min=%u median=%.1f mean=%.1f max=%u\n",
+                        vs.frag_len_min, vs.frag_len_median,
+                        vs.frag_len_mean, vs.frag_len_max);
+        }
         std::printf("  Total postings:  %lu\n",
                     static_cast<unsigned long>(vs.total_postings));
         std::printf("  File sizes:\n");
@@ -427,7 +509,39 @@ int main(int argc, char* argv[]) {
 
     // Overall statistics
     std::printf("--- Overall Statistics ---\n\n");
-    std::printf("Total sequences:   %lu\n", static_cast<unsigned long>(total_sequences));
+    // v10 (Phase 4): cross-volume parent / fragment rollup.  total_parents
+    // and total_sequences (= total fragments) are summed here from the per-
+    // volume KSX scans above; the aggregated fragment-length distribution
+    // stitches together all per-volume frag_lens vectors.
+    std::printf("Total parents:     %lu\n", static_cast<unsigned long>(total_parents));
+    std::printf("Total fragments:   %lu\n", static_cast<unsigned long>(total_sequences));
+    if (total_parents > 0 && total_sequences > 0) {
+        std::printf("Frag/Parent:       %.2f\n",
+                    static_cast<double>(total_sequences) /
+                    static_cast<double>(total_parents));
+    }
+    if (!all_frag_lengths.empty()) {
+        uint64_t sum_lens = 0;
+        uint32_t agg_min = UINT32_MAX;
+        uint32_t agg_max = 0;
+        for (uint32_t v : all_frag_lengths) {
+            sum_lens += v;
+            if (v < agg_min) agg_min = v;
+            if (v > agg_max) agg_max = v;
+        }
+        const double agg_mean = static_cast<double>(sum_lens) /
+                                static_cast<double>(all_frag_lengths.size());
+        std::vector<uint32_t> sorted = all_frag_lengths;
+        std::sort(sorted.begin(), sorted.end());
+        const size_t mid = sorted.size() / 2;
+        const double agg_median =
+            (sorted.size() % 2 == 0)
+                ? (static_cast<double>(sorted[mid - 1]) +
+                   static_cast<double>(sorted[mid])) / 2.0
+                : static_cast<double>(sorted[mid]);
+        std::printf("Fragment length:   min=%u median=%.1f mean=%.1f max=%u\n",
+                    agg_min, agg_median, agg_mean, agg_max);
+    }
     std::printf("Total postings:    %lu\n", static_cast<unsigned long>(total_postings));
     uint64_t total_index_size = total_kix_size + total_kpx_size + total_ksx_size + khx_size;
     std::printf("Total index size:  %s (%lu bytes)\n",

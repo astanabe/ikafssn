@@ -49,7 +49,9 @@ static AccInfo g_acc_info[NUM_TARGETS];
 // ---- Helpers ----
 
 // Parse FASTA from a string into accession -> sequence map.
-// Header format: >ACCESSION query=... strand=... range=... score=...
+// v10 (Phase 4) defline: `>ACCESSION:start-end query=... strand=... score=...`
+// (kafsss style).  We strip the `:start-end` suffix so the map is keyed by
+// the bare parent accession that callers compare against TARGET_ACC.
 static std::unordered_map<std::string, std::string>
 parse_fasta_output(const std::string& fasta_str) {
     std::unordered_map<std::string, std::string> seqs;
@@ -61,12 +63,19 @@ parse_fasta_output(const std::string& fasta_str) {
         if (line.empty()) continue;
         if (line[0] == '>') {
             if (!cur_acc.empty()) seqs[cur_acc] = cur_seq;
-            // Extract first word after '>'
+            // Extract first whitespace-delimited token after '>'.
             size_t s = 1;
             while (s < line.size() && std::isspace(static_cast<unsigned char>(line[s]))) s++;
             size_t e = s;
             while (e < line.size() && !std::isspace(static_cast<unsigned char>(line[e]))) e++;
-            cur_acc = line.substr(s, e - s);
+            std::string tok = line.substr(s, e - s);
+            // Strip the trailing `:start-end` (v10 Phase 4 retriever
+            // defline) so the map key remains the bare parent accession.
+            // GenBank accessions never contain ':' so a single ':' is
+            // unambiguous for this slicing.
+            auto colon = tok.find(':');
+            if (colon != std::string::npos) tok.resize(colon);
+            cur_acc = std::move(tok);
             cur_seq.clear();
         } else {
             cur_seq += line;

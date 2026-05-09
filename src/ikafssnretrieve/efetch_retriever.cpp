@@ -1,4 +1,5 @@
 #include "ikafssnretrieve/efetch_retriever.hpp"
+#include "io/accession_utils.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -223,6 +224,16 @@ static void reverse_complement(std::string& seq) {
     }
 }
 
+// First accession token of a (possibly '\x01'-joined multi-defline) sseqid.
+// Mirrors local_retriever::first_accession_token so the kafsss-style
+// `parent_acc:start-end` defline stays well-formed when the parent OID
+// carries several accessions.
+static std::string first_accession_token(const std::string& sseqid) {
+    auto tokens = split_accessions(sseqid);
+    if (tokens.empty()) return sseqid;
+    return std::string(tokens.front());
+}
+
 // Write a single FASTA record with 70-char line wrapping.
 static void write_fasta_record(std::ostream& out, const std::string& header,
                                const std::string& sequence) {
@@ -341,11 +352,16 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                     reverse_complement(subseq);
                 }
 
+                // v10 (Phase 4) defline: kafsss-style `parent_acc:start-end`
+                // where coordinates are 1-based inclusive (consistent with
+                // BLAST's seq_start/seq_stop semantics that this code path
+                // already speaks below).  ext_start / ext_end here are
+                // 0-based parent-relative, so add 1.
                 std::ostringstream header;
-                header << hit.sseqid
+                header << first_accession_token(hit.sseqid) << ':'
+                       << (ext_start + 1) << '-' << (ext_end + 1)
                        << " query=" << hit.qseqid
                        << " strand=" << hit.sstrand
-                       << " range=" << ext_start << '-' << ext_end
                        << " score=" << hit.chainscore;
                 write_fasta_record(out, header.str(), subseq);
                 retrieved++;
@@ -394,11 +410,14 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                 reverse_complement(subseq);
             }
 
+            // v10 (Phase 4) defline: same `parent_acc:start-end` form as the
+            // batch path above, using the 1-based (seq_start, seq_stop) we
+            // already passed to efetch.
             std::ostringstream header;
-            header << hit.sseqid
+            header << first_accession_token(hit.sseqid) << ':'
+                   << seq_start << '-' << seq_stop
                    << " query=" << hit.qseqid
                    << " strand=" << hit.sstrand
-                   << " range=" << hr.ext_start << '-' << hr.ext_end
                    << " score=" << hit.chainscore;
             write_fasta_record(out, header.str(), subseq);
             retrieved++;

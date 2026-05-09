@@ -165,7 +165,10 @@ static void test_context_extension() {
         }
         // Range: [100-10, 200+10] = [90, 210], size = 121
         CHECK_EQ(seq.size(), 121u);
-        CHECK(hdr.find("range=90-210") != std::string::npos);
+        // v10 (Phase 4): defline now embeds the parent accession + the
+        // 1-based inclusive extracted range as `acc:start-end` (kafsss
+        // style).  ext_start=90, ext_end=210 (0-based) -> 91-211 (1-based).
+        CHECK(hdr.find(":91-211") != std::string::npos);
     }
 }
 
@@ -182,7 +185,11 @@ static void test_context_clamp_start() {
     uint32_t n = retrieve_local(hits, g_testdb_path, opts, out);
     CHECK_EQ(n, 1u);
     std::string fasta = out.str();
-    CHECK(fasta.find("range=0-") != std::string::npos);
+    // v10 (Phase 4): defline = `>acc:1-N` after 0-based ext_start=0 is
+    // converted to 1-based.  We grep for the leading ':1-' rather than the
+    // upper bound (which depends on the parent length and the context
+    // clamp at the upper end).
+    CHECK(fasta.find(":1-") != std::string::npos);
 }
 
 static void test_reverse_strand() {
