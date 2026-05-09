@@ -179,11 +179,108 @@ static void test_multi_fragment_per_parent() {
     std::remove(TEST_FILE);
 }
 
+// Phase 5 round-trip: multiple parents that all carry several fragments,
+// exercising the cross-parent boundary as well as 3+ fragments per parent.
+// The Phase 1 builder still emits the degenerate 1:1 layout, so this test
+// stresses the wire format / reader resolution end-to-end against the kind
+// of layout the Phase 2 builder writes once -min_length_split is non-zero.
+static void test_multi_parent_multi_fragment() {
+    {
+        KsxWriter writer;
+        writer.set_min_seq_length(64);
+        writer.set_min_length_split(1500);
+        writer.set_overlap_length(200);
+
+        // Parent 0 (BLAST OID 7): 3 fragments mirroring the LONGCHR_1
+        // expected split (5171 bp, min=1500, ovl=200).
+        uint32_t p0 = writer.add_parent(7, 5171, "LONGCHR_1");
+        writer.add_fragment(p0, 1,    1791);  // SeqId 0
+        writer.add_fragment(p0, 1592, 3381);  // SeqId 1
+        writer.add_fragment(p0, 3182, 4771);  // SeqId 2
+
+        // Parent 1 (BLAST OID 11): 2 fragments, asymmetric lengths.
+        uint32_t p1 = writer.add_parent(11, 4000, "MID_CHR");
+        writer.add_fragment(p1, 1,    2200);  // SeqId 3
+        writer.add_fragment(p1, 2001, 4000);  // SeqId 4
+
+        // Parent 2 (BLAST OID 12): single fragment.
+        uint32_t p2 = writer.add_parent(12, 800, "SHORT");
+        writer.add_fragment(p2, 1, 800);     // SeqId 5
+
+        // Parent 3 (BLAST OID 21): 4 fragments — exercises the case where
+        // a parent has more than 3 children of unequal length.
+        uint32_t p3 = writer.add_parent(21, 8000, "LONGCHR_2");
+        writer.add_fragment(p3, 1,    2200);  // SeqId 6
+        writer.add_fragment(p3, 2001, 4200);  // SeqId 7
+        writer.add_fragment(p3, 4001, 6200);  // SeqId 8
+        writer.add_fragment(p3, 6001, 8000);  // SeqId 9
+
+        CHECK_EQ(writer.num_parents(), 4u);
+        CHECK_EQ(writer.num_sequences(), 10u);
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KsxReader reader;
+        CHECK(reader.open(TEST_FILE));
+        CHECK_EQ(reader.num_parents(), 4u);
+        CHECK_EQ(reader.num_sequences(), 10u);
+        CHECK_EQ(reader.min_length_split(), 1500u);
+        CHECK_EQ(reader.overlap_length(), 200u);
+
+        // Per-fragment expectations: parent_idx, frag_start, frag_end,
+        // frag_length, parent_length, parent_accession, blast_oid.
+        struct FragExp {
+            uint32_t parent_idx;
+            uint32_t fstart;
+            uint32_t fend;
+            uint32_t fragment_length;
+            uint32_t parent_length;
+            const char* parent_accession;
+            uint32_t blast_oid;
+        };
+        FragExp exp[10] = {
+            {0, 1,    1791, 1791, 5171, "LONGCHR_1", 7},
+            {0, 1592, 3381, 1790, 5171, "LONGCHR_1", 7},
+            {0, 3182, 4771, 1590, 5171, "LONGCHR_1", 7},
+            {1, 1,    2200, 2200, 4000, "MID_CHR",   11},
+            {1, 2001, 4000, 2000, 4000, "MID_CHR",   11},
+            {2, 1,     800,  800,  800, "SHORT",     12},
+            {3, 1,    2200, 2200, 8000, "LONGCHR_2", 21},
+            {3, 2001, 4200, 2200, 8000, "LONGCHR_2", 21},
+            {3, 4001, 6200, 2200, 8000, "LONGCHR_2", 21},
+            {3, 6001, 8000, 2000, 8000, "LONGCHR_2", 21},
+        };
+        for (uint32_t sid = 0; sid < 10; ++sid) {
+            CHECK_EQ(reader.parent_index(sid),   exp[sid].parent_idx);
+            CHECK_EQ(reader.fragment_start(sid), exp[sid].fstart);
+            CHECK_EQ(reader.fragment_end(sid),   exp[sid].fend);
+            CHECK_EQ(reader.seq_length(sid),     exp[sid].fragment_length);
+            CHECK(reader.accession(sid) == exp[sid].parent_accession);
+        }
+        // Parent-keyed accessors round-trip independently.
+        for (uint32_t pidx = 0; pidx < reader.num_parents(); ++pidx) {
+            // Find the first sid that maps to this parent, and reuse its
+            // expected parent_length / parent_accession / blast_oid.
+            for (uint32_t sid = 0; sid < 10; ++sid) {
+                if (exp[sid].parent_idx != pidx) continue;
+                CHECK_EQ(reader.parent_length(pidx), exp[sid].parent_length);
+                CHECK_EQ(reader.blast_oid(pidx),     exp[sid].blast_oid);
+                CHECK(reader.parent_accession(pidx) == exp[sid].parent_accession);
+                break;
+            }
+        }
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
 int main() {
     test_basic_roundtrip();
     test_empty_accession();
     test_long_accession();
     test_multi_fragment_per_parent();
+    test_multi_parent_multi_fragment();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

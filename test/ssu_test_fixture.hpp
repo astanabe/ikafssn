@@ -37,6 +37,13 @@ inline std::string multivol_b_prefix() {
     return std::string(DERIVED_DIR) + "/ssu_multivol_b";
 }
 
+// Phase 5: long-parent DB for fragment-split integration tests.
+// Two LONGCHR_X parents, each the concatenation of three SSU sequences
+// (~5000bp).  Run setup_ssu_testdata.sh to populate.
+inline std::string long_db_prefix() {
+    return std::string(DERIVED_DIR) + "/ssu_longdb";
+}
+
 inline std::string queries_path() {
     return std::string(DERIVED_DIR) + "/queries.fasta";
 }
@@ -78,6 +85,13 @@ inline void check_ssu_available() {
 inline void check_derived_data_ready() {
     if (!std::filesystem::exists(ambig_db_prefix() + ".nsq")) {
         skip("Derived test data not found. Run test/scripts/setup_ssu_testdata.sh first.");
+    }
+}
+
+// Verify the long-parent fixture (Phase 5) is ready; skip if not.
+inline void check_long_db_ready() {
+    if (!std::filesystem::exists(long_db_prefix() + ".nsq")) {
+        skip("Long-parent fixture not found. Re-run test/scripts/setup_ssu_testdata.sh.");
     }
 }
 

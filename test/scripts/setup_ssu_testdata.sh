@@ -6,6 +6,14 @@
 #   ssu_ambigdb.*     - BLAST DB with injected ambiguous bases
 #   ssu_multivol_a.*  - BLAST DB subset (FJ876973.1 + 4 others)
 #   ssu_multivol_b.*  - BLAST DB subset (GQ912721.1 + DQ235612.1 + 3 others)
+#   ssu_longdb.*      - BLAST DB with two artificially long parents (each
+#                       ~5000bp) used by Phase 5 fragment-split integration
+#                       tests.  Each LONGCHR_X record is the concatenation
+#                       of three SSU sequences, so with -min_length_split
+#                       1500 -overlap_length 200 the fragment splitter
+#                       carves it into multiple fragments and the boundary
+#                       (and the overlap region between adjacent fragments)
+#                       is well-defined for boundary-crossing query tests.
 #   queries.fasta     - 100bp query subsequences
 #   seqidlist.txt     - Accession list for filter tests
 
@@ -122,7 +130,52 @@ else
     echo "  ssu_multivol_b already exists, skipping."
 fi
 
-# ---- 3. Query FASTA ----
+# ---- 3. Long-parent DB (for Phase 5 fragment-split integration tests) ----
+if [ ! -f "${OUTDIR}/ssu_longdb.nsq" ]; then
+    echo "--- Building ssu_longdb ---"
+
+    blastdbcmd -db "${SSU_PREFIX}" -dbtype nucl \
+        -entry "FJ876973.1,GQ912721.1,DQ235612.1,KY682881.1,KY682880.1,KY682879.1" \
+        -outfmt "%a %s" \
+        -out "${OUTDIR}/ssu_long_raw.txt"
+
+    python3 -c "
+infile  = '${OUTDIR}/ssu_long_raw.txt'
+outfile = '${OUTDIR}/ssu_long.fasta'
+
+records = {}
+with open(infile) as f:
+    for line in f:
+        line = line.rstrip('\n')
+        if not line: continue
+        acc, seq = line.split(' ', 1)
+        records[acc] = seq
+
+# LONGCHR_1 = FJ876973.1 + GQ912721.1 + DQ235612.1
+# LONGCHR_2 = KY682881.1 + KY682880.1 + KY682879.1
+parts1 = [records['FJ876973.1'], records['GQ912721.1'], records['DQ235612.1']]
+parts2 = [records['KY682881.1'], records['KY682880.1'], records['KY682879.1']]
+
+with open(outfile, 'w') as f:
+    f.write('>LONGCHR_1\n')
+    seq = ''.join(parts1)
+    for i in range(0, len(seq), 70):
+        f.write(seq[i:i+70] + '\n')
+    f.write('>LONGCHR_2\n')
+    seq = ''.join(parts2)
+    for i in range(0, len(seq), 70):
+        f.write(seq[i:i+70] + '\n')
+"
+
+    makeblastdb -in "${OUTDIR}/ssu_long.fasta" -dbtype nucl \
+        -out "${OUTDIR}/ssu_longdb" -parse_seqids
+    rm -f "${OUTDIR}/ssu_long.fasta" "${OUTDIR}/ssu_long_raw.txt"
+    echo "  ssu_longdb created."
+else
+    echo "  ssu_longdb already exists, skipping."
+fi
+
+# ---- 4. Query FASTA ----
 if [ ! -f "${OUTDIR}/queries.fasta" ]; then
     echo "--- Generating queries.fasta ---"
     {
@@ -138,7 +191,7 @@ else
     echo "  queries.fasta already exists, skipping."
 fi
 
-# ---- 4. Seqidlist ----
+# ---- 5. Seqidlist ----
 if [ ! -f "${OUTDIR}/seqidlist.txt" ]; then
     echo "--- Generating seqidlist.txt ---"
     printf "FJ876973.1\nGQ912721.1\n" > "${OUTDIR}/seqidlist.txt"

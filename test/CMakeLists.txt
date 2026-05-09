@@ -75,6 +75,20 @@ add_ikafssn_test(test_kpx_io test_kpx_io.cpp)
 add_ikafssn_test(test_khx_io test_khx_io.cpp)
 target_link_libraries(test_khx_io PRIVATE ikafssn_util)
 
+# Phase 5: fragment_splitter port reference test (no BLAST DB dependency)
+add_ikafssn_test(test_fragment_splitter test_fragment_splitter.cpp)
+
+# Phase 5: result_dedup unit test (uses KsxWriter/Reader for the Stage 2
+# parent-relative key resolution; no BLAST DB dependency).
+add_executable(test_result_dedup test_result_dedup.cpp)
+target_link_libraries(test_result_dedup PRIVATE
+    ikafssn_search ikafssn_index ikafssn_io ikafssn_core
+)
+target_include_directories(test_result_dedup PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+add_test(NAME test_result_dedup COMMAND test_result_dedup)
+
 # Phase 5i: SIMD dedup kernel unit test
 add_ikafssn_test(test_seq_id_dedup test_seq_id_dedup.cpp)
 target_link_libraries(test_seq_id_dedup PRIVATE ikafssn_util)
@@ -220,6 +234,22 @@ target_include_directories(test_stage1_simd_kernel PRIVATE
 target_compile_definitions(test_stage1_simd_kernel PRIVATE IKAFSSN_TESTING)
 add_test(NAME test_stage1_simd_kernel COMMAND test_stage1_simd_kernel)
 add_ikafssn_simd_test(test_stage1_simd_kernel)
+
+# Phase 5: split-index end-to-end integration test (requires NCBI Toolkit
+# + BLAST DB + the long-parent fixture from setup_ssu_testdata.sh).
+add_executable(test_split_index_integration test_split_index_integration.cpp)
+target_link_libraries(test_split_index_integration PRIVATE
+    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_split_index_integration PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_compile_definitions(test_split_index_integration PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME test_split_index_integration COMMAND test_split_index_integration)
 
 # Search integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_search_integration test_search_integration.cpp)
