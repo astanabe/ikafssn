@@ -119,10 +119,15 @@ void write_results_tsv_mode1_parallel(std::ostream& out,
                             const auto& cr = oh.cr;
                             const auto* ksx = in.ksx_per_volume[oh.volume_idx];
                             const std::string& qid = queries[oh.query_idx].id;
-                            std::string_view sseqid = ksx->accession(cr.seq_id);
+                            // v10 (Phase 3): report parent accession + parent
+                            // length so mode-1 output is fragment-agnostic.
+                            const uint32_t parent_idx =
+                                ksx->parent_index(cr.seq_id);
+                            std::string_view sseqid =
+                                ksx->parent_accession(parent_idx);
                             uint32_t qlen = static_cast<uint32_t>(
                                 queries[oh.query_idx].sequence.size());
-                            uint32_t slen = ksx->seq_length(cr.seq_id);
+                            uint32_t slen = ksx->parent_length(parent_idx);
 
                             append_str(buf, qid);          buf.push_back('\t');
                             append_str(buf, sseqid);       buf.push_back('\t');
@@ -232,8 +237,11 @@ void write_results_json_mode1_parallel(std::ostream& out,
             const auto& oh = hits[i];
             const auto& cr = oh.cr;
             const auto* ksx = in.ksx_per_volume[oh.volume_idx];
-            std::string_view sseqid = ksx->accession(cr.seq_id);
-            uint32_t slen = ksx->seq_length(cr.seq_id);
+            // v10 (Phase 3): report parent accession + parent length so
+            // mode-1 JSON output mirrors the TSV (fragment-agnostic).
+            const uint32_t parent_idx = ksx->parent_index(cr.seq_id);
+            std::string_view sseqid = ksx->parent_accession(parent_idx);
+            uint32_t slen = ksx->parent_length(parent_idx);
 
             buf.append("        {\n          \"sseqid\": ");
             json_escape_into(buf, sseqid);

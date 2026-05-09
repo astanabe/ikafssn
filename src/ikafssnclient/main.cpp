@@ -698,11 +698,16 @@ int main(int argc, char* argv[]) {
     // v10: validate -min_query_length against the server's min_seq_length
     // for the target database, and pre-filter queries that fall below
     // either threshold so the request only carries valid sequences.
+    // v10 (Phase 3): also reject queries longer than the index's
+    // overlap_length when fragment splitting is active, mirroring the
+    // server-side kSkipQueryTooLong path.
     {
         uint32_t srv_min_seq_length = 0;
+        uint32_t srv_overlap_length = 0;
         for (const auto& db : server_info.databases) {
             if (db.name == base_req.db) {
                 srv_min_seq_length = db.min_seq_length;
+                srv_overlap_length = db.overlap_length;
                 break;
             }
         }
@@ -719,7 +724,8 @@ int main(int argc, char* argv[]) {
 
         std::vector<FastaRecord> kept;
         kept.reserve(queries.size());
-        uint32_t skipped = 0;
+        uint32_t skipped_short = 0;
+        uint32_t skipped_long  = 0;
         for (auto& q : queries) {
             if (q.sequence.size() < min_query_length) {
                 std::fprintf(stderr,
@@ -727,20 +733,37 @@ int main(int argc, char* argv[]) {
                     "skipped\n",
                     q.id.c_str(), q.sequence.size(),
                     static_cast<unsigned>(min_query_length));
-                ++skipped;
+                ++skipped_short;
+                continue;
+            }
+            if (srv_overlap_length > 0 &&
+                q.sequence.size() > srv_overlap_length) {
+                std::fprintf(stderr,
+                    "Warning: query '%s' (length=%zu) is longer than the index's "
+                    "overlap_length=%u for database '%s', skipped\n",
+                    q.id.c_str(), q.sequence.size(),
+                    static_cast<unsigned>(srv_overlap_length),
+                    base_req.db.c_str());
+                ++skipped_long;
                 continue;
             }
             kept.push_back(std::move(q));
         }
-        if (skipped > 0) {
+        if (skipped_short > 0) {
             logger.info("Skipped %u queries shorter than min_query_length=%u",
-                        skipped, static_cast<unsigned>(min_query_length));
+                        skipped_short, static_cast<unsigned>(min_query_length));
+        }
+        if (skipped_long > 0) {
+            logger.info("Skipped %u queries longer than overlap_length=%u",
+                        skipped_long, static_cast<unsigned>(srv_overlap_length));
         }
         queries = std::move(kept);
         if (queries.empty()) {
             std::fprintf(stderr,
-                "Error: all input queries were shorter than -min_query_length=%u\n",
-                static_cast<unsigned>(min_query_length));
+                "Error: all input queries were rejected by -min_query_length=%u "
+                "or the index's overlap_length=%u\n",
+                static_cast<unsigned>(min_query_length),
+                static_cast<unsigned>(srv_overlap_length));
             return 1;
         }
     }

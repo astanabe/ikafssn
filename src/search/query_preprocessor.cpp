@@ -93,6 +93,25 @@ QueryKmerData<KmerInt> preprocess_query(
         result.skip_detail = buf;
         return result;
     }
+    // Then the v10 (Phase 3) overlap_length ceiling.  The index reports its
+    // overlap_length via the .ksx header; the orchestrator copies it into
+    // SearchConfig::max_query_length.  Queries longer than the overlap are
+    // skipped because the Stage 2/3 dedup keys (parent-relative coordinates)
+    // assume every chain hit fits inside at most two adjacent fragments.
+    // max_query_length == 0 disables the check (degenerate fragment-table
+    // case: min_length_split == 0, no splitting).
+    if (config.max_query_length > 0 &&
+        query_seq.size() > config.max_query_length) {
+        result.skip_reason = kSkipQueryTooLong;
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "length=%zu > overlap_length=%u; queries longer than the "
+                      "index's overlap_length are not supported",
+                      query_seq.size(),
+                      static_cast<unsigned>(config.max_query_length));
+        result.skip_detail = buf;
+        return result;
+    }
     // The window-count Nqkmer also requires seq_len >= span.
     const int span = (t > 0) ? static_cast<int>(t) : k;
     if (static_cast<int>(query_seq.size()) < span) {

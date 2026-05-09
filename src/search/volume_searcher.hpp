@@ -35,6 +35,13 @@ struct SearchConfig {
     // skipped with kSkipQueryTooShort (the legacy span-based check still
     // runs as a fallback for the t > 0 case).  0 disables the filter.
     uint32_t min_query_length = 0;
+    // v10 (Phase 3): maximum query length.  Set from the index's
+    // overlap_length (from the .ksx header) when fragment splitting is
+    // active.  Queries longer than this are skipped with kSkipQueryTooLong
+    // because dedup correctness relies on every chain hit fitting inside at
+    // most two adjacent fragments (i.e. the overlap window).  0 disables the
+    // filter (degenerate fragment-table case: min_length_split == 0).
+    uint32_t max_query_length = 0;
 };
 
 struct SearchResult {

@@ -12,6 +12,7 @@
 #include "search/parallel_search.hpp"
 #include "search/preprocess_runner.hpp"
 #include "search/query_preprocessor.hpp"
+#include "search/result_dedup.hpp"
 #include "search/search_orchestrator.hpp"
 #include "search/tier_selection.hpp"
 
@@ -497,6 +498,10 @@ SearchResponse process_search_request(
 
     // Convert OrchestratorHit -> ResponseHit at the boundary, fanning out
     // into the corresponding QueryResult slot.
+    //
+    // v10 (Phase 3): Stage 2 chains live in fragment-relative coordinates.
+    // Re-map them to parent-OID-relative coordinates so wire output carries
+    // the parent accession, parent slen, and parent-relative sstart/send.
     for (const auto& oh_in : orch_hits) {
         const auto& cr = oh_in.cr;
         size_t result_idx = query_to_result[oh_in.query_idx];
@@ -504,22 +509,27 @@ SearchResponse process_search_request(
         const auto& vol = is_both_mode
             ? group_cod->volumes[oh_in.volume_idx]
             : group.volumes[oh_in.volume_idx];
+        const uint32_t parent_idx = vol.ksx.parent_index(cr.seq_id);
+        const uint32_t frag_start = vol.ksx.fragment_start(cr.seq_id);
+        const uint32_t shift      = frag_start - 1u;
         ResponseHit rh;
-        rh.sseqid = std::string(vol.ksx.accession(cr.seq_id));
+        rh.sseqid = std::string(vol.ksx.parent_accession(parent_idx));
         rh.sstrand = cr.is_reverse ? 1 : 0;
         rh.qstart = cr.q_start;
         rh.qend = cr.q_end;
-        rh.sstart = cr.s_start;
-        rh.send = cr.s_end;
+        rh.sstart = cr.s_start + shift;
+        rh.send   = cr.s_end   + shift;
         rh.chainscore = static_cast<uint16_t>(cr.chainscore);
         if (config.stage1.stage1_score_type == 2)
             rh.matchscore = static_cast<uint16_t>(cr.stage1_score);
         else
             rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
         rh.volume = vol.volume_index;
-        rh.oid = cr.seq_id;
+        // Stage 3 keys BlastDbReader by parent BLAST DB OID, so propagate
+        // the parent's BLAST OID rather than the internal fragment seq_id.
+        rh.oid = vol.ksx.blast_oid(parent_idx);
         rh.qlen = static_cast<uint32_t>(req.queries[oh_in.query_idx].sequence.size());
-        rh.slen = vol.ksx.seq_length(cr.seq_id);
+        rh.slen = vol.ksx.parent_length(parent_idx);
         resp.results[result_idx].hits.push_back(std::move(rh));
     }
 
@@ -567,6 +577,10 @@ SearchResponse process_search_request(
         stage3_config.posting_budget = posting_budget;
         output_hits = run_stage3(output_hits, fasta_queries, db.db_path,
                                  stage3_config, ctx_is_ratio, ctx_ratio, ctx_abs, logger);
+        // v10 (Phase 3): Stage 3 dedup over parent-relative (send, alnscore).
+        // Mirrors the ikafssnsearch dedup so server responses look identical
+        // for fragmented indexes.
+        dedup_stage3_output_hits(output_hits);
 
         // Write back to ResponseHit
         for (auto& qr : resp.results) qr.hits.clear();

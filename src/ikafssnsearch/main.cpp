@@ -10,6 +10,7 @@
 #include "index/ksx_reader.hpp"
 #include "index/khx_reader.hpp"
 #include "search/oid_filter.hpp"
+#include "search/result_dedup.hpp"
 #include "search/volume_searcher.hpp"
 #include "search/parallel_search.hpp"
 #include "search/search_orchestrator.hpp"
@@ -625,6 +626,14 @@ int main(int argc, char* argv[]) {
         if (!open_volumes(ctx.vol_files, ctx.volumes, need_kpx)) return 1;
     }
 
+    // v10 (Phase 3): drive max_query_length from the index's overlap_length.
+    // All volumes within an index carry the same overlap_length so the first
+    // .ksx is authoritative.  When overlap_length == 0 (degenerate fragment
+    // table from Phase 1, no splitting) the check stays disabled.
+    if (!ctxs.empty() && !ctxs[0].volumes.empty()) {
+        config.max_query_length = ctxs[0].volumes[0].ksx.overlap_length();
+    }
+
     // Open shared .khx for every context (non-fatal if missing).
     {
         auto parts = parse_index_prefix(ix_prefix);
@@ -797,10 +806,12 @@ int main(int argc, char* argv[]) {
     }
 
     uint32_t skipped_too_short = 0;
+    uint32_t skipped_too_long  = 0;
     for (size_t qi = 0; qi < queries.size(); ++qi) {
         if (query_skip_reason[qi] != 0) {
             has_skipped = true;
             if (query_skip_reason[qi] == kSkipQueryTooShort) ++skipped_too_short;
+            else if (query_skip_reason[qi] == kSkipQueryTooLong) ++skipped_too_long;
             std::fprintf(stderr, "Warning: query '%s' skipped: %s (%s)\n",
                          queries[qi].id.c_str(),
                          skip_reason_str(query_skip_reason[qi]),
@@ -818,6 +829,11 @@ int main(int argc, char* argv[]) {
         logger.info("Skipped %u queries shorter than min_query_length=%u",
                     skipped_too_short,
                     static_cast<unsigned>(config.min_query_length));
+    }
+    if (skipped_too_long > 0) {
+        logger.info("Skipped %u queries longer than overlap_length=%u",
+                    skipped_too_long,
+                    static_cast<unsigned>(config.max_query_length));
     }
 
     // Thread-local Stage1Buffer sizing inputs.  num_sequences was captured
@@ -982,28 +998,39 @@ int main(int argc, char* argv[]) {
     }
 
     // Convert OrchestratorHit -> OutputHit at the boundary.
+    //
+    // v10 (Phase 3): Stage 2 chains live in fragment-relative coordinates.
+    // Re-map them to parent-OID-relative coordinates for output: sseqid
+    // becomes the parent accession, slen becomes the parent length, and
+    // sstart/send shift by (fragment_start - 1).
     std::vector<OutputHit> all_hits;
     all_hits.reserve(orch_hits.size());
     for (const auto& oh_in : orch_hits) {
         const auto& cr = oh_in.cr;
         const auto& ksx_primary = ctxs[0].volumes[oh_in.volume_idx].ksx;
+        const uint32_t parent_idx = ksx_primary.parent_index(cr.seq_id);
+        const uint32_t frag_start = ksx_primary.fragment_start(cr.seq_id);
+        const uint32_t shift      = frag_start - 1u;
         OutputHit oh;
         oh.qseqid = queries[oh_in.query_idx].id;
-        oh.sseqid = std::string(ksx_primary.accession(cr.seq_id));
+        oh.sseqid = std::string(ksx_primary.parent_accession(parent_idx));
         oh.sstrand = cr.is_reverse ? '-' : '+';
         oh.qstart = cr.q_start;
         oh.qend = cr.q_end;
-        oh.sstart = cr.s_start;
-        oh.send = cr.s_end;
+        oh.sstart = cr.s_start + shift;
+        oh.send   = cr.s_end   + shift;
         oh.chainscore = cr.chainscore;
         if (config.stage1.stage1_score_type == 2)
             oh.matchscore = cr.stage1_score;
         else
             oh.coverscore = cr.stage1_score;
         oh.volume = oh_in.volume_index;
-        oh.oid = cr.seq_id;
+        // Stage 3 fetches the subject sequence via BlastDbReader keyed by
+        // BLAST DB volume-local OID, so the parent's BLAST OID is what
+        // belongs in oh.oid (not the internal fragment seq_id).
+        oh.oid = ksx_primary.blast_oid(parent_idx);
         oh.qlen = static_cast<uint32_t>(queries[oh_in.query_idx].sequence.size());
-        oh.slen = ksx_primary.seq_length(cr.seq_id);
+        oh.slen = ksx_primary.parent_length(parent_idx);
         all_hits.push_back(std::move(oh));
     }
 
@@ -1029,6 +1056,16 @@ int main(int argc, char* argv[]) {
                               ctx_param.is_ratio, ctx_param.ratio, ctx_param.abs,
                               logger);
         logger.info("Stage 3 complete: %zu hits after filtering.", all_hits.size());
+        // v10 (Phase 3): Stage 3 dedup over parent-relative (send, alnscore).
+        // Re-runs after alignment because the alignment can extend / clamp
+        // sstart freely, leaving duplicates that survived Stage 2 dedup with
+        // distinct (sstart, chainscore) but identical (send, alnscore).
+        const size_t before = all_hits.size();
+        dedup_stage3_output_hits(all_hits);
+        if (before != all_hits.size()) {
+            logger.info("Stage 3 dedup: %zu hit(s) -> %zu after dedup",
+                        before, all_hits.size());
+        }
     }
 
     // Re-attach skip markers after Stage 3.

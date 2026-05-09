@@ -5,6 +5,7 @@
 #include "index/ksx_reader.hpp"
 #include "search/parallel_search.hpp"
 #include "search/oid_filter.hpp"
+#include "search/result_dedup.hpp"
 #include "search/stage1_filter.hpp"
 #include "util/common_init.hpp"
 #include "util/logger.hpp"
@@ -489,6 +490,20 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         logger->info("Stage 2A complete: %zu hit(s) collected (aggregated)",
                      total_stage2a_hits);
         logger->info("Stage 2B complete: %zu chain(s)", results.size());
+    }
+
+    // v10 (Phase 3): Stage 2 dedup over the parent-OID-relative key.
+    // Fragment splitting can yield duplicate chains when a query hits the
+    // same parent region through several adjacent fragments; collapse them
+    // here, before the (orch_hit -> output_hit) boundary, so neither Stage 3
+    // alignment nor TSV writing wastes work on duplicates.
+    {
+        const size_t before = results.size();
+        dedup_stage2_orchestrator_hits(results, in.ksx_per_volume);
+        if (logger && before != results.size()) {
+            logger->info("Stage 2 dedup: %zu chain(s) -> %zu after dedup",
+                         before, results.size());
+        }
     }
     return results;
 }

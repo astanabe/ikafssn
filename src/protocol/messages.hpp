@@ -99,6 +99,7 @@ enum SkipReason : uint8_t {
     kSkipDegenRejected        = 2,  // accept_qdegen=0 and query has IUPAC degenerates
     kSkipThresholdUnreachable = 3,  // resolved Stage 1 threshold <= 0
     kSkipInvalidChar          = 4,  // sequence contained a non-IUPAC character
+    kSkipQueryTooLong         = 5,  // seq_len > overlap_length on a fragment-split index
     kFailHttpJob              = 255,// client-only: async HTTP job failed
 };
 
@@ -108,6 +109,7 @@ inline const char* skip_reason_str(uint8_t r) {
         case kSkipDegenRejected:        return "degen_rejected";
         case kSkipThresholdUnreachable: return "threshold_unreachable";
         case kSkipInvalidChar:          return "invalid_char";
+        case kSkipQueryTooLong:         return "query_too_long";
         case kFailHttpJob:              return "http_job_failed";
         default:                        return "ok";
     }
