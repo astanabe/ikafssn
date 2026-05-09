@@ -22,7 +22,7 @@ bool KpxReader::open(const std::string& path) {
 
     header_ = reinterpret_cast<const KpxHeader*>(mmap_.data());
 
-    if (std::memcmp(header_->magic, KPX_MAGIC, 4) != 0) {
+    if (std::memcmp(header_->magic, KPX_MAGIC, sizeof(KPX_MAGIC)) != 0) {
         std::fprintf(stderr, "KpxReader: invalid magic\n");
         close();
         return false;

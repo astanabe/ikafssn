@@ -21,7 +21,7 @@ bool KsxReader::open(const std::string& path) {
 
     const auto* hdr = reinterpret_cast<const KsxHeader*>(mmap_.data());
 
-    if (std::memcmp(hdr->magic, KSX_MAGIC, 4) != 0) {
+    if (std::memcmp(hdr->magic, KSX_MAGIC, sizeof(KSX_MAGIC)) != 0) {
         std::fprintf(stderr, "KsxReader: invalid magic\n");
         close();
         return false;
@@ -36,36 +36,74 @@ bool KsxReader::open(const std::string& path) {
         return false;
     }
 
-    num_sequences_ = hdr->num_sequences;
+    num_sequences_    = hdr->num_sequences;
+    num_parents_      = hdr->num_parents;
+    min_seq_length_   = hdr->min_seq_length;
+    min_length_split_ = hdr->min_length_split;
+    overlap_length_   = hdr->overlap_length;
 
     const uint8_t* ptr = mmap_.data() + sizeof(KsxHeader);
-    seq_lengths_ = reinterpret_cast<const uint32_t*>(ptr);
+
+    parent_lengths_ = reinterpret_cast<const uint32_t*>(ptr);
+    ptr += sizeof(uint32_t) * num_parents_;
+
+    parent_blast_oids_ = reinterpret_cast<const uint32_t*>(ptr);
+    ptr += sizeof(uint32_t) * num_parents_;
+
+    parent_acc_offsets_ = reinterpret_cast<const uint32_t*>(ptr);
+    ptr += sizeof(uint32_t) * (num_parents_ + 1);
+
+    parent_acc_strings_ = reinterpret_cast<const char*>(ptr);
+    if (num_parents_ > 0) {
+        ptr += parent_acc_offsets_[num_parents_];
+    }
+
+    fragment_parent_idx_ = reinterpret_cast<const uint32_t*>(ptr);
     ptr += sizeof(uint32_t) * num_sequences_;
 
-    acc_offsets_ = reinterpret_cast<const uint32_t*>(ptr);
-    ptr += sizeof(uint32_t) * (num_sequences_ + 1);
+    fragment_start_ = reinterpret_cast<const uint32_t*>(ptr);
+    ptr += sizeof(uint32_t) * num_sequences_;
 
-    acc_strings_ = reinterpret_cast<const char*>(ptr);
+    fragment_end_ = reinterpret_cast<const uint32_t*>(ptr);
+    ptr += sizeof(uint32_t) * num_sequences_;
+
+    if (static_cast<size_t>(ptr - mmap_.data()) > mmap_.size()) {
+        std::fprintf(stderr, "KsxReader: file truncated\n");
+        close();
+        return false;
+    }
 
     return true;
 }
 
 void KsxReader::close() {
     mmap_.close();
-    num_sequences_ = 0;
-    seq_lengths_ = nullptr;
-    acc_offsets_ = nullptr;
-    acc_strings_ = nullptr;
+    num_sequences_   = 0;
+    num_parents_     = 0;
+    min_seq_length_  = 0;
+    min_length_split_= 0;
+    overlap_length_  = 0;
+    parent_lengths_      = nullptr;
+    parent_blast_oids_   = nullptr;
+    parent_acc_offsets_  = nullptr;
+    parent_acc_strings_  = nullptr;
+    fragment_parent_idx_ = nullptr;
+    fragment_start_      = nullptr;
+    fragment_end_        = nullptr;
 }
 
-uint32_t KsxReader::seq_length(uint32_t oid) const {
-    return seq_lengths_[oid];
+uint32_t KsxReader::seq_length(uint32_t seq_id) const {
+    return fragment_end_[seq_id] - fragment_start_[seq_id] + 1u;
 }
 
-std::string_view KsxReader::accession(uint32_t oid) const {
-    uint32_t start = acc_offsets_[oid];
-    uint32_t len = acc_offsets_[oid + 1] - start;
-    return std::string_view(acc_strings_ + start, len);
+std::string_view KsxReader::accession(uint32_t seq_id) const {
+    return parent_accession(fragment_parent_idx_[seq_id]);
+}
+
+std::string_view KsxReader::parent_accession(uint32_t parent_idx) const {
+    uint32_t start = parent_acc_offsets_[parent_idx];
+    uint32_t len   = parent_acc_offsets_[parent_idx + 1] - start;
+    return std::string_view(parent_acc_strings_ + start, len);
 }
 
 size_t KsxReader::willneed_size() const {

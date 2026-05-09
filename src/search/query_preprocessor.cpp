@@ -80,7 +80,20 @@ QueryKmerData<KmerInt> preprocess_query(
     QueryKmerData<KmerInt> result;
     result.qlen = static_cast<uint32_t>(query_seq.size());
 
-    // 0. Length check (window-count Nqkmer requires seq_len >= span)
+    // 0. Length check.
+    // First, the explicit -min_query_length floor (v10).  Queries shorter
+    // than this are skipped before the span-based check below.
+    if (config.min_query_length > 0 &&
+        query_seq.size() < config.min_query_length) {
+        result.skip_reason = kSkipQueryTooShort;
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "length=%zu < min_query_length=%u",
+                      query_seq.size(),
+                      static_cast<unsigned>(config.min_query_length));
+        result.skip_detail = buf;
+        return result;
+    }
+    // The window-count Nqkmer also requires seq_len >= span.
     const int span = (t > 0) ? static_cast<int>(t) : k;
     if (static_cast<int>(query_seq.size()) < span) {
         result.skip_reason = kSkipQueryTooShort;

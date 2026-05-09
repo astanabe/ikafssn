@@ -24,7 +24,7 @@ bool KixReader::open(const std::string& path) {
 
     header_ = reinterpret_cast<const KixHeader*>(mmap_.data());
 
-    if (std::memcmp(header_->magic, KIX_MAGIC, 4) != 0) {
+    if (std::memcmp(header_->magic, KIX_MAGIC, sizeof(KIX_MAGIC)) != 0) {
         std::fprintf(stderr, "KixReader: invalid magic\n");
         close();
         return false;

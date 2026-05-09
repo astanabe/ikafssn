@@ -43,27 +43,21 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t
 // CompositeCodec<SIMDFastPFor<4>, VariableByte>). Phase 5g-2 bumped to v6
 // (.kpx partition + short bucket layout). Phase 5i bumped to v7 (distinct
 // seq_id semantic + self-describing short bucket). Phase 6 bumped to v8
-// (kind-map .kpx layout). Phase 7 bumps to v9:
-//   - .kix and .kpx dictionaries replaced by Elias-Fano blobs (4.6× smaller
-//     on average across NCBI nt_v4).  Per-tier ladder mirrors the FastPFor
-//     PForDelta dispatcher: AVX2+ uses BMI2 PDEP+TZCNT for inner-word
-//     select1; SSE4.2 / NEON use the popcount + bit-stripping fallback.
-//     KIX_FLAG_OFFSET32 / KpxHeader.offset_type are reserved (writers force
-//     the EF sentinel; readers ignore the byte).
-//   - .kix posting list header dropped [u32 body_words] (Phase 7c dedup B);
-//     body_words is derived from the EF dictionary's posting_byte_length.
-//   - .kpx posting list header dropped all four redundant u32 fields
-//     ([u32 distinct_count] (dedup A — comes from kix_count), the three
-//     per-kind counts (dedup C — popcount of the 2-bit kind map), and
-//     [u32 short2_position_count] (dedup D — horizontal sum of the u8
-//     occ_count[] array)).  The posting list now starts directly at the
-//     2-bit kind map; empty .kpx posting lists emit 0 bytes.
-//   - .ksx / .khx data layouts unchanged; format_version bumps for
-//     family-wide alignment.  .kvx FORMAT_VERSION line bumps to 9.
-inline constexpr uint16_t KIX_FORMAT_VERSION = 9;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 9;
-inline constexpr uint16_t KSX_FORMAT_VERSION = 9;
-inline constexpr uint16_t KHX_FORMAT_VERSION = 9;
+// (kind-map .kpx layout). Phase 7 bumped to v9 (Elias-Fano dictionaries +
+// dedup B/C/D). v10 (the fragment-indexing initiative, Phase 1):
+//   - KIX/KPX/KSX header reserved areas now carry the triplet
+//     {min_seq_length, min_length_split, overlap_length} that controls
+//     short-sequence filtering and (in Phase 2 onward) long-sequence
+//     fragment splitting.  In Phase 1 only min_seq_length carries a
+//     non-zero value; the other two are written as 0.
+//   - .ksx becomes a two-stage layout (parents -> fragments).  The Phase
+//     1 writer still emits 1 fragment per parent, so the wire layout is
+//     compatible with future Phase 2 multi-fragment outputs without
+//     another format_version bump.
+inline constexpr uint16_t KIX_FORMAT_VERSION = 10;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 10;
+inline constexpr uint16_t KSX_FORMAT_VERSION = 10;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 10;
 
 // Direct-address table size for k-mer value k: 4^k.
 // Max supported: 4^15 = 1,073,741,824 (fits uint32_t).  k=16 would

@@ -25,6 +25,12 @@ struct IndexBuilderConfig {
     // shared short bucket.  Default 8 mirrors -max_freq_build's `>`
     // comparison semantics.
     uint32_t freq_threshold_part = 8;
+
+    // v10 fragment-indexing additions (Phase 1: only min_seq_length is wired
+    // up to a CLI flag; the other two stay 0 until Phase 2).
+    uint32_t min_seq_length    = 64;  // shorter sequences are skipped at index time
+    uint32_t min_length_split  = 0;   // 0 = splitting disabled
+    uint32_t overlap_length    = 0;   // 0 = splitting disabled
 };
 
 // Build .kix, .kpx, .ksx index files for a single BLAST DB volume.

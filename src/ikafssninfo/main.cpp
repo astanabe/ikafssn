@@ -293,8 +293,12 @@ int main(int argc, char* argv[]) {
     int k = vol_files[0].k;
     uint8_t vol_t = vol_files[0].t;
     uint8_t vol_template_type = vol_files[0].template_type;
-    // Determine table size from first volume's reader
+    // Determine table size and v10 fragment-indexing triplet from the
+    // first volume's reader.
     uint32_t tbl_size = 0;
+    uint32_t hdr_min_seq_length = 0;
+    uint32_t hdr_min_length_split = 0;
+    uint32_t hdr_overlap_length = 0;
     {
         KixReader kix0;
         if (!kix0.open(vol_files[0].kix_path)) {
@@ -302,6 +306,9 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         tbl_size = kix0.table_size();
+        hdr_min_seq_length   = kix0.min_seq_length();
+        hdr_min_length_split = kix0.min_length_split();
+        hdr_overlap_length   = kix0.overlap_length();
         kix0.close();
     }
 
@@ -362,6 +369,9 @@ int main(int argc, char* argv[]) {
                      template_type_to_string(static_cast<TemplateType>(vol_template_type)).c_str());
     }
     std::printf("Table size (4^k):  %lu\n", static_cast<unsigned long>(tbl_size));
+    std::printf("min_seq_length:    %u\n", hdr_min_seq_length);
+    std::printf("min_length_split:  %u\n", hdr_min_length_split);
+    std::printf("overlap_length:    %u\n", hdr_overlap_length);
     std::printf("Number of volumes: %zu\n\n", vol_stats.size());
 
     // Per-volume info

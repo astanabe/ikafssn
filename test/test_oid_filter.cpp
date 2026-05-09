@@ -12,13 +12,16 @@ using namespace ikafssn;
 
 static std::string g_test_dir;
 
-// Create a minimal .ksx file with known accessions
+// Create a minimal v10 .ksx file with known accessions, one fragment per
+// parent (the Phase 1 degenerate layout used by ikafssnindex).
 static void create_test_ksx(const std::string& path,
                             const std::vector<std::string>& accessions,
                             const std::vector<uint32_t>& lengths) {
     KsxWriter writer;
     for (size_t i = 0; i < accessions.size(); i++) {
-        writer.add_sequence(lengths[i], accessions[i]);
+        uint32_t parent_idx = writer.add_parent(static_cast<uint32_t>(i),
+                                                lengths[i], accessions[i]);
+        writer.add_fragment(parent_idx, 1, lengths[i]);
     }
     writer.write(path);
 }

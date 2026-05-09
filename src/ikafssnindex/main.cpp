@@ -51,11 +51,12 @@ static int64_t file_size_or_neg(const std::string& path) {
     return static_cast<int64_t>(st.st_size);
 }
 
-// Verify the on-disk .ksx size matches the expected layout
-// (header + seq_lengths[N] + acc_offsets[N+1] + accession string table,
-// where the string table size is recorded in acc_offsets[N]).
-// Returns true on match.  Reads the KsxHeader and acc_offsets[N] from
-// disk, so the caller does not need to know num_sequences in advance.
+// Verify the on-disk .ksx size matches the v10 two-stage layout:
+//   header + parent_lengths[P] + parent_blast_oids[P] + parent_acc_offsets[P+1]
+//          + accession-string-table[acc_bytes]
+//          + fragment_parent_idx[N] + fragment_start[N] + fragment_end[N]
+// where P = num_parents, N = num_sequences, and acc_bytes is recorded in
+// parent_acc_offsets[P].
 static bool verify_ksx_file_size(const std::string& ksx_path,
                                  const Logger& logger) {
     FILE* fp = std::fopen(ksx_path.c_str(), "rb");
@@ -65,16 +66,20 @@ static bool verify_ksx_file_size(const std::string& ksx_path,
         std::fclose(fp);
         return false;
     }
-    if (std::memcmp(hdr.magic, KSX_MAGIC, 4) != 0
+    if (std::memcmp(hdr.magic, KSX_MAGIC, sizeof(KSX_MAGIC)) != 0
         || hdr.format_version != KSX_FORMAT_VERSION) {
         std::fclose(fp);
         return false;
     }
     const uint32_t num_sequences = hdr.num_sequences;
-    if (std::fseek(fp, sizeof(KsxHeader)
-                       + sizeof(uint32_t) * num_sequences
-                       + sizeof(uint32_t) * num_sequences,
-                   SEEK_SET) != 0) {
+    const uint32_t num_parents   = hdr.num_parents;
+
+    // Read parent_acc_offsets[num_parents] (the sentinel = total acc bytes).
+    const long acc_offsets_pos = static_cast<long>(sizeof(KsxHeader))
+                               + static_cast<long>(sizeof(uint32_t)) * num_parents
+                               + static_cast<long>(sizeof(uint32_t)) * num_parents
+                               + static_cast<long>(sizeof(uint32_t)) * num_parents;
+    if (std::fseek(fp, acc_offsets_pos, SEEK_SET) != 0) {
         std::fclose(fp);
         return false;
     }
@@ -86,9 +91,13 @@ static bool verify_ksx_file_size(const std::string& ksx_path,
     std::fclose(fp);
 
     int64_t expected = static_cast<int64_t>(sizeof(KsxHeader))
-                     + static_cast<int64_t>(sizeof(uint32_t)) * num_sequences
-                     + static_cast<int64_t>(sizeof(uint32_t)) * (num_sequences + 1)
-                     + static_cast<int64_t>(string_table_bytes);
+                     + static_cast<int64_t>(sizeof(uint32_t)) * num_parents          // parent_lengths
+                     + static_cast<int64_t>(sizeof(uint32_t)) * num_parents          // parent_blast_oids
+                     + static_cast<int64_t>(sizeof(uint32_t)) * (num_parents + 1)    // parent_acc_offsets
+                     + static_cast<int64_t>(string_table_bytes)                       // accession strings
+                     + static_cast<int64_t>(sizeof(uint32_t)) * num_sequences        // fragment_parent_idx
+                     + static_cast<int64_t>(sizeof(uint32_t)) * num_sequences        // fragment_start
+                     + static_cast<int64_t>(sizeof(uint32_t)) * num_sequences;       // fragment_end
     int64_t actual = file_size_or_neg(ksx_path);
     if (actual != expected) {
         logger.warn("validate: %s file size %ld != expected %ld",
@@ -175,17 +184,20 @@ static IndexValidation validate_khx_standalone(
 
 // Validate existing index files for a volume against the BLAST DB.
 // Checks (in order): file existence, header validity, BLAST DB
-// metadata match (num_sequences / total_bases / k / t / template_type),
-// .kix and .ksx on-disk file size, and (if deep == true) a structural
-// walk of the (.kix, .kpx) pair via validate_volume() so truncated /
-// FOR-stream-corrupt files left behind by a previous crash are caught
-// before we try to reuse them.
+// metadata match (num_sequences / total_bases / k / t / template_type /
+// min_seq_length), .kix and .ksx on-disk file size, and (if deep == true)
+// a structural walk of the (.kix, .kpx) pair via validate_volume() so
+// truncated / FOR-stream-corrupt files left behind by a previous crash
+// are caught before we try to reuse them.
 //
 // suffix: "" for final files (.kix), ".tmp" for temp files (.kix.tmp).
 static IndexValidation validate_existing_index(
     const std::string& output_prefix,
     const std::string& vol_path,
     int k, uint8_t t, uint8_t template_type,
+    uint32_t min_seq_length,
+    uint32_t min_length_split,
+    uint32_t overlap_length,
     bool skip_kpx,
     const Logger& logger,
     bool deep,
@@ -203,30 +215,33 @@ static IndexValidation validate_existing_index(
     std::fclose(fp);
     if (!ok) return result; // kNotFound (truncated file)
 
-    if (std::memcmp(kix_hdr.magic, KIX_MAGIC, 4) != 0) return result;
+    if (std::memcmp(kix_hdr.magic, KIX_MAGIC, sizeof(KIX_MAGIC)) != 0) return result;
     if (kix_hdr.format_version != KIX_FORMAT_VERSION) return result;
 
-    // Check .ksx exists, read header + seq_lengths to compute total_bases
+    // Check .ksx exists, read header + parent_lengths to compute total_bases
+    // (in v10 the parent table — not the fragment table — carries the
+    // full per-OID lengths that should sum to the BLAST DB total).
     fp = std::fopen(ksx_path.c_str(), "rb");
     if (!fp) return result; // kNotFound
     KsxHeader ksx_hdr{};
     ok = (std::fread(&ksx_hdr, sizeof(ksx_hdr), 1, fp) == 1);
     if (!ok) { std::fclose(fp); return result; }
 
-    if (std::memcmp(ksx_hdr.magic, KSX_MAGIC, 4) != 0) { std::fclose(fp); return result; }
+    if (std::memcmp(ksx_hdr.magic, KSX_MAGIC, sizeof(KSX_MAGIC)) != 0) { std::fclose(fp); return result; }
     if (ksx_hdr.format_version != KSX_FORMAT_VERSION) { std::fclose(fp); return result; }
 
-    uint32_t ksx_nseq = ksx_hdr.num_sequences;
-    std::vector<uint32_t> seq_lengths(ksx_nseq);
-    if (ksx_nseq > 0) {
-        size_t read_count = std::fread(seq_lengths.data(), sizeof(uint32_t), ksx_nseq, fp);
-        if (read_count != ksx_nseq) { std::fclose(fp); return result; }
+    uint32_t ksx_nseq     = ksx_hdr.num_sequences;
+    uint32_t ksx_nparents = ksx_hdr.num_parents;
+    std::vector<uint32_t> parent_lengths(ksx_nparents);
+    if (ksx_nparents > 0) {
+        size_t read_count = std::fread(parent_lengths.data(), sizeof(uint32_t), ksx_nparents, fp);
+        if (read_count != ksx_nparents) { std::fclose(fp); return result; }
     }
     std::fclose(fp);
 
     uint64_t ksx_total_bases = 0;
-    for (uint32_t i = 0; i < ksx_nseq; i++) {
-        ksx_total_bases += seq_lengths[i];
+    for (uint32_t i = 0; i < ksx_nparents; i++) {
+        ksx_total_bases += parent_lengths[i];
     }
 
     // Check .kpx exists (if required)
@@ -244,7 +259,6 @@ static IndexValidation validate_existing_index(
         return result;
     }
     uint32_t db_nseq = db.num_sequences();
-    uint64_t db_total_bases = db.total_length();
 
     // Check k, t, template_type
     if (kix_hdr.k != static_cast<uint8_t>(k) ||
@@ -262,25 +276,90 @@ static IndexValidation validate_existing_index(
         return result;
     }
 
-    // Check num_sequences
-    if (kix_hdr.num_sequences != db_nseq || ksx_nseq != db_nseq) {
+    // Check min_seq_length matches what we are about to build with.  The
+    // .ksx parent table was filtered by this value, so reusing the index
+    // requires the same filter.
+    if (kix_hdr.min_seq_length != min_seq_length ||
+        ksx_hdr.min_seq_length != min_seq_length) {
         char buf[256];
         std::snprintf(buf, sizeof(buf),
-            "%s: num_sequences=%u but BLAST DB '%s' has %u",
-            kix_path.c_str(), kix_hdr.num_sequences,
-            vol_path.c_str(), db_nseq);
+            "%s: min_seq_length (kix=%u, ksx=%u) does not match requested %u",
+            kix_path.c_str(),
+            kix_hdr.min_seq_length, ksx_hdr.min_seq_length,
+            min_seq_length);
         result.status = IndexStatus::kMismatch;
         result.detail = buf;
         return result;
     }
 
-    // Check total_bases
-    if (ksx_total_bases != db_total_bases) {
+    // Check min_length_split / overlap_length match what we are about to
+    // build with.  The .ksx fragment table is keyed off these values.
+    if (kix_hdr.min_length_split != min_length_split ||
+        ksx_hdr.min_length_split != min_length_split ||
+        kix_hdr.overlap_length   != overlap_length   ||
+        ksx_hdr.overlap_length   != overlap_length) {
+        char buf[320];
+        std::snprintf(buf, sizeof(buf),
+            "%s: split parameters (kix min_length_split=%u, overlap_length=%u; "
+            "ksx min_length_split=%u, overlap_length=%u) do not match requested "
+            "(min_length_split=%u, overlap_length=%u)",
+            kix_path.c_str(),
+            kix_hdr.min_length_split, kix_hdr.overlap_length,
+            ksx_hdr.min_length_split, ksx_hdr.overlap_length,
+            min_length_split, overlap_length);
+        result.status = IndexStatus::kMismatch;
+        result.detail = buf;
+        return result;
+    }
+
+    // Recompute BLAST DB stats with the same min_seq_length filter so we
+    // can compare them against the .ksx-recorded counts.  Sequences whose
+    // length is below min_seq_length are excluded from both num_seqs and
+    // total_bases.
+    uint32_t db_filtered_nseq = 0;
+    uint64_t db_filtered_total_bases = 0;
+    for (uint32_t oid = 0; oid < db_nseq; oid++) {
+        uint32_t slen = db.seq_length(oid);
+        if (slen < min_seq_length) continue;
+        db_filtered_nseq++;
+        db_filtered_total_bases += slen;
+    }
+
+    // Check num_parents (= number of OIDs that survived the
+    // min_seq_length filter) against the BLAST DB.  Fragment count
+    // (num_sequences) is not directly comparable when splitting is on,
+    // since it depends on N-runs in each parent's sequence; we only
+    // require num_sequences == kix_hdr.num_sequences (internal
+    // consistency between the .kix and .ksx files).
+    if (ksx_nparents != db_filtered_nseq) {
         char buf[256];
         std::snprintf(buf, sizeof(buf),
-            "%s: total_bases=%lu but BLAST DB '%s' has %lu",
+            "%s: num_parents=%u but BLAST DB '%s' has %u (after min_seq_length=%u filter)",
+            ksx_path.c_str(), ksx_nparents,
+            vol_path.c_str(), db_filtered_nseq, min_seq_length);
+        result.status = IndexStatus::kMismatch;
+        result.detail = buf;
+        return result;
+    }
+    if (kix_hdr.num_sequences != ksx_nseq) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "%s: num_sequences=%u but %s reports %u",
+            kix_path.c_str(), kix_hdr.num_sequences,
+            ksx_path.c_str(), ksx_nseq);
+        result.status = IndexStatus::kMismatch;
+        result.detail = buf;
+        return result;
+    }
+
+    // Check total_bases (sum of parent lengths).
+    if (ksx_total_bases != db_filtered_total_bases) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "%s: total_bases=%lu but BLAST DB '%s' has %lu (after min_seq_length=%u filter)",
             ksx_path.c_str(), static_cast<unsigned long>(ksx_total_bases),
-            vol_path.c_str(), static_cast<unsigned long>(db_total_bases));
+            vol_path.c_str(), static_cast<unsigned long>(db_filtered_total_bases),
+            min_seq_length);
         result.status = IndexStatus::kMismatch;
         result.detail = buf;
         return result;
@@ -333,10 +412,22 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "  -k <int>               k-mer length (%d-%d)\n"
         "  -o <dir>               Output directory\n\n"
         "Options:\n"
-        "  -mode <1|2|3>          Search mode the index will support (default: 2)\n"
-        "                         1 = Stage 1 only (skip .kpx generation)\n"
-        "                         2 = Stage 1+2 (default)\n"
+        "  -mode <1|2|3>          Search mode the index will support (default: 1)\n"
+        "                         1 = Stage 1 only (skip .kpx generation, default)\n"
+        "                         2 = Stage 1+2\n"
         "                         3 = Stage 1+2+3 (same as 2 for index)\n"
+        "  -min_seq_length <int>  Minimum sequence length; shorter sequences are skipped\n"
+        "                         (default: 64)\n"
+        "  -min_length_split <int>\n"
+        "                         Minimum split length; long sequences are split into\n"
+        "                         overlapping fragments of this size (default: 50000\n"
+        "                         for -mode 1, 0 for -mode 2/3).  0 disables splitting.\n"
+        "                         When non-zero, must be in [1000, 1000000].\n"
+        "  -overlap_length <int>  Overlap between adjacent fragments, in bases\n"
+        "                         (default: 500 for -mode 1, 0 for -mode 2/3).\n"
+        "                         Must be < min_length_split / 2.\n"
+        "                         -min_length_split and -overlap_length must both be 0\n"
+        "                         (splitting disabled) or both non-zero.\n"
         "  -rebuild <0|1>         Rebuild mode (default: 0)\n"
         "                         0 = skip volumes with valid existing indexes\n"
         "                         1 = always rebuild all volumes from scratch\n"
@@ -413,10 +504,89 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Parse -mode (1, 2, or 3; default 2)
-    int index_mode = cli.get_int("-mode", 2);
+    // Parse -mode (1, 2, or 3; default 1).
+    // Phase 2 (fragment indexing): -mode 1 is now the recommended default
+    // because fragment splitting brings .kpx-less search into the practical
+    // range for nt-class databases.
+    int index_mode = cli.get_int("-mode", 1);
     if (index_mode < 1 || index_mode > 3) {
         std::fprintf(stderr, "Error: -mode must be 1, 2, or 3\n");
+        return 1;
+    }
+
+    // Parse -min_seq_length (default 64).  Sequences shorter than this
+    // are skipped at index time; the value is persisted in the .kix /
+    // .kpx / .ksx headers and consulted by ikafssnsearch / ikafssnclient
+    // to validate -min_query_length.
+    uint32_t min_seq_length = 64;
+    if (cli.has("-min_seq_length")) {
+        int v = cli.get_int("-min_seq_length", 0);
+        if (v <= 0) {
+            std::fprintf(stderr,
+                "Error: -min_seq_length must be a positive integer (got %d)\n", v);
+            return 1;
+        }
+        min_seq_length = static_cast<uint32_t>(v);
+    }
+
+    // Parse -min_length_split / -overlap_length (Phase 2).
+    //
+    // Defaults depend on -mode:
+    //   - -mode 1: min_length_split = 50000, overlap_length = 500
+    //   - -mode 2/3: min_length_split = 0, overlap_length = 0 (no splitting)
+    //
+    // The two flags are coupled: either both 0 (splitting disabled) or both
+    // non-zero.  When non-zero, min_length_split must be in [1000, 1000000]
+    // and overlap_length must be < min_length_split / 2.
+    uint32_t min_length_split;
+    uint32_t overlap_length;
+    if (index_mode == 1) {
+        min_length_split = 50000;
+        overlap_length = 500;
+    } else {
+        min_length_split = 0;
+        overlap_length = 0;
+    }
+    if (cli.has("-min_length_split")) {
+        long long v = cli.get_int("-min_length_split", -1);
+        if (v < 0) {
+            std::fprintf(stderr,
+                "Error: -min_length_split must be 0 (disabled) or in [1000, 1000000] "
+                "(got %lld)\n", v);
+            return 1;
+        }
+        if (v != 0 && (v < 1000 || v > 1000000)) {
+            std::fprintf(stderr,
+                "Error: -min_length_split must be 0 (disabled) or in [1000, 1000000] "
+                "(got %lld)\n", v);
+            return 1;
+        }
+        min_length_split = static_cast<uint32_t>(v);
+    }
+    if (cli.has("-overlap_length")) {
+        long long v = cli.get_int("-overlap_length", -1);
+        if (v < 0) {
+            std::fprintf(stderr,
+                "Error: -overlap_length must be a non-negative integer (got %lld)\n", v);
+            return 1;
+        }
+        overlap_length = static_cast<uint32_t>(v);
+    }
+    // Coupling: both 0 or both non-zero.
+    if ((min_length_split == 0) != (overlap_length == 0)) {
+        std::fprintf(stderr,
+            "Error: -min_length_split (%u) and -overlap_length (%u) must both be 0 "
+            "(splitting disabled) or both non-zero (splitting enabled)\n",
+            min_length_split, overlap_length);
+        return 1;
+    }
+    // overlap_length must leave at least min_length_split / 2 of fresh bases
+    // per fragment, otherwise the kafsss split formula degenerates.
+    if (min_length_split != 0 && overlap_length >= min_length_split / 2) {
+        std::fprintf(stderr,
+            "Error: -overlap_length (%u) must be < -min_length_split / 2 "
+            "(%u / 2 = %u)\n",
+            overlap_length, min_length_split, min_length_split / 2);
         return 1;
     }
 
@@ -557,12 +727,19 @@ int main(int argc, char* argv[]) {
     if (spaced_t > 0) {
         std::string type_display = (spaced_type == TemplateType::kBoth)
             ? "both (coding+optimal)" : template_type_to_string(spaced_type);
-        logger.info("Parameters: k=%d, t=%d, template_type=%s, mode=%d, memory_limit=%s, threads=%d",
+        logger.info("Parameters: k=%d, t=%d, template_type=%s, mode=%d, "
+                    "min_seq_length=%u, min_length_split=%u, overlap_length=%u, "
+                    "memory_limit=%s, threads=%d",
                     k, spaced_t, type_display.c_str(),
-                    index_mode, mem_limit_str.c_str(), threads);
+                    index_mode, min_seq_length, min_length_split, overlap_length,
+                    mem_limit_str.c_str(), threads);
     } else {
-        logger.info("Parameters: k=%d, mode=%d, memory_limit=%s, threads=%d",
-                    k, index_mode, mem_limit_str.c_str(), threads);
+        logger.info("Parameters: k=%d, mode=%d, min_seq_length=%u, "
+                    "min_length_split=%u, overlap_length=%u, "
+                    "memory_limit=%s, threads=%d",
+                    k, index_mode, min_seq_length,
+                    min_length_split, overlap_length,
+                    mem_limit_str.c_str(), threads);
     }
 
     // Extract DB base name from path
@@ -582,6 +759,9 @@ int main(int argc, char* argv[]) {
     config.t = spaced_t;
     config.template_type = static_cast<uint8_t>(spaced_type);
     config.freq_threshold_part = static_cast<uint32_t>(freq_threshold_part);
+    config.min_seq_length = min_seq_length;
+    config.min_length_split = min_length_split;
+    config.overlap_length = overlap_length;
     // When max_freq_build is active (not 1.0 = disabled), keep .tmp files for cross-volume filtering
     bool freq_filter_active = (max_freq_build != 1.0);
     config.keep_tmp = freq_filter_active;
@@ -659,7 +839,9 @@ int main(int argc, char* argv[]) {
             std::vector<IndexValidation> validations(total_volumes);
             for (uint16_t vi = 0; vi < total_volumes; vi++) {
                 validations[vi] = validate_existing_index(vol_prefixes[vi], vol_paths[vi],
-                    k, spaced_t, cur_tt, config.skip_kpx, logger, /*deep=*/true);
+                    k, spaced_t, cur_tt, min_seq_length,
+                    min_length_split, overlap_length,
+                    config.skip_kpx, logger, /*deep=*/true);
             }
 
             // Check for mismatches — error out immediately
@@ -719,7 +901,9 @@ int main(int argc, char* argv[]) {
                     // rebuild the missing/invalid ones.
                     for (uint16_t vi = 0; vi < total_volumes; vi++) {
                         auto tmp_val = validate_existing_index(vol_prefixes[vi], vol_paths[vi],
-                            k, spaced_t, cur_tt, config.skip_kpx, logger, /*deep=*/true, ".tmp");
+                            k, spaced_t, cur_tt, min_seq_length,
+                            min_length_split, overlap_length,
+                            config.skip_kpx, logger, /*deep=*/true, ".tmp");
                         if (tmp_val.status == IndexStatus::kValid) {
                             skip_volume[vi] = true;
                             logger.info("Volume %d/%d (%s): valid .tmp index exists, "

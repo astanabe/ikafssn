@@ -65,7 +65,7 @@ bool KixWriter::write(const std::string& path) {
     // header bit is preserved as reserved/sentinel for the eventual v9
     // bump per Phase 7 design decision #6).
     KixHeader hdr{};
-    std::memcpy(hdr.magic, KIX_MAGIC, 4);
+    std::memcpy(hdr.magic, KIX_MAGIC, sizeof(KIX_MAGIC));
     hdr.format_version = KIX_FORMAT_VERSION;
     hdr.k = static_cast<uint8_t>(k_);
     hdr.kmer_type = kmer_type_;
@@ -86,6 +86,11 @@ bool KixWriter::write(const std::string& path) {
     hdr.block_size            = 0;
     hdr.tail_codec            = 0;
     hdr.exception_codec_flags = 0;
+
+    // v10 fragment-indexing triplet
+    hdr.min_seq_length   = min_seq_length_;
+    hdr.min_length_split = min_length_split_;
+    hdr.overlap_length   = overlap_length_;
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 

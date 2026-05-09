@@ -359,7 +359,12 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format (v9):
+// Wire format (v10 — adds the per-database fragment-indexing triplet
+// {min_seq_length, min_length_split, overlap_length} after the existing
+// per-database fields).  Older clients deserialising a v10 frame will
+// stop at the wrong byte boundary; callers must rebuild client/server
+// together when the format_version triplet at the top of `core/config.hpp`
+// changes.
 //   u8   status
 //   u8   default_k
 //   i32  max_queue_size
@@ -370,6 +375,9 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 //     str16 name
 //     u8    default_k
 //     u8    max_mode
+//     u32   min_seq_length     (v10)
+//     u32   min_length_split   (v10)
+//     u32   overlap_length     (v10)
 //     u16   num_groups
 //     for each group:
 //       u8  k
@@ -400,6 +408,9 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
         w.str16(db.name);
         w.u8(db.default_k);
         w.u8(db.max_mode);
+        w.u32(db.min_seq_length);
+        w.u32(db.min_length_split);
+        w.u32(db.overlap_length);
         w.u16(static_cast<uint16_t>(db.groups.size()));
 
         for (const auto& g : db.groups) {
@@ -440,6 +451,9 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
         if (!r.get_str16(db.name)) return false;
         if (!r.get_u8(db.default_k)) return false;
         if (!r.get_u8(db.max_mode)) return false;
+        if (!r.get_u32(db.min_seq_length)) return false;
+        if (!r.get_u32(db.min_length_split)) return false;
+        if (!r.get_u32(db.overlap_length)) return false;
 
         uint16_t num_groups;
         if (!r.get_u16(num_groups)) return false;

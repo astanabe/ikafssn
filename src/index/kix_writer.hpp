@@ -22,6 +22,9 @@ public:
     void set_db(const std::string& name);
     void set_num_sequences(uint32_t n);
     void set_flags(uint32_t flags);
+    void set_min_seq_length(uint32_t v)   { min_seq_length_ = v; }
+    void set_min_length_split(uint32_t v) { min_length_split_ = v; }
+    void set_overlap_length(uint32_t v)   { overlap_length_ = v; }
 
     // Add a posting list for a k-mer.  In v7 `seq_ids` must be **sorted
     // and distinct** (the on-disk posting list stores distinct seq_ids only;
@@ -40,6 +43,9 @@ private:
     uint16_t total_volumes_ = 1;
     uint32_t flags_ = 0;
     std::string db_;
+    uint32_t min_seq_length_   = 0;
+    uint32_t min_length_split_ = 0;
+    uint32_t overlap_length_   = 0;
 
     uint32_t table_size_;
 

@@ -29,6 +29,10 @@ public:
     // ascending order.
     void add_posting_list(uint32_t kmer_value, const std::vector<PostingEntry>& entries);
 
+    void set_min_seq_length(uint32_t v)   { min_seq_length_ = v; }
+    void set_min_length_split(uint32_t v) { min_length_split_ = v; }
+    void set_overlap_length(uint32_t v)   { overlap_length_ = v; }
+
     // Write the .kpx file. Returns true on success.
     bool write(const std::string& path) const;
 
@@ -41,6 +45,9 @@ private:
     std::vector<uint64_t> pos_offsets_;
     std::vector<uint8_t> posting_file_;
     uint64_t total_position_count_ = 0;
+    uint32_t min_seq_length_   = 0;
+    uint32_t min_length_split_ = 0;
+    uint32_t overlap_length_   = 0;
 };
 
 } // namespace ikafssn

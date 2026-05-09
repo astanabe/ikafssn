@@ -13,6 +13,7 @@
 #include "index/pfd_codec.hpp"
 #include "index/seq_id_dedup.hpp"
 #include "index/parallel_sort_dispatch.hpp"
+#include "index/fragment_splitter.hpp"
 #include "util/logger.hpp"
 #include "util/progress.hpp"
 
@@ -60,9 +61,15 @@ bool build_index(BlastDbReader& db,
                  const Logger& logger) {
 
     const int k = config.k;
-    const uint32_t num_seqs = db.num_sequences();
+    const uint32_t blast_num_seqs = db.num_sequences();
+    const bool splitting_enabled = (config.min_length_split > 0);
 
-    logger.info("Building index: k=%d, sequences=%u", k, num_seqs);
+    logger.info("Building index: k=%d, blast-db sequences=%u, "
+                "min_seq_length=%u, min_length_split=%u, overlap_length=%u",
+                k, blast_num_seqs,
+                config.min_seq_length,
+                config.min_length_split,
+                config.overlap_length);
 
     // File paths (.tmp during construction, renamed to final on success)
     std::string ksx_tmp = output_prefix + ".ksx.tmp";
@@ -76,15 +83,85 @@ bool build_index(BlastDbReader& db,
     }
 
     // =========== Phase 0: Metadata collection -> .ksx ===========
-    logger.info("Phase 0: collecting metadata...");
+    // BLAST DB OIDs whose sequence is shorter than min_seq_length are
+    // skipped silently.  The surviving OIDs become parents in the .ksx.
+    //
+    // When fragment splitting is disabled (min_length_split == 0), each
+    // parent emits one degenerate fragment spanning the whole parent.
+    // When splitting is enabled, the parent's ambiguity table is parsed
+    // here (once per OID) and fed to fragment_splitter::split() to derive
+    // overlapping fragments at min_length_split / overlap_length.  N runs
+    // (ncbi4na == 0xF) cut the parent into "valid segments" so fragments
+    // never straddle long ambiguous regions.
+    //
+    // The per-fragment mapping (parent OID + parent-relative range) is
+    // captured in seq_id_to_blast_oid / seq_id_to_frag_start /
+    // seq_id_to_frag_end and consulted by the per-SeqId scan loops in
+    // Phases 1 / 2 / 3 to slice the parent's k-mer stream and rebase
+    // positions to fragment-relative coordinates.
+    logger.info("Phase 0: collecting metadata%s...",
+                splitting_enabled ? " and splitting parents into fragments" : "");
+    std::vector<uint32_t> seq_id_to_blast_oid;
+    std::vector<uint32_t> seq_id_to_frag_start;  // 1-based, inclusive (parent-relative)
+    std::vector<uint32_t> seq_id_to_frag_end;    // 1-based, inclusive
+    seq_id_to_blast_oid.reserve(blast_num_seqs);
+    seq_id_to_frag_start.reserve(blast_num_seqs);
+    seq_id_to_frag_end.reserve(blast_num_seqs);
     {
         KsxWriter ksx;
-        Progress prog("Phase 0", num_seqs, config.verbose);
-        for (uint32_t oid = 0; oid < num_seqs; oid++) {
-            uint32_t slen = db.seq_length(oid);
-            std::string acc = db.get_accession(oid);
-            ksx.add_sequence(slen, acc);
-            prog.update(oid + 1);
+        ksx.set_min_seq_length(config.min_seq_length);
+        ksx.set_min_length_split(config.min_length_split);
+        ksx.set_overlap_length(config.overlap_length);
+
+        Progress prog("Phase 0", blast_num_seqs, config.verbose);
+        uint32_t skipped = 0;
+        uint64_t total_fragments = 0;
+        for (uint32_t blast_oid = 0; blast_oid < blast_num_seqs; blast_oid++) {
+            uint32_t slen = db.seq_length(blast_oid);
+            if (slen < config.min_seq_length) {
+                skipped++;
+                prog.update(blast_oid + 1);
+                continue;
+            }
+            std::string acc = db.get_accession(blast_oid);
+            uint32_t parent_idx = ksx.add_parent(blast_oid, slen, acc);
+
+            // Compute the fragment list for this parent.
+            std::vector<fragment_splitter::Fragment> frags;
+            if (!splitting_enabled) {
+                frags.push_back({1u, slen});
+            } else {
+                auto raw = db.get_raw_sequence(blast_oid);
+                auto ambig = AmbiguityParser::parse(raw.ambig_data,
+                                                   raw.ambig_bytes);
+                db.ret_raw_sequence(raw);
+                frags = fragment_splitter::split(slen, ambig,
+                                                 config.min_length_split,
+                                                 config.overlap_length);
+            }
+
+            for (const auto& f : frags) {
+                // SeqId space is u32; reject parents that would push the
+                // running fragment count past UINT32_MAX so downstream
+                // u32 SeqId arithmetic stays safe.
+                if (seq_id_to_blast_oid.size() >= UINT32_MAX) {
+                    logger.error("SeqId space exhausted: more than %u fragments "
+                                 "would be required for this volume "
+                                 "(BLAST DB OID %u, parent length %u). "
+                                 "Increase -min_length_split or split the BLAST "
+                                 "DB into smaller volumes.",
+                                 UINT32_MAX, blast_oid, slen);
+                    std::remove(ksx_tmp.c_str());
+                    return false;
+                }
+                uint32_t seq_id = ksx.add_fragment(parent_idx, f.start, f.end);
+                (void)seq_id;
+                seq_id_to_blast_oid.push_back(blast_oid);
+                seq_id_to_frag_start.push_back(f.start);
+                seq_id_to_frag_end.push_back(f.end);
+            }
+            total_fragments += frags.size();
+            prog.update(blast_oid + 1);
         }
         prog.finish();
 
@@ -92,8 +169,16 @@ bool build_index(BlastDbReader& db,
             logger.error("Failed to write %s", ksx_tmp.c_str());
             return false;
         }
-        logger.info("Phase 0: wrote %s (%u sequences)", ksx_tmp.c_str(), num_seqs);
+        logger.info("Phase 0: wrote %s (%u parents -> %u fragments, "
+                    "%u skipped < min_seq_length=%u)",
+                    ksx_tmp.c_str(), ksx.num_parents(), ksx.num_sequences(),
+                    skipped, config.min_seq_length);
+        (void)total_fragments;
     }
+    // Internal SeqId space is the per-fragment count; counting / encoding
+    // loops below are keyed by SeqId.  When splitting is disabled this
+    // collapses to one fragment per surviving OID.
+    const uint32_t num_seqs = static_cast<uint32_t>(seq_id_to_blast_oid.size());
 
     // Pre-compute spaced seed masks (shared across all phases).
     std::vector<uint32_t> seed_masks;
@@ -119,39 +204,87 @@ bool build_index(BlastDbReader& db,
             [&](const tbb::blocked_range<uint32_t>& range) {
                 auto& my_counts = local_counts.local();
                 PackedKmerScanner<KmerInt> scanner(k);
-                for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
-                    auto raw = db.get_raw_sequence(oid);
-                    auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+                // Cache the most-recently-loaded parent inside this TBB
+                // task so consecutive fragments belonging to the same
+                // parent reuse the parsed ambiguity table.  Fragments
+                // were emitted in parent registration order during
+                // Phase 0, so adjacency is the common case.
+                uint32_t cached_oid = UINT32_MAX;
+                BlastDbReader::RawSequence cached_raw{};
+                std::vector<AmbiguityEntry> cached_ambig;
+                auto release_cache = [&]() {
+                    if (cached_oid != UINT32_MAX) {
+                        db.ret_raw_sequence(cached_raw);
+                        cached_oid = UINT32_MAX;
+                    }
+                };
+                for (uint32_t seq_id = range.begin(); seq_id < range.end(); seq_id++) {
+                    const uint32_t blast_oid = seq_id_to_blast_oid[seq_id];
+                    if (blast_oid != cached_oid) {
+                        release_cache();
+                        cached_raw = db.get_raw_sequence(blast_oid);
+                        cached_ambig = AmbiguityParser::parse(
+                            cached_raw.ambig_data, cached_raw.ambig_bytes);
+                        cached_oid = blast_oid;
+                    }
+                    // Fragment-relative position filter.  The scanner emits
+                    // pos = leftmost-base index (0-based) of each k-mer
+                    // (kmer_start in PackedKmerScanner); a valid k-mer for
+                    // this fragment has its leftmost base in
+                    // [frag_start - 1, frag_end - k] (0-based, inclusive).
+                    // Counting only needs the in-range condition;
+                    // positions are not stored in this phase.
+                    const uint32_t fs = seq_id_to_frag_start[seq_id];
+                    const uint32_t fe = seq_id_to_frag_end[seq_id];
+                    const uint32_t pos_lo = fs - 1u;
+                    // fe - k >= 0 because fragments shorter than k cannot
+                    // contribute any k-mer; we still emit them to .ksx but
+                    // pos_hi being below pos_lo here makes the in-range
+                    // check unconditionally false, which is the desired
+                    // skip-this-fragment behaviour.
+                    const uint32_t pos_hi =
+                        (fe >= static_cast<uint32_t>(k))
+                        ? (fe - static_cast<uint32_t>(k))
+                        : 0u;
+                    const bool fragment_too_short =
+                        (fe < fs + static_cast<uint32_t>(k) - 1u);
+                    if (fragment_too_short) continue;
                     if (config.t > 0) {
-                        scanner.scan_spaced(raw.ncbi2na_data, raw.seq_length, ambig,
+                        scanner.scan_spaced(cached_raw.ncbi2na_data,
+                            cached_raw.seq_length, cached_ambig,
                             seed_masks, static_cast<int>(config.t),
-                            [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
+                            [&](uint32_t pos, KmerInt kmer) {
+                                if (pos < pos_lo || pos > pos_hi) return;
                                 my_counts[kmer]++;
                             },
-                            [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
-                                         const AmbigInfo* infos, int count) {
+                            [&](uint32_t pos, KmerInt base_kmer,
+                                const AmbigInfo* infos, int count) {
+                                if (pos < pos_lo || pos > pos_hi) return;
                                 expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
-                                    [&my_counts](KmerInt expanded) {
+                                    [&](KmerInt expanded) {
                                         my_counts[expanded]++;
                                     });
                             },
                             config.max_degen_expand);
                     } else {
-                        scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
-                            [&my_counts](uint32_t /*pos*/, KmerInt kmer) {
+                        scanner.scan(cached_raw.ncbi2na_data,
+                            cached_raw.seq_length, cached_ambig,
+                            [&](uint32_t pos, KmerInt kmer) {
+                                if (pos < pos_lo || pos > pos_hi) return;
                                 my_counts[kmer]++;
                             },
-                            [&my_counts](uint32_t /*pos*/, KmerInt base_kmer,
-                                         const AmbigInfo* infos, int count) {
+                            [&](uint32_t pos, KmerInt base_kmer,
+                                const AmbigInfo* infos, int count) {
+                                if (pos < pos_lo || pos > pos_hi) return;
                                 expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
-                                    [&my_counts](KmerInt expanded) {
+                                    [&](KmerInt expanded) {
                                         my_counts[expanded]++;
                                     });
                             },
                             config.max_degen_expand);
                     }
-                    db.ret_raw_sequence(raw);
                 }
+                release_cache();
             });
 
         // Reduce thread-local counts.  Walking each thread-local vector
@@ -308,37 +441,76 @@ bool build_index(BlastDbReader& db,
             [&](const tbb::blocked_range<uint32_t>& range) {
                 auto& my_buffer = local_buffers.local();
                 PackedKmerScanner<KmerInt> scanner(k);
-                for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
-                    auto raw = db.get_raw_sequence(oid);
-                    auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
+                // Cache the most-recently-loaded parent (see comment in
+                // Phase 1).  Same rationale: consecutive seq_ids tend to
+                // share a parent.
+                uint32_t cached_oid = UINT32_MAX;
+                BlastDbReader::RawSequence cached_raw{};
+                std::vector<AmbiguityEntry> cached_ambig;
+                auto release_cache = [&]() {
+                    if (cached_oid != UINT32_MAX) {
+                        db.ret_raw_sequence(cached_raw);
+                        cached_oid = UINT32_MAX;
+                    }
+                };
+                for (uint32_t seq_id = range.begin(); seq_id < range.end(); seq_id++) {
+                    const uint32_t blast_oid = seq_id_to_blast_oid[seq_id];
+                    if (blast_oid != cached_oid) {
+                        release_cache();
+                        cached_raw = db.get_raw_sequence(blast_oid);
+                        cached_ambig = AmbiguityParser::parse(
+                            cached_raw.ambig_data, cached_raw.ambig_bytes);
+                        cached_oid = blast_oid;
+                    }
+                    // Fragment-relative position arithmetic — see Phase 1
+                    // comment.  shift converts the scanner's parent-relative
+                    // (kmer_start) pos to a fragment-relative pos that the
+                    // .kpx layout stores.  P1 confirmed: positions persisted
+                    // under each fragment SeqId are fragment-relative
+                    // (0-based, leftmost base of the k-mer window).
+                    const uint32_t fs = seq_id_to_frag_start[seq_id];
+                    const uint32_t fe = seq_id_to_frag_end[seq_id];
+                    const uint32_t pos_lo = fs - 1u;
+                    const uint32_t pos_hi =
+                        (fe >= static_cast<uint32_t>(k))
+                        ? (fe - static_cast<uint32_t>(k))
+                        : 0u;
+                    const uint32_t shift  = fs - 1u;
+                    const bool fragment_too_short =
+                        (fe < fs + static_cast<uint32_t>(k) - 1u);
                     auto normal_cb = [&](uint32_t pos, KmerInt kmer) {
+                        if (pos < pos_lo || pos > pos_hi) return;
                         uint32_t kval = static_cast<uint32_t>(kmer);
                         if (counts[kval] == 0) return;
                         if (static_cast<int>(partition_of(kval, partition_bits, effective_bits)) != p) return;
-                        my_buffer.push_back({kval, oid, pos});
+                        my_buffer.push_back({kval, seq_id, pos - shift});
                     };
                     auto ambig_cb = [&](uint32_t pos, KmerInt base_kmer,
                                         const AmbigInfo* infos, int count) {
+                        if (pos < pos_lo || pos > pos_hi) return;
                         expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
                             [&](KmerInt expanded) {
                                 uint32_t kval = static_cast<uint32_t>(expanded);
                                 if (counts[kval] == 0) return;
                                 if (static_cast<int>(partition_of(kval, partition_bits, effective_bits)) != p) return;
-                                my_buffer.push_back({kval, oid, pos});
+                                my_buffer.push_back({kval, seq_id, pos - shift});
                             });
                     };
+                    if (fragment_too_short) continue;
                     if (config.t > 0) {
-                        scanner.scan_spaced(raw.ncbi2na_data, raw.seq_length, ambig,
+                        scanner.scan_spaced(cached_raw.ncbi2na_data,
+                            cached_raw.seq_length, cached_ambig,
                             seed_masks, static_cast<int>(config.t),
                             normal_cb, ambig_cb,
                             config.max_degen_expand);
                     } else {
-                        scanner.scan(raw.ncbi2na_data, raw.seq_length, ambig,
+                        scanner.scan(cached_raw.ncbi2na_data,
+                            cached_raw.seq_length, cached_ambig,
                             normal_cb, ambig_cb,
                             config.max_degen_expand);
                     }
-                    db.ret_raw_sequence(raw);
                 }
+                release_cache();
                 // Atomic progress update (coarse-grained per chunk)
                 uint32_t done = progress_counter.fetch_add(
                     range.end() - range.begin(), std::memory_order_relaxed)
@@ -597,7 +769,7 @@ bool build_index(BlastDbReader& db,
         // Write the final kix file
         FILE* wr = std::fopen(kix_tmp.c_str(), "wb");
 
-        std::memcpy(kix_hdr.magic, KIX_MAGIC, 4);
+        std::memcpy(kix_hdr.magic, KIX_MAGIC, sizeof(KIX_MAGIC));
         kix_hdr.format_version = KIX_FORMAT_VERSION;
         kix_hdr.k = static_cast<uint8_t>(k);
         kix_hdr.kmer_type = kmer_type_for(k, config.t);
@@ -619,6 +791,9 @@ bool build_index(BlastDbReader& db,
         kix_hdr.block_size            = 0;
         kix_hdr.tail_codec            = 0;
         kix_hdr.exception_codec_flags = 0;
+        kix_hdr.min_seq_length   = config.min_seq_length;
+        kix_hdr.min_length_split = config.min_length_split;
+        kix_hdr.overlap_length   = config.overlap_length;
         std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, wr);
 
         if (!write_kix_dictionary_ef(wr, kix_offsets.data(), tbl_size,
@@ -649,7 +824,7 @@ bool build_index(BlastDbReader& db,
 
         FILE* wr = std::fopen(kpx_tmp.c_str(), "wb");
 
-        std::memcpy(kpx_hdr.magic, KPX_MAGIC, 4);
+        std::memcpy(kpx_hdr.magic, KPX_MAGIC, sizeof(KPX_MAGIC));
         kpx_hdr.format_version = KPX_FORMAT_VERSION;
         kpx_hdr.k = static_cast<uint8_t>(k);
         kpx_hdr.t = config.t;
@@ -663,6 +838,9 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.codec_version = 0;
         kpx_hdr.block_size    = 0;
         kpx_hdr.tail_codec    = 0;
+        kpx_hdr.min_seq_length   = config.min_seq_length;
+        kpx_hdr.min_length_split = config.min_length_split;
+        kpx_hdr.overlap_length   = config.overlap_length;
         std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, wr);
 
         if (!write_kpx_dictionary_ef(wr, kpx_offsets.data(), tbl_size,

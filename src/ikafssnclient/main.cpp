@@ -70,6 +70,10 @@ static void print_usage(const char* prog) {
         "  -query <path>            Query FASTA file (- for stdin)\n"
         "  -ix <name>               Target database name on server\n"
         "\n"
+        "Filtering:\n"
+        "  -min_query_length <int>  Minimum query length; shorter queries are skipped\n"
+        "                           (default: 64; must be >= server's min_seq_length)\n"
+        "\n"
 #ifdef IKAFSSN_ENABLE_HTTP
         "Async REST job management (requires -http):\n"
         "  -submit_only             Submit, print group_id, and exit\n"
@@ -550,6 +554,19 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // v10 (Phase 1): -min_query_length default 64.  The integrity check
+    // against the server's min_seq_length runs after execute_info().
+    uint32_t min_query_length = 64;
+    {
+        int v = cli.get_int("-min_query_length", 64);
+        if (v <= 0) {
+            std::fprintf(stderr,
+                "Error: -min_query_length must be a positive integer (got %d)\n", v);
+            return 1;
+        }
+        min_query_length = static_cast<uint32_t>(v);
+    }
+
     SearchRequest base_req;
     base_req.k = static_cast<uint8_t>(cli.get_int("-k", 0));
     if (cli.has("-stage2_min_score")) {
@@ -674,6 +691,56 @@ int main(int argc, char* argv[]) {
                                         base_req.t, base_req.template_type);
         if (!err.empty()) {
             std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+    }
+
+    // v10: validate -min_query_length against the server's min_seq_length
+    // for the target database, and pre-filter queries that fall below
+    // either threshold so the request only carries valid sequences.
+    {
+        uint32_t srv_min_seq_length = 0;
+        for (const auto& db : server_info.databases) {
+            if (db.name == base_req.db) {
+                srv_min_seq_length = db.min_seq_length;
+                break;
+            }
+        }
+        if (min_query_length < srv_min_seq_length) {
+            std::fprintf(stderr,
+                "Error: -min_query_length=%u is smaller than the index's min_seq_length=%u "
+                "for database '%s'. Specify -min_query_length=%u or larger.\n",
+                static_cast<unsigned>(min_query_length),
+                static_cast<unsigned>(srv_min_seq_length),
+                base_req.db.c_str(),
+                static_cast<unsigned>(srv_min_seq_length));
+            return 1;
+        }
+
+        std::vector<FastaRecord> kept;
+        kept.reserve(queries.size());
+        uint32_t skipped = 0;
+        for (auto& q : queries) {
+            if (q.sequence.size() < min_query_length) {
+                std::fprintf(stderr,
+                    "Warning: query '%s' (length=%zu) is shorter than -min_query_length=%u, "
+                    "skipped\n",
+                    q.id.c_str(), q.sequence.size(),
+                    static_cast<unsigned>(min_query_length));
+                ++skipped;
+                continue;
+            }
+            kept.push_back(std::move(q));
+        }
+        if (skipped > 0) {
+            logger.info("Skipped %u queries shorter than min_query_length=%u",
+                        skipped, static_cast<unsigned>(min_query_length));
+        }
+        queries = std::move(kept);
+        if (queries.empty()) {
+            std::fprintf(stderr,
+                "Error: all input queries were shorter than -min_query_length=%u\n",
+                static_cast<unsigned>(min_query_length));
             return 1;
         }
     }

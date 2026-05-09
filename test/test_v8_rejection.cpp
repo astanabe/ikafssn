@@ -104,24 +104,27 @@ void test_khx_v8_rejected() {
     std::remove(path.c_str());
 }
 
-// Confirm v9 is the *current* format constant.  Guards against an
+// Confirm v10 is the *current* format constant.  Guards against an
 // accidental constant downgrade.
-void test_v9_is_current() {
-    CHECK_EQ(KIX_FORMAT_VERSION, 9u);
-    CHECK_EQ(KPX_FORMAT_VERSION, 9u);
-    CHECK_EQ(KSX_FORMAT_VERSION, 9u);
-    CHECK_EQ(KHX_FORMAT_VERSION, 9u);
-    CHECK(KIX_MAGIC[3] == '9');
-    CHECK(KPX_MAGIC[3] == '9');
+void test_v10_is_current() {
+    CHECK_EQ(KIX_FORMAT_VERSION, 10u);
+    CHECK_EQ(KPX_FORMAT_VERSION, 10u);
+    CHECK_EQ(KSX_FORMAT_VERSION, 10u);
+    CHECK_EQ(KHX_FORMAT_VERSION, 10u);
+    // v10 magic widened from 4 bytes "KIX9" to 5 bytes "KIX10".
+    CHECK(KIX_MAGIC[3] == '1' && KIX_MAGIC[4] == '0');
+    CHECK(KPX_MAGIC[3] == '1' && KPX_MAGIC[4] == '0');
 }
 
-// Synthesize a .kix file with the *wrong* magic ("KIX8" while format
-// version is 9).  The reader should reject on magic mismatch first.
+// Synthesize a .kix file with the *wrong* magic ("KIX08" — the v10
+// 5-byte magic field but with v9-style version digit) while format
+// version is 10.  The reader should reject on magic mismatch first.
 void test_wrong_magic_rejected() {
     std::string path = test_tmpdir("/tmp/test_v8_wrong_magic") + ".kix";
     KixHeader hdr{};
-    hdr.magic[0] = 'K'; hdr.magic[1] = 'I'; hdr.magic[2] = 'X'; hdr.magic[3] = '8';
-    hdr.format_version = KIX_FORMAT_VERSION;  // = 9
+    hdr.magic[0] = 'K'; hdr.magic[1] = 'I'; hdr.magic[2] = 'X';
+    hdr.magic[3] = '0'; hdr.magic[4] = '8';
+    hdr.format_version = KIX_FORMAT_VERSION;  // = 10
     hdr.k = 5;
     FILE* fp = std::fopen(path.c_str(), "wb");
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
@@ -140,7 +143,7 @@ int main() {
     test_kpx_v8_rejected();
     test_ksx_v8_rejected();
     test_khx_v8_rejected();
-    test_v9_is_current();
+    test_v10_is_current();
     test_wrong_magic_rejected();
     TEST_SUMMARY();
     return g_fail_count == 0 ? 0 : 1;

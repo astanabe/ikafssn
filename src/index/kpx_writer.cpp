@@ -78,7 +78,7 @@ bool KpxWriter::write(const std::string& path) const {
     // the legacy offset_type byte takes the EF sentinel value and the
     // reader ignores it at decode time.
     KpxHeader hdr{};
-    std::memcpy(hdr.magic, KPX_MAGIC, 4);
+    std::memcpy(hdr.magic, KPX_MAGIC, sizeof(KPX_MAGIC));
     hdr.format_version = KPX_FORMAT_VERSION;
     hdr.k = static_cast<uint8_t>(k_);
     hdr.total_position_count = total_position_count_;
@@ -90,6 +90,11 @@ bool KpxWriter::write(const std::string& path) const {
     hdr.codec_version = 0;
     hdr.block_size    = 0;
     hdr.tail_codec    = 0;
+
+    // v10 fragment-indexing triplet
+    hdr.min_seq_length   = min_seq_length_;
+    hdr.min_length_split = min_length_split_;
+    hdr.overlap_length   = overlap_length_;
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 

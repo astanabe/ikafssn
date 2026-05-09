@@ -11,6 +11,7 @@
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
+#include "protocol/messages.hpp"
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
 #include "core/spaced_seed.hpp"
@@ -532,6 +533,40 @@ static void test_search_both_template() {
     ksx.close();
 }
 
+// v10: -min_query_length integration.  Verify that
+//   1. queries shorter than config.min_query_length are skipped with
+//      kSkipQueryTooShort and produce a clear skip_detail message;
+//   2. queries at or above the threshold preprocess normally.
+//
+// The integrity check between -min_query_length and the index's
+// min_seq_length is performed by ikafssnsearch's open_volumes lambda
+// before any preprocessing runs, so we exercise it here by inspecting the
+// .kix's min_seq_length field directly (the lambda's failure path
+// terminates the binary, which is not unit-test-friendly).
+static void test_min_query_length_skip() {
+    std::fprintf(stderr, "-- test_min_query_length_skip\n");
+
+    std::string prefix = g_test_dir + "/test.00.07mer";
+
+    // Index built with default min_seq_length=64 in test_build_and_search.
+    KixReader kix;
+    CHECK(kix.open(prefix + ".kix"));
+    CHECK_EQ(kix.min_seq_length(), 64u);
+    kix.close();
+
+    // Query length 50 < min_query_length 64 -> kSkipQueryTooShort.
+    SearchConfig config;
+    config.min_query_length = 64;
+    std::string short_query(50, 'A');
+    auto qdata_short = preprocess_query<uint16_t>(short_query, 7, nullptr, config);
+    CHECK_EQ(qdata_short.skip_reason, kSkipQueryTooShort);
+    CHECK(!qdata_short.skip_detail.empty());
+
+    // Query length 100 >= min_query_length -> preprocesses normally.
+    auto qdata_ok = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
+    CHECK_EQ(qdata_ok.skip_reason, 0u);
+}
+
 int main() {
     check_ssu_available();
 
@@ -562,6 +597,7 @@ int main() {
     test_search_mode1();
     test_search_nresult_zero();
     test_search_both_template();
+    test_min_query_length_skip();
 
     std::filesystem::remove_all(g_test_dir);
 

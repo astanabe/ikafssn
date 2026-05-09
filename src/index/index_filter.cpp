@@ -312,7 +312,7 @@ static bool write_filtered_kix(
     // KIX_FLAG_OFFSET32 bit is forced to 0 (preserved as reserved on
     // the header for byte-stability per Phase 7 design decision #6).
     KixHeader kix_hdr{};
-    std::memcpy(kix_hdr.magic, KIX_MAGIC, 4);
+    std::memcpy(kix_hdr.magic, KIX_MAGIC, sizeof(KIX_MAGIC));
     kix_hdr.format_version = KIX_FORMAT_VERSION;
     kix_hdr.k = static_cast<uint8_t>(k);
     kix_hdr.kmer_type = kmer_type_for(k, kix_in.header().t);
@@ -332,6 +332,11 @@ static bool write_filtered_kix(
     kix_hdr.block_size            = 0;
     kix_hdr.tail_codec            = 0;
     kix_hdr.exception_codec_flags = 0;
+
+    // Carry over the v10 fragment-indexing triplet from the input header.
+    kix_hdr.min_seq_length   = kix_in.header().min_seq_length;
+    kix_hdr.min_length_split = kix_in.header().min_length_split;
+    kix_hdr.overlap_length   = kix_in.header().overlap_length;
 
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
 
@@ -391,7 +396,7 @@ static bool write_filtered_kpx(
     // Write header.  Phase 7e: pos_offsets dictionary is Elias-Fano;
     // offset_type takes the EF sentinel byte (0xFF).
     KpxHeader kpx_hdr{};
-    std::memcpy(kpx_hdr.magic, KPX_MAGIC, 4);
+    std::memcpy(kpx_hdr.magic, KPX_MAGIC, sizeof(KPX_MAGIC));
     kpx_hdr.format_version = KPX_FORMAT_VERSION;
     kpx_hdr.k = static_cast<uint8_t>(k);
     kpx_hdr.t = kpx_in.header().t;
@@ -404,6 +409,11 @@ static bool write_filtered_kpx(
     kpx_hdr.codec_version = 0;
     kpx_hdr.block_size    = 0;
     kpx_hdr.tail_codec    = 0;
+
+    // Carry over the v10 fragment-indexing triplet from the input header.
+    kpx_hdr.min_seq_length   = kpx_in.header().min_seq_length;
+    kpx_hdr.min_length_split = kpx_in.header().min_length_split;
+    kpx_hdr.overlap_length   = kpx_in.header().overlap_length;
 
     std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
 

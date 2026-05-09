@@ -70,7 +70,9 @@ static void print_usage(const char* prog) {
         "  -nthread <int>           Parallel search threads (default: all cores)\n"
         "  -memory_limit <size>     madvise WILLNEED budget (default: half of RAM)\n"
         "                           Accepts K, M, G suffixes\n"
-        "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: 2)\n"
+        "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: 1)\n"
+        "  -min_query_length <int>  Minimum query length; shorter queries are skipped with a warning.\n"
+        "                           Must be >= the index's min_seq_length (default: 64)\n"
         "  -db <path>               BLAST DB path for mode 3 (default: same as -ix)\n"
         "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: 1)\n"
         "  -stage2_min_score <int>  Minimum chain score (default: 0 = adaptive)\n"
@@ -208,7 +210,7 @@ int main(int argc, char* argv[]) {
     config.stage2.min_nhit_diag = static_cast<uint32_t>(cli.get_int("-stage2_min_nhit_diag", 1));
     config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-stage2_min_score", 0));
     config.nresult = static_cast<uint32_t>(cli.get_int("-nresult", 0));
-    config.mode = static_cast<uint8_t>(cli.get_int("-mode", 2));
+    config.mode = static_cast<uint8_t>(cli.get_int("-mode", 1));
     config.strand = static_cast<int8_t>(cli.get_int("-strand", 2));
     if (config.strand != -1 && config.strand != 1 && config.strand != 2) {
         std::fprintf(stderr, "Error: -strand must be -1, 1, or 2\n");
@@ -304,6 +306,19 @@ int main(int argc, char* argv[]) {
     }
 
     config.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
+
+    // v10 (Phase 1): -min_query_length default 64.  The integrity check
+    // against the index's min_seq_length runs after the first .kix is
+    // opened (search.cpp keeps a single in-memory list of probes).
+    {
+        int v = cli.get_int("-min_query_length", 64);
+        if (v <= 0) {
+            std::fprintf(stderr,
+                "Error: -min_query_length must be a positive integer (got %d)\n", v);
+            return 1;
+        }
+        config.min_query_length = static_cast<uint32_t>(v);
+    }
 
     {
         std::string err;
@@ -553,6 +568,23 @@ int main(int argc, char* argv[]) {
                 vdata[vi].kix_posting_size = kix_probe.posting_file_size();
                 vdata[vi].kix_full_size    = kix_probe.willneed_size_full();
                 vdata[vi].num_sequences    = kix_probe.num_sequences();
+                // v10: integrity check between -min_query_length and the
+                // index's min_seq_length.  Each volume of a multi-volume
+                // index has the same min_seq_length, so any volume's value
+                // is authoritative.
+                const uint32_t idx_min = kix_probe.min_seq_length();
+                if (config.min_query_length < idx_min) {
+                    std::fprintf(stderr,
+                        "Error: -min_query_length=%u is smaller than the "
+                        "index's min_seq_length=%u (%s). "
+                        "Specify -min_query_length=%u or larger.\n",
+                        static_cast<unsigned>(config.min_query_length),
+                        static_cast<unsigned>(idx_min),
+                        vf.kix_path.c_str(),
+                        static_cast<unsigned>(idx_min));
+                    kix_probe.close();
+                    return false;
+                }
                 kix_probe.close();
             }
 
@@ -764,9 +796,11 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    uint32_t skipped_too_short = 0;
     for (size_t qi = 0; qi < queries.size(); ++qi) {
         if (query_skip_reason[qi] != 0) {
             has_skipped = true;
+            if (query_skip_reason[qi] == kSkipQueryTooShort) ++skipped_too_short;
             std::fprintf(stderr, "Warning: query '%s' skipped: %s (%s)\n",
                          queries[qi].id.c_str(),
                          skip_reason_str(query_skip_reason[qi]),
@@ -779,6 +813,11 @@ int main(int argc, char* argv[]) {
                 queries[qi].id.c_str(),
                 static_cast<unsigned>(config.max_degen_expand));
         }
+    }
+    if (skipped_too_short > 0) {
+        logger.info("Skipped %u queries shorter than min_query_length=%u",
+                    skipped_too_short,
+                    static_cast<unsigned>(config.min_query_length));
     }
 
     // Thread-local Stage1Buffer sizing inputs.  num_sequences was captured

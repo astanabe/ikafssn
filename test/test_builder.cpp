@@ -577,6 +577,104 @@ static void test_build_parallel_scan() {
     kpx_st.close(); kpx_mt.close();
 }
 
+// v10: -min_seq_length filter.  Build the same DB twice with different
+// thresholds and verify that the higher threshold produces a strictly
+// smaller / equal index (more sequences excluded).
+static void test_min_seq_length_filter() {
+    std::fprintf(stderr, "-- test_min_seq_length_filter\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    const uint32_t db_nseq = db.num_sequences();
+
+    // Build with default min_seq_length=64 first.
+    Logger logger(Logger::kError);
+    IndexBuilderConfig cfg64;
+    cfg64.k = 7;
+    cfg64.min_seq_length = 64;
+    std::string prefix64 = g_output_dir + "/test.minlen64.07mer";
+    CHECK(build_index<uint16_t>(db, cfg64, prefix64, 0, 1, "test", logger));
+
+    KsxReader ksx64;
+    CHECK(ksx64.open(prefix64 + ".ksx"));
+    const uint32_t kept64 = ksx64.num_sequences();
+    CHECK_EQ(ksx64.min_seq_length(), 64u);
+    CHECK_EQ(ksx64.min_length_split(), 0u);
+    CHECK_EQ(ksx64.overlap_length(), 0u);
+    // Phase 1: 1 fragment per parent, so num_parents == num_sequences.
+    CHECK_EQ(ksx64.num_parents(), kept64);
+    // Every fragment spans the whole parent.
+    for (uint32_t i = 0; i < kept64; i++) {
+        CHECK_EQ(ksx64.fragment_start(i), 1u);
+        CHECK_EQ(ksx64.fragment_end(i), ksx64.parent_length(i));
+        CHECK_EQ(ksx64.parent_index(i), i);
+    }
+    ksx64.close();
+
+    // .kix / .kpx headers persist the same triplet.
+    KixReader kix64;
+    CHECK(kix64.open(prefix64 + ".kix"));
+    CHECK_EQ(kix64.min_seq_length(), 64u);
+    CHECK_EQ(kix64.num_sequences(), kept64);
+    kix64.close();
+    KpxReader kpx64;
+    CHECK(kpx64.open(prefix64 + ".kpx"));
+    CHECK_EQ(kpx64.min_seq_length(), 64u);
+    kpx64.close();
+
+    // Build again with a very large min_seq_length so most / all sequences
+    // are filtered out.  10 Mbp exceeds every SSU rRNA gene length.
+    IndexBuilderConfig cfg_big;
+    cfg_big.k = 7;
+    cfg_big.min_seq_length = 10'000'000u;
+    std::string prefix_big = g_output_dir + "/test.minlen10M.07mer";
+    CHECK(build_index<uint16_t>(db, cfg_big, prefix_big, 0, 1, "test", logger));
+
+    KsxReader ksx_big;
+    CHECK(ksx_big.open(prefix_big + ".ksx"));
+    const uint32_t kept_big = ksx_big.num_sequences();
+    CHECK_EQ(ksx_big.min_seq_length(), 10'000'000u);
+    CHECK(kept_big <= kept64);
+    CHECK(kept_big < db_nseq);
+    ksx_big.close();
+}
+
+// v10: degenerate fragment layout — 1 parent = 1 fragment, parent_length
+// equals fragment length, blast_oid is monotonically increasing across
+// surviving parents (i.e. the original BLAST DB OID after the
+// min_seq_length filter).
+static void test_degenerate_fragment_layout() {
+    std::fprintf(stderr, "-- test_degenerate_fragment_layout\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+
+    Logger logger(Logger::kError);
+    IndexBuilderConfig cfg;
+    cfg.k = 7;
+    cfg.min_seq_length = 64;
+    std::string prefix = g_output_dir + "/test.degenfrag.07mer";
+    CHECK(build_index<uint16_t>(db, cfg, prefix, 0, 1, "test", logger));
+
+    KsxReader ksx;
+    CHECK(ksx.open(prefix + ".ksx"));
+
+    CHECK_EQ(ksx.num_parents(), ksx.num_sequences());
+    uint32_t prev_blast_oid = 0;
+    bool first = true;
+    for (uint32_t pidx = 0; pidx < ksx.num_parents(); pidx++) {
+        uint32_t blast_oid = ksx.blast_oid(pidx);
+        if (!first) CHECK(blast_oid > prev_blast_oid);
+        prev_blast_oid = blast_oid;
+        first = false;
+        // Parent length matches BLAST DB.
+        CHECK_EQ(ksx.parent_length(pidx), db.seq_length(blast_oid));
+        // Accession matches.
+        CHECK(ksx.parent_accession(pidx) == db.get_accession(blast_oid));
+    }
+    ksx.close();
+}
+
 int main(int argc, char* argv[]) {
     init_simd_dispatch(nullptr);
     check_required_tier_or_skip();
@@ -596,6 +694,8 @@ int main(int argc, char* argv[]) {
     test_build_with_max_freq_build();
     test_build_with_memory_limits();
     test_build_parallel_scan();
+    test_min_seq_length_filter();
+    test_degenerate_fragment_layout();
 
     // Clean up
     std::filesystem::remove_all(g_output_dir);
