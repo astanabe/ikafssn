@@ -82,6 +82,8 @@ wrappers:
 
 Build a k-mer inverted index from a BLAST database. For each volume, index files are generated: `.kix` (ID postings), `.kpx` (position postings, unless `-mode 1`), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a shared `.khx` file (build-time exclusion bitset) is also generated. The `.khx` file is shared across all volumes (one per k value, not per volume).
 
+**Indexed unit (v10):** Each parent BLAST OID is split into one or more **fragments** at index time. A fragment is the unit registered as one internal SeqId in `.kix` / `.kpx` / `.ksx`; adjacent fragments of the same parent share `-overlap_length` bases so a chain that crosses the boundary still has at least one fragment that fully covers it. When `-min_length_split 0` is used, every parent has exactly one fragment that spans the whole parent (the degenerate / no-split layout). Search-side dedup folds fragment-relative coordinates back to **parent-relative coordinates** so downstream tools always see one canonical row per parent OID.
+
 ```
 ikafssnindex [options]
 
@@ -91,10 +93,37 @@ Required:
   -o <dir>                Output directory
 
 Options:
-  -mode <1|2|3>           Search mode the index will support (default: 2)
-                          1 = Stage 1 only (skip .kpx generation, saves disk and time)
-                          2 = Stage 1+2 (default)
+  -mode <1|2|3>           Search mode the index will support (default: 1)
+                          1 = Stage 1 only (skip .kpx generation, saves disk and time; default)
+                          2 = Stage 1+2
                           3 = Stage 1+2+3 (same as 2 for index build)
+  -min_seq_length <int>   Minimum length of a parent OID accepted into the
+                          index (default: 64).  Parents shorter than this are
+                          dropped at index time and never registered as
+                          fragments.  Persisted in the .kix / .kpx / .ksx
+                          headers; ikafssnsearch / ikafssnclient cross-check
+                          their -min_query_length against this so a too-short
+                          query cannot silently produce zero hits.
+  -min_length_split <int> Fragment-splitting threshold (default: 50000 under
+                          -mode 1, 0 under -mode 2/3).  A parent longer than
+                          this is split into multiple overlapping fragments
+                          using the kafssstore calcsegment2 formula
+                          (DNA2 mode: ncbi4na==0xF / N runs cut a parent
+                          into valid segments first, and each valid segment
+                          is then carved into fragments of approximately
+                          this size).  0 disables splitting (every parent
+                          becomes a single fragment).
+  -overlap_length <int>   Per-fragment trailing overlap, in bases (default:
+                          500 under -mode 1, 0 otherwise).  Adjacent
+                          fragments of the same valid segment share this
+                          many bases.  Must satisfy
+                          0 < overlap_length < min_length_split / 2 when
+                          splitting is enabled.  This value also caps the
+                          maximum query length at search time
+                          (kSkipQueryTooLong is emitted for longer queries),
+                          because the parent-relative dedup keys assume
+                          every chain hit fits inside at most two adjacent
+                          fragments.
   -memory_limit <size>    Memory limit (default: half of physical RAM)
                           Accepts K, M, G suffixes
                           Partitions are auto-calculated to fit within this limit
@@ -183,8 +212,15 @@ Options:
   -nthread <int>          Parallel search threads (default: all cores)
   -memory_limit <size>    madvise WILLNEED budget (default: half of RAM)
                           Accepts K, M, G suffixes
-  -mode <1|2|3>           Search mode (default: 2)
+  -mode <1|2|3>           Search mode (default: 1)
                           1=Stage 1 only, 2=Stage 1+2, 3=Stage 1+2+3
+  -min_query_length <int> Minimum query length, in bases (default: 64).
+                          Queries shorter than this are skipped with
+                          kSkipQueryTooShort.  Must be >= the index's
+                          min_seq_length (recorded in the .kix / .ksx
+                          header); a smaller value would let queries match
+                          parents the index never saw, so the integrity
+                          check refuses to start.
   -db <path>              BLAST DB path for mode 3 (default: same as -ix)
   -stage1_score <1|2>     Stage 1 score type (default: 1)
                           1=coverscore, 2=matchscore
@@ -359,6 +395,10 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
 ### ikafssnretrieve
 
 Extract matched subsequences based on search results. Supports local BLAST DB extraction and remote retrieval via NCBI E-utilities (efetch).
+
+**FASTA defline (v10):** Each retrieved record is emitted as
+`>parent_accession:start-end query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`,
+with `start` / `end` 1-based and inclusive in **parent-relative coordinates** (the parent OID accession on the left, never a fragment-derived synthetic name). On the local path the sequence fetch is routed through `BlastDbReader::get_subsequence(parent_oid, start, end)` so chromosome-scale parents only decode the requested window instead of the whole OID.
 
 ```
 ikafssnretrieve [options]
@@ -656,6 +696,12 @@ Options:
   -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
   -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)
   -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)
+  -min_query_length <int>  Minimum query length, in bases (default: 64).
+                           Pre-filters queries client-side so that the
+                           server's identical check never has to.  Must
+                           be >= the server-reported min_seq_length
+                           (surfaced via the InfoResponse); a smaller
+                           value is rejected at the pre-flight stage.
   -t <int>                 Template length for spaced seeds (default: server default)
                            0: contiguous k-mers; 13, 15, 18 (k=8-9); 16, 18, 21 (k=11-12)
   -template_type <str>     Template type for spaced seeds (default: server default)
@@ -759,10 +805,13 @@ Local mode output includes:
 
 - K-mer length (k) and integer type (uint16/uint32)
 - Number of volumes
-- Per-volume statistics: sequence count, total postings, file sizes, excluded k-mer count (if `.khx` present)
-- Overall statistics: total sequences, total postings, total index size, compression ratio
+- Per-volume statistics: parent (BLAST OID) count, fragment (internal SeqId) count, fragment-length distribution (min / median / mean / max), total postings, file sizes, excluded k-mer count (if `.khx` present)
+- Overall statistics: total parents, total fragments, aggregated fragment-length distribution, total postings, total index size, compression ratio
+- v10 header fields (`min_seq_length`, `min_length_split`, `overlap_length`) per index
 - With `-v`: k-mer frequency distribution (min, max, mean, percentiles)
 - With `-db` (or auto-detected): BLAST DB title, sequence count, total bases, volume paths
+
+The "Parents" / "Fragments" split makes it visible whether the index uses fragment splitting (`min_length_split > 0` and `Fragments > Parents`) or the degenerate one-fragment-per-parent layout (`Fragments == Parents`).
 
 **Remote mode** queries a running server and displays its capabilities.
 
@@ -888,10 +937,11 @@ When ikafssn cannot run a query through Stages 1–3 it emits a sentinel record 
 
 | Reason (enum / string) | Meaning |
 |---|---|
-| `kSkipQueryTooShort` / `query_too_short` | `seq_len < span` (k-mer / spaced-seed window cannot fit). |
+| `kSkipQueryTooShort` / `query_too_short` | `seq_len < span` (k-mer / spaced-seed window cannot fit), or `seq_len < -min_query_length`. |
 | `kSkipDegenRejected` / `degen_rejected` | `-accept_qdegen 0` was set and the query contains IUPAC degenerate bases. |
 | `kSkipInvalidChar` / `invalid_char` | Query contains a character outside `[ACGT]` ∪ IUPAC. The detail names the offending position. |
 | `kSkipThresholdUnreachable` / `threshold_unreachable` | Resolved fractional threshold is `< 1` on every searched strand. |
+| `kSkipQueryTooLong` / `query_too_long` | `seq_len > overlap_length` on a fragment-split index (v10).  The parent-relative dedup keys rely on every chain hit fitting inside at most two adjacent fragments, so queries longer than the overlap are rejected up-front rather than producing per-fragment partial chains.  Indexes with `min_length_split == 0` (no splitting) report `overlap_length == 0`, which disables this check. |
 
 Output representations:
 
@@ -977,6 +1027,8 @@ Score rules:
 - `*` vs any = -4
 
 ## Output Format
+
+**Coordinate convention (v10):** `sseqid` is the **parent OID's** accession (never a fragment-derived synthetic name), `sstart` / `send` are 1-based parent-relative positions, and `slen` is the parent OID's full length. After Stage 2 / Stage 3 dedup folds per-fragment chains together, every row in the output describes one canonical hit per `(qseqid, sseqid, sstrand, send, alnscore)` tuple.
 
 ### Tab Format (default)
 
@@ -1253,30 +1305,37 @@ Examples:
 
 **Multi-accession deflines:** When the source BLAST DB was built with `makeblastdb -parse_seqids` and carries multi-defline records (the NCBI convention for registering identical sequences under several accessions, separated by `\x01` / `^A` in the FASTA defline), `ikafssnindex` preserves **all** accessions for each OID. The `.ksx` accession string for such OIDs contains every accession joined by `\x01`, and search output emits the same `\x01`-joined string in the `sseqid` column / SAM RNAME / FASTA defline / protocol `sseqid` field. Downstream consumers should split on `\x01` to recover individual accessions. The `-seqidlist` filter and `ikafssnretrieve` accept either the full `\x01`-joined form or any individual constituent accession.
 
-**Index format version:** The current index format is version 9 for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`). Key changes from earlier versions:
+**Index format version:** The current index format is **v10** (fragment-indexing) for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`, `.kvx`). Key changes:
 
-- **`.kix` v9 (Phase 7):** The dictionary is stored as an Elias-Fano blob in place of the raw `u32`/`u64` `offsets[]` array (4.6× smaller on average across NCBI nt_v4). Each posting list header is now just `[u32 distinct_count]` (4 B) — `body_words` was removed (Phase 7c dedup B; derived from the EF dictionary's `posting_byte_length`). Body encoding is unchanged: FastPFor's `CompositeCodec<SIMDFastPFor<4>, VariableByte>` (PForDelta with VByte exception stream) over the **distinct seq_id** delta stream `[abs_first, d1, d2, ...]` with `d_i >= 1`. The legacy `KIX_FLAG_OFFSET32` flag (0x04) is reserved (writers force-clear it; readers ignore it).
-- **`.kpx` v9 (Phase 7):** The `pos_offsets` dictionary is also Elias-Fano. Per-posting-list, all four redundant header `u32` fields were dropped — the body starts directly at the 2-bit kind map. `distinct_count` is taken from the `kix_count` decoder parameter (Phase 7c dedup A); `partition_count`, `short1_count`, `short2_count` are derived from a SIMD popcount of the kind map (Phase 7d dedup C); `short2_position_count` is derived as the cumulative sum that builds the short2 offset table from the `u8 occ_count[]` array (Phase 7d dedup D). Empty `.kpx` posting lists emit zero bytes. The `KpxHeader.offset_type` byte is reserved (writers set the EF sentinel `0xFF`; readers ignore it).
-- **`.ksx` / `.khx` v9 (Phase 7):** Data layouts are unchanged from v8; the `format_version` field bumps for family-wide alignment (single-major-version policy). Magic strings stay `KMSX` / `KMHX`.
-- **`.kvx` v9 (Phase 7):** Manifest text format is unchanged; the `FORMAT_VERSION` line bumps to 9.
+- **Family-wide v10 bump (Phase 1 of fragment-indexing):** The `.kix` / `.kpx` magic widens to `KIX10` / `KPX10` (the trailing version byte was previously embedded in the header's `format_version` field only). All four format headers gain a `{min_seq_length, min_length_split, overlap_length}` triplet so the search side can cross-check the index's intent against the user-supplied `-min_query_length`.
+- **`.ksx` two-stage layout:** The sequence-metadata file now records each parent OID's `(parent_length, blast_oid, accession)` first, then a fragment table that maps every internal SeqId to `(parent_idx, fragment_start, fragment_end)`. Convenience accessors (`KsxReader::seq_length` / `accession`) still take a SeqId and resolve to the matching parent under the hood. Magic stays `KMSX`.
+- **`.kix` / `.kpx` codec layouts unchanged from v9:** Elias-Fano dictionary, 2-bit kind map, FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` body. Only the header triplet and magic differ.
+- **`.kvx` v10:** Manifest text format is unchanged; the `FORMAT_VERSION` line bumps to 10.
 
-### Migration (v8 → v9)
+The fragment splitter is a port of kafssstore's `split_long_sequence_positions` (DNA2 mode, ncbi4na==0xF cuts, calcsegment2 formula). When `-min_length_split 0` (the historical default for `-mode 2/3`), every parent is registered as a single fragment that spans the whole parent — i.e. the v10 layout reduces to the v9 one-row-per-OID model with the new header fields zeroed out.
 
-ikafssn 0.1.2026.05.03+ requires v9 indexes. v8 indexes are rejected at open with the message:
+### Migration (v9 → v10)
 
-```
-KixReader: index format version mismatch (got 8, expected 9). Please rebuild with the current ikafssnindex.
-```
-
-(and analogous messages for `.kpx` / `.ksx` / `.khx`). To migrate, rebuild the index from the BLAST DB:
+ikafssn 0.1.2026.05.10+ requires v10 indexes. v9 indexes are rejected at open with the message:
 
 ```
+KixReader: index format version mismatch (got 9, expected 10). Please rebuild with the current ikafssnindex.
+```
+
+(and analogous messages for `.kpx` / `.ksx` / `.khx` / `.kvx`). **An index rebuild is required.** To migrate, re-run the indexer from the BLAST DB:
+
+```
+# Default (mode 1, fragment-aware): keeps the new -min_length_split / -overlap_length defaults
 ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir>
+
+# Explicitly disable splitting (v9-equivalent layout with v10 headers)
+ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir> \
+    -min_length_split 0 -overlap_length 0
 ```
 
-For NCBI nt-scale databases (~700 volumes at k=12 t=21), expect tens of hours of rebuild time on a 32-core host. v9 indexes are 25–35 % smaller on disk than v8 (the dictionary EF blob is ~4.6× smaller, posting list headers shrink by 4–24 B per non-empty k-mer); RAM/page-cache savings are substantially larger because the dictionary and posting list headers sit on the Stage 1 hot path.
+For NCBI nt-scale databases (~700 volumes at k=12 t=21), expect tens of hours of rebuild time on a 32-core host. With `-min_length_split` non-zero the on-disk size grows in proportion to the average overlap length per parent; chromosome-scale parents that previously sat in one volume-spanning posting list now contribute multiple fragments, each of bounded length, which bounds Stage 2's per-subject memory.
 
-Indexes built before v8 are still rejected with the same "rebuild your index" message. Rebuild after upgrading.
+Indexes built before v9 are still rejected with the same "rebuild your index" message. Rebuild after upgrading.
 
 ## Installation
 

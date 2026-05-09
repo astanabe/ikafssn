@@ -55,13 +55,17 @@ The canonical mapping (full-text-search domain) is:
 | Sequence ID where a term occurs | **posting** | A single entry inside a posting list — the ID of one sequence containing the term (in `.kpx`, also carries position information). |
 | List of postings for one term | **posting list** | All postings for a given term, concatenated. |
 | Concatenation of all posting lists | **posting file** | The bulk region holding every term's posting list, in dictionary order. In ikafssn this region lives inside `.kix` and `.kpx` after the header + dictionary. |
+| Source nucleotide sequence in the BLAST DB | **parent** (or **parent OID**) | The full-length nucleotide sequence as registered in the source BLAST DB volume — i.e. one BLAST OID and the accession that goes with it. Parents are the unit retained for accession lookup, parent length, and user-facing sstart/send coordinates. |
+| Indexed slice of a parent | **fragment** | The unit registered as one internal SeqId inside `.kix` / `.kpx` / `.ksx`. A fragment is the slice of a parent produced by the fragment splitter under `-min_length_split` / `-overlap_length`; in the degenerate case (`min_length_split == 0`) every parent has exactly one fragment that spans the whole parent. Adjacent fragments of the same parent share `overlap_length` bases. The k-mer scanner indexes fragments, but the search-side dedup and downstream tools all collapse fragment-relative coordinates back to the parent. |
 
 Auxiliary terms that follow from the canonical vocabulary:
 - **dictionary entry** — one offset value in the dictionary array (`offsets[i]`).
 - **posting list header** — the fixed-size metadata at the front of a posting list.
 - **posting list body** — the variable-size encoded content of a posting list after its header.
+- **parent-relative coordinates** — sstart / send expressed as 1-based positions within the **parent**. After Stage 2 dedup, every chain hit is reported in this coordinate space (never in fragment-relative form).
+- **fragment-relative coordinates** — sstart / send expressed as 1-based positions within the **fragment**. Internal to the orchestrator: Stage 2 chains are produced in this space and shifted by `(fragment_start - 1)` at the orchestrator → output / response boundary.
 
-A nucleotide sequence is **not** called a "document". Do not import that word from generic IR literature into this codebase. The term "sequence" (or `seq_id` for its identifier) stands on its own.
+A nucleotide sequence is **not** called a "document". Do not import that word from generic IR literature into this codebase. The term "sequence" stands on its own; **parent** and **fragment** are reserved for the index-side parent-OID / fragment distinction introduced in v10.
 
 ### Forbidden expressions (always rewrite)
 
@@ -71,6 +75,9 @@ A nucleotide sequence is **not** called a "document". Do not import that word fr
 - "posting" used alone to mean the full per-k-mer data → **posting list**
 - "payload" in the narrow sense (variable-size content of a posting list) → **posting list body**
 - "document" (when the actual referent is a nucleotide sequence) → **sequence**
+- "BLAST DB sequence" / "OID-level sequence" / "full-length sequence" (when distinguishing from a fragment) → **parent**
+- "subsequence" / "chunk" / "window" / "tile" (when referring to a sliced indexed unit) → **fragment**
+- "OID-relative coordinates" / "subject coordinates" (when emphasising parent-vs-fragment) → **parent-relative coordinates**
 
 ### Application — no exceptions
 

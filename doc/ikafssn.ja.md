@@ -79,6 +79,8 @@ TSV / JSON / FASTA 出力に対し、透過的なコーデックラッパを通�
 
 BLAST DB から k-mer 転置インデックスを構築します。各ボリュームに対して `.kix` (ID ポスティング)、`.kpx` (位置ポスティング、`-mode 1` の場合は省略)、`.ksx` (配列メタデータ) のファイルを生成します。`-max_freq_build` 使用時は共有 `.khx` (構築時除外ビットセット) も生成されます。`.khx` ファイルは全ボリューム共通 (k 値ごとに 1 つ) です。
 
+**インデックス単位 (v10):** 各親 BLAST OID は構築時に 1 つ以上の **fragment**（フラグメント）に分割されます。フラグメントは `.kix` / `.kpx` / `.ksx` で 1 つの内部 SeqId として登録される単位です。同じ親由来の隣接フラグメントは `-overlap_length` 塩基を共有するため、境界をまたぐチェインヒットも、必ずどちらか一方のフラグメント内に完全に収まります。`-min_length_split 0` を指定した場合は、各親に対して親全体をカバーする 1 つのフラグメントだけが登録される退化レイアウトになります。検索側の dedup によりフラグメント相対座標は **親相対座標** に畳み戻されるため、下流ツールには親 OID あたり 1 行の正準ヒットだけが届きます。
+
 ```
 ikafssnindex [options]
 
@@ -88,10 +90,35 @@ ikafssnindex [options]
   -o <dir>                出力ディレクトリ
 
 オプション:
-  -mode <1|2|3>           インデックスがサポートする検索モード (デフォルト: 2)
-                          1 = Stage 1 のみ (.kpx 生成スキップ、ディスク・時間節約)
-                          2 = Stage 1+2 (デフォルト)
+  -mode <1|2|3>           インデックスがサポートする検索モード (デフォルト: 1)
+                          1 = Stage 1 のみ (.kpx 生成スキップ、ディスク・時間節約。デフォルト)
+                          2 = Stage 1+2
                           3 = Stage 1+2+3 (インデックス構築では 2 と同一動作)
+  -min_seq_length <int>   インデックスに登録する親 OID の最短長 (デフォルト: 64)。
+                          これより短い親はインデックス時に弾かれ、フラグメント
+                          としても登録されません。値は .kix / .kpx / .ksx
+                          ヘッダに記録され、ikafssnsearch / ikafssnclient は
+                          自身の -min_query_length とこの値の整合性を起動時
+                          にチェックします（短すぎるクエリが silently に 0 ヒット
+                          になるのを防ぐため）。
+  -min_length_split <int> フラグメント分割の閾値 (デフォルト: -mode 1 のとき
+                          50000、-mode 2/3 のとき 0)。これを超える親は
+                          kafssstore の calcsegment2 公式に従って複数の
+                          重なり付きフラグメントに分割されます (DNA2 モード:
+                          ncbi4na==0xF / N ラン位置で親を有効セグメントに
+                          分け、各セグメントを更にこの長さに近づけて分割)。
+                          0 を指定すると分割を無効化し、各親はそのまま 1
+                          フラグメントとして登録されます。
+  -overlap_length <int>   隣接フラグメントの末尾オーバーラップ塩基数
+                          (デフォルト: -mode 1 のとき 500、それ以外で 0)。
+                          有効セグメント内の隣接フラグメントはこの塩基数を
+                          共有します。分割を有効化する場合は
+                          0 < overlap_length < min_length_split / 2 を満たす
+                          必要があります。検索時にはこの値が許容クエリ長の
+                          上限となり (これより長いクエリは
+                          kSkipQueryTooLong でスキップされる)、親相対の
+                          dedup キーが必ず隣接 2 フラグメント以内に収まる
+                          ことを保証します。
   -memory_limit <size>    メモリ上限 (デフォルト: 物理メモリの半分)
                           接尾辞 K, M, G を認識
                           パーティション数はこの上限内に収まるよう自動決定
@@ -178,9 +205,16 @@ ikafssnsearch [options]
   -nthread <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
   -memory_limit <size>    madvise WILLNEED 予算 (デフォルト: 物理メモリの半分)
                           接尾辞 K, M, G を認識
-  -mode <1|2|3>           検索モード (デフォルト: 2)
+  -mode <1|2|3>           検索モード (デフォルト: 1)
                           1=Stage 1 のみ、2=Stage 1+2、3=Stage 1+2+3
   -db <path>              モード 3 用 BLAST DB パス (デフォルト: -ix と同じ)
+  -min_query_length <int> クエリ配列の最短長 (デフォルト: 64)。これより短い
+                          クエリは kSkipQueryTooShort でスキップされます。
+                          値はインデックスの min_seq_length (.kix / .ksx
+                          ヘッダに記録) 以上である必要があり、それより小さい
+                          値を指定するとインデックスが登録していない短い
+                          配列までクエリ対象に含めてしまうため、整合性
+                          チェックで起動が拒否されます。
   -stage1_score <1|2>     Stage 1 スコア種別 (デフォルト: 1)
                           1=coverscore、2=matchscore
   -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 0)
@@ -349,6 +383,10 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
 ### ikafssnretrieve
 
 検索結果に基づきマッチした部分配列を抽出します。配列ソースとしてローカル BLAST DB または NCBI E-utilities (efetch) を選択できます。
+
+**FASTA defline (v10):** 各レコードは
+`>parent_accession:start-end query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`
+形式で出力されます。`start` / `end` は 1-based 包括の **親相対座標** で、左端のアクセッションは常に親 OID のもの（フラグメント由来の合成名は使われません）。ローカルパスでは `BlastDbReader::get_subsequence(parent_oid, start, end)` 経由でサブシーケンスを取得するため、染色体級の親でも要求された区間だけがデコードされ、OID 全体を読み込むことはありません。
 
 ```
 ikafssnretrieve [options]
@@ -651,6 +689,12 @@ ikafssnclient [options]
   -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
   -accept_qdegen <0|1>     縮重塩基を含むクエリを許可 (デフォルト: 1)
   -max_degen_expand <int>  縮重塩基展開の最大数 (デフォルト: サーバ側デフォルト、最大: 256)
+  -min_query_length <int>  クエリ配列の最短長 (デフォルト: 64)。クライアント
+                           側で短いクエリを事前にフィルタするため、サーバ側
+                           の同じチェックが発火する前に弾かれます。値は
+                           InfoResponse 経由でサーバから取得した
+                           min_seq_length 以上である必要があり、それより
+                           小さい場合は pre-flight 検証で拒否されます。
   -t <int>                 スペースドシード用テンプレート長 (デフォルト: サーバ側デフォルト)
                            0: 連続 k-mer; 13, 15, 18 (k=8-9); 16, 18, 21 (k=11-12)
   -template_type <str>     スペースドシードのテンプレート種別 (デフォルト: サーバ側デフォルト)
@@ -754,10 +798,13 @@ ikafssninfo [options]
 
 - k-mer 長 (k) および k-mer 整数型 (uint16/uint32)
 - ボリューム数
-- 各ボリュームの配列数、総ポスティング数、ファイルサイズ、除外 k-mer 数 (`.khx` 存在時)
-- 全体統計: 総配列数、総ポスティング数、総インデックスサイズ、圧縮率
+- 各ボリュームの親 (BLAST OID) 数、フラグメント (内部 SeqId) 数、フラグメント長分布 (min / median / mean / max)、総ポスティング数、ファイルサイズ、除外 k-mer 数 (`.khx` 存在時)
+- 全体統計: 総親数、総フラグメント数、集約フラグメント長分布、総ポスティング数、総インデックスサイズ、圧縮率
+- 各インデックスの v10 ヘッダフィールド (`min_seq_length` / `min_length_split` / `overlap_length`)
 - `-v` 指定時: k-mer 出現頻度分布 (min, max, mean, パーセンタイル)
 - `-db` 指定時 (または自動検出時): BLAST DB のタイトル、配列数、総塩基数、ボリューム構成
+
+「Parents」と「Fragments」の値が一致しない場合はインデックスがフラグメント分割を有効にしている (`min_length_split > 0`) ことを意味し、一致する場合は「親 1 つにつきフラグメント 1 つ」の退化レイアウトです。
 
 **リモートモード:** 稼働中のサーバに問い合わせ、サーバの能力情報を表示します。
 
@@ -883,10 +930,11 @@ threshold = ceil(Nqkmer * P) - Nhighfreq
 
 | 理由 (enum / 文字列) | 意味 |
 |---|---|
-| `kSkipQueryTooShort` / `query_too_short` | `seq_len < span` (k-mer / spaced seed の窓が乗らない)。 |
+| `kSkipQueryTooShort` / `query_too_short` | `seq_len < span` (k-mer / spaced seed の窓が乗らない)、または `seq_len < -min_query_length`。 |
 | `kSkipDegenRejected` / `degen_rejected` | `-accept_qdegen 0` 指定時に IUPAC 縮重塩基を含む。 |
 | `kSkipInvalidChar` / `invalid_char` | `[ACGT]` ∪ IUPAC 以外の文字を含む。詳細メッセージに位置を含む。 |
 | `kSkipThresholdUnreachable` / `threshold_unreachable` | フラクショナル閾値が検索対象のすべてのストランドで `< 1` になる。 |
+| `kSkipQueryTooLong` / `query_too_long` | フラグメント分割インデックス (v10) で `seq_len > overlap_length`。親相対 dedup キーは「すべてのチェインヒットが隣接 2 フラグメント内に収まること」を前提とするため、それより長いクエリはフラグメント単位の partial chain を生成する前に弾かれます。`min_length_split == 0` (分割無効) のインデックスは `overlap_length == 0` を報告するためこのチェックが無効化されます。 |
 
 各出力フォーマットでの表現:
 
@@ -972,6 +1020,8 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
 - `*` vs 任意 = -4
 
 ## 出力形式
+
+**座標規約 (v10):** `sseqid` は **親 OID** のアクセッション (フラグメント由来の合成名は使われない)、`sstart` / `send` は 1-based の親相対位置、`slen` は親 OID の全長です。Stage 2 / Stage 3 の dedup によりフラグメント単位のチェインが畳み戻されるため、出力は `(qseqid, sseqid, sstrand, send, alnscore)` の組ごとに 1 行の正準ヒットのみを含みます。
 
 ### Tab 形式 (デフォルト)
 
@@ -1248,30 +1298,37 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 
 **マルチアクセッション defline:** 元の BLAST DB が `makeblastdb -parse_seqids` で構築され、`\x01` (`^A`) 区切りの multi-defline レコード（同一塩基配列を複数アクセッションで登録する NCBI 慣習）を含んでいる場合、`ikafssnindex` は OID ごとに**全てのアクセッション**を保持します。`.ksx` のアクセッション文字列は OID ごとに全アクセッションを `\x01` で連結した形で格納され、検索出力 (`sseqid` カラム / SAM RNAME / FASTA defline / プロトコルの `sseqid` フィールド) も同じ `\x01` 連結形のまま emit されます。受け取り側で `\x01` を区切りとして分割してください。`-seqidlist` フィルタと `ikafssnretrieve` は `\x01` 連結形・個別アクセッションのいずれを指定しても解決できます。
 
-**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`) でバージョン 9 です。主な変更点:
+**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`、`.kvx`) で **v10** (フラグメントインデキシング系列) です。主な変更点:
 
-- **`.kix` v9 (Phase 7):** 辞書 (`offsets[]` 配列) が Elias-Fano blob で格納されるようになりました（NCBI nt_v4 全体平均で 4.6× 圧縮）。各ポスティングリストヘッダは `[u32 distinct_count]`（4 B）のみ — `body_words` は EF 辞書の `posting_byte_length` から導出されるため除去されました（Phase 7c dedup B）。ボディは v8 から変更なしで、FastPFor の `CompositeCodec<SIMDFastPFor<4>, VariableByte>`（PForDelta + VByte 例外ストリーム）が **distinct seq_id** delta 列 `[abs_first, d1, d2, ...]`（`d_i >= 1` 保証）をエンコードします。レガシーの `KIX_FLAG_OFFSET32` フラグ (0x04) は予約扱い（writer は常に 0、reader は無視）。
-- **`.kpx` v9 (Phase 7):** `pos_offsets` 辞書も Elias-Fano。ポスティングリストの 4 つの冗長 `u32` ヘッダフィールドは全て除去され、ボディは 2-bit kind map から始まります。`distinct_count` はデコーダの `kix_count` パラメータから取得（Phase 7c dedup A）。`partition_count` / `short1_count` / `short2_count` は kind map の SIMD popcount から導出（Phase 7d dedup C）。`short2_position_count` は u8 `occ_count[]` のオフセット表構築時の cum sum から導出（Phase 7d dedup D）。空 `.kpx` ポスティングリストはバイト数 0。`KpxHeader.offset_type` バイトは EF sentinel `0xFF` 固定（reader は無視）。
-- **`.ksx` / `.khx` v9 (Phase 7):** データレイアウトは v8 から変更なし。`format_version` のみ family-wide 整合のため bump（single-major-version policy）。マジック文字列は `KMSX` / `KMHX` のまま。
-- **`.kvx` v9 (Phase 7):** マニフェストテキストフォーマットは変更なし。`FORMAT_VERSION` 行が 9 に bump。
+- **family 全体の v10 bump (フラグメントインデキシング Phase 1):** `.kix` / `.kpx` のマジックは `KIX10` / `KPX10` に拡張されました（従来はヘッダの `format_version` フィールドだけにバージョン番号があった）。4 種すべてのフォーマットヘッダに `{min_seq_length, min_length_split, overlap_length}` の 3 値が追加され、検索側がインデックスの構築意図と `-min_query_length` を相互チェックできるようになりました。
+- **`.ksx` 二段レイアウト:** 配列メタデータファイルは、まず各親 OID の `(parent_length, blast_oid, accession)` を記録し、続いてフラグメントテーブルが各内部 SeqId を `(parent_idx, fragment_start, fragment_end)` にマップします。`KsxReader::seq_length` / `accession` などの簡易アクセサは引き続き SeqId を取り、内部で対応する親に解決します。マジックは `KMSX` のまま。
+- **`.kix` / `.kpx` のコーデックは v9 から変更なし:** Elias-Fano 辞書、2-bit kind map、FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` ボディ。違いはヘッダ 3 値とマジックのみ。
+- **`.kvx` v10:** マニフェストテキストフォーマットは変更なし。`FORMAT_VERSION` 行が 10 に bump。
 
-### マイグレーション (v8 → v9)
+フラグメント分割器は kafssstore の `split_long_sequence_positions` (DNA2 モード、ncbi4na==0xF カット、calcsegment2 公式) の C++ ポートです。`-min_length_split 0`（`-mode 2/3` 旧デフォルト）の場合は各親が単一フラグメントとして登録され、v10 レイアウトは新ヘッダフィールドが 0 の v9 相当の 1 行/OID モデルに退化します。
 
-ikafssn 0.1.2026.05.03 以降は v9 インデックスを要求します。v8 インデックスは open 時に以下のメッセージで拒否されます:
+### マイグレーション (v9 → v10)
 
-```
-KixReader: index format version mismatch (got 8, expected 9). Please rebuild with the current ikafssnindex.
-```
-
-(`.kpx` / `.ksx` / `.khx` も同様)。マイグレーションは BLAST DB から再インデックスしてください:
+ikafssn 0.1.2026.05.10 以降は v10 インデックスを要求します。v9 インデックスは open 時に以下のメッセージで拒否されます:
 
 ```
+KixReader: index format version mismatch (got 9, expected 10). Please rebuild with the current ikafssnindex.
+```
+
+(`.kpx` / `.ksx` / `.khx` / `.kvx` も同様)。**インデックスの再構築が必要です。** マイグレーションは BLAST DB から再インデックスしてください:
+
+```
+# デフォルト (mode 1 + フラグメント分割有効)
 ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir>
+
+# 明示的に分割を無効化 (v9 互換レイアウト + v10 ヘッダ)
+ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir> \
+    -min_length_split 0 -overlap_length 0
 ```
 
-NCBI nt 規模（~700 ボリューム、k=12 t=21）では 32 コアホストで数十時間程度の所要時間を想定してください。ディスク上の v9 インデックスサイズは v8 比で 25–35% 削減（辞書 EF blob で約 4.6× 圧縮、ポスティングリストヘッダで非空 k-mer あたり 4–24 B 削減）；RAM/page cache 上の節約は Stage 1 ホットパスに集中するため実効的にはより大きくなります。
+NCBI nt 規模（~700 ボリューム、k=12 t=21）では 32 コアホストで数十時間程度の所要時間を想定してください。`-min_length_split` を非 0 にするとオーバーラップに比例してディスク上のサイズは増えますが、染色体級の親 OID が以前は 1 ボリューム全体に渡る巨大ポスティングリストになっていたものが、複数の有限長フラグメントに分割されるため Stage 2 のサブジェクト単位メモリ上限が抑えられます。
 
-v8 より前のインデックスは引き続き同じ「rebuild」エラーで拒否されます。アップグレード後に再構築してください。
+v9 より前のインデックスは引き続き同じ「rebuild」エラーで拒否されます。アップグレード後に再構築してください。
 
 ## インストール
 
