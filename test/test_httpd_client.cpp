@@ -96,9 +96,16 @@ static std::string build_test_index(int k) {
     IndexBuilderConfig bconfig;
     bconfig.k = k;
 
-    char kk[4];
-    std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string prefix = ix_dir + "/test.00." + std::string(kk) + "mer";
+    auto stem_for = [&](const std::string& base) {
+        return index_file_stem(ix_dir, base, bconfig.k,
+                               bconfig.t, bconfig.template_type,
+                               bconfig.min_seq_length,
+                               bconfig.min_length_split,
+                               bconfig.overlap_length,
+                               /*max_freq_build=*/1,
+                               /*max_degen_expand=*/0);
+    };
+    std::string prefix = stem_for("test.00");
 
     bool ok;
     if (k < K_TYPE_THRESHOLD) {
@@ -108,7 +115,7 @@ static std::string build_test_index(int k) {
     }
     if (!ok) return {};
 
-    std::string kvx_path = ix_dir + "/test." + std::string(kk) + "mer.kvx";
+    std::string kvx_path = stem_for("test") + ".kvx";
     FILE* fp = std::fopen(kvx_path.c_str(), "w");
     if (fp) {
         std::fprintf(fp, "TITLE test\nDBLIST \"test.00\"\n");
@@ -280,12 +287,11 @@ static void test_async_submit_poll_get() {
     KixReader kix;
     KpxReader kpx;
     KsxReader ksx;
-    char kk[4];
-    std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string base = ix_prefix + ".00." + std::string(kk) + "mer";
-    CHECK(kix.open(base + ".kix"));
-    CHECK(kpx.open(base + ".kpx"));
-    CHECK(ksx.open(base + ".ksx"));
+    auto vols = discover_volumes(ix_prefix, k);
+    CHECK(!vols.empty());
+    CHECK(kix.open(vols[0].kix_path));
+    CHECK(kpx.open(vols[0].kpx_path));
+    CHECK(ksx.open(vols[0].ksx_path));
 
     SearchConfig config;
     config.stage2.min_score = 1;

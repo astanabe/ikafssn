@@ -8,6 +8,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
@@ -45,7 +46,13 @@ static void test_build_and_search() {
     IndexBuilderConfig bconfig;
     bconfig.k = 7;
 
-    std::string prefix = g_test_dir + "/test.00.07mer";
+    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                         /*t=*/0, /*template_type=*/0,
+                                         /*min_seq_length=*/64,
+                                         /*min_length_split=*/0,
+                                         /*overlap_length=*/0,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
     CHECK(build_index<uint16_t>(db, bconfig, prefix, 0, 1, "test", logger));
 
     // Open index
@@ -93,7 +100,13 @@ static void test_revcomp_search() {
     Stage1Buffer buf;
     std::fprintf(stderr, "-- test_revcomp_search\n");
 
-    std::string prefix = g_test_dir + "/test.00.07mer";
+    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                         /*t=*/0, /*template_type=*/0,
+                                         /*min_seq_length=*/64,
+                                         /*min_length_split=*/0,
+                                         /*overlap_length=*/0,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
 
     KixReader kix;
     KpxReader kpx;
@@ -140,7 +153,13 @@ static void test_seqidlist_filter() {
     Stage1Buffer buf;
     std::fprintf(stderr, "-- test_seqidlist_filter\n");
 
-    std::string prefix = g_test_dir + "/test.00.07mer";
+    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                         /*t=*/0, /*template_type=*/0,
+                                         /*min_seq_length=*/64,
+                                         /*min_length_split=*/0,
+                                         /*overlap_length=*/0,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
 
     KixReader kix;
     KpxReader kpx;
@@ -188,7 +207,13 @@ static void test_negative_seqidlist() {
     Stage1Buffer buf;
     std::fprintf(stderr, "-- test_negative_seqidlist\n");
 
-    std::string prefix = g_test_dir + "/test.00.07mer";
+    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                         /*t=*/0, /*template_type=*/0,
+                                         /*min_seq_length=*/64,
+                                         /*min_length_split=*/0,
+                                         /*overlap_length=*/0,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
 
     KixReader kix;
     KpxReader kpx;
@@ -357,7 +382,13 @@ static void test_search_mode1() {
     Stage1Buffer buf;
     std::fprintf(stderr, "-- test_search_mode1\n");
 
-    std::string prefix = g_test_dir + "/test.00.07mer";
+    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                         /*t=*/0, /*template_type=*/0,
+                                         /*min_seq_length=*/64,
+                                         /*min_length_split=*/0,
+                                         /*overlap_length=*/0,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
 
     KixReader kix;
     KpxReader kpx; // not opened — mode 1 doesn't use kpx
@@ -406,7 +437,13 @@ static void test_search_nresult_zero() {
     Stage1Buffer buf;
     std::fprintf(stderr, "-- test_search_nresult_zero\n");
 
-    std::string prefix = g_test_dir + "/test.00.07mer";
+    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                         /*t=*/0, /*template_type=*/0,
+                                         /*min_seq_length=*/64,
+                                         /*min_length_split=*/0,
+                                         /*overlap_length=*/0,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
 
     KixReader kix;
     KpxReader kpx;
@@ -471,7 +508,10 @@ static void test_search_both_template() {
     bcfg_cod.k = 9;
     bcfg_cod.t = 15;
     bcfg_cod.template_type = static_cast<uint8_t>(TemplateType::kCoding);
-    std::string prefix_cod = g_test_dir + "/test.00.09mer.15mer.cod";
+    std::string prefix_cod = index_file_stem(g_test_dir, "test.00",
+        bcfg_cod.k, bcfg_cod.t, bcfg_cod.template_type,
+        bcfg_cod.min_seq_length, bcfg_cod.min_length_split,
+        bcfg_cod.overlap_length, /*max_freq_build=*/1, /*max_degen_expand=*/0);
     CHECK(build_index<uint32_t>(db, bcfg_cod, prefix_cod, 0, 1, "test", logger));
 
     // Build optimal-side spaced seed index (k=9, t=15).
@@ -479,7 +519,10 @@ static void test_search_both_template() {
     bcfg_opt.k = 9;
     bcfg_opt.t = 15;
     bcfg_opt.template_type = static_cast<uint8_t>(TemplateType::kOptimal);
-    std::string prefix_opt = g_test_dir + "/test.00.09mer.15mer.opt";
+    std::string prefix_opt = index_file_stem(g_test_dir, "test.00",
+        bcfg_opt.k, bcfg_opt.t, bcfg_opt.template_type,
+        bcfg_opt.min_seq_length, bcfg_opt.min_length_split,
+        bcfg_opt.overlap_length, /*max_freq_build=*/1, /*max_degen_expand=*/0);
     CHECK(build_index<uint32_t>(db, bcfg_opt, prefix_opt, 0, 1, "test", logger));
 
     KixReader kix_cod, kix_opt;
@@ -546,12 +589,17 @@ static void test_search_both_template() {
 static void test_min_query_length_skip() {
     std::fprintf(stderr, "-- test_min_query_length_skip\n");
 
-    std::string prefix = g_test_dir + "/test.00.07mer";
+    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                         /*t=*/0, /*template_type=*/0,
+                                         /*min_seq_length=*/64,
+                                         /*min_length_split=*/0,
+                                         /*overlap_length=*/0,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
 
     // Index built with default min_seq_length=64 in test_build_and_search.
     KixReader kix;
     CHECK(kix.open(prefix + ".kix"));
-    CHECK_EQ(kix.min_seq_length(), 64u);
     kix.close();
 
     // Query length 50 < min_query_length 64 -> kSkipQueryTooShort.

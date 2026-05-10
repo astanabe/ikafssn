@@ -30,9 +30,6 @@ static void test_basic_roundtrip() {
 
     {
         KsxWriter writer;
-        writer.set_min_seq_length(64);
-        writer.set_min_length_split(0);
-        writer.set_overlap_length(0);
         for (auto& s : seqs) {
             uint32_t parent_idx = writer.add_parent(s.blast_oid, s.length, s.accession);
             writer.add_fragment(parent_idx, 1, s.length);
@@ -47,9 +44,6 @@ static void test_basic_roundtrip() {
         CHECK(reader.open(TEST_FILE));
         CHECK_EQ(reader.num_sequences(), 5u);
         CHECK_EQ(reader.num_parents(), 5u);
-        CHECK_EQ(reader.min_seq_length(), 64u);
-        CHECK_EQ(reader.min_length_split(), 0u);
-        CHECK_EQ(reader.overlap_length(), 0u);
 
         for (uint32_t i = 0; i < seqs.size(); i++) {
             CHECK_EQ(reader.seq_length(i), seqs[i].length);
@@ -70,7 +64,6 @@ static void test_basic_roundtrip() {
 static void test_empty_accession() {
     {
         KsxWriter writer;
-        writer.set_min_seq_length(64);
         uint32_t p0 = writer.add_parent(0, 100, "");      writer.add_fragment(p0, 1, 100);
         uint32_t p1 = writer.add_parent(1, 200, "ACC2");  writer.add_fragment(p1, 1, 200);
         uint32_t p2 = writer.add_parent(2, 300, "");      writer.add_fragment(p2, 1, 300);
@@ -101,7 +94,6 @@ static void test_long_accession() {
 
     {
         KsxWriter writer;
-        writer.set_min_seq_length(64);
         uint32_t p = writer.add_parent(0, 42, long_acc);
         writer.add_fragment(p, 1, 42);
         CHECK(writer.write(TEST_FILE));
@@ -125,9 +117,6 @@ static void test_long_accession() {
 static void test_multi_fragment_per_parent() {
     {
         KsxWriter writer;
-        writer.set_min_seq_length(64);
-        writer.set_min_length_split(50000);
-        writer.set_overlap_length(500);
         // Parent 0: full length 100000, split into 2 fragments [1..50500] and [50001..100000].
         uint32_t p0 = writer.add_parent(0, 100000, "BIG_CHR");
         writer.add_fragment(p0, 1, 50500);          // SeqId 0
@@ -144,9 +133,6 @@ static void test_multi_fragment_per_parent() {
         CHECK(reader.open(TEST_FILE));
         CHECK_EQ(reader.num_sequences(), 3u);
         CHECK_EQ(reader.num_parents(), 2u);
-        CHECK_EQ(reader.min_seq_length(), 64u);
-        CHECK_EQ(reader.min_length_split(), 50000u);
-        CHECK_EQ(reader.overlap_length(), 500u);
 
         // SeqId 0 -> first fragment of parent 0
         CHECK_EQ(reader.parent_index(0), 0u);
@@ -185,10 +171,6 @@ static void test_multi_fragment_per_parent() {
 static void test_multi_parent_multi_fragment() {
     {
         KsxWriter writer;
-        writer.set_min_seq_length(64);
-        writer.set_min_length_split(1500);
-        writer.set_overlap_length(200);
-
         // Parent 0 (BLAST OID 7): 3 fragments mirroring the LONGCHR_1
         // expected split (5171 bp, min=1500, ovl=200).
         uint32_t p0 = writer.add_parent(7, 5171, "LONGCHR_1");
@@ -223,8 +205,6 @@ static void test_multi_parent_multi_fragment() {
         CHECK(reader.open(TEST_FILE));
         CHECK_EQ(reader.num_parents(), 4u);
         CHECK_EQ(reader.num_sequences(), 10u);
-        CHECK_EQ(reader.min_length_split(), 1500u);
-        CHECK_EQ(reader.overlap_length(), 200u);
 
         // Per-fragment expectations: parent_idx, frag_start, frag_end,
         // frag_length, parent_length, parent_accession, blast_oid.

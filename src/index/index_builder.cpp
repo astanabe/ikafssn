@@ -51,130 +51,124 @@ static inline int log2_ceil(int n) {
     return bits;
 }
 
-template <typename KmerInt>
-bool build_index(BlastDbReader& db,
-                 const IndexBuilderConfig& config,
-                 const std::string& output_prefix,
-                 uint16_t volume_index,
-                 uint16_t total_volumes,
-                 const std::string& db_name,
-                 const Logger& logger) {
+bool build_metadata(BlastDbReader& db,
+                    const IndexBuilderConfig& config,
+                    const std::string& output_prefix,
+                    VolumeMetadata& out,
+                    const Logger& logger) {
 
-    const int k = config.k;
     const uint32_t blast_num_seqs = db.num_sequences();
     const bool splitting_enabled = (config.min_length_split > 0);
 
-    logger.info("Building index: k=%d, blast-db sequences=%u, "
+    logger.info("Building metadata: blast-db sequences=%u, "
                 "min_seq_length=%u, min_length_split=%u, overlap_length=%u",
-                k, blast_num_seqs,
+                blast_num_seqs,
                 config.min_seq_length,
                 config.min_length_split,
                 config.overlap_length);
 
-    // File paths (.tmp during construction, renamed to final on success)
     std::string ksx_tmp = output_prefix + ".ksx.tmp";
-    std::string kix_tmp = output_prefix + ".kix.tmp";
-    std::string ksx_final = output_prefix + ".ksx";
-    std::string kix_final = output_prefix + ".kix";
-    std::string kpx_tmp, kpx_final;
-    if (!config.skip_kpx) {
-        kpx_tmp = output_prefix + ".kpx.tmp";
-        kpx_final = output_prefix + ".kpx";
-    }
 
-    // Metadata pass: write .ksx (parents + fragments).
-    // BLAST DB OIDs shorter than min_seq_length are skipped. Surviving
-    // OIDs become parents. When splitting is disabled, each parent emits
-    // one fragment spanning the whole parent; otherwise the parent's
-    // ambiguity table is parsed and fragment_splitter::split() derives
-    // overlapping fragments at min_length_split / overlap_length, with
-    // N runs (ncbi4na == 0xF) cutting the parent into valid segments so
-    // fragments never straddle long ambiguous regions.
-    //
-    // The per-fragment mapping (parent OID + parent-relative range) is
-    // captured in seq_id_to_blast_oid / seq_id_to_frag_start /
-    // seq_id_to_frag_end and consulted by the later per-SeqId scan loops
-    // to slice the parent's k-mer stream and rebase positions to
+    // BLAST DB OIDs shorter than min_seq_length are skipped; the rest
+    // become parents.  Each parent is split into fragments by
+    // fragment_splitter::split() (cutting at ncbi4na==0xF runs so
+    // fragments never straddle long ambiguous regions); with
+    // min_length_split == 0 every parent emits one whole-parent
+    // fragment.  The per-fragment mapping returned via VolumeMetadata
+    // lets the postings pass slice each parent's k-mer stream into
     // fragment-relative coordinates.
     logger.info("Collecting metadata%s...",
                 splitting_enabled ? " and splitting parents into fragments" : "");
-    std::vector<uint32_t> seq_id_to_blast_oid;
-    std::vector<uint32_t> seq_id_to_frag_start;  // 1-based, inclusive (parent-relative)
-    std::vector<uint32_t> seq_id_to_frag_end;    // 1-based, inclusive
-    seq_id_to_blast_oid.reserve(blast_num_seqs);
-    seq_id_to_frag_start.reserve(blast_num_seqs);
-    seq_id_to_frag_end.reserve(blast_num_seqs);
-    {
-        KsxWriter ksx;
-        ksx.set_min_seq_length(config.min_seq_length);
-        ksx.set_min_length_split(config.min_length_split);
-        ksx.set_overlap_length(config.overlap_length);
+    out = VolumeMetadata{};
+    out.seq_id_to_blast_oid.reserve(blast_num_seqs);
+    out.seq_id_to_frag_start.reserve(blast_num_seqs);
+    out.seq_id_to_frag_end.reserve(blast_num_seqs);
 
-        Progress prog("Metadata", blast_num_seqs, config.verbose);
-        uint32_t skipped = 0;
-        uint64_t total_fragments = 0;
-        for (uint32_t blast_oid = 0; blast_oid < blast_num_seqs; blast_oid++) {
-            uint32_t slen = db.seq_length(blast_oid);
-            if (slen < config.min_seq_length) {
-                skipped++;
-                prog.update(blast_oid + 1);
-                continue;
-            }
-            std::string acc = db.get_accession(blast_oid);
-            uint32_t parent_idx = ksx.add_parent(blast_oid, slen, acc);
-
-            // Compute the fragment list for this parent.
-            std::vector<fragment_splitter::Fragment> frags;
-            if (!splitting_enabled) {
-                frags.push_back({1u, slen});
-            } else {
-                auto raw = db.get_raw_sequence(blast_oid);
-                auto ambig = AmbiguityParser::parse(raw.ambig_data,
-                                                   raw.ambig_bytes);
-                db.ret_raw_sequence(raw);
-                frags = fragment_splitter::split(slen, ambig,
-                                                 config.min_length_split,
-                                                 config.overlap_length);
-            }
-
-            for (const auto& f : frags) {
-                // SeqId space is u32; reject parents that would push the
-                // running fragment count past UINT32_MAX so downstream
-                // u32 SeqId arithmetic stays safe.
-                if (seq_id_to_blast_oid.size() >= UINT32_MAX) {
-                    logger.error("SeqId space exhausted: more than %u fragments "
-                                 "would be required for this volume "
-                                 "(BLAST DB OID %u, parent length %u). "
-                                 "Increase -min_length_split or split the BLAST "
-                                 "DB into smaller volumes.",
-                                 UINT32_MAX, blast_oid, slen);
-                    std::remove(ksx_tmp.c_str());
-                    return false;
-                }
-                uint32_t seq_id = ksx.add_fragment(parent_idx, f.start, f.end);
-                (void)seq_id;
-                seq_id_to_blast_oid.push_back(blast_oid);
-                seq_id_to_frag_start.push_back(f.start);
-                seq_id_to_frag_end.push_back(f.end);
-            }
-            total_fragments += frags.size();
+    KsxWriter ksx;
+    Progress prog("Metadata", blast_num_seqs, config.verbose);
+    uint32_t skipped = 0;
+    for (uint32_t blast_oid = 0; blast_oid < blast_num_seqs; blast_oid++) {
+        uint32_t slen = db.seq_length(blast_oid);
+        if (slen < config.min_seq_length) {
+            skipped++;
             prog.update(blast_oid + 1);
+            continue;
         }
-        prog.finish();
+        std::string acc = db.get_accession(blast_oid);
+        uint32_t parent_idx = ksx.add_parent(blast_oid, slen, acc);
 
-        if (!ksx.write(ksx_tmp)) {
-            logger.error("Failed to write %s", ksx_tmp.c_str());
-            return false;
+        // Compute the fragment list for this parent.
+        std::vector<fragment_splitter::Fragment> frags;
+        if (!splitting_enabled) {
+            frags.push_back({1u, slen});
+        } else {
+            auto raw = db.get_raw_sequence(blast_oid);
+            auto ambig = AmbiguityParser::parse(raw.ambig_data,
+                                               raw.ambig_bytes);
+            db.ret_raw_sequence(raw);
+            frags = fragment_splitter::split(slen, ambig,
+                                             config.min_length_split,
+                                             config.overlap_length);
         }
-        logger.info("Wrote %s (%u parents -> %u fragments, "
-                    "%u skipped < min_seq_length=%u)",
-                    ksx_tmp.c_str(), ksx.num_parents(), ksx.num_sequences(),
-                    skipped, config.min_seq_length);
-        (void)total_fragments;
+
+        for (const auto& f : frags) {
+            if (out.seq_id_to_blast_oid.size() >= UINT32_MAX) {
+                logger.error("SeqId space exhausted: more than %u fragments "
+                             "would be required for this volume "
+                             "(BLAST DB OID %u, parent length %u). "
+                             "Increase -min_length_split or split the BLAST "
+                             "DB into smaller volumes.",
+                             UINT32_MAX, blast_oid, slen);
+                std::remove(ksx_tmp.c_str());
+                return false;
+            }
+            uint32_t seq_id = ksx.add_fragment(parent_idx, f.start, f.end);
+            (void)seq_id;
+            out.seq_id_to_blast_oid.push_back(blast_oid);
+            out.seq_id_to_frag_start.push_back(f.start);
+            out.seq_id_to_frag_end.push_back(f.end);
+        }
+        prog.update(blast_oid + 1);
     }
-    // Internal SeqId space is the per-fragment count; counting / encoding
-    // loops below are keyed by SeqId.  When splitting is disabled this
-    // collapses to one fragment per surviving OID.
+    prog.finish();
+
+    if (!ksx.write(ksx_tmp)) {
+        logger.error("Failed to write %s", ksx_tmp.c_str());
+        return false;
+    }
+    out.num_sequences = ksx.num_sequences();
+    out.num_parents = ksx.num_parents();
+    logger.info("Wrote %s (%u parents -> %u fragments, "
+                "%u skipped < min_seq_length=%u)",
+                ksx_tmp.c_str(), out.num_parents, out.num_sequences,
+                skipped, config.min_seq_length);
+    return true;
+}
+
+template <typename KmerInt>
+bool build_postings(BlastDbReader& db,
+                    const IndexBuilderConfig& config,
+                    const std::string& output_prefix,
+                    const VolumeMetadata& meta,
+                    uint16_t volume_index,
+                    uint16_t total_volumes,
+                    const std::string& db_name,
+                    const Logger& logger) {
+
+    const int k = config.k;
+
+    // File paths (.tmp during construction, renamed to final on success).
+    std::string ksx_tmp = output_prefix + ".ksx.tmp";
+    std::string kix_tmp = output_prefix + ".kix.tmp";
+    std::string kpx_tmp;
+    if (!config.skip_kpx) {
+        kpx_tmp = output_prefix + ".kpx.tmp";
+    }
+
+    const std::vector<uint32_t>& seq_id_to_blast_oid   = meta.seq_id_to_blast_oid;
+    const std::vector<uint32_t>& seq_id_to_frag_start  = meta.seq_id_to_frag_start;
+    const std::vector<uint32_t>& seq_id_to_frag_end    = meta.seq_id_to_frag_end;
+
     const uint32_t num_seqs = static_cast<uint32_t>(seq_id_to_blast_oid.size());
 
     // Pre-compute spaced seed masks (shared across all passes).
@@ -779,9 +773,6 @@ bool build_index(BlastDbReader& db,
         kix_hdr.block_size            = 0;
         kix_hdr.tail_codec            = 0;
         kix_hdr.exception_codec_flags = 0;
-        kix_hdr.min_seq_length   = config.min_seq_length;
-        kix_hdr.min_length_split = config.min_length_split;
-        kix_hdr.overlap_length   = config.overlap_length;
         std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, wr);
 
         if (!write_kix_dictionary_ef(wr, kix_offsets.data(), tbl_size,
@@ -826,9 +817,6 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.codec_version = 0;
         kpx_hdr.block_size    = 0;
         kpx_hdr.tail_codec    = 0;
-        kpx_hdr.min_seq_length   = config.min_seq_length;
-        kpx_hdr.min_length_split = config.min_length_split;
-        kpx_hdr.overlap_length   = config.overlap_length;
         std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, wr);
 
         if (!write_kpx_dictionary_ef(wr, kpx_offsets.data(), tbl_size,
@@ -844,31 +832,54 @@ bool build_index(BlastDbReader& db,
         std::fclose(wr);
     }
 
-    // Rename .tmp files to final names (unless keep_tmp is set)
-    if (!config.keep_tmp) {
-        if (std::rename(ksx_tmp.c_str(), ksx_final.c_str()) != 0) {
-            logger.error("Failed to rename %s -> %s", ksx_tmp.c_str(), ksx_final.c_str());
-            return false;
-        }
-        if (std::rename(kix_tmp.c_str(), kix_final.c_str()) != 0) {
-            logger.error("Failed to rename %s -> %s", kix_tmp.c_str(), kix_final.c_str());
-            return false;
-        }
-        if (!config.skip_kpx) {
-            if (std::rename(kpx_tmp.c_str(), kpx_final.c_str()) != 0) {
-                logger.error("Failed to rename %s -> %s", kpx_tmp.c_str(), kpx_final.c_str());
-                return false;
-            }
-        }
-    }
-
-    logger.info("Index built: %s (.kix%s, .ksx%s)", output_prefix.c_str(),
-                config.skip_kpx ? "" : ", .kpx",
-                config.keep_tmp ? " [tmp]" : "");
+    logger.info("Postings built: %s (.kix.tmp%s, .ksx.tmp)", output_prefix.c_str(),
+                config.skip_kpx ? "" : ", .kpx.tmp");
     return true;
 }
 
 // Explicit template instantiations
+template bool build_postings<uint16_t>(BlastDbReader&, const IndexBuilderConfig&,
+    const std::string&, const VolumeMetadata&, uint16_t, uint16_t,
+    const std::string&, const Logger&);
+template bool build_postings<uint32_t>(BlastDbReader&, const IndexBuilderConfig&,
+    const std::string&, const VolumeMetadata&, uint16_t, uint16_t,
+    const std::string&, const Logger&);
+
+template <typename KmerInt>
+bool build_index(BlastDbReader& db,
+                 const IndexBuilderConfig& config,
+                 const std::string& output_prefix,
+                 uint16_t volume_index,
+                 uint16_t total_volumes,
+                 const std::string& db_name,
+                 const Logger& logger) {
+    VolumeMetadata meta;
+    if (!build_metadata(db, config, output_prefix, meta, logger)) {
+        return false;
+    }
+    if (!build_postings<KmerInt>(db, config, output_prefix, meta,
+                                 volume_index, total_volumes, db_name, logger)) {
+        return false;
+    }
+    if (config.keep_tmp) return true;
+
+    auto rename_one = [&](const char* ext) {
+        std::string from = output_prefix + ext + ".tmp";
+        std::string to   = output_prefix + ext;
+        if (std::rename(from.c_str(), to.c_str()) != 0) {
+            logger.error("Failed to rename %s -> %s", from.c_str(), to.c_str());
+            return false;
+        }
+        return true;
+    };
+    if (!rename_one(".ksx")) return false;
+    if (!rename_one(".kix")) return false;
+    if (!config.skip_kpx) {
+        if (!rename_one(".kpx")) return false;
+    }
+    return true;
+}
+
 template bool build_index<uint16_t>(BlastDbReader&, const IndexBuilderConfig&,
     const std::string&, uint16_t, uint16_t, const std::string&, const Logger&);
 template bool build_index<uint32_t>(BlastDbReader&, const IndexBuilderConfig&,

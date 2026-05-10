@@ -569,11 +569,8 @@ int main(int argc, char* argv[]) {
                 vdata[vi].kix_posting_size = kix_probe.posting_file_size();
                 vdata[vi].kix_full_size    = kix_probe.willneed_size_full();
                 vdata[vi].num_sequences    = kix_probe.num_sequences();
-                // v10: integrity check between -min_query_length and the
-                // index's min_seq_length.  Each volume of a multi-volume
-                // index has the same min_seq_length, so any volume's value
-                // is authoritative.
-                const uint32_t idx_min = kix_probe.min_seq_length();
+                // -min_query_length must be >= the index's min_seq_length.
+                const uint32_t idx_min = vf.min_seq_length;
                 if (config.min_query_length < idx_min) {
                     std::fprintf(stderr,
                         "Error: -min_query_length=%u is smaller than the "
@@ -626,20 +623,23 @@ int main(int argc, char* argv[]) {
         if (!open_volumes(ctx.vol_files, ctx.volumes, need_kpx)) return 1;
     }
 
-    // Drive max_query_length from the index's overlap_length.
-    // All volumes within an index carry the same overlap_length so the
-    // first .ksx is authoritative.  When overlap_length == 0 (no
-    // fragment splitting) the check stays disabled.
-    if (!ctxs.empty() && !ctxs[0].volumes.empty()) {
-        config.max_query_length = ctxs[0].volumes[0].ksx.overlap_length();
+    // Drive max_query_length from the index's overlap_length; 0
+    // disables the upper-bound check (no fragment splitting).
+    if (!ctxs.empty() && !ctxs[0].vol_files.empty()) {
+        config.max_query_length = ctxs[0].vol_files[0].overlap_length;
     }
 
     // Open shared .khx for every context (non-fatal if missing).
     {
         auto parts = parse_index_prefix(ix_prefix);
         for (auto& ctx : ctxs) {
+            if (ctx.vol_files.empty()) continue;
+            const auto& v0 = ctx.vol_files[0];
             ctx.khx.open(khx_path_for(parts.parent_dir, parts.db, k,
-                                       spaced_t, static_cast<uint8_t>(ctx.type)));
+                                       spaced_t, static_cast<uint8_t>(ctx.type),
+                                       v0.min_seq_length, v0.min_length_split,
+                                       v0.overlap_length, v0.max_freq_build,
+                                       v0.max_degen_expand));
         }
     }
 

@@ -69,9 +69,6 @@ OutputHit make_output_hit(const std::string& q, const std::string& s,
 std::string write_test_ksx() {
     static const char* path = "/tmp/test_result_dedup.ksx";
     KsxWriter writer;
-    writer.set_min_seq_length(64);
-    writer.set_min_length_split(1500);
-    writer.set_overlap_length(200);
     uint32_t p0 = writer.add_parent(0, 5171, "LONGCHR_1");
     writer.add_fragment(p0, 1,    1791);  // SeqId 0
     writer.add_fragment(p0, 1592, 3381);  // SeqId 1

@@ -305,12 +305,10 @@ int main(int argc, char* argv[]) {
     int k = vol_files[0].k;
     uint8_t vol_t = vol_files[0].t;
     uint8_t vol_template_type = vol_files[0].template_type;
-    // Determine table size and the fragment-indexing triplet from the
-    // first volume's reader.
+    const uint32_t hdr_min_seq_length   = vol_files[0].min_seq_length;
+    const uint32_t hdr_min_length_split = vol_files[0].min_length_split;
+    const uint32_t hdr_overlap_length   = vol_files[0].overlap_length;
     uint32_t tbl_size = 0;
-    uint32_t hdr_min_seq_length = 0;
-    uint32_t hdr_min_length_split = 0;
-    uint32_t hdr_overlap_length = 0;
     {
         KixReader kix0;
         if (!kix0.open(vol_files[0].kix_path)) {
@@ -318,9 +316,6 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         tbl_size = kix0.table_size();
-        hdr_min_seq_length   = kix0.min_seq_length();
-        hdr_min_length_split = kix0.min_length_split();
-        hdr_overlap_length   = kix0.overlap_length();
         kix0.close();
     }
 
@@ -489,9 +484,14 @@ int main(int argc, char* argv[]) {
         std::printf("\n");
     }
 
-    // Try to open shared .khx
+    // Try to open the shared .khx.
     auto prefix_parts = parse_index_prefix(ix_prefix);
-    std::string khx_path = khx_path_for(prefix_parts.parent_dir, prefix_parts.db, k);
+    const auto& v0 = vol_files[0];
+    std::string khx_path = khx_path_for(prefix_parts.parent_dir, prefix_parts.db,
+                                         k, vol_t, vol_template_type,
+                                         v0.min_seq_length, v0.min_length_split,
+                                         v0.overlap_length, v0.max_freq_build,
+                                         v0.max_degen_expand);
     KhxReader shared_khx;
     bool has_khx = shared_khx.open(khx_path);
     uint64_t khx_size = has_khx ? file_size(khx_path) : 0;

@@ -20,10 +20,6 @@ public:
     uint8_t template_type() const { return header_->template_type; }
     uint64_t total_position_count() const { return header_->total_position_count; }
     uint32_t table_size() const { return table_size_; }
-    // Fragment-indexing header values
-    uint32_t min_seq_length()   const { return header_->min_seq_length; }
-    uint32_t min_length_split() const { return header_->min_length_split; }
-    uint32_t overlap_length()   const { return header_->overlap_length; }
 
     // Raw pointer to the start of the position posting file
     const uint8_t* posting_file() const { return posting_file_; }

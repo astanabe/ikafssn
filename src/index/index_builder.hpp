@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ikafssn {
 
@@ -31,15 +32,41 @@ struct IndexBuilderConfig {
     uint32_t overlap_length    = 0;   // 0 = splitting disabled
 };
 
-// Build .kix, .kpx, .ksx index files for a single BLAST DB volume.
-// Template parameter KmerInt selects uint16_t (k<=8) or uint32_t (k>=9).
-//
-// output_prefix: directory + base name, e.g. "/out/nt.00.11mer"
-//   -> writes nt.00.11mer.ksx, nt.00.11mer.kix, nt.00.11mer.kpx
-//
-// volume_index / total_volumes: metadata stored in kix header.
-//
-// Returns true on success.
+// Per-fragment metadata captured during the metadata pass.  Consumed
+// by build_postings() to drive the per-fragment k-mer scanner.
+struct VolumeMetadata {
+    uint32_t num_sequences = 0;             // total fragment count for this volume
+    uint32_t num_parents = 0;
+    std::vector<uint32_t> seq_id_to_blast_oid;
+    std::vector<uint32_t> seq_id_to_frag_start;
+    std::vector<uint32_t> seq_id_to_frag_end;
+};
+
+// Collect parent / fragment metadata, write .ksx.tmp, and populate
+// `out` for the postings pass.  Returns true on success.
+bool build_metadata(BlastDbReader& db,
+                    const IndexBuilderConfig& config,
+                    const std::string& output_prefix,
+                    VolumeMetadata& out,
+                    const Logger& logger);
+
+// Scan k-mers per fragment, emit per-partition posting lists, and
+// write .kix.tmp / .kpx.tmp.  `volume_index` / `total_volumes` /
+// `db_name` are recorded in the .kix header for cross-volume
+// bookkeeping.
+template <typename KmerInt>
+bool build_postings(BlastDbReader& db,
+                    const IndexBuilderConfig& config,
+                    const std::string& output_prefix,
+                    const VolumeMetadata& meta,
+                    uint16_t volume_index,
+                    uint16_t total_volumes,
+                    const std::string& db_name,
+                    const Logger& logger);
+
+// Convenience wrapper: run build_metadata + build_postings for one
+// volume and rename the resulting .ksx.tmp / .kix.tmp / .kpx.tmp to
+// their final names.  Used by tests to stand up a single-volume index.
 template <typename KmerInt>
 bool build_index(BlastDbReader& db,
                  const IndexBuilderConfig& config,

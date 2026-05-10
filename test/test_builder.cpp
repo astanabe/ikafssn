@@ -346,7 +346,7 @@ static void test_build_with_max_freq_build() {
 
     // Apply cross-volume filtering (single volume, threshold=3)
     std::string khx_path2 = g_output_dir + "/freq_test2.07mer.khx";
-    CHECK(filter_volumes_cross_volume({prefix2}, khx_path2, 7, 3, 1, logger));
+    CHECK(filter_volumes_cross_volume({prefix2}, {prefix2}, khx_path2, 7, 3, 1, logger));
 
     // The filtered index should have fewer or equal total postings
     KixReader kix1, kix2;
@@ -380,7 +380,7 @@ static void test_build_with_max_freq_build() {
     CHECK(build_index<uint16_t>(db, config3, prefix3, 0, 1, "test", logger));
 
     std::string khx_path3 = g_output_dir + "/freq_test3.07mer.khx";
-    CHECK(filter_volumes_cross_volume({prefix3}, khx_path3, 7, frac_threshold, 1, logger));
+    CHECK(filter_volumes_cross_volume({prefix3}, {prefix3}, khx_path3, 7, frac_threshold, 1, logger));
 
     // Re-open kix1 for comparison with fractional-threshold build
     CHECK(kix1.open(prefix1 + ".kix"));
@@ -597,9 +597,6 @@ static void test_min_seq_length_filter() {
     KsxReader ksx64;
     CHECK(ksx64.open(prefix64 + ".ksx"));
     const uint32_t kept64 = ksx64.num_sequences();
-    CHECK_EQ(ksx64.min_seq_length(), 64u);
-    CHECK_EQ(ksx64.min_length_split(), 0u);
-    CHECK_EQ(ksx64.overlap_length(), 0u);
     // 1 fragment per parent, so num_parents == num_sequences.
     CHECK_EQ(ksx64.num_parents(), kept64);
     // Every fragment spans the whole parent.
@@ -610,15 +607,13 @@ static void test_min_seq_length_filter() {
     }
     ksx64.close();
 
-    // .kix / .kpx headers persist the same triplet.
+    // .kix mirrors the fragment count from .ksx.
     KixReader kix64;
     CHECK(kix64.open(prefix64 + ".kix"));
-    CHECK_EQ(kix64.min_seq_length(), 64u);
     CHECK_EQ(kix64.num_sequences(), kept64);
     kix64.close();
     KpxReader kpx64;
     CHECK(kpx64.open(prefix64 + ".kpx"));
-    CHECK_EQ(kpx64.min_seq_length(), 64u);
     kpx64.close();
 
     // Build again with a very large min_seq_length so most / all sequences
@@ -632,7 +627,6 @@ static void test_min_seq_length_filter() {
     KsxReader ksx_big;
     CHECK(ksx_big.open(prefix_big + ".ksx"));
     const uint32_t kept_big = ksx_big.num_sequences();
-    CHECK_EQ(ksx_big.min_seq_length(), 10'000'000u);
     CHECK(kept_big <= kept64);
     CHECK(kept_big < db_nseq);
     ksx_big.close();

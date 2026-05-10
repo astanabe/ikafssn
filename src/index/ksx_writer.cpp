@@ -71,9 +71,6 @@ bool KsxWriter::write(const std::string& path) const {
     std::memcpy(hdr.magic, KSX_MAGIC, sizeof(KSX_MAGIC));
     hdr.format_version   = KSX_FORMAT_VERSION;
     hdr.num_sequences    = num_seq;
-    hdr.min_seq_length   = min_seq_length_;
-    hdr.min_length_split = min_length_split_;
-    hdr.overlap_length   = overlap_length_;
     hdr.num_parents      = num_parents;
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 

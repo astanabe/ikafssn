@@ -7,6 +7,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/volume_searcher.hpp"
@@ -48,6 +49,18 @@ static void build_multivolume_index(int k, const std::string& db_base) {
     char kk_str[8];
     std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
 
+    auto vol_stem = [&](const std::string& base) {
+        IndexBuilderConfig config;
+        config.k = k;
+        return index_file_stem(g_test_dir, base, config.k,
+                               config.t, config.template_type,
+                               config.min_seq_length,
+                               config.min_length_split,
+                               config.overlap_length,
+                               /*max_freq_build=*/1,
+                               /*max_degen_expand=*/0);
+    };
+
     // Volume 0: multivol_a (using volume basename)
     {
         BlastDbReader db;
@@ -56,8 +69,7 @@ static void build_multivolume_index(int k, const std::string& db_base) {
         IndexBuilderConfig config;
         config.k = k;
 
-        std::string prefix = g_test_dir + "/" + VOL_BASENAME_A + "." +
-                             std::string(kk_str) + "mer";
+        std::string prefix = vol_stem(VOL_BASENAME_A);
 
         if (k < K_TYPE_THRESHOLD) {
             CHECK(build_index<uint16_t>(db, config, prefix, 0, 2, db_base, logger));
@@ -74,8 +86,7 @@ static void build_multivolume_index(int k, const std::string& db_base) {
         IndexBuilderConfig config;
         config.k = k;
 
-        std::string prefix = g_test_dir + "/" + VOL_BASENAME_B + "." +
-                             std::string(kk_str) + "mer";
+        std::string prefix = vol_stem(VOL_BASENAME_B);
 
         if (k < K_TYPE_THRESHOLD) {
             CHECK(build_index<uint16_t>(db, config, prefix, 1, 2, db_base, logger));
@@ -86,7 +97,7 @@ static void build_multivolume_index(int k, const std::string& db_base) {
 
     // Write .kvx manifest
     {
-        std::string kvx_path = g_test_dir + "/" + db_base + "." + kk_str + "mer.kvx";
+        std::string kvx_path = vol_stem(db_base) + ".kvx";
         FILE* fp = std::fopen(kvx_path.c_str(), "w");
         CHECK(fp != nullptr);
         std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
@@ -101,22 +112,21 @@ static std::vector<OutputHit> search_sequential(
         const std::string& db_base, int k,
         const std::vector<FastaRecord>& queries,
         const SearchConfig& config) {
-    char kk_str[8];
-    std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
-
-    const char* vol_basenames[2] = { VOL_BASENAME_A, VOL_BASENAME_B };
+    auto vols = discover_volumes(g_test_dir + "/" + db_base, k);
+    CHECK_EQ(vols.size(), 2u);
     std::vector<OutputHit> all_hits;
 
-    for (int vi = 0; vi < 2; vi++) {
-        std::string prefix = g_test_dir + "/" + vol_basenames[vi] + "." +
-                             std::string(kk_str) + "mer";
+    for (size_t vi = 0; vi < 2; vi++) {
+        const std::string& kix_path = vols[vi].kix_path;
+        const std::string& kpx_path = vols[vi].kpx_path;
+        const std::string& ksx_path = vols[vi].ksx_path;
 
         KixReader kix;
         KpxReader kpx;
         KsxReader ksx;
-        CHECK(kix.open(prefix + ".kix"));
-        CHECK(kpx.open(prefix + ".kpx"));
-        CHECK(ksx.open(prefix + ".ksx"));
+        CHECK(kix.open(kix_path));
+        CHECK(kpx.open(kpx_path));
+        CHECK(ksx.open(ksx_path));
 
         OidFilter filter;
 
@@ -172,8 +182,8 @@ static std::vector<OutputHit> search_parallel(
         const std::vector<FastaRecord>& queries,
         const SearchConfig& config,
         int nthread) {
-    char kk_str[8];
-    std::snprintf(kk_str, sizeof(kk_str), "%02d", k);
+    auto discovered = discover_volumes(g_test_dir + "/" + db_base, k);
+    CHECK_EQ(discovered.size(), 2u);
 
     // Pre-open volumes
     struct VolumeData {
@@ -183,14 +193,11 @@ static std::vector<OutputHit> search_parallel(
         uint16_t volume_index;
     };
 
-    const char* vol_basenames[2] = { VOL_BASENAME_A, VOL_BASENAME_B };
     std::vector<VolumeData> vols(2);
-    for (int vi = 0; vi < 2; vi++) {
-        std::string prefix = g_test_dir + "/" + vol_basenames[vi] + "." +
-                             std::string(kk_str) + "mer";
-        CHECK(vols[vi].kix.open(prefix + ".kix"));
-        CHECK(vols[vi].kpx.open(prefix + ".kpx"));
-        CHECK(vols[vi].ksx.open(prefix + ".ksx"));
+    for (size_t vi = 0; vi < 2; vi++) {
+        CHECK(vols[vi].kix.open(discovered[vi].kix_path));
+        CHECK(vols[vi].kpx.open(discovered[vi].kpx_path));
+        CHECK(vols[vi].ksx.open(discovered[vi].ksx_path));
         vols[vi].volume_index = static_cast<uint16_t>(vi);
     }
 
@@ -380,14 +387,27 @@ static void test_parallel_counting_pass() {
     BlastDbReader db;
     CHECK(db.open(g_multivol_a_path));
 
+    auto pcnt_stem = [&](const std::string& base) {
+        IndexBuilderConfig cfg;
+        cfg.k = 7;
+        return index_file_stem(g_test_dir, base, cfg.k,
+                               cfg.t, cfg.template_type,
+                               cfg.min_seq_length,
+                               cfg.min_length_split,
+                               cfg.overlap_length,
+                               /*max_freq_build=*/1,
+                               /*max_degen_expand=*/0);
+    };
+    std::string st_prefix = pcnt_stem("pcnt_st.00");
+    std::string mt_prefix = pcnt_stem("pcnt_mt.00");
+
     // Build with 1 thread
     {
         IndexBuilderConfig config;
         config.k = 7;
         config.threads = 1;
 
-        std::string prefix = g_test_dir + "/pcnt_st.00.07mer";
-        CHECK(build_index<uint16_t>(db, config, prefix, 0, 1, "pcnt", logger));
+        CHECK(build_index<uint16_t>(db, config, st_prefix, 0, 1, "pcnt", logger));
     }
 
     // Build with 2 threads (need to re-open DB as it may have internal state)
@@ -398,14 +418,13 @@ static void test_parallel_counting_pass() {
         config.k = 7;
         config.threads = 2;
 
-        std::string prefix = g_test_dir + "/pcnt_mt.00.07mer";
-        CHECK(build_index<uint16_t>(db2, config, prefix, 0, 1, "pcnt", logger));
+        CHECK(build_index<uint16_t>(db2, config, mt_prefix, 0, 1, "pcnt", logger));
     }
 
     // Compare kix files: offsets and counts should be identical
     KixReader kix_st, kix_mt;
-    CHECK(kix_st.open(g_test_dir + "/pcnt_st.00.07mer.kix"));
-    CHECK(kix_mt.open(g_test_dir + "/pcnt_mt.00.07mer.kix"));
+    CHECK(kix_st.open(st_prefix + ".kix"));
+    CHECK(kix_mt.open(mt_prefix + ".kix"));
 
     CHECK_EQ(kix_st.table_size(), kix_mt.table_size());
     CHECK_EQ(kix_st.total_distinct_postings(), kix_mt.total_distinct_postings());
@@ -426,10 +445,10 @@ static void test_parallel_counting_pass() {
     // Search both and verify same results
     KpxReader kpx_st, kpx_mt;
     KsxReader ksx_st, ksx_mt;
-    CHECK(kpx_st.open(g_test_dir + "/pcnt_st.00.07mer.kpx"));
-    CHECK(kpx_mt.open(g_test_dir + "/pcnt_mt.00.07mer.kpx"));
-    CHECK(ksx_st.open(g_test_dir + "/pcnt_st.00.07mer.ksx"));
-    CHECK(ksx_mt.open(g_test_dir + "/pcnt_mt.00.07mer.ksx"));
+    CHECK(kpx_st.open(st_prefix + ".kpx"));
+    CHECK(kpx_mt.open(mt_prefix + ".kpx"));
+    CHECK(ksx_st.open(st_prefix + ".ksx"));
+    CHECK(ksx_mt.open(mt_prefix + ".ksx"));
 
     OidFilter filter;
     SearchConfig sconfig;

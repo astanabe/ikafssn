@@ -94,34 +94,22 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
             const auto& kix_hdr = kix_probe.header();
             svd.db_name = std::string(kix_hdr.db,
                                       strnlen(kix_hdr.db, sizeof(kix_hdr.db)));
-            // v10: capture the fragment-indexing triplet from the first
-            // index seen, then verify every subsequent index in this DB
-            // agrees.  Mismatches mean the user has mixed indexes built
-            // with different filter / split parameters under the same
-            // prefix — refuse to load.
-            const uint32_t kix_min     = kix_probe.min_seq_length();
-            const uint32_t kix_split   = kix_probe.min_length_split();
-            const uint32_t kix_overlap = kix_probe.overlap_length();
-            if (entry.kmer_groups.size() == 1 && group.volumes.empty()) {
-                // First index seen for this DB.
-                entry.min_seq_length   = kix_min;
-                entry.min_length_split = kix_split;
-                entry.overlap_length   = kix_overlap;
-            } else if (entry.min_seq_length   != kix_min   ||
-                       entry.min_length_split != kix_split ||
-                       entry.overlap_length   != kix_overlap) {
-                logger.error("Index %s has min_seq_length=%u min_length_split=%u "
-                             "overlap_length=%u but the DB '%s' was already loaded "
-                             "with %u/%u/%u",
-                             dv.kix_path.c_str(),
-                             kix_min, kix_split, kix_overlap,
-                             db_name.c_str(),
-                             entry.min_seq_length, entry.min_length_split,
-                             entry.overlap_length);
-                kix_probe.close();
-                return false;
-            }
             kix_probe.close();
+        }
+
+        // overlap_length comes from DiscoveredVolume (parsed from the
+        // file name).  Capture the first volume's value and verify each
+        // subsequent volume agrees; a mismatch means the user has mixed
+        // indexes built with different parameters under the same prefix.
+        if (entry.kmer_groups.size() == 1 && group.volumes.empty()) {
+            entry.overlap_length = dv.overlap_length;
+        } else if (entry.overlap_length != dv.overlap_length) {
+            logger.error("Index %s has overlap_length=%u but the DB '%s' was "
+                         "already loaded with overlap_length=%u",
+                         dv.kix_path.c_str(),
+                         dv.overlap_length, db_name.c_str(),
+                         entry.overlap_length);
+            return false;
         }
 
         if (dv.has_kpx) {
@@ -163,9 +151,15 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
                       return a.volume_index < b.volume_index;
                   });
 
-        // Open shared .khx for this k-mer group (non-fatal if missing)
-        group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db,
-                                     group.k, group.t, group.template_type));
+        // Open the shared .khx for this k-mer group; non-fatal if missing.
+        if (!group.volumes.empty()) {
+            const auto& v0 = group.volumes.front().files;
+            group.khx.open(khx_path_for(prefix_parts.parent_dir, prefix_parts.db,
+                                        group.k, group.t, group.template_type,
+                                        v0.min_seq_length, v0.min_length_split,
+                                        v0.overlap_length, v0.max_freq_build,
+                                        v0.max_degen_expand));
+        }
     }
 
     // Default k = largest available (groups sorted by k ascending)
@@ -183,16 +177,15 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
         }
     }
 
-    // Resolve search config from server config template
+    // Adopt the index's min_seq_length as the effective floor for
+    // -min_query_length and its overlap_length as the upper bound for
+    // -max_query_length.  overlap_length == 0 disables the upper-bound
+    // check (no fragment splitting).
     entry.resolved_search_config = config.search_config;
-    // v10: the server has no -min_query_length CLI flag of its own.  It
-    // adopts the loaded index's min_seq_length as the effective floor so
-    // queries shorter than the index's filter are skipped server-side
-    // (defence-in-depth — well-behaved clients reject these locally).
-    entry.resolved_search_config.min_query_length = entry.min_seq_length;
-    // adopt the index's overlap_length as the upper bound so
-    // queries longer than overlap_length are skipped with kSkipQueryTooLong.
-    // overlap_length == 0 (no fragment splitting) leaves the check disabled.
+    if (!entry.kmer_groups.empty() && !entry.kmer_groups.front().volumes.empty()) {
+        const auto& v0 = entry.kmer_groups.front().volumes.front().files;
+        entry.resolved_search_config.min_query_length = v0.min_seq_length;
+    }
     entry.resolved_search_config.max_query_length = entry.overlap_length;
 
     // Copy stage3/context params from ServerConfig

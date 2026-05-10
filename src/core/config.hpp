@@ -29,10 +29,10 @@ inline constexpr int K_TYPE_THRESHOLD = 9; // k >= 9 uses uint32_t (contiguous/t
 
 // Format versions — all index files share a single major version so
 // users only have to track one number.
-inline constexpr uint16_t KIX_FORMAT_VERSION = 10;
-inline constexpr uint16_t KPX_FORMAT_VERSION = 10;
-inline constexpr uint16_t KSX_FORMAT_VERSION = 10;
-inline constexpr uint16_t KHX_FORMAT_VERSION = 10;
+inline constexpr uint16_t KIX_FORMAT_VERSION = 11;
+inline constexpr uint16_t KPX_FORMAT_VERSION = 11;
+inline constexpr uint16_t KSX_FORMAT_VERSION = 11;
+inline constexpr uint16_t KHX_FORMAT_VERSION = 11;
 
 // Direct-address table size for k-mer value k: 4^k.
 // Max supported: 4^15 = 1,073,741,824 (fits uint32_t).

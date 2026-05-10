@@ -82,7 +82,7 @@ wrappers:
 
 Build a k-mer inverted index from a BLAST database. For each volume, index files are generated: `.kix` (ID postings), `.kpx` (position postings, unless `-mode 1`), and `.ksx` (sequence metadata). When `-max_freq_build` is used, a shared `.khx` file (build-time exclusion bitset) is also generated. The `.khx` file is shared across all volumes (one per k value, not per volume).
 
-**Indexed unit (v10):** Each parent BLAST OID is split into one or more **fragments** at index time. A fragment is the unit registered as one internal SeqId in `.kix` / `.kpx` / `.ksx`; adjacent fragments of the same parent share `-overlap_length` bases so a chain that crosses the boundary still has at least one fragment that fully covers it. When `-min_length_split 0` is used, every parent has exactly one fragment that spans the whole parent (the degenerate / no-split layout). Search-side dedup folds fragment-relative coordinates back to **parent-relative coordinates** so downstream tools always see one canonical row per parent OID.
+**Indexed unit:** Each parent BLAST OID is split into one or more **fragments** at index time. A fragment is the unit registered as one internal SeqId in `.kix` / `.kpx` / `.ksx`; adjacent fragments of the same parent share `-overlap_length` bases so a chain that crosses the boundary still has at least one fragment that fully covers it. When `-min_length_split 0` is used, every parent has exactly one fragment that spans the whole parent (the degenerate / no-split layout). Search-side dedup folds fragment-relative coordinates back to **parent-relative coordinates** so downstream tools always see one canonical row per parent OID.
 
 ```
 ikafssnindex [options]
@@ -278,18 +278,16 @@ Primer mode (alternative to -query):
 The `-ix` option specifies the index prefix path (without extension), similar to `blastn -db`. For example, if `ikafssnindex -db nt -k 11 -o /data/index` generated the following files for a multi-volume BLAST DB (`nt` with volumes `nt.00`, `nt.01`):
 
 ```
-/data/index/nt.00.11mer.kix
-/data/index/nt.00.11mer.kpx
-/data/index/nt.00.11mer.ksx
-/data/index/nt.01.11mer.kix
-/data/index/nt.01.11mer.kpx
-/data/index/nt.01.11mer.ksx
-/data/index/nt.11mer.kvx
+/data/index/nt.00.k11.minlen64.minsplit50000.ovllen500.kix
+/data/index/nt.00.k11.minlen64.minsplit50000.ovllen500.ksx
+/data/index/nt.01.k11.minlen64.minsplit50000.ovllen500.kix
+/data/index/nt.01.k11.minlen64.minsplit50000.ovllen500.ksx
+/data/index/nt.k11.minlen64.minsplit50000.ovllen500.kvx
 ```
 
-then specify `-ix /data/index/nt`. The prefix `/data/index/nt` is split into the directory `/data/index/` and the base name `nt`. Volumes are discovered via the `.kvx` manifest file (`nt.11mer.kvx`), which lists the volume basenames. For aggregated databases (e.g. `combined` aggregating `foo` and `bar`), the index files would be `foo.11mer.kix`, `bar.11mer.kix`, with `combined.11mer.kvx` as the manifest.
+then specify `-ix /data/index/nt`. The prefix `/data/index/nt` is split into the directory `/data/index/` and the base name `nt`. Volumes are discovered via the `.kvx` manifest file, which lists the volume basenames. For aggregated databases (e.g. `combined` aggregating `foo` and `bar`), the index files would be `foo.k11.…kix`, `bar.k11.…kix`, with `combined.k11.…kvx` as the manifest.
 
-If the index directory contains indexes for multiple k-mer sizes (e.g. both `nt.09mer.kvx` and `nt.11mer.kvx`), you must specify `-k` to select which one to use. If only a single k-mer size exists, `-k` can be omitted.
+If the index directory contains indexes for multiple k-mer sizes (e.g. both `nt.k9.…kvx` and `nt.k11.…kvx`), you must specify `-k` to select which one to use. If only a single k-mer size exists, `-k` can be omitted.
 
 When `-accept_qdegen` is 0, queries containing IUPAC degenerate bases (R, Y, S, W, K, M, B, D, H, V, N) are skipped with a `degen_rejected` skip-marker (TSV `*SKIPPED:degen_rejected`, JSON `"status": "skipped"`, SAM unmapped record with `XR:Z:degen_rejected`) and a stderr warning, and the exit code is 2. See "Skip reasons" below for the complete reason list and per-format representation. Set `-accept_qdegen 1` to allow such queries. K-mers containing exactly one degenerate base are expanded to all possible variants (e.g., R→A,G produces 2 k-mers; N→A,C,G,T produces 4) and used for search. K-mers whose per-position expansion product exceeds `-max_degen_expand` are skipped; when this occurs, a warning is emitted to stderr once per query indicating the query name and that such k-mers are ignored. (Note: this is a per-window unemit, not a whole-query skip — the rest of the query is still searched, and the unemit position is reflected in `Nhighfreq` for fractional thresholds.) In server mode (`ikafssnserver`), this warning is propagated through the protocol to `ikafssnclient`, which displays the same message. This matches the indexer's handling of subject-side degenerate bases.
 
@@ -396,7 +394,7 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
 
 Extract matched subsequences based on search results. Supports local BLAST DB extraction and remote retrieval via NCBI E-utilities (efetch).
 
-**FASTA defline (v10):** Each retrieved record is emitted as
+**FASTA defline:** Each retrieved record is emitted as
 `>parent_accession:start-end query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`,
 with `start` / `end` 1-based and inclusive in **parent-relative coordinates** (the parent OID accession on the left, never a fragment-derived synthetic name). On the local path the sequence fetch is routed through `BlastDbReader::get_subsequence(parent_oid, start, end)` so chromosome-scale parents only decode the requested window instead of the whole OID.
 
@@ -805,7 +803,7 @@ Local mode output includes:
 - Number of volumes
 - Per-volume statistics: parent (BLAST OID) count, fragment (internal SeqId) count, fragment-length distribution (min / median / mean / max), total postings, file sizes, excluded k-mer count (if `.khx` present)
 - Overall statistics: total parents, total fragments, aggregated fragment-length distribution, total postings, total index size, compression ratio
-- v10 header fields (`min_seq_length`, `min_length_split`, `overlap_length`) per index
+- Fragment-indexing parameters (`min_seq_length`, `min_length_split`, `overlap_length`) parsed from the index file name
 - With `-v`: k-mer frequency distribution (min, max, mean, percentiles)
 - With `-db` (or auto-detected): BLAST DB title, sequence count, total bases, volume paths
 
@@ -939,7 +937,7 @@ When ikafssn cannot run a query through Stages 1–3 it emits a sentinel record 
 | `kSkipDegenRejected` / `degen_rejected` | `-accept_qdegen 0` was set and the query contains IUPAC degenerate bases. |
 | `kSkipInvalidChar` / `invalid_char` | Query contains a character outside `[ACGT]` ∪ IUPAC. The detail names the offending position. |
 | `kSkipThresholdUnreachable` / `threshold_unreachable` | Resolved fractional threshold is `< 1` on every searched strand. |
-| `kSkipQueryTooLong` / `query_too_long` | `seq_len > overlap_length` on a fragment-split index (v10).  The parent-relative dedup keys rely on every chain hit fitting inside at most two adjacent fragments, so queries longer than the overlap are rejected up-front rather than producing per-fragment partial chains.  Indexes with `min_length_split == 0` (no splitting) report `overlap_length == 0`, which disables this check. |
+| `kSkipQueryTooLong` / `query_too_long` | `seq_len > overlap_length` on a fragment-split index.  The parent-relative dedup keys rely on every chain hit fitting inside at most two adjacent fragments, so queries longer than the overlap are rejected up-front rather than producing per-fragment partial chains.  Indexes with `min_length_split == 0` (no splitting) report `overlap_length == 0`, which disables this check. |
 
 Output representations:
 
@@ -1026,7 +1024,7 @@ Score rules:
 
 ## Output Format
 
-**Coordinate convention (v10):** `sseqid` is the **parent OID's** accession (never a fragment-derived synthetic name), `sstart` / `send` are 1-based parent-relative positions, and `slen` is the parent OID's full length. After Stage 2 / Stage 3 dedup folds per-fragment chains together, every row in the output describes one canonical hit per `(qseqid, sseqid, sstrand, send, alnscore)` tuple.
+**Coordinate convention:** `sseqid` is the **parent OID's** accession (never a fragment-derived synthetic name), `sstart` / `send` are 1-based parent-relative positions, and `slen` is the parent OID's full length. After Stage 2 / Stage 3 dedup folds per-fragment chains together, every row in the output describes one canonical hit per `(qseqid, sseqid, sstrand, send, alnscore)` tuple.
 
 ### Tab Format (default)
 
@@ -1253,64 +1251,75 @@ Sample systemd unit files are provided in `doc/systemd/`. See the files for conf
 
 ## Index File Formats
 
-Per BLAST DB volume, three files are generated using the BLAST DB volume's own basename:
+All fragment-indexing parameters that change the *content* of an index
+are encoded directly in the file name, so multiple indexes built with
+different parameters can co-exist in the same output directory.
+
+Per BLAST DB volume, three files are generated:
 
 ```
-<vol_basename>.<kk>mer.kix   — ID postings (direct-address table + delta-compressed)
-<vol_basename>.<kk>mer.kpx   — Position postings (delta-compressed)
-<vol_basename>.<kk>mer.ksx   — Sequence metadata (lengths + accessions)
+<vol_basename>.k<k>[.t<t>][.minlen<X>][.minsplit<X>][.ovllen<X>]
+              [.maxfreq<X>][.maxexpand<X>][.cod|.opt].(kix|kpx|ksx)
 ```
 
-A `.kvx` manifest file is always generated for volume discovery:
+The shared per-DB manifest (and, when `-max_freq_build` is used, the
+exclusion bitset) follow the same convention without the volume index:
 
 ```
-<db_base>.<kk>mer.kvx        — Volume manifest (text, lists volume basenames)
+<db_base>.k<k>[.t<t>][.minlen<X>][.minsplit<X>][.ovllen<X>]
+          [.maxfreq<X>][.maxexpand<X>][.cod|.opt].(kvx|khx)
 ```
 
-When `-max_freq_build` is used, a shared exclusion bitset file is also generated (one per k value, shared across all volumes):
+Suffix-omission rules:
 
-```
-<db_base>.<kk>mer.khx        — Build-time exclusion bitset (shared across volumes)
-```
+| Suffix | Omitted when |
+|---|---|
+| `k<X>`         | never (always emitted, no zero-padding) |
+| `t<X>`         | `t == 0` |
+| `minlen<X>`    | `min_seq_length == 0` |
+| `minsplit<X>`  | `min_length_split == 0` |
+| `ovllen<X>`    | `overlap_length == 0` (synchronized with `minsplit`) |
+| `maxfreq<X>`   | `max_freq_build == 1` (the resolved absolute threshold) |
+| `maxexpand<X>` | `max_degen_expand` is `0` or `1` |
+| `cod` / `opt`  | `t == 0` |
 
 Examples:
-- Standard multi-volume (`nt` with volumes `nt.00`, `nt.01`): `nt.00.11mer.kix`, `nt.01.11mer.kpx`, `nt.11mer.kvx`, `nt.11mer.khx`
-- Aggregated (`combined` with volumes `foo`, `bar`): `foo.11mer.kix`, `bar.11mer.kix`, `combined.11mer.kvx`
 
-The `.khx` file contains a 32-byte header (magic "KMHX", format version, k) followed by a bitset of `ceil(4^k / 8)` bytes. Bit *i* = 1 indicates that k-mer *i* was excluded during index build based on cross-volume aggregated counts.
+- Default `-mode 1` (`-min_seq_length 64 -min_length_split 50000 -overlap_length 500`):
+  - `nt.00.k11.minlen64.minsplit50000.ovllen500.kix`
+  - `nt.k11.minlen64.minsplit50000.ovllen500.kvx`
+- Mode 1 with cross-volume filter (`-max_freq_build 1000 -max_degen_expand 4`):
+  - `nt.00.k11.minlen64.minsplit50000.ovllen500.maxfreq1000.maxexpand4.kix`
+  - `nt.k11.minlen64.minsplit50000.ovllen500.maxfreq1000.maxexpand4.khx`
+- Mode 2 / 3 (`-min_length_split 0 -overlap_length 0`):
+  - `nt.00.k11.minlen64.kix`
+- Spaced seed (`-k 11 -t 16 -template_type coding -mode 1`):
+  - `nt.00.k11.t16.minlen64.minsplit50000.ovllen500.cod.kix`
+  - `nt.k11.t16.minlen64.minsplit50000.ovllen500.cod.kvx`
 
-ID and position postings are stored in separate files so that Stage 1 filtering never touches `.kpx`, maximizing page cache efficiency.
+Fractional `-max_freq_build` (e.g. `0.001`) is resolved to an absolute
+threshold at the end of the metadata-collection pass, and that
+absolute value is what appears in the file name, so the same fraction
+applied to a different fragment set produces a different file name.
 
-### Spaced Seed Index File Naming
+The `.khx` file contains a 32-byte header (magic "KMHX", format version,
+k) followed by a bitset of `ceil(4^k / 8)` bytes. Bit *i* = 1 indicates
+that k-mer *i* was excluded during index build based on cross-volume
+aggregated counts.
 
-When spaced seeds are enabled (`-t > 0`), the file naming includes the template length and type:
-
-```
-<vol_basename>.<kk>mer.<tt>mer.<type>.kix
-<vol_basename>.<kk>mer.<tt>mer.<type>.kpx
-<vol_basename>.<kk>mer.<tt>mer.<type>.ksx
-<db_base>.<kk>mer.<tt>mer.<type>.kvx
-<db_base>.<kk>mer.<tt>mer.<type>.khx
-```
-
-Where `<tt>` is the zero-padded template length and `<type>` is `cod` (coding) or `opt` (optimal).
-
-Examples:
-- Spaced seed with k=11, t=16, coding: `nt.00.11mer.16mer.cod.kix`
-- Spaced seed with k=11, t=16, optimal: `nt.00.11mer.16mer.opt.kix`
-- Spaced seed with k=12, t=21, coding: `nt.00.12mer.21mer.cod.kix`
-- Manifest: `nt.11mer.16mer.cod.kvx`
+ID and position postings are stored in separate files so that Stage 1
+filtering never touches `.kpx`, maximizing page cache efficiency.
 
 **Multi-accession deflines:** When the source BLAST DB was built with `makeblastdb -parse_seqids` and carries multi-defline records (the NCBI convention for registering identical sequences under several accessions, separated by `\x01` / `^A` in the FASTA defline), `ikafssnindex` preserves **all** accessions for each OID. The `.ksx` accession string for such OIDs contains every accession joined by `\x01`, and search output emits the same `\x01`-joined string in the `sseqid` column / SAM RNAME / FASTA defline / protocol `sseqid` field. Downstream consumers should split on `\x01` to recover individual accessions. The `-seqidlist` filter and `ikafssnretrieve` accept either the full `\x01`-joined form or any individual constituent accession.
 
-**Index format version:** The current index format is **v10** for every index file (`.kix`, `.kpx`, `.ksx`, `.khx`, `.kvx`). Layout summary:
+**Index format version:** The current index format is **v11** for every index file (`.kix`, `.kpx`, `.ksx`, `.khx`, `.kvx`). Layout summary:
 
-- **`.kix` / `.kpx` magic** is `KIX10` / `KPX10`; all four format headers carry a `{min_seq_length, min_length_split, overlap_length}` triplet so the search side can cross-check the index's intent against the user-supplied `-min_query_length`.
+- **`.kix` / `.kpx` magic** is `KIX11` / `KPX11`; the fragment-indexing parameters that used to live in the headers (`min_seq_length`, `min_length_split`, `overlap_length`, plus the resolved `max_freq_build` / `max_degen_expand`) are now encoded in the file name and parsed once at volume discovery time.
 - **`.ksx` two-stage layout:** the sequence-metadata file records each parent OID's `(parent_length, blast_oid, accession)` in a parent table, followed by a fragment table that maps every internal SeqId to `(parent_idx, fragment_start, fragment_end)`. Convenience accessors (`KsxReader::seq_length` / `accession`) take a SeqId and resolve to the matching parent. Magic is `KMSX`.
 - **`.kix` / `.kpx` body:** Elias-Fano dictionary, 2-bit kind map, FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` body.
-- **`.kvx`:** manifest text format with a `FORMAT_VERSION` line set to 10.
+- **`.kvx`:** manifest text format with a `FORMAT_VERSION` line set to 11.
 
-The fragment splitter is a port of kafssstore's `split_long_sequence_positions` (DNA2 mode, ncbi4na==0xF cuts, calcsegment2 formula). When `-min_length_split 0`, every parent is registered as a single fragment that spans the whole parent — i.e. one fragment per OID with the header's split / overlap fields zeroed out.
+The fragment splitter is a port of kafssstore's `split_long_sequence_positions` (ncbi4na==0xF cuts, calcsegment2 formula). When `-min_length_split 0`, every parent is registered as a single fragment that spans the whole parent — i.e. one fragment per OID, and the file name carries no `minsplit` / `ovllen` suffix.
 
 Indexes whose `format_version` does not match are rejected at open with a message such as:
 

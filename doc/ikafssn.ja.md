@@ -79,7 +79,7 @@ TSV / JSON / FASTA 出力に対し、透過的なコーデックラッパを通�
 
 BLAST DB から k-mer 転置インデックスを構築します。各ボリュームに対して `.kix` (ID ポスティング)、`.kpx` (位置ポスティング、`-mode 1` の場合は省略)、`.ksx` (配列メタデータ) のファイルを生成します。`-max_freq_build` 使用時は共有 `.khx` (構築時除外ビットセット) も生成されます。`.khx` ファイルは全ボリューム共通 (k 値ごとに 1 つ) です。
 
-**インデックス単位 (v10):** 各親 BLAST OID は構築時に 1 つ以上の **fragment**（フラグメント）に分割されます。フラグメントは `.kix` / `.kpx` / `.ksx` で 1 つの内部 SeqId として登録される単位です。同じ親由来の隣接フラグメントは `-overlap_length` 塩基を共有するため、境界をまたぐチェインヒットも、必ずどちらか一方のフラグメント内に完全に収まります。`-min_length_split 0` を指定した場合は、各親に対して親全体をカバーする 1 つのフラグメントだけが登録される退化レイアウトになります。検索側の dedup によりフラグメント相対座標は **親相対座標** に畳み戻されるため、下流ツールには親 OID あたり 1 行の正準ヒットだけが届きます。
+**インデックス単位:** 各親 BLAST OID は構築時に 1 つ以上の **fragment**（フラグメント）に分割されます。フラグメントは `.kix` / `.kpx` / `.ksx` で 1 つの内部 SeqId として登録される単位です。同じ親由来の隣接フラグメントは `-overlap_length` 塩基を共有するため、境界をまたぐチェインヒットも、必ずどちらか一方のフラグメント内に完全に収まります。`-min_length_split 0` を指定した場合は、各親に対して親全体をカバーする 1 つのフラグメントだけが登録される退化レイアウトになります。検索側の dedup によりフラグメント相対座標は **親相対座標** に畳み戻されるため、下流ツールには親 OID あたり 1 行の正準ヒットだけが届きます。
 
 ```
 ikafssnindex [options]
@@ -266,18 +266,16 @@ ikafssnsearch [options]
 `-ix` オプションには `blastn -db` と同様にインデックスのプレフィックスパス (拡張子なし) を指定します。例えば、マルチボリューム BLAST DB (`nt`、ボリューム `nt.00`、`nt.01`) に対して `ikafssnindex -db nt -k 11 -o /data/index` が以下のファイルを生成した場合:
 
 ```
-/data/index/nt.00.11mer.kix
-/data/index/nt.00.11mer.kpx
-/data/index/nt.00.11mer.ksx
-/data/index/nt.01.11mer.kix
-/data/index/nt.01.11mer.kpx
-/data/index/nt.01.11mer.ksx
-/data/index/nt.11mer.kvx
+/data/index/nt.00.k11.minlen64.minsplit50000.ovllen500.kix
+/data/index/nt.00.k11.minlen64.minsplit50000.ovllen500.ksx
+/data/index/nt.01.k11.minlen64.minsplit50000.ovllen500.kix
+/data/index/nt.01.k11.minlen64.minsplit50000.ovllen500.ksx
+/data/index/nt.k11.minlen64.minsplit50000.ovllen500.kvx
 ```
 
-`-ix /data/index/nt` と指定します。プレフィックス `/data/index/nt` はディレクトリ `/data/index/` とベース名 `nt` に分割され、`.kvx` マニフェストファイル (`nt.11mer.kvx`) からボリュームベースネームの一覧を読み取ってボリュームを検出します。集約データベース (例: `combined` が `foo` と `bar` を束ねたもの) の場合、インデックスファイルは `foo.11mer.kix`、`bar.11mer.kix`、マニフェストは `combined.11mer.kvx` となります。
+`-ix /data/index/nt` と指定します。プレフィックス `/data/index/nt` はディレクトリ `/data/index/` とベース名 `nt` に分割され、`.kvx` マニフェストファイルからボリュームベースネームの一覧を読み取ってボリュームを検出します。集約データベース (例: `combined` が `foo` と `bar` を束ねたもの) の場合、インデックスファイルは `foo.k11.…kix`、`bar.k11.…kix`、マニフェストは `combined.k11.…kvx` となります。
 
-インデックスディレクトリに複数の k-mer サイズのインデックスが含まれる場合 (例: `nt.09mer.kvx` と `nt.11mer.kvx` の両方が存在する場合)、`-k` で使用するサイズを指定する必要があります。k-mer サイズが 1 種類のみの場合は `-k` を省略できます。
+インデックスディレクトリに複数の k-mer サイズのインデックスが含まれる場合 (例: `nt.k9.…kvx` と `nt.k11.…kvx` の両方が存在する場合)、`-k` で使用するサイズを指定する必要があります。k-mer サイズが 1 種類のみの場合は `-k` を省略できます。
 
 `-accept_qdegen` が 0 の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは `degen_rejected` のスキップマーカー (TSV: `*SKIPPED:degen_rejected`、JSON: `"status": "skipped"`、SAM: unmapped レコード + `XR:Z:degen_rejected`) と stderr 警告付きでスキップされ、終了コードは 2 になります。詳しい理由一覧と各フォーマットでの表現は下記「スキップ理由」を参照してください。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます。1 文字の縮重塩基を含む k-mer は全可能バリアントに展開して検索に使用されます (例: R→A,G で 2 k-mer、N→A,C,G,T で 4 k-mer)。位置ごとの展開積が `-max_degen_expand` を超える窓は emit されません。この場合、クエリごとに 1 回、当該クエリ名と当該 k-mer がスキップされた旨の警告が標準エラーに出力されます (注: これは窓単位の unemit であり、クエリ全体のスキップではありません — 残りの窓は検索に使われ、emit されなかった位置はフラクショナル閾値の `Nhighfreq` に反映されます)。サーバモード (`ikafssnserver`) ではこの警告がプロトコル経由で `ikafssnclient` に伝播され、クライアント側でも同じメッセージが表示されます。この処理はインデックス構築時のサブジェクト配列に対する処理と同等です。
 
@@ -384,7 +382,7 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
 
 検索結果に基づきマッチした部分配列を抽出します。配列ソースとしてローカル BLAST DB または NCBI E-utilities (efetch) を選択できます。
 
-**FASTA defline (v10):** 各レコードは
+**FASTA defline:** 各レコードは
 `>parent_accession:start-end query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`
 形式で出力されます。`start` / `end` は 1-based 包括の **親相対座標** で、左端のアクセッションは常に親 OID のもの（フラグメント由来の合成名は使われません）。ローカルパスでは `BlastDbReader::get_subsequence(parent_oid, start, end)` 経由でサブシーケンスを取得するため、染色体級の親でも要求された区間だけがデコードされ、OID 全体を読み込むことはありません。
 
@@ -798,7 +796,7 @@ ikafssninfo [options]
 - ボリューム数
 - 各ボリュームの親 (BLAST OID) 数、フラグメント (内部 SeqId) 数、フラグメント長分布 (min / median / mean / max)、総ポスティング数、ファイルサイズ、除外 k-mer 数 (`.khx` 存在時)
 - 全体統計: 総親数、総フラグメント数、集約フラグメント長分布、総ポスティング数、総インデックスサイズ、圧縮率
-- 各インデックスの v10 ヘッダフィールド (`min_seq_length` / `min_length_split` / `overlap_length`)
+- ファイル名から parse したフラグメント・インデックス用パラメータ (`min_seq_length` / `min_length_split` / `overlap_length`)
 - `-v` 指定時: k-mer 出現頻度分布 (min, max, mean, パーセンタイル)
 - `-db` 指定時 (または自動検出時): BLAST DB のタイトル、配列数、総塩基数、ボリューム構成
 
@@ -932,7 +930,7 @@ threshold = ceil(Nqkmer * P) - Nhighfreq
 | `kSkipDegenRejected` / `degen_rejected` | `-accept_qdegen 0` 指定時に IUPAC 縮重塩基を含む。 |
 | `kSkipInvalidChar` / `invalid_char` | `[ACGT]` ∪ IUPAC 以外の文字を含む。詳細メッセージに位置を含む。 |
 | `kSkipThresholdUnreachable` / `threshold_unreachable` | フラクショナル閾値が検索対象のすべてのストランドで `< 1` になる。 |
-| `kSkipQueryTooLong` / `query_too_long` | フラグメント分割インデックス (v10) で `seq_len > overlap_length`。親相対 dedup キーは「すべてのチェインヒットが隣接 2 フラグメント内に収まること」を前提とするため、それより長いクエリはフラグメント単位の partial chain を生成する前に弾かれます。`min_length_split == 0` (分割無効) のインデックスは `overlap_length == 0` を報告するためこのチェックが無効化されます。 |
+| `kSkipQueryTooLong` / `query_too_long` | フラグメント分割インデックス で `seq_len > overlap_length`。親相対 dedup キーは「すべてのチェインヒットが隣接 2 フラグメント内に収まること」を前提とするため、それより長いクエリはフラグメント単位の partial chain を生成する前に弾かれます。`min_length_split == 0` (分割無効) のインデックスは `overlap_length == 0` を報告するためこのチェックが無効化されます。 |
 
 各出力フォーマットでの表現:
 
@@ -1019,7 +1017,7 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
 
 ## 出力形式
 
-**座標規約 (v10):** `sseqid` は **親 OID** のアクセッション (フラグメント由来の合成名は使われない)、`sstart` / `send` は 1-based の親相対位置、`slen` は親 OID の全長です。Stage 2 / Stage 3 の dedup によりフラグメント単位のチェインが畳み戻されるため、出力は `(qseqid, sseqid, sstrand, send, alnscore)` の組ごとに 1 行の正準ヒットのみを含みます。
+**座標規約:** `sseqid` は **親 OID** のアクセッション (フラグメント由来の合成名は使われない)、`sstart` / `send` は 1-based の親相対位置、`slen` は親 OID の全長です。Stage 2 / Stage 3 の dedup によりフラグメント単位のチェインが畳み戻されるため、出力は `(qseqid, sseqid, sstrand, send, alnscore)` の組ごとに 1 行の正準ヒットのみを含みます。
 
 ### Tab 形式 (デフォルト)
 
@@ -1246,69 +1244,70 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 
 ## インデックスファイル形式
 
-BLAST DB ボリュームごとに、ボリューム自身のベースネームを使って 3 つのファイルが生成されます:
+インデックスの**内容**を変えるフラグメント・インデックス用パラメータは、すべてファイル名に符号化されます。これにより、異なるパラメータで構築した複数のインデックスを同一ディレクトリに共存できます。
+
+BLAST DB ボリュームごとに 3 ファイルが生成されます:
 
 ```
-<vol_basename>.<kk>mer.kix   — ID ポスティング (直接アドレステーブル + デルタ圧縮)
-<vol_basename>.<kk>mer.kpx   — 位置ポスティング (デルタ圧縮)
-<vol_basename>.<kk>mer.ksx   — 配列メタデータ (配列長 + アクセッション)
+<vol_basename>.k<k>[.t<t>][.minlen<X>][.minsplit<X>][.ovllen<X>]
+              [.maxfreq<X>][.maxexpand<X>][.cod|.opt].(kix|kpx|ksx)
 ```
 
-ボリューム検出用の `.kvx` マニフェストファイルが常に生成されます:
+DB 単位の共有ファイル（マニフェスト `.kvx`、および `-max_freq_build` 使用時の除外ビットセット `.khx`）は同じ命名規則からボリューム番号を除いた形で生成されます:
 
 ```
-<db_base>.<kk>mer.kvx        — ボリュームマニフェスト (テキスト形式、ボリュームベースネーム一覧)
+<db_base>.k<k>[.t<t>][.minlen<X>][.minsplit<X>][.ovllen<X>]
+          [.maxfreq<X>][.maxexpand<X>][.cod|.opt].(kvx|khx)
 ```
 
-`-max_freq_build` 使用時は全ボリューム共有の除外ビットセットファイルも生成されます (k 値ごとに 1 つ):
+サフィックスの省略条件:
 
-```
-<db_base>.<kk>mer.khx        — 構築時除外ビットセット (全ボリューム共有)
-```
+| サフィックス | 省略条件 |
+|---|---|
+| `k<X>`         | 省略しない（常に出力、ゼロ埋めなし） |
+| `t<X>`         | `t == 0` |
+| `minlen<X>`    | `min_seq_length == 0` |
+| `minsplit<X>`  | `min_length_split == 0` |
+| `ovllen<X>`    | `overlap_length == 0`（`minsplit` と同期） |
+| `maxfreq<X>`   | `max_freq_build == 1`（解決された絶対閾値） |
+| `maxexpand<X>` | `max_degen_expand` が `0` または `1` |
+| `cod` / `opt`  | `t == 0` |
 
 例:
-- 標準マルチボリューム (`nt`、ボリューム `nt.00`、`nt.01`): `nt.00.11mer.kix`、`nt.01.11mer.kpx`、`nt.11mer.kvx`、`nt.11mer.khx`
-- 集約 DB (`combined`、ボリューム `foo`、`bar`): `foo.11mer.kix`、`bar.11mer.kix`、`combined.11mer.kvx`
 
-`.khx` ファイルは 32 バイトヘッダ (マジック "KMHX"、フォーマットバージョン、k) に続き、`ceil(4^k / 8)` バイトのビットセットで構成されます。ビット *i* = 1 は k-mer *i* がボリューム横断の合算カウントに基づきインデックス構築時に除外されたことを示します。
+- デフォルトの `-mode 1`（`-min_seq_length 64 -min_length_split 50000 -overlap_length 500`）:
+  - `nt.00.k11.minlen64.minsplit50000.ovllen500.kix`
+  - `nt.k11.minlen64.minsplit50000.ovllen500.kvx`
+- `-mode 1` + クロスボリュームフィルタ（`-max_freq_build 1000 -max_degen_expand 4`）:
+  - `nt.00.k11.minlen64.minsplit50000.ovllen500.maxfreq1000.maxexpand4.kix`
+  - `nt.k11.minlen64.minsplit50000.ovllen500.maxfreq1000.maxexpand4.khx`
+- `-mode 2` / `-mode 3`（`-min_length_split 0 -overlap_length 0`）:
+  - `nt.00.k11.minlen64.kix`
+- スペースドシード（`-k 11 -t 16 -template_type coding -mode 1`）:
+  - `nt.00.k11.t16.minlen64.minsplit50000.ovllen500.cod.kix`
+  - `nt.k11.t16.minlen64.minsplit50000.ovllen500.cod.kvx`
+
+`-max_freq_build` に小数（例: `0.001`）を指定した場合、メタデータ収集パスの終了直後に絶対閾値へ解決され、その**絶対値**がファイル名に出力されます。よって、同じ小数を異なるフラグメント集合に適用すると別のファイル名になります。
+
+`.khx` ファイルは 32 バイトヘッダ（マジック "KMHX"、フォーマットバージョン、k）に続き `ceil(4^k / 8)` バイトのビットセットで構成され、ビット *i* = 1 は k-mer *i* がインデックス構築時に除外されたことを示します。
 
 ID ポスティングと位置ポスティングは別ファイルに格納されるため、Stage 1 フィルタリングが `.kpx` にアクセスすることはなく、ページキャッシュ効率が最大化されます。
 
-### スペースドシードインデックスのファイル命名
-
-スペースドシードが有効な場合 (`-t > 0`)、ファイル名にテンプレート長と種別が追加されます:
-
-```
-<vol_basename>.<kk>mer.<tt>mer.<type>.kix
-<vol_basename>.<kk>mer.<tt>mer.<type>.kpx
-<vol_basename>.<kk>mer.<tt>mer.<type>.ksx
-<db_base>.<kk>mer.<tt>mer.<type>.kvx
-<db_base>.<kk>mer.<tt>mer.<type>.khx
-```
-
-`<tt>` はゼロパディングされたテンプレート長、`<type>` は `cod` (coding) または `opt` (optimal) です。
-
-例:
-- スペースドシード (k=11, t=16, coding): `nt.00.11mer.16mer.cod.kix`
-- スペースドシード (k=11, t=16, optimal): `nt.00.11mer.16mer.opt.kix`
-- スペースドシード (k=12, t=21, coding): `nt.00.12mer.21mer.cod.kix`
-- マニフェスト: `nt.11mer.16mer.cod.kvx`
-
 **マルチアクセッション defline:** 元の BLAST DB が `makeblastdb -parse_seqids` で構築され、`\x01` (`^A`) 区切りの multi-defline レコード（同一塩基配列を複数アクセッションで登録する NCBI 慣習）を含んでいる場合、`ikafssnindex` は OID ごとに**全てのアクセッション**を保持します。`.ksx` のアクセッション文字列は OID ごとに全アクセッションを `\x01` で連結した形で格納され、検索出力 (`sseqid` カラム / SAM RNAME / FASTA defline / プロトコルの `sseqid` フィールド) も同じ `\x01` 連結形のまま emit されます。受け取り側で `\x01` を区切りとして分割してください。`-seqidlist` フィルタと `ikafssnretrieve` は `\x01` 連結形・個別アクセッションのいずれを指定しても解決できます。
 
-**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`、`.kvx`) で **v10** です。レイアウト概要:
+**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`、`.kvx`) で **v11** です。レイアウト概要:
 
-- **`.kix` / `.kpx` マジック**は `KIX10` / `KPX10`。4 種すべてのフォーマットヘッダに `{min_seq_length, min_length_split, overlap_length}` の 3 値が含まれ、検索側がインデックスの構築意図と `-min_query_length` を相互チェックできるようになっています。
+- **`.kix` / `.kpx` マジック**は `KIX11` / `KPX11`。フラグメント・インデックス用パラメータ（`min_seq_length`、`min_length_split`、`overlap_length`、解決済みの `max_freq_build` / `max_degen_expand`）はヘッダから移動し、ファイル名で表現される設計に変更されました。検索側はボリューム検出時に一度だけ parse して `-min_query_length` / `-max_query_length` のチェックに利用します。
 - **`.ksx` 二段レイアウト:** まず各親 OID の `(parent_length, blast_oid, accession)` を親テーブルに記録し、続いてフラグメントテーブルが各内部 SeqId を `(parent_idx, fragment_start, fragment_end)` にマップします。`KsxReader::seq_length` / `accession` などの簡易アクセサは SeqId を受け取り、内部で対応する親に解決します。マジックは `KMSX`。
 - **`.kix` / `.kpx` ボディ:** Elias-Fano 辞書、2-bit kind map、FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` ボディ。
-- **`.kvx`:** マニフェストテキスト形式。`FORMAT_VERSION` 行は 10。
+- **`.kvx`:** マニフェストテキスト形式。`FORMAT_VERSION` 行は 11。
 
-フラグメント分割器は kafssstore の `split_long_sequence_positions` (DNA2 モード、ncbi4na==0xF カット、calcsegment2 公式) の C++ ポートです。`-min_length_split 0` の場合は各親が単一フラグメントとして登録され、ヘッダの分割関連フィールドは 0 になります。
+フラグメント分割器は kafssstore の `split_long_sequence_positions` の C++ ポートで、ncbi4na==0xF カットと calcsegment2 公式に従います。`-min_length_split 0` の場合は各親が単一フラグメントとして登録され、ファイル名にも `minsplit` / `ovllen` サフィックスは出力されません。
 
 `format_version` が一致しないインデックスは open 時に以下のようなメッセージで拒否されます:
 
 ```
-KixReader: index format version mismatch (got 9, expected 10). Please rebuild with the current ikafssnindex.
+KixReader: index format version mismatch (got 10, expected 11). Please rebuild with the current ikafssnindex.
 ```
 
 (`.kpx` / `.ksx` / `.khx` / `.kvx` も同様)。現行の `ikafssnindex` で再構築してください:

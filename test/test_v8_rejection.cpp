@@ -106,13 +106,13 @@ void test_khx_v8_rejected() {
 
 // Confirm the format constants match what the readers expect.  Guards
 // against an accidental constant downgrade.
-void test_v10_is_current() {
-    CHECK_EQ(KIX_FORMAT_VERSION, 10u);
-    CHECK_EQ(KPX_FORMAT_VERSION, 10u);
-    CHECK_EQ(KSX_FORMAT_VERSION, 10u);
-    CHECK_EQ(KHX_FORMAT_VERSION, 10u);
-    CHECK(KIX_MAGIC[3] == '1' && KIX_MAGIC[4] == '0');
-    CHECK(KPX_MAGIC[3] == '1' && KPX_MAGIC[4] == '0');
+void test_v11_is_current() {
+    CHECK_EQ(KIX_FORMAT_VERSION, 11u);
+    CHECK_EQ(KPX_FORMAT_VERSION, 11u);
+    CHECK_EQ(KSX_FORMAT_VERSION, 11u);
+    CHECK_EQ(KHX_FORMAT_VERSION, 11u);
+    CHECK(KIX_MAGIC[3] == '1' && KIX_MAGIC[4] == '1');
+    CHECK(KPX_MAGIC[3] == '1' && KPX_MAGIC[4] == '1');
 }
 
 // Synthesize a .kix file with the *wrong* magic ("KIX08" — the v10
@@ -142,7 +142,7 @@ int main() {
     test_kpx_v8_rejected();
     test_ksx_v8_rejected();
     test_khx_v8_rejected();
-    test_v10_is_current();
+    test_v11_is_current();
     test_wrong_magic_rejected();
     TEST_SUMMARY();
     return g_fail_count == 0 ? 0 : 1;

@@ -7,15 +7,19 @@
 
 namespace ikafssn {
 
-// Two-stage .ksx reader (v10 layout — see src/index/ksx_format.hpp).
+// Two-stage .ksx reader (see src/index/ksx_format.hpp).
 //
-// External callers continue to use the simple SeqId-based API:
+// SeqId-based convenience API:
 //   - seq_length(seq_id):   fragment length (= frag_end - frag_start + 1)
 //   - accession(seq_id):    accession string of the fragment's parent OID
-// On top of that the reader exposes the new fragment-aware accessors
-// (parent_index / fragment_start / fragment_end / blast_oid / parent_length /
-//  num_parents / num_sequences / min_seq_length / min_length_split /
-//  overlap_length).
+// Fragment-aware accessors (parent_index / fragment_start /
+// fragment_end / blast_oid / parent_length / num_parents /
+// num_sequences) expose the underlying parent / fragment tables.
+//
+// Fragment-indexing parameters (min_seq_length / min_length_split /
+// overlap_length / max_freq_build / max_degen_expand) are not stored
+// in the .ksx header; callers obtain them via parse_index_filename()
+// on the .ksx / .kix path.
 class KsxReader {
 public:
     bool open(const std::string& path);
@@ -39,11 +43,6 @@ public:
     uint32_t blast_oid(uint32_t parent_idx)     const { return parent_blast_oids_[parent_idx]; }
     std::string_view parent_accession(uint32_t parent_idx) const;
 
-    // Fragment-indexing header values.
-    uint32_t min_seq_length()   const { return min_seq_length_; }
-    uint32_t min_length_split() const { return min_length_split_; }
-    uint32_t overlap_length()   const { return overlap_length_; }
-
     // madvise budget API
     size_t willneed_size() const;
     void apply_madvise(bool willneed);
@@ -52,9 +51,6 @@ private:
     MmapFile mmap_;
     uint32_t num_sequences_   = 0;
     uint32_t num_parents_     = 0;
-    uint32_t min_seq_length_  = 0;
-    uint32_t min_length_split_= 0;
-    uint32_t overlap_length_  = 0;
 
     const uint32_t* parent_lengths_       = nullptr;
     const uint32_t* parent_blast_oids_    = nullptr;

@@ -85,9 +85,7 @@ void handle_connection(
             dbi.name = db.name;
             dbi.default_k = static_cast<uint8_t>(db.default_k);
             dbi.max_mode = db.max_mode;
-            dbi.min_seq_length   = db.min_seq_length;
-            dbi.min_length_split = db.min_length_split;
-            dbi.overlap_length   = db.overlap_length;
+            dbi.overlap_length = db.overlap_length;
 
             for (const auto& group : db.kmer_groups) {
                 KmerGroupInfo gi;

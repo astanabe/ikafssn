@@ -211,40 +211,10 @@ static void test_empty_postings() {
     std::remove(TEST_FILE);
 }
 
-// v10: round-trip the new fragment-indexing triplet via the writer's
-// setters and the reader's getters.
-static void test_v10_min_seq_length_roundtrip() {
-    int k = 5;
-    uint8_t kmer_type = 0;
-
-    {
-        KixWriter writer(k, kmer_type);
-        writer.set_num_sequences(0);
-        writer.set_min_seq_length(128);
-        writer.set_min_length_split(50000);
-        writer.set_overlap_length(500);
-        for (uint32_t i = 0; i < table_size(k); i++) {
-            writer.add_posting_list(i, {});
-        }
-        CHECK(writer.write(TEST_FILE));
-    }
-
-    {
-        KixReader reader;
-        CHECK(reader.open(TEST_FILE));
-        CHECK_EQ(reader.min_seq_length(), 128u);
-        CHECK_EQ(reader.min_length_split(), 50000u);
-        CHECK_EQ(reader.overlap_length(), 500u);
-        reader.close();
-    }
-    std::remove(TEST_FILE);
-}
-
 int main() {
     test_k7_uint16();
     test_k9_uint32();
     test_empty_postings();
-    test_v10_min_seq_length_roundtrip();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

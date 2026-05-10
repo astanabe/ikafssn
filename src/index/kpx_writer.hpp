@@ -6,11 +6,11 @@
 
 namespace ikafssn {
 
-// Writes a .kpx file (v7 layout).
-// Position postings are stored as absolute values; the codec partitions
-// each per-posting-list grouping on (seq_id) so that high-multiplicity clusters
-// get their own partition group while the rest go into a self-describing
-// short bucket (see src/index/pfd_codec.hpp).
+// Writes a .kpx file.  Position postings are stored as absolute
+// values; the codec partitions each per-posting-list grouping on
+// (seq_id) so that high-multiplicity clusters get their own partition
+// group while the rest go into a self-describing short bucket (see
+// src/index/pfd_codec.hpp).
 class KpxWriter {
 public:
     // freq_threshold_part: per-(kmer, seq_id) occurrence count strictly
@@ -29,10 +29,6 @@ public:
     // ascending order.
     void add_posting_list(uint32_t kmer_value, const std::vector<PostingEntry>& entries);
 
-    void set_min_seq_length(uint32_t v)   { min_seq_length_ = v; }
-    void set_min_length_split(uint32_t v) { min_length_split_ = v; }
-    void set_overlap_length(uint32_t v)   { overlap_length_ = v; }
-
     // Write the .kpx file. Returns true on success.
     bool write(const std::string& path) const;
 
@@ -45,9 +41,6 @@ private:
     std::vector<uint64_t> pos_offsets_;
     std::vector<uint8_t> posting_file_;
     uint64_t total_position_count_ = 0;
-    uint32_t min_seq_length_   = 0;
-    uint32_t min_length_split_ = 0;
-    uint32_t overlap_length_   = 0;
 };
 
 } // namespace ikafssn

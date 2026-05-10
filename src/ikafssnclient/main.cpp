@@ -695,30 +695,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Validate -min_query_length against the server's min_seq_length
-    // for the target database and pre-filter queries that fall below
-    // either threshold; also reject queries longer than the index's
-    // overlap_length when fragment splitting is active, mirroring the
-    // server-side kSkipQueryTooLong path.
+    // Pre-filter queries by -min_query_length and the server-reported
+    // overlap_length.  The server enforces the same checks but rejecting
+    // here saves a round trip and surfaces a clear local error.
     {
-        uint32_t srv_min_seq_length = 0;
         uint32_t srv_overlap_length = 0;
         for (const auto& db : server_info.databases) {
             if (db.name == base_req.db) {
-                srv_min_seq_length = db.min_seq_length;
                 srv_overlap_length = db.overlap_length;
                 break;
             }
-        }
-        if (min_query_length < srv_min_seq_length) {
-            std::fprintf(stderr,
-                "Error: -min_query_length=%u is smaller than the index's min_seq_length=%u "
-                "for database '%s'. Specify -min_query_length=%u or larger.\n",
-                static_cast<unsigned>(min_query_length),
-                static_cast<unsigned>(srv_min_seq_length),
-                base_req.db.c_str(),
-                static_cast<unsigned>(srv_min_seq_length));
-            return 1;
         }
 
         std::vector<FastaRecord> kept;

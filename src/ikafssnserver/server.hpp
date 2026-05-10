@@ -31,11 +31,9 @@ struct DatabaseEntry {
     bool context_is_ratio = true;
     double context_ratio = 2.0;
     uint32_t context_abs = 0;
-    // Fragment-indexing triplet, sourced from the .kix headers at load
-    // time.  All k-mer groups within a database must agree on these
-    // values; the server logs an error and refuses to load otherwise.
-    uint32_t min_seq_length   = 0;
-    uint32_t min_length_split = 0;
+    // overlap_length parsed from the index file names at load time.
+    // All k-mer groups within a database must agree; the server refuses
+    // to load otherwise.  Used downstream to cap query length.
     uint32_t overlap_length   = 0;
 
     const KmerGroup* find_group(int k, uint8_t t = 0, uint8_t template_type = 0) const {

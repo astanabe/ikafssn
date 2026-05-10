@@ -322,17 +322,12 @@ static bool write_filtered_kix(
     kix_hdr.template_type = kix_in.header().template_type;
     std::memcpy(kix_hdr.db, kix_in.header().db, 32);
 
-    // Reserved codec-extension area (zero in v5).
+    // Reserved codec-extension area.
     kix_hdr.codec_id              = 0;
     kix_hdr.codec_version         = 0;
     kix_hdr.block_size            = 0;
     kix_hdr.tail_codec            = 0;
     kix_hdr.exception_codec_flags = 0;
-
-    // Carry over the fragment-indexing triplet from the input header.
-    kix_hdr.min_seq_length   = kix_in.header().min_seq_length;
-    kix_hdr.min_length_split = kix_in.header().min_length_split;
-    kix_hdr.overlap_length   = kix_in.header().overlap_length;
 
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
 
@@ -405,11 +400,6 @@ static bool write_filtered_kpx(
     kpx_hdr.block_size    = 0;
     kpx_hdr.tail_codec    = 0;
 
-    // Carry over the fragment-indexing triplet from the input header.
-    kpx_hdr.min_seq_length   = kpx_in.header().min_seq_length;
-    kpx_hdr.min_length_split = kpx_in.header().min_length_split;
-    kpx_hdr.overlap_length   = kpx_in.header().overlap_length;
-
     std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
 
     if (!write_kpx_dictionary_ef(kpx_fp, new_kpx_offsets.data(), tbl_size,
@@ -429,17 +419,18 @@ static bool write_filtered_kpx(
 
 // Filter a single volume's .kix.tmp/.kpx.tmp -> .kix/.kpx (in parallel).
 static bool filter_one_volume(
-    const std::string& vol_prefix,
+    const std::string& vol_prefix_tmp,
+    const std::string& vol_prefix_final,
     const std::vector<bool>& excluded,
     int k,
     const Logger& logger) {
 
-    std::string kix_tmp = vol_prefix + ".kix.tmp";
-    std::string kpx_tmp = vol_prefix + ".kpx.tmp";
-    std::string ksx_tmp = vol_prefix + ".ksx.tmp";
-    std::string kix_final = vol_prefix + ".kix";
-    std::string kpx_final = vol_prefix + ".kpx";
-    std::string ksx_final = vol_prefix + ".ksx";
+    std::string kix_tmp = vol_prefix_tmp + ".kix.tmp";
+    std::string kpx_tmp = vol_prefix_tmp + ".kpx.tmp";
+    std::string ksx_tmp = vol_prefix_tmp + ".ksx.tmp";
+    std::string kix_final = vol_prefix_final + ".kix";
+    std::string kpx_final = vol_prefix_final + ".kpx";
+    std::string ksx_final = vol_prefix_final + ".ksx";
 
     bool has_kpx_tmp = std::filesystem::exists(kpx_tmp);
 
@@ -483,7 +474,7 @@ static bool filter_one_volume(
         }
     }
 
-    // Compute new totals.  v7: .kix tracks distinct seq_id postings;
+    // Compute new totals: .kix tracks distinct seq_id postings;
     // .kpx tracks the total position count (sum of intra-sequence
     // occurrences).
     auto counts = kix_in.bulk_count_postings();
@@ -557,14 +548,15 @@ static bool filter_one_volume(
     if (has_kpx_tmp) std::remove(kpx_tmp.c_str());
 
     logger.info("Filtered volume: %s (distinct_postings=%lu, position_count=%lu)",
-                vol_prefix.c_str(),
+                vol_prefix_final.c_str(),
                 static_cast<unsigned long>(new_total_distinct_postings),
                 static_cast<unsigned long>(new_total_position_count));
     return true;
 }
 
 bool filter_volumes_cross_volume(
-    const std::vector<std::string>& vol_prefixes,
+    const std::vector<std::string>& vol_prefixes_tmp,
+    const std::vector<std::string>& vol_prefixes_final,
     const std::string& khx_path,
     int k,
     uint64_t freq_threshold,
@@ -572,11 +564,11 @@ bool filter_volumes_cross_volume(
     const Logger& logger) {
 
     logger.info("Cross-volume filter: aggregating counts from %zu volume(s)...",
-                vol_prefixes.size());
+                vol_prefixes_tmp.size());
 
     uint32_t eff_tbl_size = 0;
     {
-        std::string kix_tmp0 = vol_prefixes[0] + ".kix.tmp";
+        std::string kix_tmp0 = vol_prefixes_tmp[0] + ".kix.tmp";
         KixReader kix0;
         if (!kix0.open(kix_tmp0)) {
             logger.error("filter: cannot open %s for count aggregation", kix_tmp0.c_str());
@@ -588,7 +580,7 @@ bool filter_volumes_cross_volume(
 
     std::vector<uint64_t> global_counts(eff_tbl_size, 0);
 
-    for (const auto& prefix : vol_prefixes) {
+    for (const auto& prefix : vol_prefixes_tmp) {
         std::string kix_tmp = prefix + ".kix.tmp";
         KixReader kix;
         if (!kix.open(kix_tmp)) {
@@ -642,7 +634,7 @@ bool filter_volumes_cross_volume(
         return false;
     }
 
-    size_t num_vols = vol_prefixes.size();
+    size_t num_vols = vol_prefixes_tmp.size();
     std::vector<bool> vol_ok(num_vols, false);
 
     tbb::task_arena arena(filter_threads);
@@ -651,7 +643,9 @@ bool filter_volumes_cross_volume(
             tbb::blocked_range<size_t>(0, num_vols),
             [&](const tbb::blocked_range<size_t>& range) {
                 for (size_t vi = range.begin(); vi < range.end(); vi++) {
-                    vol_ok[vi] = filter_one_volume(vol_prefixes[vi], excluded, k, logger);
+                    vol_ok[vi] = filter_one_volume(vol_prefixes_tmp[vi],
+                                                    vol_prefixes_final[vi],
+                                                    excluded, k, logger);
                 }
             });
     });

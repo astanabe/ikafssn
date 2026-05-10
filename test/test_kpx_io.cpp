@@ -529,34 +529,6 @@ static void test_partition_group_threshold() {
     run_threshold(100);  // nothing exceeds 100 → all short
 }
 
-// v10: round-trip the new fragment-indexing triplet via the writer's
-// setters and the reader's getters.
-static void test_v10_min_seq_length_roundtrip() {
-    int k = 5;
-    uint32_t ts = table_size(k);
-
-    {
-        KpxWriter writer(k);
-        writer.set_min_seq_length(128);
-        writer.set_min_length_split(50000);
-        writer.set_overlap_length(500);
-        for (uint32_t i = 0; i < ts; i++) {
-            writer.add_posting_list(i, {});
-        }
-        CHECK(writer.write(TEST_FILE));
-    }
-
-    {
-        KpxReader reader;
-        CHECK(reader.open(TEST_FILE));
-        CHECK_EQ(reader.min_seq_length(), 128u);
-        CHECK_EQ(reader.min_length_split(), 50000u);
-        CHECK_EQ(reader.overlap_length(), 500u);
-        reader.close();
-    }
-    std::remove(TEST_FILE);
-}
-
 int main() {
     test_single_seq();
     test_all_occ1();
@@ -569,7 +541,6 @@ int main() {
     test_all_candidates_miss();
     test_multiple_kmers();
     test_partition_group_threshold();
-    test_v10_min_seq_length_roundtrip();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

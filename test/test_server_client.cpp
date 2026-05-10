@@ -57,9 +57,16 @@ static std::string build_test_index(int k) {
     IndexBuilderConfig bconfig;
     bconfig.k = k;
 
-    char kk[4];
-    std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string prefix = ix_dir + "/test.00." + std::string(kk) + "mer";
+    auto stem_for = [&](const std::string& base) {
+        return index_file_stem(ix_dir, base, bconfig.k,
+                               bconfig.t, bconfig.template_type,
+                               bconfig.min_seq_length,
+                               bconfig.min_length_split,
+                               bconfig.overlap_length,
+                               /*max_freq_build=*/1,
+                               /*max_degen_expand=*/0);
+    };
+    std::string prefix = stem_for("test.00");
 
     bool ok;
     if (k < K_TYPE_THRESHOLD) {
@@ -74,7 +81,7 @@ static std::string build_test_index(int k) {
     }
 
     // Write .kvx manifest (normally done by ikafssnindex main)
-    std::string kvx_path = ix_dir + "/test." + std::string(kk) + "mer.kvx";
+    std::string kvx_path = stem_for("test") + ".kvx";
     FILE* fp = std::fopen(kvx_path.c_str(), "w");
     if (fp) {
         std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
@@ -110,12 +117,11 @@ static void test_server_client_search() {
     KixReader kix;
     KpxReader kpx;
     KsxReader ksx;
-    char kk[4];
-    std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string base = ix_prefix + ".00." + std::string(kk) + "mer";
-    CHECK(kix.open(base + ".kix"));
-    CHECK(kpx.open(base + ".kpx"));
-    CHECK(ksx.open(base + ".ksx"));
+    auto vols = discover_volumes(ix_prefix, k);
+    CHECK(!vols.empty());
+    CHECK(kix.open(vols[0].kix_path));
+    CHECK(kpx.open(vols[0].kpx_path));
+    CHECK(ksx.open(vols[0].ksx_path));
 
     // Build search config matching server defaults.
     SearchConfig config;
@@ -285,10 +291,9 @@ static void test_seqidlist_filter_via_server() {
 
     // Get an accession from the ksx to use as seqidlist filter
     KsxReader ksx;
-    char kk[4];
-    std::snprintf(kk, sizeof(kk), "%02d", k);
-    std::string base = ix_prefix + ".00." + std::string(kk) + "mer";
-    CHECK(ksx.open(base + ".ksx"));
+    auto vols = discover_volumes(ix_prefix, k);
+    CHECK(!vols.empty());
+    CHECK(ksx.open(vols[0].ksx_path));
 
     std::string target_acc;
     if (ksx.num_sequences() > 0) {

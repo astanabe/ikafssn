@@ -89,11 +89,6 @@ bool KpxWriter::write(const std::string& path) const {
     hdr.block_size    = 0;
     hdr.tail_codec    = 0;
 
-    // Fragment-indexing triplet
-    hdr.min_seq_length   = min_seq_length_;
-    hdr.min_length_split = min_length_split_;
-    hdr.overlap_length   = overlap_length_;
-
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
     if (!write_kpx_dictionary_ef(fp, pos_offsets_.data(), table_size_,

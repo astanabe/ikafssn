@@ -4,11 +4,9 @@
 
 namespace ikafssn {
 
-// .khx v10: bitset of k-mers excluded from the index because their
-// distinct seq_id count exceeded the build-time threshold. Magic is
-// "KMHX" — see the comment in src/index/ksx_format.hpp for why .ksx /
-// .khx do not carry a version digit in the magic string. format_version
-// tracks the rest of the index family for alignment.
+// Bitset of k-mers excluded from the index because their distinct
+// seq_id count exceeded the build-time threshold.  Magic "KMHX"
+// carries no version digit; format_version is checked at open time.
 inline constexpr char KHX_MAGIC[4] = {'K', 'M', 'H', 'X'};
 
 #pragma pack(push, 1)

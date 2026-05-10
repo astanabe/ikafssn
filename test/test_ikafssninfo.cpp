@@ -5,6 +5,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "core/config.hpp"
 #include "core/types.hpp"
 #include "util/logger.hpp"
@@ -48,7 +49,16 @@ static void setup() {
 
     std::string db_base = "testdb";
     std::string vol_basename = std::filesystem::path(g_testdb_path).filename().string();
-    std::string prefix = g_index_dir + "/" + vol_basename + ".07mer";
+    auto stem = [&](const std::string& base) {
+        return index_file_stem(g_index_dir, base, config.k,
+                               config.t, config.template_type,
+                               config.min_seq_length,
+                               config.min_length_split,
+                               config.overlap_length,
+                               /*max_freq_build=*/1,
+                               /*max_degen_expand=*/0);
+    };
+    std::string prefix = stem(vol_basename);
     bool ok = build_index<uint16_t>(db, config, prefix, 0, 1, db_base, logger);
     if (!ok) {
         std::fprintf(stderr, "FAIL: index build failed\n");
@@ -58,7 +68,7 @@ static void setup() {
 
     // Write .kvx manifest so ikafssninfo can discover the volume
     {
-        std::string kvx_path = g_index_dir + "/" + db_base + ".07mer.kvx";
+        std::string kvx_path = stem(db_base) + ".kvx";
         FILE* fp = std::fopen(kvx_path.c_str(), "w");
         if (!fp) { std::fprintf(stderr, "FAIL: cannot write kvx\n"); std::exit(1); }
         std::fprintf(fp, "#\n# ikafssn index volume manifest\n#\n");
@@ -157,7 +167,7 @@ static void test_consistency_with_reader() {
 
     // Verify that the info displayed by ikafssninfo matches
     // what we read directly from the index files.
-    std::regex kix_pattern(R"((.+)\.(\d+)mer\.kix)");
+    std::regex kix_pattern(R"((.+)\.k(\d+)\..*\.kix)");
 
     uint32_t found_seqs = 0;
     uint64_t found_postings = 0;

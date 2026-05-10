@@ -38,9 +38,6 @@ bool KsxReader::open(const std::string& path) {
 
     num_sequences_    = hdr->num_sequences;
     num_parents_      = hdr->num_parents;
-    min_seq_length_   = hdr->min_seq_length;
-    min_length_split_ = hdr->min_length_split;
-    overlap_length_   = hdr->overlap_length;
 
     const uint8_t* ptr = mmap_.data() + sizeof(KsxHeader);
 
@@ -80,9 +77,6 @@ void KsxReader::close() {
     mmap_.close();
     num_sequences_   = 0;
     num_parents_     = 0;
-    min_seq_length_  = 0;
-    min_length_split_= 0;
-    overlap_length_  = 0;
     parent_lengths_      = nullptr;
     parent_blast_oids_   = nullptr;
     parent_acc_offsets_  = nullptr;

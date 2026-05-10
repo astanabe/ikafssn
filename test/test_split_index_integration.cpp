@@ -29,6 +29,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "io/volume_discovery.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/result_dedup.hpp"
@@ -73,7 +74,13 @@ std::string build_long_index(const std::string& test_dir, const char* tag,
     cfg.min_length_split  = min_length_split;
     cfg.overlap_length    = overlap_length;
 
-    std::string prefix = test_dir + "/" + tag + ".07mer";
+    std::string prefix = index_file_stem(test_dir, std::string(tag) + ".00",
+                                         cfg.k, /*t=*/0, /*template_type=*/0,
+                                         cfg.min_seq_length,
+                                         cfg.min_length_split,
+                                         cfg.overlap_length,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
     if (!build_index<uint16_t>(db, cfg, prefix, 0, 1, "long", logger)) {
         std::fprintf(stderr, "FATAL: build_index failed for %s\n", tag);
         std::exit(1);
@@ -119,17 +126,19 @@ std::vector<ParentHit> run_and_collapse(const std::string& prefix,
         std::exit(1);
     }
 
+    IndexFilenameParts ifp;
+    CHECK(parse_index_filename(prefix + ".kix", ifp));
     if (expect_split) {
-        CHECK(ksx.min_length_split() > 0);
-        CHECK(ksx.overlap_length()   > 0);
+        CHECK(ifp.min_length_split > 0);
+        CHECK(ifp.overlap_length   > 0);
     } else {
-        CHECK_EQ(ksx.min_length_split(), 0u);
-        CHECK_EQ(ksx.overlap_length(),   0u);
+        CHECK_EQ(ifp.min_length_split, 0u);
+        CHECK_EQ(ifp.overlap_length,   0u);
     }
 
     SearchConfig config = base_cfg;
     // max_query_length is driven from the index's overlap_length.
-    config.max_query_length = ksx.overlap_length();
+    config.max_query_length = ifp.overlap_length;
 
     OidFilter filter;
     Stage1Buffer buf;
@@ -281,7 +290,11 @@ static void test_boundary_query_dedups_to_one() {
     CHECK(kix.open(pfx_split + ".kix"));
     CHECK(kpx.open(pfx_split + ".kpx"));
     CHECK(ksx.open(pfx_split + ".ksx"));
-    cfg.max_query_length = ksx.overlap_length();
+    {
+        IndexFilenameParts ifp;
+        CHECK(parse_index_filename(pfx_split + ".kix", ifp));
+        cfg.max_query_length = ifp.overlap_length;
+    }
 
     OidFilter filter;
     Stage1Buffer buf;
@@ -362,10 +375,12 @@ static void test_query_too_long_for_overlap() {
 
     KsxReader ksx;
     CHECK(ksx.open(pfx + ".ksx"));
-    CHECK_EQ(ksx.overlap_length(), 50u);
+    IndexFilenameParts ifp;
+    CHECK(parse_index_filename(pfx + ".ksx", ifp));
+    CHECK_EQ(ifp.overlap_length, 50u);
 
     SearchConfig cfg = make_base_config();
-    cfg.max_query_length = ksx.overlap_length();
+    cfg.max_query_length = ifp.overlap_length;
 
     auto qdata = preprocess_query<uint16_t>(query, 7, nullptr, cfg);
     CHECK_EQ(qdata.skip_reason, kSkipQueryTooLong);

@@ -27,10 +27,6 @@ public:
                           uint32_t frag_start,
                           uint32_t frag_end);
 
-    void set_min_seq_length(uint32_t v)   { min_seq_length_ = v; }
-    void set_min_length_split(uint32_t v) { min_length_split_ = v; }
-    void set_overlap_length(uint32_t v)   { overlap_length_ = v; }
-
     // Write the .ksx file. Returns true on success.
     bool write(const std::string& path) const;
 
@@ -51,10 +47,6 @@ private:
     std::vector<uint32_t> fragment_parent_idx_;
     std::vector<uint32_t> fragment_start_;
     std::vector<uint32_t> fragment_end_;
-
-    uint32_t min_seq_length_   = 0;
-    uint32_t min_length_split_ = 0;
-    uint32_t overlap_length_   = 0;
 };
 
 } // namespace ikafssn
