@@ -1,6 +1,7 @@
 #include "io/blastdb_reader.hpp"
 #include "core/ambiguity_parser.hpp"
 
+#include <corelib/ncbifile.hpp>
 #include <objtools/blast/seqdb_reader/seqdbexpert.hpp>
 #include <objects/seqloc/Seq_id.hpp>
 #include <objects/general/Dbtag.hpp>
@@ -75,6 +76,22 @@ uint32_t BlastDbReader::num_sequences() const {
 uint64_t BlastDbReader::total_length() const {
     if (!impl_->db) return 0;
     return static_cast<uint64_t>(impl_->db->GetTotalLength());
+}
+
+void BlastDbReader::set_mmap_strategy(MMapStrategy s) const {
+    if (!impl_->db) return;
+    using ncbi::CMemoryFile_Base;
+    CMemoryFile_Base::EMemMapAdvise adv;
+    switch (s) {
+        case MMapStrategy::kNormal:     adv = CMemoryFile_Base::eMMA_Normal;     break;
+        case MMapStrategy::kRandom:     adv = CMemoryFile_Base::eMMA_Random;     break;
+        case MMapStrategy::kSequential: adv = CMemoryFile_Base::eMMA_Sequential; break;
+        case MMapStrategy::kWillNeed:   adv = CMemoryFile_Base::eMMA_WillNeed;   break;
+        case MMapStrategy::kDontNeed:   adv = CMemoryFile_Base::eMMA_DontNeed;   break;
+        case MMapStrategy::kNoReuse:    adv = CMemoryFile_Base::eMMA_NoReuse;    break;
+        default:                        adv = CMemoryFile_Base::eMMA_Normal;     break;
+    }
+    impl_->db->SetMMapStrategy(adv);
 }
 
 uint32_t BlastDbReader::seq_length(uint32_t oid) const {

@@ -698,6 +698,11 @@ int main(int argc, char* argv[]) {
             const auto& batch = meta_batches[bi];
             const int batch_concurrency = std::min(
                 static_cast<int>(batch.vols.size()), std::max(1, threads));
+            // Pre-fault sequence pages for the volumes in this batch so
+            // page faults don't serialize the per-OID parallel walk.
+            for (uint16_t vi : batch.vols) {
+                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kWillNeed);
+            }
             tbb::task_arena meta_arena(batch_concurrency);
             meta_arena.execute([&] {
                 tbb::parallel_for(size_t(0), batch.vols.size(),
@@ -715,6 +720,11 @@ int main(int argc, char* argv[]) {
                         }
                     });
             });
+            // Release the page cache before the next batch so peak
+            // memory stays bounded by -memory_limit.
+            for (uint16_t vi : batch.vols) {
+                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
+            }
         }
         if (meta_failed.load()) {
             std::fprintf(stderr,
@@ -855,6 +865,12 @@ int main(int argc, char* argv[]) {
                     batch_config.memory_limit = memory_limit /
                         static_cast<uint64_t>(batch_concurrency);
                 }
+                // Pre-fault sequence pages for the volumes scanned by
+                // this batch; release them once the batch finishes so
+                // peak page-cache use stays bounded.
+                for (uint16_t vi : batch.vols) {
+                    dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kWillNeed);
+                }
                 tbb::task_arena post_arena(batch_concurrency);
                 post_arena.execute([&] {
                     tbb::parallel_for(size_t(0), batch.vols.size(),
@@ -881,6 +897,9 @@ int main(int argc, char* argv[]) {
                             }
                         });
                 });
+                for (uint16_t vi : batch.vols) {
+                    dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
+                }
             }
             if (post_failed.load()) {
                 std::fprintf(stderr,

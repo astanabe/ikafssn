@@ -2,16 +2,33 @@
 
 This directory contains patches applied to third-party dependencies before building them.
 
-## ncbi-cxx-toolkit-seqdb-madvise-random.patch
+## ncbi-cxx-toolkit-seqdb-mmap-strategy.patch
 
-Adds `MemMapAdvise(eMMA_Random)` to `CAtlasMappedFile`'s constructor in the NCBI C++ Toolkit's SeqDB reader. This disables the kernel's default readahead (typically 128 KB per page fault) on BLAST DB memory-mapped files, reducing page cache pollution by ~32x during Stage 3 alignment. Without this patch, readahead on BLAST DB accesses evicts ikafssn's index data from the page cache, causing slow Stage 1 startup on subsequent queries.
+Adds `CSeqDB::SetMMapStrategy(EMemMapAdvise)` (and a matching
+`CSeqDBAtlas::SetMMapStrategy()`) so callers can advise the kernel on
+the expected access pattern for memory-mapped BLAST DB files.  The
+patch also defaults `CAtlasMappedFile`'s mmap strategy to
+`eMMA_Normal` (OS-decided readahead), and exposes `eMADV_NoReuse`
+(`MADV_NOREUSE`) on the underlying `EMemoryAdvise` enum.
+
+ikafssn drives this from `BlastDbReader::set_mmap_strategy()`:
+- `kSequential` / `kWillNeed` for `ikafssnindex` metadata + postings
+  passes and Stage 3's batched subject-sequence fetch (kafsss
+  readahead, pre-fetch into page cache);
+- `kDontNeed` between batches so the page cache stays bounded by
+  `-memory_limit`;
+- `kRandom` for callers performing sparse OID lookups, suppressing
+  readahead and reducing page cache pollution.
+
+Submitted upstream as a pull request; once merged, this patch can
+be retired.
 
 ### How to apply
 
 From the NCBI C++ Toolkit source directory (e.g. `ncbi-cxx-toolkit-public-release-30.2.0/`):
 
 ```bash
-patch -p1 < /path/to/ikafssn/patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
+patch -p1 < /path/to/ikafssn/patches/ncbi-cxx-toolkit-seqdb-mmap-strategy.patch
 ```
 
 Apply this patch after extracting the toolkit source and before running `./cmake-configure`.

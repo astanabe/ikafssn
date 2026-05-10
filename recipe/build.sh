@@ -83,7 +83,7 @@ mkdir -p ncbi-src
 tar xf ncbi.tar.gz -C ncbi-src --strip-components=1
 
 cd ncbi-src
-patch -p1 < "${SRC_DIR}/patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch"
+patch -p1 < "${SRC_DIR}/patches/ncbi-cxx-toolkit-seqdb-mmap-strategy.patch"
 
 # Compute the sysroot path used by the conda-build toolchain.
 #   - Linux: ${BUILD_PREFIX}/${HOST}/sysroot ships glibc 2.34 stub libraries.

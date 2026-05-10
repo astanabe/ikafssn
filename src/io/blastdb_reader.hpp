@@ -37,6 +37,24 @@ public:
     // Total residue count across every sequence in this volume.
     uint64_t total_length() const;
 
+    // Memory-map access pattern hint passed through to the kernel
+    // (CSeqDB::SetMMapStrategy under the hood).
+    //   kNormal     — OS default; readahead enabled.
+    //   kRandom     — disable readahead (sparse OID lookups).
+    //   kSequential — aggressive readahead (whole-volume scans).
+    //   kWillNeed   — pre-fault pages into the page cache up front.
+    //   kDontNeed   — release pages from the page cache.
+    //   kNoReuse    — hint that data will be touched only once.
+    enum class MMapStrategy {
+        kNormal,
+        kRandom,
+        kSequential,
+        kWillNeed,
+        kDontNeed,
+        kNoReuse,
+    };
+    void set_mmap_strategy(MMapStrategy s) const;
+
     // Sequence length in bases for given OID.
     uint32_t seq_length(uint32_t oid) const;
 

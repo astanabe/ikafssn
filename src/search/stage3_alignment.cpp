@@ -288,6 +288,12 @@ std::vector<OutputHit> run_stage3(
         }
 
         // 8b. Fetch subseqs (volume-parallel, restricted to volumes touched).
+        // Pre-fault sequence pages on the touched volumes so per-OID
+        // get_subsequence calls don't serialize on page faults.
+        for (size_t ri = 0; ri < readers.size(); ri++) {
+            if (hits_by_reader[ri].empty()) continue;
+            readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kWillNeed);
+        }
         fetch_arena.execute([&] {
             tbb::parallel_for(size_t(0), readers.size(), [&](size_t ri) {
                 for (size_t hit_idx : hits_by_reader[ri]) {
@@ -314,6 +320,13 @@ std::vector<OutputHit> run_stage3(
                 }
             });
         });
+        // Subseqs are now in `subject_subseqs` (heap-owned strings); the
+        // alignment step does not touch the mmap further this batch, so
+        // release the cached pages before the next batch's fetch.
+        for (size_t ri = 0; ri < readers.size(); ri++) {
+            if (hits_by_reader[ri].empty()) continue;
+            readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
+        }
 
         // 8c. Collect valid hit indices for parallel alignment.
         std::vector<size_t> valid_indices;
