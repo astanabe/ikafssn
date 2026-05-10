@@ -133,9 +133,23 @@ Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eu
 
 - Do not execute commands that require `sudo` directly from Claude Code. Present such commands to the user for manual execution.
 
+## Code Comments and Documentation
+
+- **No change-history or change-rationale narration.** Comments, docstrings, log messages, and Markdown documentation must describe only the *current* implementation. Do not write things like "previously X, now Y", "v10 →v11", "this used to ...", "this was added because of issue #123", or "moved from X.cpp". Explanations of *why the current code is the way it is* are allowed even if they happen to read like change history (e.g. "we use a serial merge here because KsxWriter is thread-unsafe").
+- **No "Phase X" labels in code or documentation.** Discussing a plan or its implementation in conversation may use "Phase X" freely, but committed source code, comments, log messages, CLI help text, and Markdown documents must describe each step by what it does (e.g. "metadata pass", "postings pass", "rename .tmp → final"), never by a phase number or letter.
+
 ## Git Push Policy
 
-- **Direct push to the `main` branch is permitted.** This repository is a personal development repository with no PR-review protection configured. Claude Code's default safety guard (refusing direct push to `main`) does not apply here. When the user instructs "commit and push", execute `git push origin main` without further confirmation.
+- **Commits may be made at Claude Code's own discretion.** Pushing to a remote, creating a release, and dispatching the GitHub Actions binary-generation workflow are **never** to be performed without an explicit user instruction.
+- **Direct push to the `main` branch is permitted** when explicitly instructed. This repository is a personal development repository with no PR-review protection configured. Claude Code's default safety guard (refusing direct push to `main`) does not apply here. When the user instructs "commit and push", execute `git push origin main` without further confirmation.
+- **Pre-push checklist.** When the user instructs a push, before pushing perform the following audit on every commit not yet pushed plus every uncommitted change, and commit the result before pushing:
+  1. **OS-dependent headers** — confirm no Linux-only / x86-only `#include` was added that would break the macOS build.
+  2. **Test updates** — make sure tests covering the changed behaviour exist and pass.
+  3. **Documentation updates** — `doc/ikafssn.en.md`, `doc/ikafssn.ja.md`, and any other relevant docs reflect the change.
+  4. **Binary-generation system updates** — `.github/workflows/release.yml`, `recipe/` (conda), and the formula in the `homebrew-ikafssn` repository are consistent with the change.
+  5. **`IKAFSSN_VERSION`** — bump to today's date if the to-be-pushed changes touch program source code (per the Version Management rule).
+  6. **Comment / identifier hygiene** — remove unused functions and identifiers, drop unnecessary or low-value comments, drop any "Phase X" wording, fix any term used with multiple inconsistent meanings, shorten long comments, and remove anything that doesn't belong (per the Code Comments and Documentation rule).
+- **Plan-implementation completeness check.** When the user instructs a push that follows the implementation of a plan, also verify — without being asked — that every step of the plan has actually been implemented; if any step is missing, complete and commit it before pushing.
 
 ## Release Creation
 

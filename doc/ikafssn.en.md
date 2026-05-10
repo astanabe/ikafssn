@@ -124,9 +124,12 @@ Options:
                           because the parent-relative dedup keys assume
                           every chain hit fits inside at most two adjacent
                           fragments.
-  -memory_limit <size>    Memory limit (default: half of physical RAM)
-                          Accepts K, M, G suffixes
-                          Partitions are auto-calculated to fit within this limit
+  -memory_limit <size>    Memory budget for the build (default: half of physical RAM)
+                          Accepts K, M, G suffixes.  Used to size posting
+                          partitions and to plan how many volumes are
+                          processed concurrently in the metadata and
+                          postings passes (each batch's summed cost
+                          stays within this budget).
   -max_freq_build <num>   Exclude k-mers with cross-volume count above this threshold
                           1 or 1.0: disable (no exclusion, default)
                           0 < x < 1: fraction of total NSEQ across all volumes
@@ -134,7 +137,7 @@ Options:
                           0: not allowed (error)
                           Counts are aggregated across all volumes before filtering
   -freq_threshold_part <int>
-                          .kpx v7 per-(kmer, seq_id) partition threshold (default: 8, max: 255)
+                          .kpx per-(kmer, seq_id) partition threshold (default: 8, max: 255)
                           A (k-mer, seq_id) cluster with occurrence count > threshold
                           gets its own partition group; lower-multiplicity clusters
                           merge into a shared short bucket (improves chromosome-class
@@ -156,8 +159,9 @@ Options:
                           optimal: optimal template only
                           both: build coding and optimal indexes sequentially
   -nthread <int>          Number of threads (default: all cores)
-                          Parallelizes counting, partition scan, sort,
-                          and volume processing
+                          Parallelizes per-volume counting / partition
+                          scan / sort, the per-OID metadata pass, and
+                          inter-volume processing within each batch.
   -v, --verbose           Verbose output
 ```
 
