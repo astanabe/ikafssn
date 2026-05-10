@@ -542,15 +542,17 @@ if(BUILD_HTTPD)
     )
 endif()
 
-install(FILES
-    doc/systemd/ikafssnserver@.service
-    doc/systemd/ikafssnhttpd@.service
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system
-)
-install(FILES
-    doc/systemd/README.md
-    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/ikafssn/systemd
-)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    install(FILES
+        doc/systemd/ikafssnserver@.service
+        doc/systemd/ikafssnhttpd@.service
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system
+    )
+    install(FILES
+        doc/systemd/README.md
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/ikafssn/systemd
+    )
+endif()
 
 # --- CPack packaging ---
 set(CPACK_PACKAGE_NAME "ikafssn")
