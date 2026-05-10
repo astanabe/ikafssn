@@ -247,7 +247,6 @@ Options:
   -stage3_min_ppositive <num>  Min percent positive filter for mode 3 (default: 0)
   -stage3_min_npositive <int>  Min positive-scoring positions filter for mode 3 (default: 0)
   -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: degmatch)
-  -stage3_nthread_fetch <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, nthread); error if exceeds -nthread)
   -nresult <int>      Max results per query, 0=unlimited (default: 0)
   -seqidlist <path>       Include only listed accessions
   -negative_seqidlist <path>  Exclude listed accessions
@@ -499,7 +498,6 @@ Options:
   -stage3_min_ppositive <num>  Default min percent positive (default: 0)
   -stage3_min_npositive <int>  Default min positive-scoring positions (default: 0)
   -stage3_score_matrix <name>  Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)
-  -stage3_nthread_fetch <int>  Threads for BLAST DB fetch (default: min(8, nthread))
   -nresult <int>      Default max results per query (default: 0)
   -accept_qdegen <0|1>    Default accept queries with degenerate bases (default: 1)
   -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
@@ -858,7 +856,7 @@ The default parameters prioritize throughput: `stage1_topn=0` and `nresult=0` di
 
 2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= stage2_min_score` are reported. The DP inner loop is limited by `-stage2_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior). When `-stage2_max_nhit_per_subject` is greater than 1 (or 0 for unlimited), multiple non-overlapping chains are extracted per subject using greedy best-chain removal: the best chain is found and its hits are removed, then the DP is re-run on the remaining hits, repeating until the limit is reached or no chain meets `min_score`.
 
-3. **Stage 3 (Pairwise Alignment):** For each Stage 2 hit, retrieves the subject subsequence from the BLAST DB (with optional context extension via `-context_extend`), and performs semi-global pairwise alignment using the Parasail library (using the score matrix specified by `-stage3_score_matrix`, default: DEGMATCH). The alignment score (**alnscore**) is computed for all hits. When `-stage3_traceback 1` is enabled, CIGAR strings, percent positive (ppositive), positive-scoring position count (npositive), negative-scoring count (nnegative), and aligned sequences (with gaps) are also computed. Hits can be filtered by `-stage3_min_ppositive` and `-stage3_min_npositive` (traceback mode only). Subject sequences are pre-fetched in parallel across BLAST DB volumes controlled by `-stage3_nthread_fetch`.
+3. **Stage 3 (Pairwise Alignment):** For each Stage 2 hit, retrieves the subject subsequence from the BLAST DB (with optional context extension via `-context_extend`), and performs semi-global pairwise alignment using the Parasail library (using the score matrix specified by `-stage3_score_matrix`, default: DEGMATCH). The alignment score (**alnscore**) is computed for all hits. When `-stage3_traceback 1` is enabled, CIGAR strings, percent positive (ppositive), positive-scoring position count (npositive), negative-scoring count (nnegative), and aligned sequences (with gaps) are also computed. Hits can be filtered by `-stage3_min_ppositive` and `-stage3_min_npositive` (traceback mode only). Subject subsequences are fetched hit-parallel using the full `-nthread` pool; within each TBB task, hits are visited in (volume, OID) order to preserve sequential mmap locality.
 
 **Adaptive `-stage2_min_score` (default):** When `-stage2_min_score 0` (the default), the minimum chain score is set adaptively per query to the resolved Stage 1 threshold. With fractional `-stage1_min_score` (e.g. `0.5`), this means each query gets a per-query adaptive threshold based on its k-mer composition. With absolute `-stage1_min_score`, the configured value is used. Set `-stage2_min_score` to a positive integer to override this behavior with a fixed threshold.
 

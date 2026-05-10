@@ -96,7 +96,6 @@ static void print_usage(const char* prog) {
         "  -stage3_min_ppositive <num> Min percent positive filter for mode 3 (default: 0)\n"
         "  -stage3_min_npositive <int> Min positive-scoring positions filter for mode 3 (default: 0)\n"
         "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
-        "  -stage3_nthread_fetch <int>  Threads for BLAST DB fetch in mode 3 (default: min(8, nthread))\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -t <int>                 Template length for spaced seeds (0=contiguous, 13/15/18 for k=8-9, 16/18/21 for k=11-12; default: 0)\n"
         "  -template_type <string>  Template type: coding, optimal, both (default: both)\n"
@@ -245,18 +244,6 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-    if (cli.has("-stage3_nthread_fetch")) {
-        stage3_config.nthread_fetch = cli.get_int("-stage3_nthread_fetch", 8);
-        if (stage3_config.nthread_fetch > nthread) {
-            std::fprintf(stderr,
-                "Error: -stage3_nthread_fetch (%d) exceeds -nthread (%d)\n",
-                stage3_config.nthread_fetch, nthread);
-            return 1;
-        }
-    } else {
-        stage3_config.nthread_fetch = std::min(8, nthread);
-    }
-
     // Parse -context_extend: integer (bases) or decimal (query length multiplier)
     ContextParam ctx_param;
     {

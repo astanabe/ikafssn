@@ -110,7 +110,6 @@ static void test_stage3_pipeline() {
     s3config.traceback = true;
     s3config.gapopen = 10;
     s3config.gapext = 1;
-    s3config.nthread_fetch = 1;
 
     auto filtered = run_stage3(all_hits, queries, g_testdb_path, s3config,
                                false, 0.0, 0, logger);
@@ -211,7 +210,6 @@ static void test_stage3_score_only() {
     // Score-only mode (no traceback)
     Stage3Config s3config;
     s3config.traceback = false;
-    s3config.nthread_fetch = 1;
 
     auto filtered = run_stage3(all_hits, queries, g_testdb_path, s3config,
                                false, 0.0, 0, logger);
@@ -296,7 +294,6 @@ static void test_stage3_context() {
     // With integer context
     Stage3Config s3config;
     s3config.traceback = true;
-    s3config.nthread_fetch = 1;
 
     auto filtered = run_stage3(all_hits, queries, g_testdb_path, s3config,
                                false, 0.0, 50, logger);  // 50bp context
@@ -430,7 +427,6 @@ static void test_stage3_batching_equivalence() {
     cfg.traceback = true;
     cfg.gapopen = 10;
     cfg.gapext = 1;
-    cfg.nthread_fetch = 1;
 
     // Unbatched run.
     cfg.posting_budget = 0;
@@ -494,7 +490,6 @@ static void test_stage3_oversize_group_tier1() {
     cfg.traceback = false;
     cfg.gapopen = 10;
     cfg.gapext = 1;
-    cfg.nthread_fetch = 1;
 
     cfg.posting_budget = 0;
     auto unbatched = run_stage3(hits, queries, g_testdb_path, cfg,

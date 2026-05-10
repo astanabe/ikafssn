@@ -17,7 +17,6 @@ struct Stage3Config {
     double min_ppositive = 0.0;
     uint32_t min_npositive = 0;
     std::string score_matrix = "degmatch";
-    int nthread_fetch = 8;   // threads for BLAST DB sequence fetch
     // Heap budget for Stage 3 batch loop.  When 0 (default), the entire
     // hit set is processed in a single batch.  When > 0, hits are grouped
     // by (qseqid, sseqid, sstrand) and bin-packed into batches whose
@@ -31,7 +30,6 @@ struct Stage3Config {
 // - queries: original FASTA query sequences
 // - db_path: BLAST DB path for subject sequence retrieval
 // - context_is_ratio/context_ratio/context_abs: -context_extend option values
-// - Fetch thread count is controlled by config.nthread_fetch
 // Returns filtered hits (min_ppositive/min_npositive applied).
 std::vector<OutputHit> run_stage3(
     std::vector<OutputHit>& hits,

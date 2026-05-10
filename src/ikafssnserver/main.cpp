@@ -62,7 +62,6 @@ static void print_usage(const char* prog) {
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -stage3_min_npositive <int> Default min positive-scoring positions (default: 0)\n"
         "  -stage3_score_matrix <name> Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
-        "  -stage3_nthread_fetch <int>  Threads for BLAST DB fetch (default: min(8, nthread))\n"
         "  -memory_limit <size>     madvise WILLNEED budget (default: half of RAM)\n"
         "                           Accepts K, M, G suffixes\n"
         "  -shutdown_timeout <int>  Graceful shutdown timeout in seconds (default: 30)\n"
@@ -205,20 +204,6 @@ int main(int argc, char* argv[]) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
-    }
-
-    // Resolve nthread_fetch after nthread is known
-    int nthread_resolved = resolve_threads(cli);
-    if (cli.has("-stage3_nthread_fetch")) {
-        config.stage3_config.nthread_fetch = cli.get_int("-stage3_nthread_fetch", 8);
-        if (config.stage3_config.nthread_fetch > nthread_resolved) {
-            std::fprintf(stderr,
-                "Error: -stage3_nthread_fetch (%d) exceeds -nthread (%d)\n",
-                config.stage3_config.nthread_fetch, nthread_resolved);
-            return 1;
-        }
-    } else {
-        config.stage3_config.nthread_fetch = std::min(8, nthread_resolved);
     }
 
     // Parse -context_extend: integer (bases) or decimal (query length multiplier)

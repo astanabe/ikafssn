@@ -241,7 +241,6 @@ ikafssnsearch [options]
   -stage3_min_npositive <int>  モード 3 の最小正スコア塩基数フィルタ (デフォルト: 0)
   -stage3_score_matrix <str>  モード 3 のスコア行列 (デフォルト: degmatch)
                           利用可能: degmatch、dnafull、nuc44
-  -stage3_nthread_fetch <int>  モード 3 の BLAST DB 取得スレッド数 (デフォルト: min(8, nthread); -nthread を超えるとエラー)
   -nresult <int>      最終出力件数、0=無制限 (デフォルト: 0)
   -seqidlist <path>       検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
@@ -489,7 +488,6 @@ ikafssnserver [options]
   -stage3_min_npositive <int>  デフォルト最小正スコア塩基数 (デフォルト: 0)
   -stage3_score_matrix <str>  デフォルトスコア行列 (デフォルト: degmatch)
                           利用可能: degmatch、dnafull、nuc44
-  -stage3_nthread_fetch <int>  BLAST DB 取得スレッド数 (デフォルト: min(8, nthread))
   -nresult <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
   -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)
@@ -851,7 +849,7 @@ ikafssn は 3 段階の検索パイプラインを使用します。
 
 2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。`-stage2_max_nhit_per_subject` が 1 より大きい値 (または 0 で無制限) の場合、貪欲な最良チェイン除去により同一サブジェクトから重複のない複数のチェインを抽出します: 最良チェインを見つけてそのヒットを除去し、残りのヒットで DP を再実行する処理を、制限に達するか `min_score` を満たすチェインがなくなるまで繰り返します。
 
-3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context_extend` による拡張オプション付き)、Parasail ライブラリを使って半大域ペアワイズアライメントを実行します (`-stage3_score_matrix` で指定されたスコア行列を使用、デフォルト: DEGMATCH)。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、正スコア率、正スコア塩基数、負スコア数、ギャップ付きアライメント配列も計算されます。`-stage3_min_ppositive` と `-stage3_min_npositive` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト配列は `-stage3_nthread_fetch` で制御されるボリューム並列プリフェッチで取得されます。
+3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context_extend` による拡張オプション付き)、Parasail ライブラリを使って半大域ペアワイズアライメントを実行します (`-stage3_score_matrix` で指定されたスコア行列を使用、デフォルト: DEGMATCH)。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、正スコア率、正スコア塩基数、負スコア数、ギャップ付きアライメント配列も計算されます。`-stage3_min_ppositive` と `-stage3_min_npositive` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト部分配列は `-nthread` 全数によるヒット並列でフェッチされ、各 TBB タスク内では (volume, OID) 順に走査して mmap の連続アクセス局所性を保持します。
 
 **適応的 `-stage2_min_score` (デフォルト):** `-stage2_min_score 0` (デフォルト) の場合、最小チェインスコアはクエリごとに適応的に設定され、解決済みの Stage 1 閾値が使用されます。割合指定の `-stage1_min_score` (例: `0.5`) との組み合わせでは、各クエリの k-mer 構成に基づくクエリごとの適応的閾値が設定されます。絶対値指定の `-stage1_min_score` の場合は、その設定値がそのまま使用されます。固定閾値を使用する場合は `-stage2_min_score` に正の整数を指定してください。
 

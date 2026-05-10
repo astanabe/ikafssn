@@ -12,7 +12,6 @@
 
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
-#include <tbb/task_arena.h>
 
 #include <parasail.h>
 
@@ -249,11 +248,6 @@ std::vector<OutputHit> run_stage3(
 
     bool has_context = context_is_ratio ? (context_ratio > 0) : (context_abs > 0);
 
-    int actual_nthread_fetch = std::min(config.nthread_fetch,
-                                         static_cast<int>(readers.size()));
-    if (actual_nthread_fetch < 1) actual_nthread_fetch = 1;
-    tbb::task_arena fetch_arena(actual_nthread_fetch);
-
     // 8. Per-batch loop.
     for (size_t bi = 0; bi < batches.size(); bi++) {
         const auto& batch = batches[bi];
@@ -287,18 +281,34 @@ std::vector<OutputHit> run_stage3(
                         static_cast<unsigned long long>(config.posting_budget));
         }
 
-        // 8b. Fetch subseqs (volume-parallel, restricted to volumes touched).
-        // Pre-fault sequence pages on the touched volumes so per-OID
-        // get_subsequence calls don't serialize on page faults.
+        // 8b. Fetch subseqs.  Flatten the per-volume OID-sorted hit
+        // lists into one ordered index sequence and walk it with a
+        // single hit-parallel parallel_for in the default arena (=
+        // -nthread).  Within one TBB task the iterations are
+        // contiguous in (volume, OID) order, preserving sequential
+        // mmap access locality, while across tasks the full -nthread
+        // pool is engaged.  `get_subsequence` is lock-free
+        // (CSeqDBImpl::GetRawSeqAndAmbig does not take the
+        // CSeqDBAtlas lock and only does mmap pointer arithmetic +
+        // ncbi2na decode + ambig-table lookup), so concurrent calls
+        // on the same or different volumes are safe.
+        std::vector<size_t> ordered_hits;
+        ordered_hits.reserve(batch_hit_count);
+        for (size_t ri = 0; ri < readers.size(); ri++) {
+            for (size_t h : hits_by_reader[ri]) ordered_hits.push_back(h);
+        }
         for (size_t ri = 0; ri < readers.size(); ri++) {
             if (hits_by_reader[ri].empty()) continue;
-            readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kWillNeed);
+            readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
         }
-        fetch_arena.execute([&] {
-            tbb::parallel_for(size_t(0), readers.size(), [&](size_t ri) {
-                for (size_t hit_idx : hits_by_reader[ri]) {
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, ordered_hits.size(), 16),
+            [&](const tbb::blocked_range<size_t>& r) {
+                for (size_t i = r.begin(); i < r.end(); i++) {
+                    size_t hit_idx = ordered_hits[i];
+                    uint16_t vol = hits[hit_idx].volume;
                     uint32_t oid = hits[hit_idx].oid;
-                    uint32_t seq_len = readers[ri].seq_length(oid);
+                    uint32_t seq_len = readers[vol].seq_length(oid);
 
                     uint32_t query_len = 0;
                     auto qit = query_map.find(hits[hit_idx].qseqid);
@@ -314,12 +324,12 @@ std::vector<OutputHit> run_stage3(
                         ? hits[hit_idx].sstart - ctx : 0;
                     uint32_t ext_end = std::min(hits[hit_idx].send + ctx, seq_len - 1);
 
-                    subject_subseqs[hit_idx] = readers[ri].get_subsequence(oid, ext_start, ext_end);
+                    subject_subseqs[hit_idx] = readers[vol].get_subsequence(
+                        oid, ext_start, ext_end);
                     ext_starts[hit_idx] = ext_start;
                     hits[hit_idx].slen = seq_len;
                 }
             });
-        });
         // Subseqs are now in `subject_subseqs` (heap-owned strings); the
         // alignment step does not touch the mmap further this batch, so
         // release the cached pages before the next batch's fetch.
