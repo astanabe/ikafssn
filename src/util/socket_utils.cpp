@@ -161,12 +161,6 @@ int tcp_connect(const std::string& addr) {
     return fd;
 }
 
-bool set_nonblocking(int fd) {
-    int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags < 0) return false;
-    return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
-}
-
 void close_fd(int fd) {
     if (fd >= 0) {
         int ret;

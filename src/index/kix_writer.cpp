@@ -51,8 +51,7 @@ void KixWriter::add_posting_list(uint32_t kmer_value, const std::vector<uint32_t
 }
 
 bool KixWriter::write(const std::string& path) {
-    // Set sentinel: offset after all posting file bytes
-    offsets_[table_size_] = posting_file_.size();
+    offsets_[table_size_] = posting_file_.size();  // sentinel
 
     FILE* fp = std::fopen(path.c_str(), "wb");
     if (!fp) {
@@ -60,10 +59,7 @@ bool KixWriter::write(const std::string& path) {
         return false;
     }
 
-    // Write header.  Phase 7a stores the dictionary as an Elias-Fano blob;
-    // KIX_FLAG_OFFSET32 is no longer meaningful and is forced to 0 (the
-    // header bit is preserved as reserved/sentinel for the eventual v9
-    // bump per Phase 7 design decision #6).
+    // KIX_FLAG_OFFSET32 is reserved and forced to 0.
     KixHeader hdr{};
     std::memcpy(hdr.magic, KIX_MAGIC, sizeof(KIX_MAGIC));
     hdr.format_version = KIX_FORMAT_VERSION;
@@ -79,22 +75,21 @@ bool KixWriter::write(const std::string& path) {
     hdr.db_len = static_cast<uint16_t>(name_len);
     std::memcpy(hdr.db, db_.c_str(), name_len);
 
-    // Reserved codec-extension area (codec selection follows format_version
-    // since Phase 5g-1; these fields are reserved).
+    // Reserved codec-extension area (codec selection follows
+    // format_version; these fields are reserved).
     hdr.codec_id              = 0;
     hdr.codec_version         = 0;
     hdr.block_size            = 0;
     hdr.tail_codec            = 0;
     hdr.exception_codec_flags = 0;
 
-    // v10 fragment-indexing triplet
+    // Fragment-indexing triplet
     hdr.min_seq_length   = min_seq_length_;
     hdr.min_length_split = min_length_split_;
     hdr.overlap_length   = overlap_length_;
 
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
-    // Write Elias-Fano dictionary in place of the raw u32/u64 offsets table.
     if (!write_kix_dictionary_ef(fp, offsets_.data(), table_size_,
                                  posting_file_.size())) {
         std::fprintf(stderr, "KixWriter: failed to write EF dictionary to '%s'\n",
@@ -103,7 +98,6 @@ bool KixWriter::write(const std::string& path) {
         return false;
     }
 
-    // Write posting file
     if (!posting_file_.empty()) {
         std::fwrite(posting_file_.data(), 1, posting_file_.size(), fp);
     }

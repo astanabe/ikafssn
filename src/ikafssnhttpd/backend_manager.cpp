@@ -275,10 +275,10 @@ void BackendManager::exclude_backend(size_t idx, const Logger& logger) {
 
 bool BackendManager::route_search(const SearchRequest& req, SearchResponse& resp,
                                    std::string& error_msg) {
-    // Single attempt: retry policy lives in JobWorker (which counts the
-    // attempt against `max_nretry` and re-queues via the JobStore).  The
-    // legacy 3-retry loop has been removed so that one failure here
-    // doesn't exclude two healthy backends behind the JobStore's back.
+    // Single attempt: retry policy lives in JobWorker (which counts
+    // the attempt against `max_nretry` and re-queues via the JobStore),
+    // so one failure here does not exclude healthy backends behind the
+    // JobStore's back.
     int idx = select_backend(req.db, req.k, req.mode);
     if (idx < 0) {
         error_msg = "No available backend for db=" + req.db;

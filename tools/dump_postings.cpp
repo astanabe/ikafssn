@@ -1,7 +1,7 @@
-// Phase 6 — dump v8 .kix/.kpx posting lists to TSV for compression analysis.
+// Dump .kix/.kpx posting lists to TSV for compression analysis.
 //
-// Throwaway tool: reads the current index files via the public codec API
-// and emits TSV lines:
+// Reads the current index files via the public codec API and emits
+// TSV lines:
 //
 //     kmer_value \t count \t seq_id_csv \t pos_csv
 //

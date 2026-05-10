@@ -49,7 +49,7 @@ static AccInfo g_acc_info[NUM_TARGETS];
 // ---- Helpers ----
 
 // Parse FASTA from a string into accession -> sequence map.
-// v10 (Phase 4) defline: `>ACCESSION:start-end query=... strand=... score=...`
+// defline: `>ACCESSION:start-end query=... strand=... score=...`
 // (kafsss style).  We strip the `:start-end` suffix so the map is keyed by
 // the bare parent accession that callers compare against TARGET_ACC.
 static std::unordered_map<std::string, std::string>
@@ -69,7 +69,7 @@ parse_fasta_output(const std::string& fasta_str) {
             size_t e = s;
             while (e < line.size() && !std::isspace(static_cast<unsigned char>(line[e]))) e++;
             std::string tok = line.substr(s, e - s);
-            // Strip the trailing `:start-end` (v10 Phase 4 retriever
+            // Strip the trailing `:start-end`retriever
             // defline) so the map key remains the bare parent accession.
             // GenBank accessions never contain ':' so a single ':' is
             // unambiguous for this slicing.

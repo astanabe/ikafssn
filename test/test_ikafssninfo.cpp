@@ -107,7 +107,7 @@ static void test_basic_info() {
     CHECK(output.find("K-mer integer type: uint16") != std::string::npos);
     CHECK(output.find("Number of volumes: 1") != std::string::npos);
     CHECK(output.find("Volume 0:") != std::string::npos);
-    // v10 (Phase 4): per-volume stats now distinguish parents (BLAST OIDs)
+    // per-volume stats now distinguish parents (BLAST OIDs)
     // from fragments (internal SeqIds), and show the fragment-length
     // distribution.
     CHECK(output.find("Parents:") != std::string::npos);
@@ -176,10 +176,9 @@ static void test_consistency_with_reader() {
         }
     }
 
-    // Now run ikafssninfo and verify the totals match.  v10 (Phase 4)
-    // renamed `Total sequences` → `Total fragments` because the indexed
-    // unit is a fragment (internal SeqId), and KixReader::num_sequences()
-    // is the same fragment count exposed under the new name.
+    // Run ikafssninfo and verify the totals match.  ikafssninfo
+    // labels the count as `Total fragments` because the indexed unit
+    // is a fragment (internal SeqId).
     std::string output = run_ikafssninfo("-ix " + g_index_prefix);
     std::string seq_str = "Total fragments:   " + std::to_string(found_seqs);
     CHECK(output.find(seq_str) != std::string::npos);

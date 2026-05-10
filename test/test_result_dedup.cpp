@@ -1,4 +1,4 @@
-// Phase 5 unit test: src/search/result_dedup.cpp.
+// unit test: src/search/result_dedup.cpp.
 //
 // The Stage 2 dedup collapses orchestrator hits whose parent-relative
 // (sstart, send) — derived by adding fragment_start - 1 — coincide,

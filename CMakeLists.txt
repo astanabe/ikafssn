@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.05.10")  # Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 of fragment-indexing initiative.  Phase 1 bumps the KIX/KPX/KSX/KHX format to v10 (KIX/KPX magic widened to "KIX10"/"KPX10"), gives all three index files a {min_seq_length, min_length_split, overlap_length} header triplet, switches .ksx to a two-stage parents+fragments layout (degenerate 1:1 emitted in this phase), and adds -min_seq_length (ikafssnindex) / -min_query_length (ikafssnsearch, ikafssnclient, default 64) with an index-vs-query integrity check that propagates over the wire (InfoResponse).  Phase 2 adds -min_length_split / -overlap_length to ikafssnindex (default 50000 / 500 under -mode 1, 0 / 0 under -mode 2/3), introduces src/index/fragment_splitter (a port of kafssstore's split_long_sequence_positions, DNA2 mode: ncbi4na==0xF cuts parents into valid segments, each sliced by the calcsegment2 formula), wires index_builder to register every fragment as its own internal SeqId (u32; aborts cleanly if the per-volume fragment count would overflow UINT32_MAX) and to persist fragment-relative positions with a parent-cache that avoids re-fetching mmap'd raw sequences for adjacent fragments, and flips the -mode default 2 → 1 in ikafssnindex / ikafssnsearch CLI parsers.  Phase 3 collapses fragment-level chains back to one canonical row per parent OID: the (orch_hit -> output_hit / response_hit) boundary now resolves the parent accession + parent length and shifts Stage 2 sstart/send by (fragment_start - 1) so downstream tools see parent-relative coordinates; src/search/result_dedup adds Stage 2 dedup (key: query_idx, volume_idx, parent_idx, sstrand, parent_sstart, parent_send, chainscore — applied at the end of run_search) and Stage 3 dedup (key: qseqid, sseqid, sstrand, send, alnscore — applied after run_stage3 in ikafssnsearch and the server's request_processor); SearchConfig.max_query_length is driven by the index's overlap_length and queries longer than the overlap are skipped with a new kSkipQueryTooLong reason, while ikafssnclient pre-filters the same way using the InfoResponse.overlap_length surfaced in Phase 1.  Phase 4 swaps ikafssnretrieve's defline format to the kafsss-style `>parent_acc:start-end` (1-based inclusive), routes its sequence fetch through BlastDbReader::get_subsequence(parent_oid, start, end) so chromosome-scale parents only decode the requested window instead of the whole OID, and updates ikafssninfo to report parent/fragment counts plus per-volume + aggregated fragment-length distributions (min/median/mean/max).  Wire protocol intentionally NOT extended in Phase 4: ResponseHit.sseqid + sstart/send + slen already carry parent-relative coordinates after Phase 3's dedup, so the existing msg_version 11 frame (one row per parent OID) is sufficient and ikafssnhttpd / ikafssnserver / ikafssnclient need no further changes.  Phase 5 adds the test + fixture suite for the fragment-indexing series: setup_ssu_testdata.sh now also builds ssu_longdb (two LONGCHR_X parents, each ~5000bp from concatenated SSU sequences) so split-index integration tests have a long-parent fixture; test_fragment_splitter cross-checks the C++ port against the kafssstore.pl reference (fixed cases + a Perl-equivalent C++ reference fed random parents); test_ksx_io gains a multi-parent multi-fragment round-trip; test_result_dedup unit-tests Stage 2 + Stage 3 dedup including adjacent-fragment-derived duplicates, key boundaries, and skip-row preservation; test_split_index_integration confirms the canonical query-source hit position is preserved across split / no-split builds, that two adjacent-fragment chains at the same parent-relative coordinates collapse to one row after Stage 2 dedup, and that overlap_length-overflow queries are skipped with kSkipQueryTooLong.  Documentation (doc/ikafssn.{en,ja}.md) is rewritten to cover -min_seq_length / -min_query_length / -min_length_split / -overlap_length, the >parent_acc:start-end FASTA defline, fragment-aware ikafssninfo output, and the v9 → v10 "rebuild required" migration; CLAUDE.md adds parent / fragment to the canonical vocabulary along with parent-relative / fragment-relative coordinate definitions.
+set(IKAFSSN_VERSION "0.1.2026.05.10")
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
@@ -9,10 +9,10 @@ option(IKAFSSN_BUILD_BENCH
        "Build benchmark binaries under bench/ (off by default)"
        OFF)
 
-# --- Optional analysis tools (Phase 5a) ---
-# OFF by default; ON adds tools/ subdir (throwaway dump utilities).
+# --- Optional analysis tools ---
+# OFF by default; ON adds tools/ subdir (posting / index inspection utilities).
 option(IKAFSSN_BUILD_TOOLS
-       "Build analysis tools under tools/ (Phase 5a feasibility study)"
+       "Build analysis tools under tools/"
        OFF)
 
 # Get timezone offset in +HH:MM format for build timestamp
@@ -202,7 +202,7 @@ endif()
 # block above).  ikafssnclient / ikafssnhttpd reuse the same PkgConfig::ZSTD
 # imported target for their async-job persistence layer.
 
-# --- x86-simd-sort (Phase 2c, M-4) ---
+# --- x86-simd-sort ---
 # Header + per-arch dispatch library used by index_builder for the posting
 # buffer sort. Header-only on its own; the per-arch object files (avx2 / skx)
 # are compiled with -march=haswell / -march=skylake-avx512 respectively, and
@@ -275,45 +275,30 @@ else()
     add_compile_definitions(IKAFSSN_HAS_X86_SIMD_SORT=0)
 endif()
 
-# --- FastPFor (Phase 5d/5f: per-tier object libraries for runtime dispatch) ---
+# --- FastPFor (per-tier object libraries for runtime dispatch) ---
 #
-# FastPFor 0.4.0 ships with FASTPFOR_SIMD_MODE = "native" by default, which
-# bakes the build host's -march into the static archive — incompatible with
-# ikafssn's runtime SIMD dispatch policy.  Worse, FastPFor's own source
-# files contain no explicit AVX-512 intrinsics (only SSE2-SSE4.2 and a
-# handful of AVX2 in src/varintdecode.c); whatever AVX-512 instructions
-# end up in libFastPFOR.a come purely from the compiler's auto-
-# vectorization of surrounding scalar/SSE code.
-#
-# We side-step the upstream build entirely by populating the source tree
-# (no add_subdirectory) and compiling the FastPFor TUs ourselves into 4
-# OBJECT libraries, one per ISA tier (Phase 5f x86_64 4-tier ladder):
+# FastPFor 0.4.0 ships with FASTPFOR_SIMD_MODE = "native" by default,
+# which bakes the build host's -march into the static archive —
+# incompatible with ikafssn's runtime SIMD dispatch policy.  We
+# side-step the upstream build entirely by populating the source tree
+# (no add_subdirectory) and compiling the FastPFor TUs ourselves into
+# four OBJECT libraries, one per x86_64 ISA tier:
 #
 #   - ikafssn_pfd_sse42         -msse4.2 -mpopcnt
 #   - ikafssn_pfd_avx2          -mavx2 -mbmi -mbmi2 -mfma
 #   - ikafssn_pfd_avx512bw      -mavx512bw -mavx512vl + AVX2 deps
 #   - ikafssn_pfd_avx512vbmi2   -mavx512vbmi2 -mavx512vbmi + above
 #
-# The sse42 tier is semantically equivalent to FASTPFOR_SIMD_MODE=portable
-# (FastPFor's SSE4.2 baseline). The other three tiers are equivalent to
-# FASTPFOR_SIMD_MODE=native with the upstream `-march=native` replaced by
-# the explicit ISA flag set listed above. Because we drive the per-tier
-# compile from `target_compile_options`, no `-march=native` ever reaches
-# `flags.make`, so the resulting object files run on any CPU that supports
-# the named tier — e.g. a GitHub Actions runner without AVX-512 VBMI2 can
-# still build the avx512vbmi2 OBJECT library because we only set the ISA
-# flags rather than asking the compiler to introspect the build host.
-#
-# AVX-512 VBMI/VBMI2 are merged into a single top tier — FastPFor's actual
-# source contains no byte-level shuffle/permute that VBMI/VBMI2 would
-# unlock, so the gap between the two tiers is purely auto-vectorization
-# and doesn't justify a separate object library.
+# Driving the per-tier compile from `target_compile_options` ensures
+# `-march=native` never reaches `flags.make`, so the resulting object
+# files run on any CPU that supports the named tier — a build host
+# without AVX-512 VBMI2 can still produce the avx512vbmi2 OBJECT
+# library.
 #
 # Symbol collision (every tier compiles the same FastPForLib::* symbols)
 # is avoided by remapping the namespace at compile time via
-# `-DFastPForLib=FastPForLib_<tier>`.  ikafssn_pfd_dispatch.cpp has
-# forward declarations that name the per-tier wrapper namespaces and
-# selects the right entry points from current_simd_cap() at first use.
+# `-DFastPForLib=FastPForLib_<tier>`.  pfd_codec.cpp's dispatcher
+# selects the right per-tier entry points at first use.
 include(FetchContent)
 FetchContent_Declare(
     fastpfor
@@ -330,21 +315,18 @@ endif()
 set(FASTPFOR_SRC_DIR "${fastpfor_SOURCE_DIR}")
 set(FASTPFOR_INC_DIR "${FASTPFOR_SRC_DIR}/headers")
 
-# --- SIMDe (Phase 5h: AArch64 NEON support for FastPFor) ---
+# --- SIMDe (AArch64 NEON support for FastPFor) ---
 #
-# FastPFor's headers/common.h has a native dispatch path for aarch64 that
-# requires <simde/x86/sse4.1.h>; SIMDe (https://github.com/simd-everywhere/simde)
-# is the upstream-blessed SSE/AVX → NEON emulation layer.  We populate the
-# SIMDe sources only on aarch64 builds and feed them into the per-tier
-# OBJECT library defined below.  The exact commit is the one FastPFor
-# 0.4.0's cmake_modules/simde.cmake pins (kept verbatim so any future
-# FastPFor bump can simply re-sync).
+# FastPFor's headers/common.h has an aarch64 path that requires
+# <simde/x86/sse4.1.h>; SIMDe (https://github.com/simd-everywhere/simde)
+# is the upstream-blessed SSE/AVX → NEON emulation layer.  Populated
+# only on aarch64 builds.  The pinned commit matches the one FastPFor
+# 0.4.0's cmake_modules/simde.cmake uses.
 #
 # SVE / SVE2 capable CPUs are NOT given a separate FastPFor tier object:
-# SIMDe translates SSE intrinsics into NEON only, and a SVE-native bitpacker
-# would be a hand-coded effort orthogonal to the SIMDe path.  At runtime
-# pfd_codec.cpp's dispatcher routes any aarch64 SimdCap >= NEON (which
-# includes SVE / SVE2) to the single ikafssn_pfd_neon tier object.
+# SIMDe translates SSE intrinsics into NEON only.  pfd_codec.cpp's
+# dispatcher routes any aarch64 SimdCap >= NEON (including SVE / SVE2)
+# to the single ikafssn_pfd_neon tier object.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
     FetchContent_Declare(
         simde
@@ -358,11 +340,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
     set(SIMDE_INC_DIR "${simde_SOURCE_DIR}")
 endif()
 
-# FastPFor TUs we compile per tier.  Phase 5e trimmed this list down to
-# only the bitpacker primitives — codecfactory.cpp / streamvbyte.c /
-# varintdecode.c / horizontalbitpacking.cpp are no longer used now that
-# pfd_codec_tier.cpp drives `simdpackwithoutmask` / `simdunpack` directly
-# under a custom block layout (FOR-within-block + varint tail).
+# FastPFor TUs we compile per tier.  Only the bitpacker primitives are
+# included — pfd_codec_tier.cpp drives `simdpackwithoutmask` /
+# `simdunpack` directly under a custom block layout (FOR-within-block
+# + varint tail).
 set(IKAFSSN_FASTPFOR_SOURCES
     ${FASTPFOR_SRC_DIR}/src/bitpacking.cpp
     ${FASTPFOR_SRC_DIR}/src/bitpackingaligned.cpp
@@ -412,11 +393,11 @@ function(ikafssn_add_pfd_tier_object TIER)
     set_property(TARGET ${_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
 endfunction()
 
-# The four x86_64 PForDelta tiers (Phase 5f ladder). On non-x86 builds
-# (aarch64 etc.) FastPFor's bitpacker primitives — simdpackwithoutmask /
-# simdunpack — are SSE2-only and the surrounding -m<x86 ISA> flags are
-# rejected by GCC, so we simply do not build these targets there. The
-# pfd_codec.cpp dispatcher is `#if`-guarded to match (Phase 5h).
+# The four x86_64 PForDelta tiers. On non-x86 builds (aarch64 etc.)
+# FastPFor's bitpacker primitives — simdpackwithoutmask / simdunpack —
+# are SSE2-only and the surrounding -m<x86 ISA> flags are rejected by
+# GCC, so these targets are not built there.  pfd_codec.cpp's
+# dispatcher is `#if`-guarded to match.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
     set(IKAFSSN_HAS_X86_PFD TRUE)
     ikafssn_add_pfd_tier_object(sse42
@@ -434,12 +415,11 @@ else()
     set(IKAFSSN_HAS_X86_PFD FALSE)
 endif()
 
-# AArch64 PForDelta tier (Phase 5h proper).  Single tier object covering
-# NEON / SVE / SVE2 capable CPUs alike — SIMDe's SSE → NEON translation
-# is the only emulation path, and adding hand-coded SVE bitpackers would
-# be orthogonal work not handled here.  The MARCH_FLAGS slot is left empty
-# so the compiler's default ISA (or whatever cmake/aarch64.toolchain.cmake
-# / IKAFSSN_AARCH64_MARCH supplies via CMAKE_CXX_FLAGS_INIT) carries
+# AArch64 PForDelta tier.  A single tier object covers NEON / SVE /
+# SVE2 capable CPUs alike — SIMDe's SSE → NEON translation is the only
+# emulation path used here.  The MARCH_FLAGS slot is left empty so the
+# compiler's default ISA (or whatever cmake/aarch64.toolchain.cmake /
+# IKAFSSN_AARCH64_MARCH supplies via CMAKE_CXX_FLAGS_INIT) carries
 # through unchanged.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
     set(IKAFSSN_HAS_ARM_PFD TRUE)
@@ -450,15 +430,15 @@ else()
     set(IKAFSSN_HAS_ARM_PFD FALSE)
 endif()
 
-# --- Phase 5i: per-tier SIMD dedup kernel ---
+# --- Per-tier SIMD dedup kernel ---
 #
 # src/index/seq_id_dedup_tier.cpp is compiled once per ISA tier into
-# ikafssn_dedup_<tier> OBJECT libraries.  The runtime dispatcher in
-# src/index/seq_id_dedup.cpp picks the right tier at first use based on
-# current_simd_cap(), mirroring the .kix/.kpx codec dispatcher.  No
-# FastPFor or SIMDe dependency — the kernel is a self-contained scalar
-# loop that the compiler auto-vectorises under the per-tier -m<arch>
-# flag set.
+# the ikafssn_dedup_<tier> OBJECT libraries.  The runtime dispatcher
+# in src/index/seq_id_dedup.cpp picks the right tier at first use
+# based on current_simd_cap(), mirroring the .kix/.kpx codec
+# dispatcher.  No FastPFor or SIMDe dependency — the kernel is a
+# self-contained scalar loop that the compiler auto-vectorises under
+# the per-tier -m<arch> flag set.
 function(ikafssn_add_dedup_tier_object TIER)
     set(_options)
     set(_one)
@@ -498,7 +478,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
     ikafssn_add_dedup_tier_object(neon)
 endif()
 
-# --- Phase 7b: per-tier Elias-Fano dictionary codec ---
+# --- Per-tier Elias-Fano dictionary codec ---
 #
 # src/index/ef_codec_tier.cpp is compiled once per ISA tier into the
 # ikafssn_ef_<tier> OBJECT libraries.  Each compilation gets its own
@@ -612,7 +592,7 @@ if(IKAFSSN_BUILD_BENCH)
     add_subdirectory(bench)
 endif()
 
-# --- Analysis tools (optional, Phase 5a) ---
+# --- Analysis tools (optional) ---
 if(IKAFSSN_BUILD_TOOLS)
     add_subdirectory(tools)
 endif()

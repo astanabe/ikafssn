@@ -4,25 +4,14 @@
 
 namespace ikafssn {
 
-// .kpx v10 (Phase 1 of the fragment-indexing initiative): per-(kmer,
-// seq_id) partitioned position posting file.  The dictionary and per-
-// posting-list body shape are unchanged from v9 (Elias-Fano pos_offsets +
-// 2-bit kind map + partition / short_occ1 / short_occ2 sub-buckets — see
-// kpx_format v9 notes preserved in git history for full details).  v10
-// adds the same fragment-indexing triplet to the header:
-//
-//   uint32_t min_seq_length    // -min_seq_length passed to ikafssnindex
-//   uint32_t min_length_split  // 0 in Phase 1; non-zero from Phase 2
-//   uint32_t overlap_length    // 0 in Phase 1; non-zero from Phase 2
-//
-// The magic widens from 4 bytes "KPX9" to 5 bytes "KPX10"; the rest of
-// the header shifts +1 and one byte is taken out of the reserved tail so
-// the total header size stays at 64 bytes.
+// .kpx v10: per-(kmer, seq_id) partitioned position posting file. The
+// dictionary uses Elias-Fano pos_offsets, and each posting list body is
+// laid out as a 2-bit kind map + partition / short_occ1 / short_occ2
+// sub-buckets. Header carries the fragment-indexing triplet (min_seq_length,
+// min_length_split, overlap_length) plus the standard codec-extension area.
+// Codec selection follows format_version; codec_id / codec_version /
+// block_size / tail_codec are reserved fields kept for header-byte stability.
 inline constexpr char KPX_MAGIC[5] = {'K', 'P', 'X', '1', '0'};
-
-// Codec selection follows format_version (since Phase 5g-1). The header
-// still carries an 8-bit codec_id field for layout stability but readers
-// no longer dispatch on it.
 
 #pragma pack(push, 1)
 struct KpxHeader {
@@ -35,17 +24,13 @@ struct KpxHeader {
     uint8_t  offset_type;                // 0x12: 0=uint32 offsets, 1=uint64 offsets, 0xFF=EF
     uint8_t  reserved2[14];              // 0x13
     // ---- 32 B codec-extension area (total header size = 64 B) ----
-    // codec_id / codec_version / block_size / tail_codec are reserved
-    // since Phase 5g-1: codec selection now follows format_version. Kept
-    // as fields for header-byte stability.
-    uint8_t  codec_id;                   // 0x21: 0 (reserved)
-    uint8_t  codec_version;              // 0x22: 0 (reserved)
-    uint16_t block_size;                 // 0x23: 0 (reserved)
-    uint8_t  tail_codec;                 // 0x25: 0 (reserved)
-    // v10 additions (offset 0x26, 12 bytes total)
+    uint8_t  codec_id;                   // 0x21: reserved
+    uint8_t  codec_version;              // 0x22: reserved
+    uint16_t block_size;                 // 0x23: reserved
+    uint8_t  tail_codec;                 // 0x25: reserved
     uint32_t min_seq_length;             // 0x26: short-sequence filter threshold
-    uint32_t min_length_split;           // 0x2A: 0 in Phase 1
-    uint32_t overlap_length;             // 0x2E: 0 in Phase 1
+    uint32_t min_length_split;           // 0x2A: fragment splitter threshold (0 = no split)
+    uint32_t overlap_length;             // 0x2E: overlap between adjacent fragments
     uint8_t  reserved0[14];              // 0x32: pads header to a 64 B total
 };
 #pragma pack(pop)

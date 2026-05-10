@@ -192,13 +192,12 @@ public:
     }
 
     // Scan with spaced seed templates (packed ncbi2na data).
-    // Uses sliding accumulator + bitmask extraction for O(1) per-position k-mer assembly.
-    //
-    // Phase 4b-2: pure-fast-path positions are buffered and processed via
-    // extract_for_mask_batch() at flush time. Slow-path positions (degenerate
-    // base on a set-bit mask position) drain the buffer first and take the
-    // unchanged scalar path so window_ncbi4na is consistent at the current i.
-    // Callback emit order is preserved bit-exact with the previous scalar path.
+    // Uses sliding accumulator + bitmask extraction for O(1) per-position
+    // k-mer assembly.  Pure-fast-path positions are buffered and processed
+    // via extract_for_mask_batch() at flush time; slow-path positions
+    // (degenerate base on a set-bit mask position) drain the buffer first
+    // and take the scalar path so window_ncbi4na stays consistent at the
+    // current i.
     template <typename Callback, typename AmbigCallback>
     void scan_spaced(const char* ncbi2na_data, uint32_t seq_length,
                       const std::vector<AmbiguityEntry>& ambig_entries,
@@ -239,12 +238,13 @@ public:
         uint8_t window_ncbi4na[MAX_SPACED_T] = {};
         int warmup = t - 1;
 
-        // Phase 4b-2: per-position fast-path k-mer extraction is buffered in
-        // chunks of kBatchChunk and processed via extract_for_mask_batch() at
-        // flush time. Slow-path positions (ambig on a set-bit mask position)
-        // drain the buffer and take the scalar path inline, so window_ncbi4na
-        // remains consistent with the current `i`. Buffer state lives across
-        // ncbi2na unpack chunks; the final flush is at the end of scan().
+        // Per-position fast-path k-mer extraction is buffered in chunks
+        // of kBatchChunk and processed via extract_for_mask_batch() at
+        // flush time. Slow-path positions (ambig on a set-bit mask
+        // position) drain the buffer and take the scalar path inline, so
+        // window_ncbi4na remains consistent with the current `i`. Buffer
+        // state lives across ncbi2na unpack chunks; the final flush is
+        // at the end of scan().
         constexpr size_t kBatchChunk = 64;
         alignas(64) uint64_t accum_buf[kBatchChunk];
         alignas(64) uint32_t nbits_buf[kBatchChunk];  // unused (no n_bits here)

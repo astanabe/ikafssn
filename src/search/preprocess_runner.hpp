@@ -37,11 +37,10 @@ struct PreprocessTemplateBinding {
     const std::vector<uint32_t>* masks = nullptr;
 };
 
-// Run preprocess_query once per template binding for a single query, write
-// each result into the bound slot, and return aggregate flags (multi-degen
-// across any template, first non-zero skip_reason).  The aggregate skip
-// matches the legacy behaviour of "the first template that flags a skip
-// wins".
+// Run preprocess_query once per template binding for a single query,
+// write each result into the bound slot, and return aggregate flags
+// (multi-degen across any template, first non-zero skip_reason).  The
+// aggregate skip rule is "the first template that flags a skip wins".
 template <typename KmerInt>
 PreprocessOutcome<KmerInt> run_preprocess_one_query(
     const std::string& sequence,

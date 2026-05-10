@@ -50,14 +50,14 @@ void tbb_sort_fallback(std::vector<TempEntry>& buf) {
 }
 
 #if IKAFSSN_HAS_X86_SIMD_SORT
-// Strategy E (Phase 2c plan §3.1):
+// Key-value SIMD sort:
 //   1. key[i] = (uint64_t(kmer) << 32) | seq_id
 //   2. val[i] = pos
 //   3. x86simdsort::keyvalue_qsort<uint64_t, uint32_t>(key, val, n)
 //   4. For each contiguous block of identical keys (same kmer + seq_id),
-//      std::sort the val slice to recover the (kmer, seq_id, pos) total order
-// The library's keyvalue_qsort is unstable for duplicate keys, so step 4 is
-// required to make the (pos) tail bit-exact with the TBB path.
+//      std::sort the val slice to recover (kmer, seq_id, pos) total order.
+// keyvalue_qsort is unstable for duplicate keys, so step 4 is required to
+// make the (pos) tail match the TBB path.
 void simd_sort_strategy_e(std::vector<TempEntry>& buf) {
     const std::size_t n = buf.size();
     std::vector<uint64_t> key(n);

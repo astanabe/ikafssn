@@ -10,10 +10,10 @@ endfunction()
 # kernel selection and IKAFSSN_TEST_REQUIRE_TIER ensuring CPUs that do not
 # actually support that tier exit(77) (CTest skip).
 function(add_ikafssn_simd_test TEST_NAME)
-    # Phase 5f x86_64 4-tier ladder (SSE4.2 floor, no standalone VBMI).
-    # The Scalar tier is intentionally omitted: init_simd_dispatch() rejects
-    # auto_cap == Scalar with exit(2) so a `_force_scalar` variant would
-    # always fail rather than skip cleanly.
+    # x86_64 4-tier ladder (SSE4.2 floor, no standalone VBMI).
+    # The Scalar tier is intentionally omitted: init_simd_dispatch()
+    # rejects auto_cap == Scalar with exit(2) so a `_force_scalar`
+    # variant would always fail rather than skip cleanly.
     set(_simd_tiers
         sse42 avx2 avx512bw avx512vbmi2
         neon sve sve2
@@ -40,19 +40,19 @@ target_link_libraries(test_kmer_encoding PRIVATE ikafssn_util)
 target_compile_definitions(test_kmer_encoding PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_kmer_encoding)
 
-# FASTA toupper SIMD test (Phase 1a)
+# FASTA toupper SIMD test
 add_ikafssn_test(test_fasta_toupper test_fasta_toupper.cpp)
 target_link_libraries(test_fasta_toupper PRIVATE ikafssn_util)
 target_compile_definitions(test_fasta_toupper PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_fasta_toupper)
 
-# ncbi2na unpack SIMD test (Phase 1b)
+# ncbi2na unpack SIMD test
 add_ikafssn_test(test_ncbi2na_unpack test_ncbi2na_unpack.cpp)
 target_link_libraries(test_ncbi2na_unpack PRIVATE ikafssn_util)
 target_compile_definitions(test_ncbi2na_unpack PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_ncbi2na_unpack)
 
-# Phase 0 SIMD dispatch unit test (no external dependencies).
+# SIMD dispatch unit test (no external dependencies).
 add_executable(test_simd_dispatch test_simd_dispatch.cpp)
 target_link_libraries(test_simd_dispatch PRIVATE ikafssn_util ikafssn_core)
 target_include_directories(test_simd_dispatch PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -64,7 +64,7 @@ target_link_libraries(test_spaced_seed PRIVATE ikafssn_util)
 target_compile_definitions(test_spaced_seed PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_spaced_seed)
 
-# Phase 4b-1 — extract_for_mask_batch SIMD kernel test
+# extract_for_mask_batch SIMD kernel test
 add_ikafssn_test(test_extract_for_mask_batch test_extract_for_mask_batch.cpp)
 target_link_libraries(test_extract_for_mask_batch PRIVATE ikafssn_util)
 target_compile_definitions(test_extract_for_mask_batch PRIVATE IKAFSSN_TESTING)
@@ -75,10 +75,10 @@ add_ikafssn_test(test_kpx_io test_kpx_io.cpp)
 add_ikafssn_test(test_khx_io test_khx_io.cpp)
 target_link_libraries(test_khx_io PRIVATE ikafssn_util)
 
-# Phase 5: fragment_splitter port reference test (no BLAST DB dependency)
+# fragment_splitter unit test (no BLAST DB dependency)
 add_ikafssn_test(test_fragment_splitter test_fragment_splitter.cpp)
 
-# Phase 5: result_dedup unit test (uses KsxWriter/Reader for the Stage 2
+# result_dedup unit test (uses KsxWriter/Reader for the Stage 2
 # parent-relative key resolution; no BLAST DB dependency).
 add_executable(test_result_dedup test_result_dedup.cpp)
 target_link_libraries(test_result_dedup PRIVATE
@@ -89,40 +89,40 @@ target_include_directories(test_result_dedup PRIVATE
 )
 add_test(NAME test_result_dedup COMMAND test_result_dedup)
 
-# Phase 5i: SIMD dedup kernel unit test
+# SIMD dedup kernel unit test
 add_ikafssn_test(test_seq_id_dedup test_seq_id_dedup.cpp)
 target_link_libraries(test_seq_id_dedup PRIVATE ikafssn_util)
 target_compile_definitions(test_seq_id_dedup PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_seq_id_dedup)
 
-# Phase 7a/7b: Elias-Fano dictionary codec round-trip test, exercised
-# via every per-ISA tier object (sse42 / avx2 / avx512bw / avx512vbmi2
-# / neon) by add_ikafssn_simd_test.
+# Elias-Fano dictionary codec round-trip test, exercised via every
+# per-ISA tier object (sse42 / avx2 / avx512bw / avx512vbmi2 / neon)
+# by add_ikafssn_simd_test.
 add_ikafssn_test(test_ef_codec test_ef_codec.cpp)
 target_link_libraries(test_ef_codec PRIVATE ikafssn_util)
 target_compile_definitions(test_ef_codec PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_ef_codec)
 
-# Phase 7b: confirm the EF dispatcher selects the tier requested via
+# Confirm the EF dispatcher selects the tier requested via
 # IKAFSSN_FORCE_SIMD (mirrors test_simd_dispatch's approach).
 add_ikafssn_test(test_ef_simd_dispatch test_ef_simd_dispatch.cpp)
 target_link_libraries(test_ef_simd_dispatch PRIVATE ikafssn_util)
 target_compile_definitions(test_ef_simd_dispatch PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_ef_simd_dispatch)
 
-# Phase 7f: synthesize v8-magic index files and verify that v9 readers
+# Synthesize older-format index files and verify that current readers
 # reject them with the expected error message.
 add_ikafssn_test(test_v8_rejection test_v8_rejection.cpp)
 target_link_libraries(test_v8_rejection PRIVATE ikafssn_util)
 
-# Phase 7d: structural validation of (.kix, .kpx) volume pairs +
-# bit-flip injection regression.  Exercises validate_volume() against
-# both a clean build and a corrupted kind map.
+# Structural validation of (.kix, .kpx) volume pairs + bit-flip
+# injection regression.  Exercises validate_volume() against both a
+# clean build and a corrupted kind map.
 add_ikafssn_test(test_index_filter_validate test_index_filter_validate.cpp)
 target_link_libraries(test_index_filter_validate PRIVATE ikafssn_util)
 
-# Phase 7d: per-tier popcount_kinds + horizontal_sum_u8 unit test.
-# Run across every ISA tier via add_ikafssn_simd_test so AVX2 / AVX-512
+# Per-tier popcount_kinds + horizontal_sum_u8 unit test.  Run across
+# every ISA tier via add_ikafssn_simd_test so AVX2 / AVX-512
 # auto-vectorisation paths get the same coverage as SSE4.2 / NEON.
 add_ikafssn_test(test_kind_map_popcount test_kind_map_popcount.cpp)
 target_link_libraries(test_kind_map_popcount PRIVATE ikafssn_util)
@@ -145,7 +145,7 @@ target_compile_definitions(test_builder PRIVATE
 add_test(NAME test_builder COMMAND test_builder)
 add_ikafssn_simd_test(test_builder)
 
-# parallel_sort_dispatch unit test (Phase 2c, no BLAST DB dependency)
+# parallel_sort_dispatch unit test (no BLAST DB dependency)
 add_executable(test_parallel_sort test_parallel_sort.cpp)
 target_link_libraries(test_parallel_sort PRIVATE
     ikafssn_index ikafssn_io ikafssn_util ikafssn_core
@@ -173,7 +173,7 @@ target_compile_definitions(test_packed_kmer_scanner PRIVATE
 add_test(NAME test_packed_kmer_scanner COMMAND test_packed_kmer_scanner)
 add_ikafssn_simd_test(test_packed_kmer_scanner)
 
-# --- Phase 3 tests ---
+# --- Search-pipeline tests ---
 
 # Diagonal filter test (no external dependencies)
 add_executable(test_diagonal_filter test_diagonal_filter.cpp)
@@ -223,7 +223,7 @@ target_compile_definitions(test_stage1 PRIVATE
 add_test(NAME test_stage1 COMMAND test_stage1)
 add_ikafssn_simd_test(test_stage1)
 
-# Stage 1 SIMD kernel unit test (Phase 2b, no BLAST DB dependency)
+# Stage 1 SIMD kernel unit test (no BLAST DB dependency)
 add_executable(test_stage1_simd_kernel test_stage1_simd_kernel.cpp)
 target_link_libraries(test_stage1_simd_kernel PRIVATE
     ikafssn_search ikafssn_index ikafssn_io ikafssn_util ikafssn_core
@@ -235,8 +235,8 @@ target_compile_definitions(test_stage1_simd_kernel PRIVATE IKAFSSN_TESTING)
 add_test(NAME test_stage1_simd_kernel COMMAND test_stage1_simd_kernel)
 add_ikafssn_simd_test(test_stage1_simd_kernel)
 
-# Phase 5: split-index end-to-end integration test (requires NCBI Toolkit
-# + BLAST DB + the long-parent fixture from setup_ssu_testdata.sh).
+# Split-index end-to-end integration test (requires NCBI Toolkit +
+# BLAST DB + the long-parent fixture from setup_ssu_testdata.sh).
 add_executable(test_split_index_integration test_split_index_integration.cpp)
 target_link_libraries(test_split_index_integration PRIVATE
     ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
@@ -265,7 +265,7 @@ target_compile_definitions(test_search_integration PRIVATE
 )
 add_test(NAME test_search_integration COMMAND test_search_integration)
 
-# --- Phase 4 tests ---
+# --- Multi-volume tests ---
 
 # Multi-volume and parallel search test (requires NCBI Toolkit + TBB)
 add_executable(test_multivolume test_multivolume.cpp)
@@ -282,7 +282,7 @@ target_compile_definitions(test_multivolume PRIVATE
 )
 add_test(NAME test_multivolume COMMAND test_multivolume)
 
-# --- Phase 5 tests ---
+# --- Server / protocol tests ---
 
 # Protocol serialize/deserialize test (no external dependencies)
 add_executable(test_protocol test_protocol.cpp)
@@ -321,7 +321,7 @@ target_compile_definitions(test_server_client PRIVATE
 )
 add_test(NAME test_server_client COMMAND test_server_client)
 
-# --- Phase 6 tests ---
+# --- HTTPD tests ---
 
 # HTTPD backend client integration test (requires NCBI Toolkit + TBB + Drogon build)
 if(BUILD_HTTPD)
@@ -361,7 +361,7 @@ if(BUILD_HTTPD)
     endif()
 endif()
 
-# --- Phase 6 tests (retrieve) ---
+# --- Retrieve tests ---
 
 # Result reader test (no external dependencies)
 add_executable(test_result_reader test_result_reader.cpp)
@@ -439,7 +439,7 @@ target_include_directories(test_sam_writer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
 add_test(NAME test_sam_writer COMMAND test_sam_writer)
 
-# Phase 1: query preprocessor spec compliance (Nqkmer/Nhighfreq, skip reasons)
+# Query preprocessor spec compliance (Nqkmer/Nhighfreq, skip reasons)
 add_executable(test_query_preprocessor test_query_preprocessor.cpp)
 target_link_libraries(test_query_preprocessor PRIVATE
     ikafssn_search ikafssn_index ikafssn_io ikafssn_protocol
@@ -448,7 +448,7 @@ target_include_directories(test_query_preprocessor PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
 add_test(NAME test_query_preprocessor COMMAND test_query_preprocessor)
 
-# Phase 1: skip-marker output across TSV / JSON / SAM
+# Skip-marker output across TSV / JSON / SAM
 add_executable(test_skip_output test_skip_output.cpp)
 target_link_libraries(test_skip_output PRIVATE
     ikafssn_sam_writer ikafssn_io ikafssn_protocol ikafssn_core hts)
@@ -468,7 +468,7 @@ target_compile_definitions(test_stage3_integration PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME test_stage3_integration COMMAND test_stage3_integration)
 
-# --- Phase 7 tests ---
+# --- Compression / job-store tests ---
 
 # One-shot zstd compress/decompress round-trip test
 if(ENABLE_CLIENT_HTTP OR BUILD_HTTPD)
@@ -482,7 +482,7 @@ if(ENABLE_CLIENT_HTTP OR BUILD_HTTPD)
     add_test(NAME test_zstd_io COMMAND test_zstd_io)
 endif()
 
-# JobStore round-trip + retry + TTL tests (Phase B)
+# JobStore round-trip + retry + TTL tests
 if(BUILD_HTTPD)
     add_executable(test_job_store test_job_store.cpp)
     target_link_libraries(test_job_store PRIVATE

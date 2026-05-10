@@ -99,11 +99,12 @@ extern template std::vector<Stage1Candidate> stage1_filter<uint32_t>(
     const KixReader&, const OidFilter&, const Stage1Config&,
     Stage1Buffer&);
 
-// Phase 2 ("both" mode cross-template): accumulate score / last_pos updates
-// into buf without clearing dirty. Multiple calls share the same buf to
-// merge scores from independent (kix, kmers) streams; per-position dedup
-// (`last_pos[sid] != q_pos`) carries across calls so that two templates
-// hitting the same query position contribute exactly +1 to the score.
+// Cross-template accumulation ("both" mode): accumulate score / last_pos
+// updates into buf without clearing dirty. Multiple calls share the same
+// buf to merge scores from independent (kix, kmers) streams; per-position
+// dedup (`last_pos[sid] != q_pos`) carries across calls so that two
+// templates hitting the same query position contribute exactly +1 to the
+// score.
 //
 // Use config.stage1_score_type only; min_stage1_score and stage1_topn are
 // applied later by stage1_filter_finish().
@@ -124,7 +125,7 @@ extern template void stage1_filter_accumulate<uint32_t>(
     const KixReader&, const OidFilter&, const Stage1Config&,
     Stage1Buffer&);
 
-// Phase 2: collect candidates from buf populated by one or more
+// Collect candidates from buf populated by one or more
 // stage1_filter_accumulate calls, then clear dirty so the buf is reusable.
 // `min_stage1_score` and `stage1_topn` from config are applied here.
 std::vector<Stage1Candidate> stage1_filter_finish(

@@ -102,7 +102,7 @@ inline const bool* degenerate_base_table() {
 }
 
 // Check if a sequence contains any IUPAC degenerate bases.
-// SIMD-accelerated via has_degenerate_base() (Phase 4a, M-2).
+// SIMD-accelerated via has_degenerate_base().
 inline bool contains_degenerate_base(const std::string& seq) {
     return has_degenerate_base(seq.data(), seq.size());
 }
@@ -332,13 +332,11 @@ public:
     }
 
     // Scan with spaced seed templates.
-    // Uses sliding accumulator + bitmask extraction for O(1) per-position advance.
-    // mask bit j (from LSB) corresponds to sequence position p + (t-1-j).
-    //
-    // Phase 4b-2: per-position k-mer extraction is buffered in chunks of
-    // kSpacedBatchChunk and processed via extract_for_mask_batch() at flush
-    // time. The callback emit order (per-position, then per-mask) is preserved
-    // bit-exact with the previous scalar path.
+    // Uses sliding accumulator + bitmask extraction for O(1) per-position
+    // advance. Mask bit j (from LSB) corresponds to sequence position
+    // p + (t-1-j). Per-position k-mer extraction is buffered in chunks of
+    // kSpacedBatchChunk and processed via extract_for_mask_batch() at
+    // flush time; callback emit order is per-position, then per-mask.
     template <typename Callback>
     void scan_spaced(const char* seq, size_t len, const std::vector<uint32_t>& masks,
                      int t, Callback&& callback) const {
@@ -402,14 +400,12 @@ public:
     }
 
     // Scan with spaced seed templates, handling degenerate bases.
-    // Uses sliding accumulator + dual bitsets (n_bits / degen_bits) for efficient tracking.
-    //
-    // Phase 4b-2: pure-fast-path positions (no degenerate base on any
-    // mask's set bits) are buffered and emitted via extract_for_mask_batch()
-    // at flush time. Positions that hit slow-path on at least one mask drain
-    // the buffer first (so window_ncbi4na is consistent at the slow position)
-    // and then take the unchanged scalar path. Callback emit order is
-    // preserved bit-exact with the previous scalar implementation.
+    // Uses sliding accumulator + dual bitsets (n_bits / degen_bits) for
+    // efficient tracking. Pure-fast-path positions (no degenerate base on
+    // any mask's set bits) are buffered and emitted via
+    // extract_for_mask_batch() at flush time; positions that hit slow-path
+    // on at least one mask drain the buffer first (so window_ncbi4na is
+    // consistent at the slow position) and then take the scalar path.
     template <typename Callback, typename AmbigCallback>
     void scan_spaced_ambig(const char* seq, size_t len,
                             const std::vector<uint32_t>& masks, int t,

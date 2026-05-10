@@ -1,8 +1,8 @@
-// Phase 4b-1 — extract_for_mask_batch SIMD micro-benchmark.
+// extract_for_mask_batch SIMD micro-benchmark.
 //
-// Measures the batch entry point at each available SIMD tier vs a scalar
-// baseline that mirrors the per-element extract_for_mask() call site
-// (matching the pre-Phase-4b-2 callback shape inside scan_spaced).
+// Measures the batch entry point at each available SIMD tier vs a
+// scalar baseline that mirrors the per-element extract_for_mask()
+// call site.
 
 #include "core/spaced_seed.hpp"
 #include "core/spaced_seed_simd.hpp"

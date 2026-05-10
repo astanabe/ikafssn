@@ -76,7 +76,7 @@ struct VolumeStats {
     bool has_kpx;
     // Per-volume counts array (for verbose stats)
     std::vector<uint32_t> counts;
-    // v10 (Phase 4): two-stage KSX surface area.  num_sequences above is
+    // two-stage KSX surface area.  num_sequences above is
     // the fragment count (= internal SeqId count); num_parents records
     // the parent BLAST OID count behind those fragments.  The two are
     // equal in degenerate (min_length_split == 0) indices and diverge
@@ -305,7 +305,7 @@ int main(int argc, char* argv[]) {
     int k = vol_files[0].k;
     uint8_t vol_t = vol_files[0].t;
     uint8_t vol_template_type = vol_files[0].template_type;
-    // Determine table size and v10 fragment-indexing triplet from the
+    // Determine table size and the fragment-indexing triplet from the
     // first volume's reader.
     uint32_t tbl_size = 0;
     uint32_t hdr_min_seq_length = 0;
@@ -337,7 +337,7 @@ int main(int argc, char* argv[]) {
     // Aggregated counts across all volumes (for frequency distribution)
     std::vector<uint64_t> aggregated_counts(tbl_size, 0);
 
-    // v10 (Phase 4): aggregated parent OID count + fragment-length
+    // aggregated parent OID count + fragment-length
     // distribution across all volumes.  Per-volume slices are emitted
     // first (under each "Volume N:" block) and the cross-volume rollup
     // is printed in the overall statistics section.
@@ -367,7 +367,7 @@ int main(int argc, char* argv[]) {
             aggregated_counts[i] += vs.counts[i];
         }
 
-        // v10 (Phase 4): open the volume's .ksx to surface the parent /
+        // open the volume's .ksx to surface the parent /
         // fragment split and the per-volume fragment-length distribution.
         // The KSX reader owns the parent table and per-fragment
         // (start, end) arrays even when the index is degenerate (1 parent
@@ -446,7 +446,7 @@ int main(int argc, char* argv[]) {
     std::printf("--- Per-Volume Statistics ---\n\n");
     for (const auto& vs : vol_stats) {
         std::printf("Volume %u:\n", vs.volume_index);
-        // v10 (Phase 4): Sequences == fragment count (= internal SeqId
+        // Sequences == fragment count (= internal SeqId
         // count); Parents == parent BLAST OID count.  In a degenerate
         // (min_length_split == 0) index the two are equal.
         std::printf("  Parents:         %u\n", vs.num_parents);
@@ -509,7 +509,7 @@ int main(int argc, char* argv[]) {
 
     // Overall statistics
     std::printf("--- Overall Statistics ---\n\n");
-    // v10 (Phase 4): cross-volume parent / fragment rollup.  total_parents
+    // cross-volume parent / fragment rollup.  total_parents
     // and total_sequences (= total fragments) are summed here from the per-
     // volume KSX scans above; the aggregated fragment-length distribution
     // stitches together all per-volume frag_lens vectors.

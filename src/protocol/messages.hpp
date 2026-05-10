@@ -184,11 +184,10 @@ struct DatabaseInfo {
     uint8_t default_k = 0;
     uint8_t max_mode = 2;   // 1=stage1 only, 2=stage1+2, 3=stage1+2+3
     std::vector<KmerGroupInfo> groups;
-    // v10 fragment-indexing triplet (Phase 1: only min_seq_length is non-zero).
-    // Reported back to the client so ikafssnclient can validate
-    // -min_query_length against the index's min_seq_length without ever
-    // touching the index files directly.  All databases on a single
-    // server may have different min_seq_length values, so the client
+    // Fragment-indexing triplet reported back to the client so
+    // ikafssnclient can validate -min_query_length / -max_query_length
+    // against the index without touching the index files directly.
+    // Each database on a server can have its own values, so the client
     // looks up the entry that matches its -ix argument.
     uint32_t min_seq_length   = 0;
     uint32_t min_length_split = 0;

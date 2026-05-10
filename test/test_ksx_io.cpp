@@ -10,10 +10,10 @@ using namespace ikafssn;
 
 static const char* TEST_FILE = "/tmp/test_ikafssn.ksx";
 
-// Phase 1 degenerate layout: one fragment per parent spanning the whole
+// Degenerate layout: one fragment per parent spanning the whole
 // parent (frag_start=1, frag_end=parent_length).  Verifies that the
-// SeqId-based read API still returns parent-equivalent answers and that
-// the v10 fragment-aware accessors expose the underlying parent info.
+// SeqId-based read API returns parent-equivalent answers and that the
+// fragment-aware accessors expose the underlying parent info.
 static void test_basic_roundtrip() {
     struct SeqInfo {
         uint32_t blast_oid;
@@ -119,10 +119,9 @@ static void test_long_accession() {
     std::remove(TEST_FILE);
 }
 
-// Multi-fragment per parent: not used by the Phase 1 builder but the
-// v10 wire format is already laid out for it.  Verifies that the reader
-// resolves SeqId -> parent / start / end correctly when several
-// fragments share a parent.
+// Multi-fragment per parent: verifies that the reader resolves
+// SeqId -> parent / start / end correctly when several fragments
+// share a parent.
 static void test_multi_fragment_per_parent() {
     {
         KsxWriter writer;
@@ -179,11 +178,10 @@ static void test_multi_fragment_per_parent() {
     std::remove(TEST_FILE);
 }
 
-// Phase 5 round-trip: multiple parents that all carry several fragments,
-// exercising the cross-parent boundary as well as 3+ fragments per parent.
-// The Phase 1 builder still emits the degenerate 1:1 layout, so this test
-// stresses the wire format / reader resolution end-to-end against the kind
-// of layout the Phase 2 builder writes once -min_length_split is non-zero.
+// Round-trip with multiple parents that all carry several fragments,
+// exercising the cross-parent boundary as well as 3+ fragments per
+// parent.  Stresses the wire format / reader resolution end-to-end
+// against the layout produced when -min_length_split is non-zero.
 static void test_multi_parent_multi_fragment() {
     {
         KsxWriter writer;

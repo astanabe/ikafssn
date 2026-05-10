@@ -1,8 +1,8 @@
 #pragma once
 
-// Phase 7a + 7e — Shared helpers for emitting the .kix / .kpx
-// dictionaries as Elias-Fano blobs.  Used by KixWriter / KpxWriter,
-// index_builder.cpp finalize, and index_filter.cpp.
+// Shared helpers for emitting the .kix / .kpx dictionaries as
+// Elias-Fano blobs.  Used by KixWriter / KpxWriter, the
+// index_builder.cpp finalize step, and index_filter.cpp.
 
 #include <cstdint>
 #include <cstdio>

@@ -1,10 +1,10 @@
-// Phase 5i — runtime dispatcher for the per-tier SIMD dedup kernel.
+// Runtime dispatcher for the per-tier SIMD dedup kernel.
 //
 // seq_id_dedup_tier.cpp is compiled once per ISA tier as
 // ikafssn_dedup_<tier> OBJECT libraries (declared in the top-level
-// CMakeLists.txt) under per-tier inner namespaces.  This TU itself is
-// built with the project's default flags so it must not include any
-// SIMD intrinsics directly — it only routes through function pointers.
+// CMakeLists.txt) under per-tier inner namespaces.  This TU is built
+// with the project's default flags so it must not include any SIMD
+// intrinsics directly — it only routes through function pointers.
 //
 // Active tiers per architecture are identical to the .kix/.kpx codec
 // dispatcher (src/index/pfd_codec.cpp):

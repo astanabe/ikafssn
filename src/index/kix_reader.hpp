@@ -22,13 +22,10 @@ public:
     uint8_t t() const { return header_->t; }
     uint8_t template_type() const { return header_->template_type; }
     uint32_t table_size() const { return table_size_; }
-    // v10 header values
+    // Fragment-indexing header values
     uint32_t min_seq_length()   const { return header_->min_seq_length; }
     uint32_t min_length_split() const { return header_->min_length_split; }
     uint32_t overlap_length()   const { return header_->overlap_length; }
-    // Phase 7a: dictionary is Elias-Fano; the legacy flag is no longer
-    // consulted at read time (kept on the header for byte-stability).
-    bool is_offset32() const { return false; }
 
     // Raw pointer to the start of the ID posting file
     const uint8_t* posting_file() const { return posting_file_; }
@@ -60,19 +57,15 @@ public:
     }
 
     // Byte length of posting list for a k-mer.  The Elias-Fano dictionary
-    // resolves both endpoints in a single pair-fetch (a single select1 +
-    // adjacent low-bits read in 7b SIMD; two sequential accesses in the
-    // 7a scalar PoC).
+    // resolves both endpoints in a single pair-fetch.
     uint64_t posting_list_byte_length(uint32_t kmer) const {
         uint64_t s, e;
         dict_.access_pair(kmer, s, e);
         return e - s;
     }
 
-    // Phase 7d hot-path helper: fetch (offset, byte_length) for a k-mer
-    // in one EF access_pair, halving the dispatcher round-trips that
-    // Stage 1 / Stage 2 paid by calling posting_list_offset(kmer) +
-    // posting_list_offset(kmer+1) (or _byte_length + _offset).
+    // Hot-path helper: fetch (offset, byte_length) for a k-mer in one
+    // EF access_pair, halving dispatcher round-trips on the search path.
     void posting_list_range(uint32_t kmer,
                             uint64_t& offset,
                             uint64_t& byte_length) const {
@@ -83,7 +76,7 @@ public:
     }
 
     // Bulk count all postings: for each k-mer, returns the number of
-    // distinct sequences containing it (v7: intra-sequence duplicates are
+    // distinct sequences containing it (intra-sequence duplicates are
     // removed at build time).  Used by ikafssninfo and index_filter for
     // build-time exclusion via .khx; not used on the search hot path.
     std::vector<uint32_t> bulk_count_postings() const;

@@ -23,7 +23,7 @@ static void reverse_complement(std::string& seq) {
 }
 
 // Pick the first accession token from an sseqid that may carry a
-// multi-defline '\x01'-joined string.  v10 (Phase 3) writes the parent
+// multi-defline '\x01'-joined string.  writes the parent
 // OID's accession into hit.sseqid verbatim, so when the BLAST DB volume
 // was built with `makeblastdb -parse_seqids` the field can still be a
 // joined form.  We use the first token for the FASTA defline so the
@@ -75,13 +75,12 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
 
     uint32_t retrieved = 0;
     for (const auto& hit : hits) {
-        // v10 (Phase 4): hit.sseqid is the parent OID accession (Phase 3
-        // dedup collapsed every fragment of one parent into a single row),
-        // hit.sstart / hit.send are parent-OID-relative coordinates, and
-        // BlastDbReader OIDs index parent sequences directly, so the same
-        // accession lookup that pre-fragment indices used continues to
-        // resolve hit.sseqid -> (reader, parent OID) without any extra
-        // fragment-table indirection.
+        // hit.sseqid is the parent OID accession (Stage 2 dedup
+        // collapses every fragment of one parent into a single row),
+        // hit.sstart / hit.send are parent-OID-relative coordinates,
+        // and BlastDbReader OIDs index parent sequences directly, so
+        // hit.sseqid -> (reader, parent OID) resolves through the same
+        // accession lookup with no fragment-table indirection.
         auto it = acc_map.find(hit.sseqid);
         if (it == acc_map.end()) {
             std::fprintf(stderr, "retrieve_local: accession '%s' not found in DB\n",
@@ -117,7 +116,7 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
             continue;
         }
 
-        // v10 (Phase 4): pull only the requested window from the parent
+        // pull only the requested window from the parent
         // OID via partial decode instead of materialising the whole
         // sequence.  On chromosome-scale parents the fragment index
         // shrinks the search window to ~min_length_split, and a full
@@ -134,7 +133,7 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
             reverse_complement(subseq);
         }
 
-        // v10 (Phase 4) FASTA defline (kafsss style): the parent accession
+        // FASTA defline (kafsss style): the parent accession
         // and the (1-based inclusive) extracted range are joined into one
         // canonical sseqid token, mirroring kafssstore's
         // `accession:start:end` fragment naming and BLAST's

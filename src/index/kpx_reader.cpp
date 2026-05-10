@@ -39,8 +39,8 @@ bool KpxReader::open(const std::string& path) {
 
     table_size_ = ikafssn::table_size(header_->k);
 
-    // Phase 7e: pos_offsets dictionary is Elias-Fano; the legacy
-    // offset_type byte is ignored at read time.
+    // pos_offsets dictionary is Elias-Fano; offset_type is reserved
+    // and ignored at read time.
     const uint8_t* dict_ptr = mmap_.data() + sizeof(KpxHeader);
     const size_t   remaining = mmap_.size() - sizeof(KpxHeader);
     if (!pos_dict_.open(dict_ptr, remaining)) {

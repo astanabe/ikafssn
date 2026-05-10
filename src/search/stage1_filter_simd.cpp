@@ -139,10 +139,10 @@ void flush_batch_simd(const SeqId* sid_batch, int count,
 
 #if defined(__x86_64__)
     if constexpr (Tier == Stage1Tier::T32) {
-        // Phase 2b: AVX-512 BW/VBMI/VBMI2 share one kernel — VBMI's vpermb and
-        // VBMI2's compress/expand do not help when all values are uint32_t and
-        // updates are gather+conflict+scatter shaped. AVX2 lacks scatter, so it
-        // falls through to scalar (the gather-only path was measured neutral).
+        // AVX-512 BW/VBMI/VBMI2 share one kernel — VBMI's vpermb and
+        // VBMI2's compress/expand do not help when all values are uint32_t
+        // and updates are gather+conflict+scatter shaped. AVX2 lacks
+        // scatter, so it falls through to scalar.
         if (count >= 16) {
             SimdCap cap = current_simd_cap();
             if (cap >= SimdCap::AVX512BW) {

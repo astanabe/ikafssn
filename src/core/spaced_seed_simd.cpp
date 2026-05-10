@@ -41,9 +41,8 @@ void extract_kmer_ct_batch_scalar(const std::uint64_t* a, std::size_t n,
 // keep every shift count visible to the codegen as a compile-time immediate).
 //
 // AVX-512BW and AVX-512VBMI2 share the body — the latter is a separate
-// symbol for tier-effect benchmarking, mirroring the Phase 1a / 3b
-// convention. VBMI2 introduces vpcompressb / vpexpandb / vpshrdv but none
-// of those simplifies this kernel further.
+// symbol for tier-effect benchmarking. VBMI2 introduces vpcompressb /
+// vpexpandb / vpshrdv but none of those simplifies this kernel further.
 // ===========================================================================
 #if IKAFSSN_SS_X86
 

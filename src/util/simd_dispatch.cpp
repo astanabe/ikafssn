@@ -47,11 +47,10 @@ std::atomic<bool>    g_avx512f_only { false };
 std::atomic<bool>    g_initialized { false };
 
 // Architecture bucket for a given SimdCap value.  Used to detect
-// cross-architecture force-simd requests (e.g. IKAFSSN_FORCE_SIMD=sse42 on
-// an aarch64 host).  The numeric ranges are arch-segregated by design
-// (see SimdCap definition) but `force_simd_cap` and the test-skip helper
-// previously compared raw integers, which silently accepted nonsense like
-// "x86 tier requested on arm host" as a downgrade.
+// cross-architecture force-simd requests (e.g. IKAFSSN_FORCE_SIMD=sse42
+// on an aarch64 host).  The numeric ranges are arch-segregated (see
+// SimdCap definition) and force_simd_cap / the test-skip helper compare
+// archs explicitly so cross-arch requests do not silently downgrade.
 enum class SimdArch : int { None = 0, X86 = 1, Arm = 2 };
 inline SimdArch arch_of(SimdCap c) noexcept {
     int v = static_cast<int>(c);
@@ -144,11 +143,10 @@ void do_init_once(Logger* logger) noexcept {
 #if IKAFSSN_ARCH_X86
     X86Info x = build_disabled ? X86Info{} : detect_x86();
     if (!build_disabled) {
-        // Phase 5f 4-tier ladder: SSE4.2 / AVX2 / AVX512BW / AVX512VBMI2.
-        // - AVX512F-only (KNL/KNM) is demoted to AVX2 (existing behaviour).
-        // - AVX512VBMI without VBMI2 is demoted to AVX512BW (Phase 5f new):
-        //   the standalone VBMI tier was removed because no ikafssn kernel
-        //   actually uses byte-level vpermb in a way that VBMI2 doesn't
+        // 4-tier ladder: SSE4.2 / AVX2 / AVX512BW / AVX512VBMI2.
+        // - AVX512F-only (KNL/KNM) is demoted to AVX2.
+        // - AVX512VBMI without VBMI2 is demoted to AVX512BW: no ikafssn
+        //   kernel uses byte-level vpermb in a way that VBMI2 doesn't
         //   already cover.
         if (x.has_avx512vbmi2 && x.has_avx512vbmi && x.has_avx512bw && x.has_avx512f) {
             auto_cap = SimdCap::AVX512VBMI2;
@@ -245,11 +243,10 @@ void do_init_once(Logger* logger) noexcept {
             forced = true;
             force_warned = true;
         } else if (force_request_invalid(parsed.cap, auto_cap)) {
-            // over-request OR cross-arch request rejected.  The cross-arch
-            // case (e.g. IKAFSSN_FORCE_SIMD=sse42 on aarch64) used to be
-            // silently accepted as a downgrade because the SimdCap values
-            // for x86 (10..50) sort below those for arm (100..199); fixing
-            // it required arch-aware comparison (Phase 5h).
+            // over-request OR cross-arch request rejected.  Cross-arch
+            // (e.g. IKAFSSN_FORCE_SIMD=sse42 on aarch64) is detected
+            // because force_request_invalid() compares SimdCap values
+            // arch-aware (x86: 10..50, aarch64: 100..199).
             if (logger) logger->warn(
                 "simd: IKAFSSN_FORCE_SIMD=%s incompatible with detected "
                 "capability %s; using scalar",
@@ -263,19 +260,15 @@ void do_init_once(Logger* logger) noexcept {
         }
     }
 
-    // Phase 5f: SSE4.2 is the production x86_64 floor. Reject startup with
-    // exit(2) when the resolved tier is Scalar — covers (a) pre-Nehalem
-    // CPUs that auto-detected as Scalar, (b) IKAFSSN_FORCE_SIMD=scalar,
-    // (c) unrecognized / over-request tokens that already collapsed to
-    // Scalar above. The build_disabled path keeps its legacy Scalar
-    // behaviour for debug/portability builds.
+    // SSE4.2 is the production x86_64 floor.  Reject startup with
+    // exit(2) when the resolved tier is Scalar — covers pre-Nehalem
+    // CPUs, IKAFSSN_FORCE_SIMD=scalar, and unrecognized / over-request
+    // tokens that already collapsed to Scalar above.  build_disabled
+    // builds keep Scalar for debug/portability use.
     //
-    // Test-binary carve-out: when IKAFSSN_TEST_REQUIRE_TIER names a tier
-    // that the actual CPU does not support, exit(77) so CTest records a
-    // SKIP instead of a failure. This used to live in
-    // check_required_tier_or_skip() which the test main called *after*
-    // init_simd_dispatch(); now that init can exit(2), we must handle the
-    // skip protocol first.
+    // Test-binary carve-out: when IKAFSSN_TEST_REQUIRE_TIER names a
+    // tier that the actual CPU does not support, exit(77) so CTest
+    // records a SKIP instead of a failure.
     if (!build_disabled && current == SimdCap::Scalar) {
         const char* req = std::getenv("IKAFSSN_TEST_REQUIRE_TIER");
         if (req && *req) {
@@ -322,14 +315,12 @@ void do_init_once(Logger* logger) noexcept {
         }
 
 #if IKAFSSN_ARCH_X86
-        // Phase 5f: standalone AVX-512 VBMI tier was removed; CPUs that
-        // expose VBMI without VBMI2 (Ice Lake client) are silently demoted
-        // to AVX-512 BW. Surface that as an INFO so users can correlate
-        // logs with their CPU capabilities.
+        // CPUs that expose AVX-512 VBMI without VBMI2 (Ice Lake client)
+        // are silently demoted to AVX-512 BW.  Surface that as an INFO
+        // so users can correlate logs with their CPU capabilities.
         if (!forced && x.has_avx512vbmi && !x.has_avx512vbmi2 &&
             auto_cap == SimdCap::AVX512BW) {
-            logger->info("simd: AVX-512 VBMI detected; demoted to AVX-512 BW "
-                         "(Phase 5f tier consolidation)");
+            logger->info("simd: AVX-512 VBMI detected; demoted to AVX-512 BW");
         }
         if (logger->verbose()) {
             logger->debug("simd cpu: vendor=%s family=0x%x model=0x%x "
@@ -417,19 +408,17 @@ ParseForceResult parse_force_simd_env(const char* env_value) noexcept {
     }
 
     struct Entry { const char* name; SimdCap cap; };
-    // Phase 5f: "scalar" is still recognised so existing callers compile,
-    // but init_simd_dispatch() will reject startup with exit(2) when this
-    // ends up as the active tier (unless build_disabled). "avx512vbmi"
-    // silent-demotes to AVX512BW because the standalone VBMI tier was
-    // removed — this keeps `IKAFSSN_FORCE_SIMD=avx512vbmi` from blowing up
-    // and lands users on the closest available tier.
+    // "scalar" is recognised so callers compile, but init_simd_dispatch()
+    // rejects startup with exit(2) when this ends up as the active tier
+    // (unless build_disabled).  "avx512vbmi" silent-demotes to AVX512BW
+    // because the standalone VBMI tier is folded into BW.
     static constexpr Entry table[] = {
         {"scalar",       SimdCap::Scalar},
         {"sse42",        SimdCap::SSE42},
         {"sse4",         SimdCap::SSE42},
         {"avx2",         SimdCap::AVX2},
         {"avx512bw",     SimdCap::AVX512BW},
-        {"avx512vbmi",   SimdCap::AVX512BW},   // silent demote (Phase 5f)
+        {"avx512vbmi",   SimdCap::AVX512BW},   // silent demote
         {"avx512vbmi2",  SimdCap::AVX512VBMI2},
         {"neon",         SimdCap::NEON},
         {"asimd",        SimdCap::NEON},

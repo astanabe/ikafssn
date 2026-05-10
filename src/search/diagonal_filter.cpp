@@ -6,9 +6,8 @@ namespace ikafssn {
 
 std::vector<Hit> diagonal_filter(const std::vector<Hit>& hits,
                                  uint32_t min_nhit_diag) {
-    if (min_nhit_diag <= 1) return hits; // no filtering needed
+    if (min_nhit_diag <= 1) return hits;
 
-    // Count hits per diagonal
     std::unordered_map<int32_t, uint32_t> diag_counts;
     diag_counts.reserve(hits.size());
     for (const auto& hit : hits) {
@@ -16,7 +15,6 @@ std::vector<Hit> diagonal_filter(const std::vector<Hit>& hits,
         diag_counts[diag]++;
     }
 
-    // Keep hits on diagonals with enough counts
     std::vector<Hit> filtered;
     filtered.reserve(hits.size());
     for (const auto& hit : hits) {

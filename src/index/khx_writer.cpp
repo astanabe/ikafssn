@@ -26,14 +26,12 @@ bool write_khx(const std::string& path, int k,
         return false;
     }
 
-    // Write header
     KhxHeader hdr{};
     std::memcpy(hdr.magic, KHX_MAGIC, 4);
     hdr.format_version = KHX_FORMAT_VERSION;
     hdr.k = static_cast<uint8_t>(k);
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
-    // Build bitset: ceil(tbl_size / 8) bytes
     uint32_t bitset_bytes = (tbl_size + 7) / 8;
     std::vector<uint8_t> bitset(bitset_bytes, 0);
 
@@ -70,14 +68,12 @@ bool write_khx_bitset(const std::string& path, int k,
         return false;
     }
 
-    // Write header
     KhxHeader hdr{};
     std::memcpy(hdr.magic, KHX_MAGIC, 4);
     hdr.format_version = KHX_FORMAT_VERSION;
     hdr.k = static_cast<uint8_t>(k);
     std::fwrite(&hdr, sizeof(hdr), 1, fp);
 
-    // Build bitset: ceil(tbl_size / 8) bytes
     uint32_t bitset_bytes = (tbl_size + 7) / 8;
     std::vector<uint8_t> bitset(bitset_bytes, 0);
 

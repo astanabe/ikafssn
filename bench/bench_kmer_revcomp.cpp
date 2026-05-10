@@ -1,4 +1,4 @@
-// Phase 3b — k-mer reverse-complement batch SIMD micro-benchmark.
+// k-mer reverse-complement batch SIMD micro-benchmark.
 //
 // Measures kmer_revcomp_batch() at each available SIMD tier vs the scalar
 // kmer_revcomp() loop, for representative k values and query lengths.

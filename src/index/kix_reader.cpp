@@ -41,8 +41,8 @@ bool KixReader::open(const std::string& path) {
 
     table_size_ = ikafssn::table_size(header_->k);
 
-    // Phase 7a: Elias-Fano dictionary follows the header.  The legacy
-    // KIX_FLAG_OFFSET32 bit is ignored at read time.
+    // Elias-Fano dictionary follows the header (KIX_FLAG_OFFSET32
+    // is reserved and ignored at read time).
     const uint8_t* dict_ptr = mmap_.data() + sizeof(KixHeader);
     const size_t   remaining = mmap_.size() - sizeof(KixHeader);
     if (!dict_.open(dict_ptr, remaining)) {

@@ -17,7 +17,6 @@
 
 namespace ikafssn {
 
-// ===========================================================================
 // Two-LUT set membership (Mula style).
 //
 // Degenerate IUPAC chars and their hex codes:
@@ -34,7 +33,6 @@ namespace ikafssn {
 // LUT_HI_ROWMASK[hi nibble] selects which row applies (0x10/0x20/0x40/0x80
 // for hi=4/5/6/7, else 0). Per-byte AND of the two LUT lookups is non-zero
 // iff the byte is one of the 22 degenerate codes.
-// ===========================================================================
 
 alignas(16) static const std::int8_t kLutLoBitset[16] = {
     0x00,        // 0x0
@@ -62,9 +60,7 @@ alignas(16) static const std::int8_t kLutHiRowmask[16] = {
     0x00, 0x00, 0x00, 0x00,
 };
 
-// ===========================================================================
 // Scalar reference (always compiled): tail and SIMD-disabled fallback.
-// ===========================================================================
 static inline bool has_degenerate_base_scalar(const char* data,
                                               std::size_t n) noexcept {
     const bool* tbl = degenerate_base_table();
@@ -74,9 +70,7 @@ static inline bool has_degenerate_base_scalar(const char* data,
     return false;
 }
 
-// ===========================================================================
 // x86_64 kernels.
-// ===========================================================================
 #if IKAFSSN_DS_X86
 
 __attribute__((target("sse4.2,ssse3")))
@@ -185,16 +179,14 @@ __attribute__((target("avx512vbmi2,avx512vbmi,avx512bw,avx512f")))
 static bool has_degenerate_base_avx512vbmi2(const char* data,
                                             std::size_t n) noexcept {
     // VBMI2 introduces vpcompressb / vpexpandb / vpshrdv. None of those
-    // simplifies this kernel further; body matches BW. Separate symbol for
-    // tier-effect benchmarking, mirroring the Phase 1a / 3b convention.
+    // simplifies this kernel further; body matches BW. Separate symbol
+    // for tier-effect benchmarking.
     return has_degenerate_base_avx512bw(data, n);
 }
 
 #endif // IKAFSSN_DS_X86
 
-// ===========================================================================
 // aarch64 kernel (NEON only; SVE/SVE2 fall back to NEON via the dispatcher).
-// ===========================================================================
 #if IKAFSSN_DS_ARM
 
 static bool has_degenerate_base_neon(const char* data,
@@ -220,9 +212,7 @@ static bool has_degenerate_base_neon(const char* data,
 
 #endif // IKAFSSN_DS_ARM
 
-// ===========================================================================
 // Public dispatcher.
-// ===========================================================================
 bool has_degenerate_base(const char* data, std::size_t n) noexcept {
     if (n == 0) return false;
     SimdCap cap = current_simd_cap();

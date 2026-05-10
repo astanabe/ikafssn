@@ -11,7 +11,7 @@ static void test_init_no_logger() {
     reset_simd_dispatch_for_testing();
     init_simd_dispatch(nullptr);
     SimdCap cap = current_simd_cap();
-    // Must be one of the known enum values (Phase 5f: VBMI tier removed).
+    // Must be one of the known enum values (VBMI tier removed).
     bool valid = false;
     for (SimdCap c : {SimdCap::Scalar, SimdCap::SSE42, SimdCap::AVX2,
                       SimdCap::AVX512BW, SimdCap::AVX512VBMI2,
@@ -37,9 +37,9 @@ static void test_parse_force_simd_env_basic() {
     CHECK(parse_force_simd_env(nullptr).explicit_value == false);
     CHECK(parse_force_simd_env("").explicit_value == false);
 
-    // Recognized tokens (case + separator insensitive). "scalar" is still
-    // recognised at the parser level even though init_simd_dispatch() will
-    // exit(2) when it ends up as the active tier (Phase 5f Scalar reject).
+    // Recognized tokens (case + separator insensitive). "scalar" is
+    // recognised at the parser level even though init_simd_dispatch()
+    // will exit(2) when it ends up as the active tier.
     CHECK(parse_force_simd_env("scalar").explicit_value);
     CHECK(parse_force_simd_env("scalar").cap == SimdCap::Scalar);
 
@@ -55,7 +55,7 @@ static void test_parse_force_simd_env_basic() {
     CHECK(parse_force_simd_env("avx512vbmi2").explicit_value);
     CHECK(parse_force_simd_env("avx512vbmi2").cap == SimdCap::AVX512VBMI2);
 
-    // Phase 5f: standalone VBMI tier is removed; "avx512vbmi" silent-demotes
+    // standalone VBMI tier is removed; "avx512vbmi" silent-demotes
     // to AVX512BW so callers that hard-coded that string keep working.
     CHECK(parse_force_simd_env("avx512vbmi").explicit_value);
     CHECK(parse_force_simd_env("avx512vbmi").cap == SimdCap::AVX512BW);
@@ -106,10 +106,10 @@ static void test_force_simd_cap_downgrade() {
 }
 
 static void test_reset_and_re_init() {
-    // Reset, force the lowest supported tier (SSE4.2 on x86, NEON on arm),
-    // and verify that the env was honored. We can no longer use "scalar"
-    // here because Phase 5f rejects Scalar at startup with exit(2) —
-    // running that path inside the unit binary would terminate the process.
+    // Reset, force the lowest supported tier (SSE4.2 on x86, NEON on
+    // arm), and verify that the env was honored.  "scalar" cannot be
+    // used here because the dispatcher rejects Scalar at startup with
+    // exit(2), which would terminate the unit binary.
 #if defined(__x86_64__) || defined(__i386__)
     const char* low_tier = "sse42";
     SimdCap     low_cap  = SimdCap::SSE42;

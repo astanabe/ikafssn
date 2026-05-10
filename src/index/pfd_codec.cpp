@@ -1,23 +1,19 @@
-// Phase 5d/5f/5h/5i — runtime dispatcher for the per-tier FastPFor wrappers.
+// Runtime dispatcher for the per-tier FastPFor wrappers.
 //
 // pfd_codec_tier.cpp is compiled once per ISA tier under the
-// ikafssn::pfd::ikafssn_pfd_<tier> namespaces.  Here we expose forward
-// declarations of the per-tier API and pick one at first use based on the
-// runtime CPU detection done by simd_dispatch.
-//
-// This TU itself is built with the project's default flags (no -m...
-// pinning), so it must not include any FastPFor header or use any
-// SIMD intrinsics directly — it only routes through function pointers.
+// ikafssn::pfd::ikafssn_pfd_<tier> namespaces.  This TU is built with
+// the project's default flags (no -m... pinning), so it must not include
+// any FastPFor header or use any SIMD intrinsics directly — it only
+// routes through function pointers.
 //
 // Active tiers per architecture:
-//   x86_64 : sse42 / avx2 / avx512bw / avx512vbmi2  (Phase 5f 4-tier ladder)
-//   aarch64: neon                                   (Phase 5h, single tier)
+//   x86_64 : sse42 / avx2 / avx512bw / avx512vbmi2
+//   aarch64: neon
 //
-// AArch64 SVE / SVE2 capable CPUs are *not* given a separate tier object:
-// the ikafssn_pfd_neon library uses SIMDe (https://github.com/simd-everywhere/simde)
-// to translate FastPFor's SSE intrinsics into NEON, and a SVE-native
-// bitpacker would be orthogonal hand-coded work.  The dispatcher therefore
-// routes any aarch64 SimdCap >= NEON to the single neon tier.
+// On aarch64 the ikafssn_pfd_neon library uses SIMDe
+// (https://github.com/simd-everywhere/simde) to translate FastPFor's
+// SSE intrinsics into NEON; SVE / SVE2 capable CPUs route to the same
+// neon tier.
 
 #include "index/pfd_codec.hpp"
 #include "util/simd_dispatch.hpp"
@@ -104,7 +100,6 @@ struct VTable {
     void (*popcount)(const std::uint8_t*, std::uint32_t,
                      std::uint32_t*, std::uint32_t*, std::uint32_t*) noexcept;
     std::uint32_t (*hsum_u8)(const std::uint8_t*, std::uint32_t) noexcept;
-    const char* tier_name;
 };
 
 const VTable& active_vtable() {
@@ -122,7 +117,6 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx512vbmi2::open_stream_kpx_for_candidates,
                 ikafssn_pfd_avx512vbmi2::popcount_kinds,
                 ikafssn_pfd_avx512vbmi2::horizontal_sum_u8,
-                "avx512vbmi2",
             };
         }
         if (cap >= SimdCap::AVX512BW) {
@@ -133,7 +127,6 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx512bw::open_stream_kpx_for_candidates,
                 ikafssn_pfd_avx512bw::popcount_kinds,
                 ikafssn_pfd_avx512bw::horizontal_sum_u8,
-                "avx512bw",
             };
         }
         if (cap >= SimdCap::AVX2) {
@@ -144,7 +137,6 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx2::open_stream_kpx_for_candidates,
                 ikafssn_pfd_avx2::popcount_kinds,
                 ikafssn_pfd_avx2::horizontal_sum_u8,
-                "avx2",
             };
         }
         if (cap >= SimdCap::SSE42) {
@@ -155,12 +147,10 @@ const VTable& active_vtable() {
                 ikafssn_pfd_sse42::open_stream_kpx_for_candidates,
                 ikafssn_pfd_sse42::popcount_kinds,
                 ikafssn_pfd_sse42::horizontal_sum_u8,
-                "sse42",
             };
         }
         std::fprintf(stderr,
-            "ikafssn: pfd codec requires SSE4.2; current CPU tier is below SSE4.2.\n"
-            "         (Phase 5f treats SSE4.2 as the x86_64 baseline.)\n");
+            "ikafssn: pfd codec requires SSE4.2 (the x86_64 baseline).\n");
         std::exit(2);
 #endif // IKAFSSN_PFD_HAS_X86
 
@@ -173,12 +163,10 @@ const VTable& active_vtable() {
                 ikafssn_pfd_neon::open_stream_kpx_for_candidates,
                 ikafssn_pfd_neon::popcount_kinds,
                 ikafssn_pfd_neon::horizontal_sum_u8,
-                "neon",
             };
         }
         std::fprintf(stderr,
-            "ikafssn: pfd codec requires NEON; current CPU tier is below NEON.\n"
-            "         (Phase 5h treats NEON as the aarch64 baseline.)\n");
+            "ikafssn: pfd codec requires NEON (the aarch64 baseline).\n");
         std::exit(2);
 #endif // IKAFSSN_PFD_HAS_NEON
 
@@ -193,10 +181,6 @@ const VTable& active_vtable() {
 }
 
 } // anonymous namespace
-
-const char* active_tier_name() {
-    return active_vtable().tier_name;
-}
 
 std::size_t encode_posting_kix(const std::uint32_t* delta_array,
                                std::uint32_t count,

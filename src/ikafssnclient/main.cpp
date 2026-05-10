@@ -554,8 +554,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // v10 (Phase 1): -min_query_length default 64.  The integrity check
-    // against the server's min_seq_length runs after execute_info().
+    // -min_query_length default 64.  The integrity check against the
+    // server's min_seq_length runs after execute_info().
     uint32_t min_query_length = 64;
     {
         int v = cli.get_int("-min_query_length", 64);
@@ -695,10 +695,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // v10: validate -min_query_length against the server's min_seq_length
-    // for the target database, and pre-filter queries that fall below
-    // either threshold so the request only carries valid sequences.
-    // v10 (Phase 3): also reject queries longer than the index's
+    // Validate -min_query_length against the server's min_seq_length
+    // for the target database and pre-filter queries that fall below
+    // either threshold; also reject queries longer than the index's
     // overlap_length when fragment splitting is active, mirroring the
     // server-side kSkipQueryTooLong path.
     {
@@ -961,7 +960,7 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    // -- socket / TCP path: legacy synchronous loop with checkpoint --
+    // -- socket / TCP path: synchronous loop with checkpoint --
     std::string input_sha256;
     if (input_path == "-") input_sha256 = sha256_string(stdin_content);
     else                    input_sha256 = sha256_file(input_path);

@@ -3,8 +3,7 @@
 //     -> ikafssnhttpd (job-broker)
 //       -> ikafssnserver
 //
-// Phase B replaced the synchronous POST /api/v1/search with a job-broker
-// model.  This test exercises the new flow end-to-end via libcurl, then
+// Exercises the job-broker flow end-to-end via libcurl, then
 // deserialises the binary SearchResponse blob returned by
 // GET /api/v1/jobs/<id>/result and verifies hit-by-hit equivalence
 // with a direct local search.

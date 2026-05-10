@@ -6,16 +6,11 @@
 
 namespace ikafssn {
 
-// Two-stage .ksx writer (v10 layout — see src/index/ksx_format.hpp).
-// Parents are registered first via add_parent(); each parent then receives
-// one or more fragments via add_fragment().  In Phase 1 the index builder
-// always emits exactly one fragment per parent spanning the whole parent;
-// Phase 2 introduces real splitting.
-//
-// Phase 1 builders are expected to call:
-//   set_min_seq_length(min_seq_length)
-//   set_min_length_split(0)
-//   set_overlap_length(0)
+// Two-stage .ksx writer (see src/index/ksx_format.hpp).  Parents are
+// registered first via add_parent(); each parent then receives one or
+// more fragments via add_fragment().  When fragment splitting is
+// disabled (`min_length_split == 0`) the index builder emits exactly
+// one fragment per parent spanning the whole parent.
 class KsxWriter {
 public:
     // Register a parent OID.  Returns the parent index (0-based, in

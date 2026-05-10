@@ -28,9 +28,6 @@ int unix_connect(const std::string& path);
 // Returns connected fd on success, -1 on error.
 int tcp_connect(const std::string& addr);
 
-// Set socket to non-blocking mode.
-bool set_nonblocking(int fd);
-
 // Close a file descriptor safely (ignoring EINTR).
 void close_fd(int fd);
 

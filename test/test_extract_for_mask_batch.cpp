@@ -1,4 +1,4 @@
-// Phase 4b-1 — bit-exact tests for the SIMD batch spaced-seed extractor.
+// bit-exact tests for the SIMD batch spaced-seed extractor.
 //
 // All 24 canonical masks are verified against the scalar reference
 // (extract_for_mask) at the exact n boundaries that drive each tier's chunk

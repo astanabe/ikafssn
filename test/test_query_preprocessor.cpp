@@ -8,7 +8,7 @@
 
 using namespace ikafssn;
 
-// Phase 1 spec: Nqkmer = seq_len - span + 1 (pure window count, content-
+// spec: Nqkmer = seq_len - span + 1 (pure window count, content-
 // independent). When seq_len < span, the query is too short and a single
 // k-mer cannot fit in the window — kSkipQueryTooShort fires.
 static void test_too_short() {
@@ -27,7 +27,7 @@ static void test_too_short() {
     CHECK_EQ(q2.skip_reason, (uint8_t)kSkipNone);
 }
 
-// Phase 1: accept_qdegen=0 with degenerate bases triggers kSkipDegenRejected.
+// accept_qdegen=0 with degenerate bases triggers kSkipDegenRejected.
 static void test_degen_rejected() {
     std::fprintf(stderr, "-- test_degen_rejected\n");
     SearchConfig config;
@@ -43,7 +43,7 @@ static void test_degen_rejected() {
     CHECK_EQ(q2.skip_reason, (uint8_t)kSkipNone);
 }
 
-// Phase 1: truly invalid characters (non-IUPAC, non-ACGT) trigger
+// truly invalid characters (non-IUPAC, non-ACGT) trigger
 // kSkipInvalidChar. '*' is not part of ncbi4na nor ATGC.
 static void test_invalid_char() {
     std::fprintf(stderr, "-- test_invalid_char\n");
@@ -57,7 +57,7 @@ static void test_invalid_char() {
     CHECK(q.skip_detail.find("pos") != std::string::npos);
 }
 
-// Phase 1: Nqkmer is the *window count*, independent of degenerate-position
+// Nqkmer is the *window count*, independent of degenerate-position
 // emission counts. Verify by reading back resolved_threshold derived from
 // Nqkmer * P. With khx=nullptr, Nhighfreq = case 2 + case 3 only (no .khx
 // exclusion = case 1 = 0). Pure ATGC has Nhighfreq=0, so threshold == ceil(Nqkmer * P).
@@ -75,7 +75,7 @@ static void test_nqkmer_window_count() {
     CHECK_EQ(q.resolved_threshold_rc, 46u);
 }
 
-// Phase 1: when threshold falls to <= 0 (impossibly low signal), the query
+// when threshold falls to <= 0 (impossibly low signal), the query
 // is skipped with kSkipThresholdUnreachable rather than silently returning
 // an empty hit list.
 static void test_threshold_unreachable() {
@@ -103,7 +103,7 @@ static void test_threshold_unreachable() {
     }
 }
 
-// Phase 1: qlen is set on every QueryKmerData, including skip cases, so
+// qlen is set on every QueryKmerData, including skip cases, so
 // the OutputHit skip-marker row can carry the original query length.
 static void test_qlen_populated() {
     std::fprintf(stderr, "-- test_qlen_populated\n");
@@ -120,7 +120,7 @@ static void test_qlen_populated() {
     CHECK_EQ(q2.skip_reason, (uint8_t)kSkipNone);
 }
 
-// Phase 1: skip_reason_str returns expected strings.
+// skip_reason_str returns expected strings.
 static void test_skip_reason_str() {
     std::fprintf(stderr, "-- test_skip_reason_str\n");
     CHECK(std::string(skip_reason_str(kSkipNone)) == "ok");

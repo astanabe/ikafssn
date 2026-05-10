@@ -17,8 +17,7 @@
 
 namespace ikafssn {
 
-// HTTP REST API controller.  v9 of the API replaces the synchronous
-// POST /api/v1/search with a job-broker model:
+// HTTP REST API controller.  Job-broker model:
 //
 //   POST   /api/v1/jobs              submit (returns 202 + {"job_id"})
 //   GET    /api/v1/jobs/<id>          poll status JSON

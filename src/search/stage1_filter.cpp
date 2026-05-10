@@ -204,7 +204,7 @@ std::vector<Stage1Candidate> stage1_filter(
     }
 }
 
-// Phase 2: cross-template accumulation (no dirty clear).
+// Cross-template accumulation entry point (no dirty clear).
 template <typename KmerInt>
 void stage1_filter_accumulate(
     const uint32_t* positions, const KmerInt* kmers, size_t n,
@@ -230,7 +230,7 @@ void stage1_filter_accumulate(
     }
 }
 
-// Phase 2: harvest candidates after one or more accumulate calls.
+// Harvest candidates after one or more accumulate calls.
 std::vector<Stage1Candidate> stage1_filter_finish(
     Stage1Buffer& buf, const Stage1Config& config) {
     switch (buf.tier) {

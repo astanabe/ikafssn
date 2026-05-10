@@ -104,14 +104,13 @@ void test_khx_v8_rejected() {
     std::remove(path.c_str());
 }
 
-// Confirm v10 is the *current* format constant.  Guards against an
-// accidental constant downgrade.
+// Confirm the format constants match what the readers expect.  Guards
+// against an accidental constant downgrade.
 void test_v10_is_current() {
     CHECK_EQ(KIX_FORMAT_VERSION, 10u);
     CHECK_EQ(KPX_FORMAT_VERSION, 10u);
     CHECK_EQ(KSX_FORMAT_VERSION, 10u);
     CHECK_EQ(KHX_FORMAT_VERSION, 10u);
-    // v10 magic widened from 4 bytes "KIX9" to 5 bytes "KIX10".
     CHECK(KIX_MAGIC[3] == '1' && KIX_MAGIC[4] == '0');
     CHECK(KPX_MAGIC[3] == '1' && KPX_MAGIC[4] == '0');
 }

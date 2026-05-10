@@ -1,11 +1,11 @@
-// Phase 7b — Elias-Fano dictionary codec runtime dispatcher.
+// Elias-Fano dictionary codec runtime dispatcher.
 //
 // Mirrors the FastPFor / dedup ladder in pfd_codec.cpp:
 //   x86_64 : sse42 / avx2 / avx512bw / avx512vbmi2  (SSE4.2 floor)
 //   aarch64: neon                                    (NEON floor)
 //
 // CPUs below SSE4.2 (x86) or NEON (aarch64) are rejected at startup
-// with exit(2), matching the rest of the codebase's policy.
+// with exit(2).
 //
 // Encoding is implemented here (non-tier) — the encoder body is pure
 // scalar arithmetic so per-tier compilation buys nothing, and putting
@@ -107,8 +107,7 @@ const VTable& active_vtable() {
             };
         }
         std::fprintf(stderr,
-            "ikafssn: ef codec requires SSE4.2; current CPU tier is below SSE4.2.\n"
-            "         (Phase 5f treats SSE4.2 as the x86_64 baseline.)\n");
+            "ikafssn: ef codec requires SSE4.2 (the x86_64 baseline).\n");
         std::exit(2);
 #endif
 
@@ -120,8 +119,7 @@ const VTable& active_vtable() {
             };
         }
         std::fprintf(stderr,
-            "ikafssn: ef codec requires NEON; current CPU tier is below NEON.\n"
-            "         (Phase 5h treats NEON as the aarch64 baseline.)\n");
+            "ikafssn: ef codec requires NEON (the aarch64 baseline).\n");
         std::exit(2);
 #endif
 

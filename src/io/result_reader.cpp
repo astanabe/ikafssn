@@ -165,8 +165,9 @@ static bool parse_line_with_map(
     return true;
 }
 
-// Legacy field-count-based parser (fallback when no header line is present).
-static bool parse_line_legacy(const std::string& line, OutputHit& hit) {
+// Field-count-based parser, used as a fallback when no `# ` header
+// line is present in the input TSV.
+static bool parse_line_no_header(const std::string& line, OutputHit& hit) {
     auto fields = split_tabs(line);
 
     if (fields.size() < 7) return false;
@@ -260,7 +261,7 @@ std::vector<OutputHit> read_results_tsv(std::istream& in) {
         data_lines.emplace_back(line_num, std::move(line));
     }
 
-    // Determine parse strategy: header-based or legacy fallback
+    // Determine parse strategy: header-based or no-header fallback
     bool use_header = false;
     std::unordered_map<std::string, size_t> cmap;
 
@@ -281,7 +282,7 @@ std::vector<OutputHit> read_results_tsv(std::istream& in) {
         if (use_header) {
             ok = parse_line_with_map(dline, cmap, hit, is_skip_marker);
         } else {
-            ok = parse_line_legacy(dline, hit);
+            ok = parse_line_no_header(dline, hit);
         }
 
         if (is_skip_marker) {

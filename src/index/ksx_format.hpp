@@ -4,13 +4,14 @@
 
 namespace ikafssn {
 
-// .ksx v10 (Phase 1 of the fragment-indexing initiative): the .ksx is now
-// a two-stage table.  The first stage records each parent OID's full-
-// length metadata (parent length, BLAST DB volume-local OID, accession);
-// the second stage records the fragments derived from each parent.  In
-// Phase 1 each parent has exactly one fragment spanning the whole parent
-// (`fragment_start = 1`, `fragment_end = parent_length`), so num_parents
-// equals num_sequences.  Phase 2 introduces real splitting.
+// .ksx v10: two-stage parent / fragment metadata table. The first stage
+// records each parent OID's full-length metadata (parent length, BLAST DB
+// volume-local OID, accession); the second stage records the fragments
+// derived from each parent. When `min_length_split == 0` every parent has
+// exactly one fragment spanning the whole parent (so num_parents equals
+// num_sequences); otherwise each parent contributes one or more fragments
+// of length up to `min_length_split` with `overlap_length` bases shared
+// between adjacent fragments.
 //
 // On-disk layout (after this 32 B header):
 //   parent_lengths[num_parents]            : u32
@@ -21,8 +22,8 @@ namespace ikafssn {
 //   fragment_start[num_sequences]          : u32 (1-based, parent-relative)
 //   fragment_end[num_sequences]            : u32 (1-based, parent-relative)
 //
-// Magic stays "KMSX" — the version-digit-suffix convention is reserved
-// for the codec-bearing .kix and .kpx files; .ksx / .khx use only
+// Magic is "KMSX" — the version-digit-suffix convention is reserved for
+// the codec-bearing .kix and .kpx files; .ksx / .khx use only
 // format_version for version detection.
 inline constexpr char KSX_MAGIC[4] = {'K', 'M', 'S', 'X'};
 
@@ -32,10 +33,9 @@ struct KsxHeader {
     uint16_t format_version;    // 0x04: 10
     uint16_t reserved1;         // 0x06
     uint32_t num_sequences;     // 0x08: number of internal sequence ids (= fragments)
-    // v10 additions
     uint32_t min_seq_length;    // 0x0C: short-sequence filter threshold
-    uint32_t min_length_split;  // 0x10: 0 in Phase 1
-    uint32_t overlap_length;    // 0x14: 0 in Phase 1
+    uint32_t min_length_split;  // 0x10: fragment splitter threshold (0 = no split)
+    uint32_t overlap_length;    // 0x14: overlap between adjacent fragments
     uint32_t num_parents;       // 0x18: number of parent OIDs
     uint8_t  reserved2[4];      // 0x1C: pads header to 32 B total
 };

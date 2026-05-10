@@ -37,11 +37,11 @@ static std::vector<uint32_t> decode_id_postings(
     return result;
 }
 
-// Decode pos posting list via the v8 PosDecoder.  Candidate-set-driven:
-// pass a sorted distinct seq_id list (which equals the .kix decoded
-// distinct seq_id array for this k-mer) as both the kix_decoded view
-// and the candidate set, and concatenate the per-candidate position
-// vectors in candidate order.
+// Decode pos posting list via PosDecoder.  Candidate-set-driven: pass
+// a sorted distinct seq_id list (which equals the .kix decoded distinct
+// seq_id array for this k-mer) as both the kix_decoded view and the
+// candidate set, then concatenate the per-candidate position vectors
+// in candidate order.
 static std::vector<uint32_t> decode_pos_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len,
     const std::vector<uint32_t>& distinct_sids) {
@@ -59,11 +59,10 @@ static std::vector<uint32_t> decode_pos_postings(
     return result;
 }
 
-// Compute the .kpx per-kmer position count by summing partition occ_counts
-// + short1_count + sum(short2 u8 occ_count[]).  Phase 7c+7d removed all
-// four redundant header fields; the body starts directly at the 2-bit
-// kind map and partition / short1 / short2 counts are derived from
-// popcount of the kind map.
+// Compute the .kpx per-kmer position count by summing partition
+// occ_counts + short1_count + sum(short2 u8 occ_count[]).  The body
+// starts directly at the 2-bit kind map and partition / short1 /
+// short2 counts are derived via popcount of the kind map.
 static uint32_t kpx_position_count(const KixReader& kix,
                                    const KpxReader& kpx,
                                    uint32_t kmer) {
@@ -601,7 +600,7 @@ static void test_min_seq_length_filter() {
     CHECK_EQ(ksx64.min_seq_length(), 64u);
     CHECK_EQ(ksx64.min_length_split(), 0u);
     CHECK_EQ(ksx64.overlap_length(), 0u);
-    // Phase 1: 1 fragment per parent, so num_parents == num_sequences.
+    // 1 fragment per parent, so num_parents == num_sequences.
     CHECK_EQ(ksx64.num_parents(), kept64);
     // Every fragment spans the whole parent.
     for (uint32_t i = 0; i < kept64; i++) {

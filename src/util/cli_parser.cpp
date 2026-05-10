@@ -16,10 +16,6 @@ inline std::string normalize_key(const std::string& key) {
 } // namespace
 
 CliParser::CliParser(int argc, char* argv[]) {
-    if (argc > 0) {
-        program_ = argv[0];
-    }
-
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg.size() >= 2 && arg[0] == '-') {
@@ -33,15 +29,13 @@ CliParser::CliParser(int argc, char* argv[]) {
 
             std::string key = normalize_key(arg);
 
-            // Check if this is a flag (no value) or key-value pair
+            // Flag (no value) or key-value pair
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 opts_[key].push_back(argv[i + 1]);
                 i++;
             } else {
                 opts_[key].push_back("1");
             }
-        } else {
-            positional_.push_back(arg);
         }
     }
 }

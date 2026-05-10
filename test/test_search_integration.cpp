@@ -453,7 +453,7 @@ static void test_search_nresult_zero() {
     ksx.close();
 }
 
-// Phase 2 regression: build coding + optimal indexes for k=9, t=15, run
+// regression: build coding + optimal indexes for k=9, t=15, run
 // search_volume_both, and verify (1) FJ876973.1 is found via the unified
 // Stage 1 path, and (2) the merged Stage 1 score stays in [0, Nqkmer]
 // (i.e. no double-counting from the two templates).
@@ -516,7 +516,7 @@ static void test_search_both_template() {
     CHECK(result.query_id == "both_query");
     CHECK(!result.hits.empty());
 
-    // Phase 2 invariant: per-position dedup keeps Stage 1 score in [0, Nqkmer].
+    // invariant: per-position dedup keeps Stage 1 score in [0, Nqkmer].
     // Nqkmer = seq_len - t + 1 (window count). A naive cod-then-opt
     // accumulation would inflate scores up to 2*Nqkmer; the q_pos-merge walk
     // in search_one_strand_both keeps the merged score capped at Nqkmer.

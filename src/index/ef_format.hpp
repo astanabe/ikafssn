@@ -1,6 +1,6 @@
 #pragma once
 
-// Phase 7 — Elias-Fano (EF) succinct dictionary header.
+// Elias-Fano (EF) succinct dictionary header.
 //
 // On-disk layout written by encode_dictionary_ef() and consumed by
 // EFDictionary::open():

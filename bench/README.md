@@ -30,7 +30,7 @@ tiers) is delegated to a shell driver:
 
 ## Available targets
 
-| Target                    | Phase | Notes                                      |
-|---------------------------|-------|--------------------------------------------|
-| `bench_fasta_toupper`     | 1a    | ASCII bulk to-upper (`io/text_simd`)       |
-| `bench_ncbi2na_unpack`    | 1b    | ncbi2na -> 2-bit (`core/ncbi2na_unpack`)   |
+| Target                    | Notes                                      |
+|---------------------------|--------------------------------------------|
+| `bench_fasta_toupper`     | ASCII bulk to-upper (`io/text_simd`)       |
+| `bench_ncbi2na_unpack`    | ncbi2na -> 2-bit (`core/ncbi2na_unpack`)   |

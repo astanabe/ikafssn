@@ -721,7 +721,7 @@ static void test_kmer_type_for() {
     }
 }
 
-// Phase 4b-2: chunk-boundary bit-exact tests for the buffered scan_spaced
+// chunk-boundary bit-exact tests for the buffered scan_spaced
 // path. The internal batch chunk size is 64; sequence lengths around that
 // boundary stress the warmup tail, mid-chunk fill, and final flush.
 static void test_scan_spaced_chunk_boundary() {

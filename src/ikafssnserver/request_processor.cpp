@@ -318,8 +318,8 @@ SearchResponse process_search_request(
             });
     });
 
-    // Sequential second pass: build resp.results in original query order so
-    // that result_idx and accepted_queries match the legacy layout, and
+    // Sequential second pass: build resp.results in original query
+    // order so that result_idx and accepted_queries stay in sync, and
     // adjust permit bookkeeping for skipped queries.
     std::vector<AcceptedQuery> accepted_queries;
     accepted_queries.reserve(static_cast<size_t>(acquired));
@@ -400,12 +400,13 @@ SearchResponse process_search_request(
         query_to_result[aq.query_idx] = aq.result_idx;
     }
 
-    // Determine the per-request slice of the server's posting_budget.  In
-    // pass-through mode (default) this returns the full residual immediately,
-    // matching legacy behaviour.  When -max_concurrent_search >= 1 the pool
-    // serialises requests at the budget-bound stages so in-flight heap stays
-    // bounded.  Lease lives at function scope and is released by RAII on
-    // every return path below (including the early-return Stage 3 failures).
+    // Determine the per-request slice of the server's posting_budget.
+    // In pass-through mode (default) this returns the full residual
+    // immediately.  When -max_concurrent_search >= 1 the pool serialises
+    // requests at the budget-bound stages so in-flight heap stays
+    // bounded.  Lease lives at function scope and is released by RAII
+    // on every return path below (including the early-return Stage 3
+    // failures).
     BudgetLease budget_lease = server.acquire_posting_budget(
         /*min=*/0,
         /*max=*/server.posting_budget());
@@ -499,7 +500,7 @@ SearchResponse process_search_request(
     // Convert OrchestratorHit -> ResponseHit at the boundary, fanning out
     // into the corresponding QueryResult slot.
     //
-    // v10 (Phase 3): Stage 2 chains live in fragment-relative coordinates.
+    // Stage 2 chains live in fragment-relative coordinates.
     // Re-map them to parent-OID-relative coordinates so wire output carries
     // the parent accession, parent slen, and parent-relative sstart/send.
     for (const auto& oh_in : orch_hits) {
@@ -577,7 +578,7 @@ SearchResponse process_search_request(
         stage3_config.posting_budget = posting_budget;
         output_hits = run_stage3(output_hits, fasta_queries, db.db_path,
                                  stage3_config, ctx_is_ratio, ctx_ratio, ctx_abs, logger);
-        // v10 (Phase 3): Stage 3 dedup over parent-relative (send, alnscore).
+        // Stage 3 dedup over parent-relative (send, alnscore).
         // Mirrors the ikafssnsearch dedup so server responses look identical
         // for fragmented indexes.
         dedup_stage3_output_hits(output_hits);

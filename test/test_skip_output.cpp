@@ -42,7 +42,7 @@ static OutputHit make_normal_hit(const std::string& qid,
     return h;
 }
 
-// Phase 1: TSV emits a sentinel "*SKIPPED:reason" row for skipped queries.
+// TSV emits a sentinel "*SKIPPED:reason" row for skipped queries.
 static void test_tsv_skip_row() {
     std::fprintf(stderr, "-- test_tsv_skip_row\n");
 
@@ -69,7 +69,7 @@ static void test_tsv_skip_row() {
     CHECK(skip_line.find("\t*\t") != std::string::npos);
 }
 
-// Phase 1: result_reader silently drops *SKIPPED:* rows so existing
+// result_reader silently drops *SKIPPED:* rows so existing
 // pipelines stay compatible.
 static void test_tsv_reader_drops_skip_rows() {
     std::fprintf(stderr, "-- test_tsv_reader_drops_skip_rows\n");
@@ -94,7 +94,7 @@ static void test_tsv_reader_drops_skip_rows() {
     }
 }
 
-// Phase 1: JSON output uses "status": "skipped" with reason and detail
+// JSON output uses "status": "skipped" with reason and detail
 // for skipped queries; normal queries have "status": "ok" and a hits array.
 static void test_json_skip_status() {
     std::fprintf(stderr, "-- test_json_skip_status\n");
@@ -114,7 +114,7 @@ static void test_json_skip_status() {
     CHECK(out.find("\"status\": \"ok\"") != std::string::npos);
 }
 
-// Phase 1: SAM output emits an unmapped record (FLAG=4) with XR:Z and XD:Z
+// SAM output emits an unmapped record (FLAG=4) with XR:Z and XD:Z
 // aux tags carrying the skip reason and detail. Verify by reading the file
 // back through htslib.
 static void test_sam_skip_unmapped() {

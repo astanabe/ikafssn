@@ -12,9 +12,9 @@ struct HttpAuthConfig {
     std::string netrc_file;  // path for CURLOPT_NETRC_FILE
 };
 
-// Build the JSON body for a /api/v1/jobs POST or the legacy
-// /api/v1/search POST.  Exposed so async_http_client can reuse the
-// exact same field encoding without duplicating it.
+// Build the JSON body for a /api/v1/jobs POST.  Exposed so
+// async_http_client can reuse the same field encoding without
+// duplicating it.
 std::string build_request_json(const SearchRequest& req);
 
 // Parse JSON server-info reply from /api/v1/info into InfoResponse.

@@ -4,14 +4,11 @@
 
 namespace ikafssn {
 
-// .khx v9 (Phase 7): data layout is unchanged from v3; the
-// format_version field bumps along with the rest of the index family
-// for alignment (Phase 5c policy).  Magic stays "KMHX" — see the
-// comment in src/index/ksx_format.hpp for why .ksx / .khx do not
-// carry a version digit in the magic string.  The semantic of the
-// bitset is "k-mer i was excluded because its **distinct seq_id
-// count** exceeded the build-time threshold" (matching the .kix
-// distinct-seq_id semantic established in v7).
+// .khx v10: bitset of k-mers excluded from the index because their
+// distinct seq_id count exceeded the build-time threshold. Magic is
+// "KMHX" — see the comment in src/index/ksx_format.hpp for why .ksx /
+// .khx do not carry a version digit in the magic string. format_version
+// tracks the rest of the index family for alignment.
 inline constexpr char KHX_MAGIC[4] = {'K', 'M', 'H', 'X'};
 
 #pragma pack(push, 1)

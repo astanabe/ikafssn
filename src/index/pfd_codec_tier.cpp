@@ -1,32 +1,29 @@
-// Phase 6 — per-tier custom block codec.
+// Per-tier custom block codec.
 //
-// This translation unit is compiled FOUR TIMES on x86_64 (once per ISA
+// This translation unit is compiled four times on x86_64 (once per ISA
 // tier) and once on aarch64 via the ikafssn_pfd_<tier> OBJECT libraries
 // declared in the top-level CMakeLists.txt.  Each compilation is given:
 //
-//   -DFastPForLib=FastPForLib_<tier>     (renames FastPFor's namespace
-//                                          at preprocessor time so the
-//                                          per-tier sets of symbols do
-//                                          not collide at link time)
-//   -DIKAFSSN_PFD_TIER_NAME=<tier>       (used here to name the
-//                                          tier-specific ikafssn::pfd
-//                                          inner namespace)
-//   -m<arch> ...                          (controls the instructions the
-//                                          bitpacker primitives and the
-//                                          surrounding scalar code in
-//                                          this file are allowed to use)
+//   -DFastPForLib=FastPForLib_<tier>     renames FastPFor's namespace
+//                                         at preprocessor time so the
+//                                         per-tier sets of symbols do
+//                                         not collide at link time
+//   -DIKAFSSN_PFD_TIER_NAME=<tier>       names the tier-specific
+//                                         ikafssn::pfd inner namespace
+//   -m<arch> ...                          controls the instructions the
+//                                         bitpacker primitives and the
+//                                         surrounding scalar code in
+//                                         this file are allowed to use
 //
-// For .kix posting lists (sorted distinct seq_id delta stream — wire format
-// unchanged from v7) we drive FastPFor's CompositeCodec<SIMDFastPFor<4>,
-// VariableByte> directly.
+// For .kix posting lists (sorted distinct seq_id delta stream) we drive
+// FastPFor's CompositeCodec<SIMDFastPFor<4>, VariableByte> directly.
 //
-// For .kpx posting lists (absolute position stream) Phase 6 keeps the per-
-// (kmer, seq_id) partition grouping but classifies every distinct
-// seq_id via a 2-bit kind map instead of carrying redundant seq_id
-// bytes.  The short bucket is also split into occ=1 and occ>=2 sub-
-// buckets so single-position clusters drop the u8 occ_count entirely.
-// FOR-block headers are widened to 8 B (proposal F) and stream tails
-// switch from a varint stream to a packed bit-width stream (proposal D).
+// For .kpx posting lists (absolute position stream) we keep the per-
+// (kmer, seq_id) partition grouping and classify every distinct
+// seq_id via a 2-bit kind map.  The short bucket is split into occ=1
+// and occ>=2 sub-buckets so single-position clusters drop the u8
+// occ_count entirely.  Each FOR-block header is 8 B and stream tails
+// use a packed bit-width encoding.
 
 #include "index/pfd_codec.hpp"
 
@@ -132,9 +129,9 @@ void unpack_bits_lsb(const std::uint8_t* in, std::uint32_t count,
     }
 }
 
-// v8 FOR block: [u32 min][u8 b][3 B pad][16*b bytes bitpacked (value-min)].
+// FOR block: [u32 min][u8 b][3 B pad][16*b bytes bitpacked (value-min)].
 // Total = 8 + 16*b bytes, body 8 B aligned within the block.
-void encode_block_for_v8(const std::uint32_t* in_128,
+void encode_block_for(const std::uint32_t* in_128,
                          std::vector<std::uint8_t>& out) {
     std::uint32_t mn = in_128[0];
     std::uint32_t mx = in_128[0];
@@ -165,7 +162,7 @@ void encode_block_for_v8(const std::uint32_t* in_128,
     std::memcpy(out.data() + before + 8, tmp, body_bytes);
 }
 
-bool decode_block_for_v8(const std::uint8_t*& p, const std::uint8_t* end,
+bool decode_block_for(const std::uint8_t*& p, const std::uint8_t* end,
                          std::uint32_t* out_128) {
     if (std::size_t(end - p) < 8) return false;
     std::uint32_t mn;
@@ -187,14 +184,14 @@ bool decode_block_for_v8(const std::uint8_t*& p, const std::uint8_t* end,
     return true;
 }
 
-void encode_for_stream_v8(const std::uint32_t* abs_pos_array,
+void encode_for_stream(const std::uint32_t* abs_pos_array,
                           std::uint32_t count,
                           std::vector<std::uint8_t>& out) {
     const std::uint32_t num_blocks = count / kBlockSize;
     const std::uint32_t tail_count = count % kBlockSize;
 
     for (std::uint32_t b = 0; b < num_blocks; b++) {
-        encode_block_for_v8(abs_pos_array + b * kBlockSize, out);
+        encode_block_for(abs_pos_array + b * kBlockSize, out);
     }
 
     out.push_back(static_cast<std::uint8_t>(tail_count));
@@ -222,13 +219,13 @@ void encode_for_stream_v8(const std::uint32_t* abs_pos_array,
     }
 }
 
-bool decode_for_stream_v8(const std::uint8_t*& p, const std::uint8_t* end,
+bool decode_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
                           std::uint32_t count, std::uint32_t* out) {
     const std::uint32_t num_blocks = count / kBlockSize;
     const std::uint32_t tail_count = count % kBlockSize;
 
     for (std::uint32_t b = 0; b < num_blocks; b++) {
-        if (!decode_block_for_v8(p, end, out + b * kBlockSize)) return false;
+        if (!decode_block_for(p, end, out + b * kBlockSize)) return false;
     }
 
     if (p >= end) return false;
@@ -263,10 +260,8 @@ inline std::uint8_t get_kind_bits(const std::uint8_t* kind_map, std::uint32_t i)
 
 } // anonymous namespace (TU-private helpers)
 
-// Phase 7d dedup C: count partition / short1 / short2 entries directly
-// from the 2-bit kind map.  Replaces the redundant
-// [u32 partition_count][u32 short1_count][u32 short2_count] header
-// fields.  The kind_map encoding is:
+// Count partition / short1 / short2 entries directly from the 2-bit
+// kind map.  The kind_map encoding is:
 //
 //   00 = short_occ1     -> short1
 //   01 = short_occ_ge2  -> short2
@@ -326,10 +321,9 @@ void popcount_kinds(const std::uint8_t* km,
     *p_short2    = short2_count;
 }
 
-// Phase 7d dedup D: sum a u8 array — replaces the redundant
-// [u32 short2_position_count] header field.  Compiler auto-vectorises
-// to vpsadbw under AVX2 / AVX512BW.  Tier-namespaced (not anonymous)
-// for the same VTable-dispatch reason as popcount_kinds.
+// Sum a u8 array.  Compiler auto-vectorises to vpsadbw under AVX2 /
+// AVX512BW.  Tier-namespaced for the same VTable-dispatch reason as
+// popcount_kinds.
 std::uint32_t horizontal_sum_u8(const std::uint8_t* arr,
                                 std::uint32_t n) noexcept {
     std::uint32_t sum = 0;
@@ -339,9 +333,9 @@ std::uint32_t horizontal_sum_u8(const std::uint8_t* arr,
 
 // ===== .kix encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
 //
-// Phase 7c dedup B: only the leading `[u32 distinct_count]` is written;
-// `body_words` is derived at decode time from the EF dictionary's
-// posting_byte_length.  On-disk per-posting-list layout:
+// Only the leading `[u32 distinct_count]` is written; the body length
+// is derived at decode time from the EF dictionary's posting byte
+// length.  On-disk per-posting-list layout:
 //   [u32 distinct_count]   — number of distinct seq_ids represented
 //   [u32 body[N]]          — codec output (N = (bytes - 4) / 4)
 
@@ -369,12 +363,11 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
 
 // ===== .kpx encode =====
 //
-// Phase 7c+7d: all four redundant header fields removed.  The body
-// starts directly at the 2-bit kind map; counts are derived at decode
-// time from the kind map (popcount_kinds for partition/short1/short2)
-// and from the u8 occ_count[] array (horizontal_sum_u8 for
-// short2_position_count).  See src/index/pfd_codec.hpp for the wire
-// format.
+// The body starts directly at the 2-bit kind map; counts are derived
+// at decode time from the kind map (popcount_kinds for partition /
+// short1 / short2) and from the u8 occ_count[] array
+// (horizontal_sum_u8 for short2_position_count).  See
+// src/index/pfd_codec.hpp for the wire format.
 //
 // Empty posting lists (distinct_count == 0) emit zero bytes; the
 // caller's offset table is responsible for delimiting the per-k-mer
@@ -391,8 +384,8 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
     const std::size_t before = out.size();
 
     if (distinct_count == 0) {
-        // Phase 7d: empty posting list emits 0 bytes (no header).  The
-        // decoder gates on kix_count > 0 and never reads this region.
+        // Empty posting list emits 0 bytes (no header).  The decoder
+        // gates on kix_count > 0 and never reads this region.
         return 0;
     }
 
@@ -434,7 +427,7 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
             const std::size_t off = out.size();
             out.resize(off + sizeof(std::uint32_t));
             std::memcpy(out.data() + off, &cnt, sizeof(std::uint32_t));
-            encode_for_stream_v8(abs_pos_array + pos_cursor, cnt, out);
+            encode_for_stream(abs_pos_array + pos_cursor, cnt, out);
         }
         pos_cursor += cnt;
     }
@@ -450,7 +443,7 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
             }
             cursor += occ_count[k];
         }
-        encode_for_stream_v8(short1_buf.data(), short1_count, out);
+        encode_for_stream(short1_buf.data(), short1_count, out);
     }
 
     // Pass 4: short_occ_ge2 — u8 occ_count[] + concatenated FOR stream.
@@ -477,7 +470,7 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
             }
             cursor += occ_count[k];
         }
-        encode_for_stream_v8(short2_buf.data(), short2_position_count, out);
+        encode_for_stream(short2_buf.data(), short2_position_count, out);
     }
 
     return out.size() - before;
@@ -491,14 +484,14 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
     ctx.count = 0;
     ctx.pos = 0;
     if (bytes == 0) return true;
-    if (bytes < 4) return false;  // Phase 7c: header is just [u32 distinct_count]
+    if (bytes < 4) return false;  // header is just [u32 distinct_count]
 
     std::uint32_t count;
     std::memcpy(&count, posting_list, sizeof(std::uint32_t));
     if (count == 0) return true;
 
-    // Phase 7c dedup B: body_words derived from the posting list byte
-    // length supplied by the EF dictionary (no on-wire body_words).
+    // body_words is derived from the posting list byte length supplied
+    // by the EF dictionary (no on-wire body_words).
     const std::size_t body_bytes_avail = bytes - 4;
     if ((body_bytes_avail % sizeof(std::uint32_t)) != 0) return false;
     const std::uint32_t body_words = static_cast<std::uint32_t>(
@@ -524,7 +517,7 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
     return true;
 }
 
-// ===== open_stream_kpx_for_candidates: candidate-set-driven decode (v8) =====
+// ===== open_stream_kpx_for_candidates: candidate-set-driven decode =====
 
 bool open_stream_kpx_for_candidates(
         const std::uint8_t* posting_list, std::size_t bytes,
@@ -537,8 +530,7 @@ bool open_stream_kpx_for_candidates(
 
     if (n_candidates == 0) return true;
     if (bytes == 0) return true;
-    // Phase 7c+7d: all four redundant header fields removed.  Body
-    // starts directly at the 2-bit kind map; per-kind counts are
+    // Body starts directly at the 2-bit kind map; per-kind counts are
     // derived via popcount_kinds, and short2_position_count via
     // horizontal_sum_u8 over the u8 occ_count[] array.
     const std::uint32_t distinct_count = static_cast<std::uint32_t>(kix_count);
@@ -572,7 +564,7 @@ bool open_stream_kpx_for_candidates(
         part_off[g] = static_cast<std::uint32_t>(part_pos.size());
         const std::size_t base = part_pos.size();
         part_pos.resize(base + gcnt);
-        if (!decode_for_stream_v8(p, end, gcnt, part_pos.data() + base)) return false;
+        if (!decode_for_stream(p, end, gcnt, part_pos.data() + base)) return false;
     }
     part_off[partition_count] = static_cast<std::uint32_t>(part_pos.size());
 
@@ -580,12 +572,12 @@ bool open_stream_kpx_for_candidates(
     auto& short1_pos = scratch.short1_positions;
     short1_pos.assign(short1_count, 0);
     if (short1_count > 0) {
-        if (!decode_for_stream_v8(p, end, short1_count, short1_pos.data())) return false;
+        if (!decode_for_stream(p, end, short1_count, short1_pos.data())) return false;
     }
 
     // Decode short_occ_ge2 sub-bucket: u8 occ_count[] then FOR stream.
-    // Phase 7d dedup D: short2_position_count is derived as a horizontal
-    // sum of the u8 occ_count[] array (the v8 in-blob u32 was redundant).
+    // short2_position_count is derived as a horizontal sum of the u8
+    // occ_count[] array.
     auto& short2_occ = scratch.short2_occ;
     auto& short2_off = scratch.short2_offsets;
     auto& short2_pos = scratch.short2_positions;
@@ -607,7 +599,7 @@ bool open_stream_kpx_for_candidates(
     }
     short2_pos.assign(short2_position_count, 0);
     if (short2_position_count > 0) {
-        if (!decode_for_stream_v8(p, end, short2_position_count, short2_pos.data())) {
+        if (!decode_for_stream(p, end, short2_position_count, short2_pos.data())) {
             return false;
         }
     }

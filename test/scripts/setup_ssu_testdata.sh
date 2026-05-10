@@ -7,7 +7,7 @@
 #   ssu_multivol_a.*  - BLAST DB subset (FJ876973.1 + 4 others)
 #   ssu_multivol_b.*  - BLAST DB subset (GQ912721.1 + DQ235612.1 + 3 others)
 #   ssu_longdb.*      - BLAST DB with two artificially long parents (each
-#                       ~5000bp) used by Phase 5 fragment-split integration
+#                       ~5000bp) used by the fragment-split integration
 #                       tests.  Each LONGCHR_X record is the concatenation
 #                       of three SSU sequences, so with -min_length_split
 #                       1500 -overlap_length 200 the fragment splitter
@@ -130,7 +130,7 @@ else
     echo "  ssu_multivol_b already exists, skipping."
 fi
 
-# ---- 3. Long-parent DB (for Phase 5 fragment-split integration tests) ----
+# ---- 3. Long-parent DB (for the fragment-split integration tests) ----
 if [ ! -f "${OUTDIR}/ssu_longdb.nsq" ]; then
     echo "--- Building ssu_longdb ---"
 

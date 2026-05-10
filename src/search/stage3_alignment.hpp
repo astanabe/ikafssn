@@ -19,10 +19,10 @@ struct Stage3Config {
     std::string score_matrix = "degmatch";
     int nthread_fetch = 8;   // threads for BLAST DB sequence fetch
     // Heap budget for Stage 3 batch loop.  When 0 (default), the entire
-    // hit set is processed in a single batch (legacy behavior).  When > 0,
-    // hits are grouped by (qseqid, sseqid, sstrand) and bin-packed into
-    // batches whose estimated heap footprint stays under this budget.
-    // A single oversize group falls back to a tier-1 solo batch.
+    // hit set is processed in a single batch.  When > 0, hits are grouped
+    // by (qseqid, sseqid, sstrand) and bin-packed into batches whose
+    // estimated heap footprint stays under this budget.  A single
+    // oversize group falls back to a tier-1 solo batch.
     uint64_t posting_budget = 0;
 };
 

@@ -51,7 +51,7 @@ static int64_t file_size_or_neg(const std::string& path) {
     return static_cast<int64_t>(st.st_size);
 }
 
-// Verify the on-disk .ksx size matches the v10 two-stage layout:
+// Verify the on-disk .ksx size matches the two-stage layout:
 //   header + parent_lengths[P] + parent_blast_oids[P] + parent_acc_offsets[P+1]
 //          + accession-string-table[acc_bytes]
 //          + fragment_parent_idx[N] + fragment_start[N] + fragment_end[N]
@@ -218,9 +218,9 @@ static IndexValidation validate_existing_index(
     if (std::memcmp(kix_hdr.magic, KIX_MAGIC, sizeof(KIX_MAGIC)) != 0) return result;
     if (kix_hdr.format_version != KIX_FORMAT_VERSION) return result;
 
-    // Check .ksx exists, read header + parent_lengths to compute total_bases
-    // (in v10 the parent table — not the fragment table — carries the
-    // full per-OID lengths that should sum to the BLAST DB total).
+    // Check .ksx exists, read header + parent_lengths to compute
+    // total_bases (the parent table — not the fragment table — carries
+    // the full per-OID lengths that should sum to the BLAST DB total).
     fp = std::fopen(ksx_path.c_str(), "rb");
     if (!fp) return result; // kNotFound
     KsxHeader ksx_hdr{};
@@ -440,7 +440,7 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         0: not allowed (error)\n"
         "                         Counts are aggregated across all volumes before filtering\n"
         "  -freq_threshold_part <int>\n"
-        "                         .kpx v8 per-(kmer, seq_id) partition threshold (default: 8, max: 255)\n"
+        "                         .kpx per-(kmer, seq_id) partition threshold (default: 8, max: 255)\n"
         "                         A (k-mer, seq_id) cluster with occurrence count > threshold\n"
         "                         is split into its own partition group; lower-multiplicity\n"
         "                         clusters merge into a shared short bucket\n"
@@ -455,9 +455,9 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         both: builds coding and optimal indexes sequentially\n"
         "  -nthread <int>         Number of threads (default: all cores)\n"
         "  -no_validate           Skip the post-build structural validation pass\n"
-        "                         (Phase 7d default-on validation walks each\n"
-        "                         k-mer's .kpx posting list and checks the\n"
-        "                         byte length against the EF dictionary)\n"
+        "                         (default-on; walks each k-mer's .kpx posting\n"
+        "                         list and checks its byte length against the\n"
+        "                         EF dictionary)\n"
         "  -v, --verbose          Verbose output\n",
         prog, MIN_K, MAX_K, default_mem.c_str());
 }
@@ -504,10 +504,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Parse -mode (1, 2, or 3; default 1).
-    // Phase 2 (fragment indexing): -mode 1 is now the recommended default
-    // because fragment splitting brings .kpx-less search into the practical
-    // range for nt-class databases.
+    // Parse -mode (1, 2, or 3; default 1).  Fragment splitting brings
+    // .kpx-less search into the practical range for nt-class databases,
+    // so -mode 1 is the recommended default.
     int index_mode = cli.get_int("-mode", 1);
     if (index_mode < 1 || index_mode > 3) {
         std::fprintf(stderr, "Error: -mode must be 1, 2, or 3\n");
@@ -529,7 +528,7 @@ int main(int argc, char* argv[]) {
         min_seq_length = static_cast<uint32_t>(v);
     }
 
-    // Parse -min_length_split / -overlap_length (Phase 2).
+    // Parse -min_length_split / -overlap_length.
     //
     // Defaults depend on -mode:
     //   - -mode 1: min_length_split = 50000, overlap_length = 500
@@ -605,7 +604,7 @@ int main(int argc, char* argv[]) {
         mem_limit_str = default_mem_str;
     }
 
-    // Phase 7d: post-build structural validation is on by default; -no_validate
+    // Post-build structural validation is on by default; -no_validate
     // opts out (e.g. when building a known-good index for benchmarking).
     const bool run_validate = !cli.has("-no_validate");
 
@@ -682,7 +681,7 @@ int main(int argc, char* argv[]) {
     if (freq_threshold_part > 255) {
         std::fprintf(stderr,
             "Error: -freq_threshold_part must be <= 255 "
-            "(short-bucket occurrence counts are u8 in the v8 .kpx layout)\n");
+            "(short-bucket occurrence counts are u8 in the .kpx layout)\n");
         return 1;
     }
 
@@ -946,13 +945,11 @@ int main(int argc, char* argv[]) {
         }
 
         if (!build_skipped) {
-            // Process volumes sequentially.  Volume-level concurrency was
-            // dropped along with the legacy -openvol option: per-volume
-            // partition processing is already TBB-parallel end-to-end
-            // (counting reduce, sort, per-k-mer encode), so an additional
-            // outer task_group provided no extra parallelism while
-            // doubling peak memory and forcing -memory_limit / openvol
-            // accounting on every caller.
+            // Process volumes sequentially.  Per-volume partition
+            // processing is already TBB-parallel end-to-end (counting
+            // reduce, sort, per-k-mer encode), so an additional outer
+            // task_group would not add parallelism but would double
+            // peak memory.
             for (uint16_t vi = 0; vi < total_volumes; vi++) {
                 if (skip_volume[vi]) continue;
 
@@ -1019,10 +1016,9 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Phase 7d: structural validation on the just-finalised .kix / .kpx
-        // pair (catches silent kind-map / FOR-stream corruption that the
-        // v9 dedup'd headers can no longer detect by redundancy), plus
-        // .kix / .ksx / .khx file size checks (catch truncation that the
+        // Structural validation on the just-finalised .kix / .kpx pair
+        // (catches silent kind-map / FOR-stream corruption), plus .kix /
+        // .ksx / .khx file size checks (catch truncation that the
         // structural walk and metadata checks can't see).
         if (run_validate && !build_skipped) {
             for (size_t vi = 0; vi < vol_prefixes.size(); vi++) {

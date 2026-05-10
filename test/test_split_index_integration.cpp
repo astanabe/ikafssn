@@ -1,4 +1,4 @@
-// Phase 5 integration test: end-to-end search against a fragment-split
+// integration test: end-to-end search against a fragment-split
 // index built from the long-parent fixture (LONGCHR_1 / LONGCHR_2).
 //
 // Three properties are exercised:
@@ -51,9 +51,9 @@ using namespace ssu_fixture;
 namespace {
 
 // Build an index from the long-parent fixture.  When `min_length_split`
-// is 0 this produces the degenerate v10 layout (1 parent = 1 fragment);
-// when non-zero the fragment splitter carves each LONGCHR_X parent into
-// multiple fragments.
+// is 0 this produces the degenerate layout (1 parent = 1 fragment);
+// when non-zero the fragment splitter carves each LONGCHR_X parent
+// into multiple fragments.
 //
 // Uses k=7 for fast index builds (the long fixture is only ~10000bp so
 // the index is tiny either way).  Returns the prefix on success.
@@ -128,7 +128,7 @@ std::vector<ParentHit> run_and_collapse(const std::string& prefix,
     }
 
     SearchConfig config = base_cfg;
-    // Phase 3: max_query_length is driven from the index's overlap_length.
+    // max_query_length is driven from the index's overlap_length.
     config.max_query_length = ksx.overlap_length();
 
     OidFilter filter;
@@ -373,7 +373,7 @@ static void test_query_too_long_for_overlap() {
     CHECK(qdata.skip_detail.find("overlap_length=50") != std::string::npos);
 
     // Sanity: the same query passes when max_query_length is 0 (the
-    // degenerate / no-split index case the Phase 1 path takes).
+    // degenerate / no-split index case the path takes).
     cfg.max_query_length = 0;
     auto qdata_ok = preprocess_query<uint16_t>(query, 7, nullptr, cfg);
     CHECK_EQ(qdata_ok.skip_reason, 0u);

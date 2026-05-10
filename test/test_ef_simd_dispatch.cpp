@@ -25,7 +25,7 @@ void test_active_tier_matches_force_simd() {
         return;
     }
 
-    // Phase 5f silent demotions: avx512vbmi → avx512bw.
+    // silent demotions: avx512vbmi → avx512bw.
     std::string expected = forced;
     if (expected == "avx512vbmi" || expected == "AVX512VBMI") {
         expected = "avx512bw";

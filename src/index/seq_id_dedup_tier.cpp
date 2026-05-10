@@ -1,4 +1,4 @@
-// Phase 5i — per-tier SIMD dedup kernel.
+// Per-tier SIMD dedup kernel.
 //
 // This translation unit is compiled once per ISA tier via the
 // ikafssn_dedup_<tier> OBJECT libraries declared in the top-level
@@ -11,13 +11,10 @@
 //                                       scalar-with-auto-vectorisation
 //                                       loops below
 //
-// The current implementation is a single scalar pass that the compiler
-// auto-vectorises at the chosen ISA tier — sufficient for the build-
+// The current body is a single scalar pass that the compiler auto-
+// vectorises at the chosen ISA tier; this is sufficient for the build-
 // time dedup workload which is bottlenecked by the surrounding I/O and
-// the per-kmer FastPFor encoder.  Hand-coded gather/compress-store
-// specialisations can be added per tier later if a dedicated benchmark
-// shows a need; the per-tier OBJECT library structure is in place for
-// that future work.
+// the per-kmer FastPFor encoder.
 
 #include "index/seq_id_dedup.hpp"
 
@@ -44,9 +41,8 @@ std::uint32_t dedup_seq_ids(const std::uint32_t* sid, std::uint32_t n,
 
     // Scalar pass with the surrounding ISA flags letting the compiler
     // auto-vectorise the run-length loop where it can.  occ_count is
-    // u32 in v8 — large genomic contigs can have > 255 occurrences of
-    // the same k-mer in a single sequence, and the prior u8 saturation
-    // silently dropped positions in the encoder's pos_cursor walk.
+    // u32 — large genomic contigs can have > 255 occurrences of the
+    // same k-mer in a single sequence.
     for (std::uint32_t i = 1; i < n; i++) {
         const std::uint32_t v = sid[i];
         if (v == cur_sid) {

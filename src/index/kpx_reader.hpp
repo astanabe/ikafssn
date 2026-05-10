@@ -20,31 +20,26 @@ public:
     uint8_t template_type() const { return header_->template_type; }
     uint64_t total_position_count() const { return header_->total_position_count; }
     uint32_t table_size() const { return table_size_; }
-    // v10 header values
+    // Fragment-indexing header values
     uint32_t min_seq_length()   const { return header_->min_seq_length; }
     uint32_t min_length_split() const { return header_->min_length_split; }
     uint32_t overlap_length()   const { return header_->overlap_length; }
-    // Phase 7e: pos_offsets dictionary is Elias-Fano; the legacy
-    // offset_type byte is preserved on the header as reserved/sentinel
-    // (set to 0xFF on EF writes by the writer).
-    bool is_offset32() const { return false; }
 
     // Raw pointer to the start of the position posting file
     const uint8_t* posting_file() const { return posting_file_; }
     size_t posting_file_size() const { return posting_file_size_; }
 
-    // Phase 7e: pos_offset(kmer) resolves through the EF dictionary.
-    // .kpx has no sentinel — callers needing the byte length of the
-    // last k-mer's posting list use posting_file_size() as a loose
-    // upper bound (the .kpx posting list bodies are self-delimiting).
+    // pos_offset(kmer) resolves through the EF dictionary.  .kpx has
+    // no sentinel — callers needing the byte length of the last k-mer's
+    // posting list use posting_file_size() as a loose upper bound (the
+    // .kpx posting list bodies are self-delimiting).
     uint64_t pos_offset(uint32_t kmer) const {
         return pos_dict_.access(kmer);
     }
 
-    // Phase 7d hot-path helper: fan out (lo, hi) for a k-mer's .kpx
-    // posting list slice in one EF access_pair.  hi is set to
-    // posting_file_size() when kmer is the last entry (mirrors the
-    // implicit sentinel callers had to compute by hand).
+    // Hot-path helper: fan out (lo, hi) for a k-mer's .kpx posting list
+    // slice in one EF access_pair.  hi is set to posting_file_size()
+    // when kmer is the last entry.
     void pos_offset_range(uint32_t kmer,
                           uint64_t& lo, uint64_t& hi) const {
         if (kmer + 1u < table_size_) {
@@ -60,7 +55,7 @@ public:
     void apply_madvise(bool willneed);
 
     // Full-mapping budget API: counts the pos_offsets dictionary head and
-    // the entire .kpx posting file.  Symmetric to KixReader; reserved for
+    // the entire .kpx posting file.  Symmetric to KixReader; used by
     // Stage 2 / Stage 3 batch paths that need the position posting body
     // pre-faulted as a unit (mode 1 never reads .kpx).
     size_t willneed_size_full() const;

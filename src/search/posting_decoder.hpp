@@ -8,13 +8,14 @@
 
 namespace ikafssn {
 
-// Streaming decoder for v8 .kpx posting lists (candidate-set-driven).
+// Streaming decoder for .kpx posting lists (candidate-set-driven).
 //
-// .kpx v8 stores absolute positions partitioned per-(kmer, seq_id) above
+// .kpx stores absolute positions partitioned per-(kmer, seq_id) above
 // a build-time threshold and splits the short bucket into occ=1 and
-// occ>=2 sub-buckets.  No seq_ids are stored in the .kpx posting list itself —
-// the .kix decoded distinct seq_id array supplies the resolution between
-// position rank and seq_id.  The decoder therefore needs:
+// occ>=2 sub-buckets.  No seq_ids are stored in the .kpx posting list
+// itself — the .kix decoded distinct seq_id array supplies the
+// resolution between position rank and seq_id.  The decoder therefore
+// needs:
 //
 //   - the .kix decoded distinct seq_id array (kix_decoded[0..kix_count),
 //     strictly increasing — provided by SeqIdDecoder::decoded_data() /

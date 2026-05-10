@@ -39,7 +39,7 @@ public:
     uint32_t blast_oid(uint32_t parent_idx)     const { return parent_blast_oids_[parent_idx]; }
     std::string_view parent_accession(uint32_t parent_idx) const;
 
-    // v10 header values.
+    // Fragment-indexing header values.
     uint32_t min_seq_length()   const { return min_seq_length_; }
     uint32_t min_length_split() const { return min_length_split_; }
     uint32_t overlap_length()   const { return overlap_length_; }

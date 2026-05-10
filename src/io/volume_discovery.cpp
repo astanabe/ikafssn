@@ -118,18 +118,6 @@ static std::set<KvxScanResult> scan_k_values_ext(const std::string& parent_dir,
     return results;
 }
 
-// Backward-compatible scan returning only k values (contiguous indexes only).
-static std::set<int> scan_k_values(const std::string& parent_dir,
-                                    const std::string& db) {
-    std::set<int> k_values;
-    for (const auto& r : scan_k_values_ext(parent_dir, db)) {
-        if (r.t == 0) {
-            k_values.insert(r.k);
-        }
-    }
-    return k_values;
-}
-
 std::vector<DiscoveredVolume> discover_volumes(
     const std::string& ix_prefix, int filter_k,
     uint8_t filter_t, uint8_t filter_template_type) {
@@ -157,12 +145,6 @@ std::vector<DiscoveredVolume> discover_volumes(
                   return a.volume_index < b.volume_index;
               });
     return volumes;
-}
-
-std::vector<int> discover_k_values(const std::string& ix_prefix) {
-    auto parts = parse_index_prefix(ix_prefix);
-    auto k_set = scan_k_values(parts.parent_dir, parts.db);
-    return std::vector<int>(k_set.begin(), k_set.end());
 }
 
 } // namespace ikafssn

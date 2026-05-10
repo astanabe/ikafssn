@@ -82,24 +82,21 @@ bool build_index(BlastDbReader& db,
         kpx_final = output_prefix + ".kpx";
     }
 
-    // =========== Phase 0: Metadata collection -> .ksx ===========
-    // BLAST DB OIDs whose sequence is shorter than min_seq_length are
-    // skipped silently.  The surviving OIDs become parents in the .ksx.
-    //
-    // When fragment splitting is disabled (min_length_split == 0), each
-    // parent emits one degenerate fragment spanning the whole parent.
-    // When splitting is enabled, the parent's ambiguity table is parsed
-    // here (once per OID) and fed to fragment_splitter::split() to derive
-    // overlapping fragments at min_length_split / overlap_length.  N runs
-    // (ncbi4na == 0xF) cut the parent into "valid segments" so fragments
-    // never straddle long ambiguous regions.
+    // Metadata pass: write .ksx (parents + fragments).
+    // BLAST DB OIDs shorter than min_seq_length are skipped. Surviving
+    // OIDs become parents. When splitting is disabled, each parent emits
+    // one fragment spanning the whole parent; otherwise the parent's
+    // ambiguity table is parsed and fragment_splitter::split() derives
+    // overlapping fragments at min_length_split / overlap_length, with
+    // N runs (ncbi4na == 0xF) cutting the parent into valid segments so
+    // fragments never straddle long ambiguous regions.
     //
     // The per-fragment mapping (parent OID + parent-relative range) is
     // captured in seq_id_to_blast_oid / seq_id_to_frag_start /
-    // seq_id_to_frag_end and consulted by the per-SeqId scan loops in
-    // Phases 1 / 2 / 3 to slice the parent's k-mer stream and rebase
-    // positions to fragment-relative coordinates.
-    logger.info("Phase 0: collecting metadata%s...",
+    // seq_id_to_frag_end and consulted by the later per-SeqId scan loops
+    // to slice the parent's k-mer stream and rebase positions to
+    // fragment-relative coordinates.
+    logger.info("Collecting metadata%s...",
                 splitting_enabled ? " and splitting parents into fragments" : "");
     std::vector<uint32_t> seq_id_to_blast_oid;
     std::vector<uint32_t> seq_id_to_frag_start;  // 1-based, inclusive (parent-relative)
@@ -113,7 +110,7 @@ bool build_index(BlastDbReader& db,
         ksx.set_min_length_split(config.min_length_split);
         ksx.set_overlap_length(config.overlap_length);
 
-        Progress prog("Phase 0", blast_num_seqs, config.verbose);
+        Progress prog("Metadata", blast_num_seqs, config.verbose);
         uint32_t skipped = 0;
         uint64_t total_fragments = 0;
         for (uint32_t blast_oid = 0; blast_oid < blast_num_seqs; blast_oid++) {
@@ -169,7 +166,7 @@ bool build_index(BlastDbReader& db,
             logger.error("Failed to write %s", ksx_tmp.c_str());
             return false;
         }
-        logger.info("Phase 0: wrote %s (%u parents -> %u fragments, "
+        logger.info("Wrote %s (%u parents -> %u fragments, "
                     "%u skipped < min_seq_length=%u)",
                     ksx_tmp.c_str(), ksx.num_parents(), ksx.num_sequences(),
                     skipped, config.min_seq_length);
@@ -180,7 +177,7 @@ bool build_index(BlastDbReader& db,
     // collapses to one fragment per surviving OID.
     const uint32_t num_seqs = static_cast<uint32_t>(seq_id_to_blast_oid.size());
 
-    // Pre-compute spaced seed masks (shared across all phases).
+    // Pre-compute spaced seed masks (shared across all passes).
     std::vector<uint32_t> seed_masks;
     if (config.t > 0) {
         seed_masks = get_seed_masks(k, config.t,
@@ -190,8 +187,8 @@ bool build_index(BlastDbReader& db,
     const uint32_t tbl_size = table_size(k);
     const int effective_bits = 2 * k;
 
-    // =========== Phase 1: Counting pass (TBB parallel) ===========
-    logger.info("Phase 1: counting k-mers (threads=%d)...", config.threads);
+    // Counting pass (TBB parallel).
+    logger.info("Counting k-mers (threads=%d)...", config.threads);
     std::vector<uint64_t> counts64(tbl_size, 0);
     {
         // Always use parallel path; TBB respects global_control parallelism
@@ -207,8 +204,8 @@ bool build_index(BlastDbReader& db,
                 // Cache the most-recently-loaded parent inside this TBB
                 // task so consecutive fragments belonging to the same
                 // parent reuse the parsed ambiguity table.  Fragments
-                // were emitted in parent registration order during
-                // Phase 0, so adjacency is the common case.
+                // are emitted in parent registration order during the
+                // metadata pass, so adjacency is the common case.
                 uint32_t cached_oid = UINT32_MAX;
                 BlastDbReader::RawSequence cached_raw{};
                 std::vector<AmbiguityEntry> cached_ambig;
@@ -233,7 +230,7 @@ bool build_index(BlastDbReader& db,
                     // this fragment has its leftmost base in
                     // [frag_start - 1, frag_end - k] (0-based, inclusive).
                     // Counting only needs the in-range condition;
-                    // positions are not stored in this phase.
+                    // positions are not stored in this pass.
                     const uint32_t fs = seq_id_to_frag_start[seq_id];
                     const uint32_t fe = seq_id_to_frag_end[seq_id];
                     const uint32_t pos_lo = fs - 1u;
@@ -328,13 +325,12 @@ bool build_index(BlastDbReader& db,
     counts64.clear();
     counts64.shrink_to_fit();
 
-    logger.info("Phase 1: total k-mer occurrences = %lu",
+    logger.info("Total k-mer occurrences = %lu",
                 static_cast<unsigned long>(total_occurrences));
 
-    // =========== Determine partition count from memory_limit ===========
-    // Per-entry overhead depends on the active sort path: the SIMD path needs
-    // a parallel uint64_t key + uint32_t val array on top of the TempEntry
-    // buffer (Strategy E in parallel_sort_dispatch.cpp).
+    // Determine partition count from memory_limit.  Per-entry overhead
+    // depends on the active sort path: the SIMD path needs a parallel
+    // uint64_t key + uint32_t val array on top of the TempEntry buffer.
     int num_partitions = 1;
     if (total_occurrences > 0) {
         uint64_t entries_limit = config.memory_limit / parallel_sort_entry_overhead();
@@ -346,11 +342,11 @@ bool build_index(BlastDbReader& db,
     const int partition_bits = log2_ceil(num_partitions);
 
     if (config.memory_limit >= (uint64_t(1) << 30))
-        logger.info("Phase 2-3: writing postings (partitions=%d, memory_limit=%luG)...",
+        logger.info("Writing postings (partitions=%d, memory_limit=%luG)...",
                     num_partitions,
                     static_cast<unsigned long>(config.memory_limit >> 30));
     else
-        logger.info("Phase 2-3: writing postings (partitions=%d, memory_limit=%luM)...",
+        logger.info("Writing postings (partitions=%d, memory_limit=%luM)...",
                     num_partitions,
                     static_cast<unsigned long>(config.memory_limit >> 20));
 
@@ -421,7 +417,7 @@ bool build_index(BlastDbReader& db,
         uint32_t position_count = 0;
     };
 
-    // Track v7 totals for the .kix and .kpx headers separately:
+    // Header totals tracked separately for .kix and .kpx:
     //   total_distinct_postings — sum of distinct seq_ids across all k-mers (.kix)
     //   total_position_count    — sum of intra-sequence position counts (.kpx)
     uint64_t total_distinct_postings = 0;
@@ -441,9 +437,9 @@ bool build_index(BlastDbReader& db,
             [&](const tbb::blocked_range<uint32_t>& range) {
                 auto& my_buffer = local_buffers.local();
                 PackedKmerScanner<KmerInt> scanner(k);
-                // Cache the most-recently-loaded parent (see comment in
-                // Phase 1).  Same rationale: consecutive seq_ids tend to
-                // share a parent.
+                // Cache the most-recently-loaded parent (same rationale
+                // as the counting pass: consecutive seq_ids tend to
+                // share a parent).
                 uint32_t cached_oid = UINT32_MAX;
                 BlastDbReader::RawSequence cached_raw{};
                 std::vector<AmbiguityEntry> cached_ambig;
@@ -462,12 +458,12 @@ bool build_index(BlastDbReader& db,
                             cached_raw.ambig_data, cached_raw.ambig_bytes);
                         cached_oid = blast_oid;
                     }
-                    // Fragment-relative position arithmetic — see Phase 1
-                    // comment.  shift converts the scanner's parent-relative
-                    // (kmer_start) pos to a fragment-relative pos that the
-                    // .kpx layout stores.  P1 confirmed: positions persisted
-                    // under each fragment SeqId are fragment-relative
-                    // (0-based, leftmost base of the k-mer window).
+                    // Fragment-relative position arithmetic.  shift
+                    // converts the scanner's parent-relative (kmer_start)
+                    // pos to a fragment-relative pos that the .kpx layout
+                    // stores: positions persisted under each fragment
+                    // SeqId are fragment-relative (0-based, leftmost base
+                    // of the k-mer window).
                     const uint32_t fs = seq_id_to_frag_start[seq_id];
                     const uint32_t fe = seq_id_to_frag_end[seq_id];
                     const uint32_t pos_lo = fs - 1u;
@@ -707,7 +703,7 @@ bool build_index(BlastDbReader& db,
     // Forward-fill kix_offsets: empty k-mers get the same offset as the next
     // non-empty k-mer (or the sentinel). This ensures offsets[i+1]-offsets[i]==0
     // for empty k-mers and keeps the array monotonically non-decreasing so
-    // it can be Elias-Fano encoded (Phase 7a).
+    // it can be Elias-Fano encoded.
     {
         uint64_t fill = kix_data_pos; // sentinel value for trailing empties
         for (int32_t i = static_cast<int32_t>(tbl_size) - 1; i >= 0; i--) {
@@ -719,11 +715,8 @@ bool build_index(BlastDbReader& db,
         }
     }
 
-    // Phase 7e: same treatment for kpx_offsets — needed so the EF
-    // encoder sees a monotonically non-decreasing input (the v8 raw
-    // u32/u64 dictionary tolerated the leading zeros because pos_offset
-    // was only ever queried after kix_len > 0 gating, but EF encoding
-    // requires monotonic input).
+    // Same forward-fill for kpx_offsets — the EF encoder requires a
+    // monotonically non-decreasing input.
     if (!config.skip_kpx) {
         uint64_t fill = kpx_data_pos;
         for (int32_t i = static_cast<int32_t>(tbl_size) - 1; i >= 0; i--) {
@@ -735,18 +728,14 @@ bool build_index(BlastDbReader& db,
         }
     }
 
-    // =========== Phase 4: Finalize ===========
-    logger.info("Phase 4: finalizing (distinct_postings=%lu, position_count=%lu)...",
+    // Finalize: rewrite .kix / .kpx with the Elias-Fano dictionary in
+    // place of the raw u64 offset placeholders.
+    logger.info("Finalizing (distinct_postings=%lu, position_count=%lu)...",
                 static_cast<unsigned long>(total_distinct_postings),
                 static_cast<unsigned long>(total_position_count));
 
     // Set sentinel offset
     kix_offsets[tbl_size] = kix_data_pos;
-
-    // Phase 7a/7e: both .kix and .kpx use Elias-Fano; the offset-width
-    // selection branch is gone.  Files are still rewritten at finalize
-    // because the in-progress placeholders use raw u64 offsets and need
-    // to be replaced with the EF blob.
 
     // Close the in-progress kix/kpx files; we'll rewrite them below
     // with the EF dictionary.  Both must be flushed before we reopen
@@ -775,7 +764,7 @@ bool build_index(BlastDbReader& db,
         kix_hdr.kmer_type = kmer_type_for(k, config.t);
         kix_hdr.num_sequences = num_seqs;
         kix_hdr.total_distinct_postings = total_distinct_postings;
-        // Phase 7a: KIX_FLAG_OFFSET32 reserved (Elias-Fano dictionary follows).
+        // KIX_FLAG_OFFSET32 reserved; Elias-Fano dictionary follows.
         kix_hdr.flags = KIX_FLAG_HAS_KSX;
         kix_hdr.volume_index = volume_index;
         kix_hdr.total_volumes = total_volumes;
@@ -784,8 +773,7 @@ bool build_index(BlastDbReader& db,
         std::memcpy(kix_hdr.db, db_name.c_str(), name_len);
         kix_hdr.t = config.t;
         kix_hdr.template_type = config.template_type;
-        // Reserved codec-extension area (zero in v5; codec follows
-        // format_version since Phase 5g-1).
+        // Reserved codec-extension area (codec follows format_version).
         kix_hdr.codec_id              = 0;
         kix_hdr.codec_version         = 0;
         kix_hdr.block_size            = 0;
@@ -830,10 +818,10 @@ bool build_index(BlastDbReader& db,
         kpx_hdr.t = config.t;
         kpx_hdr.template_type = config.template_type;
         kpx_hdr.total_position_count = total_position_count;
-        // Phase 7e: pos_offsets is Elias-Fano; offset_type takes the EF
-        // sentinel byte (0xFF) and is no longer consulted at read time.
+        // pos_offsets is Elias-Fano; offset_type carries the EF
+        // sentinel byte (0xFF) and is not consulted at read time.
         kpx_hdr.offset_type = 0xFF;
-        // Reserved codec-extension area (zero in v5).
+        // Reserved codec-extension area.
         kpx_hdr.codec_id      = 0;
         kpx_hdr.codec_version = 0;
         kpx_hdr.block_size    = 0;

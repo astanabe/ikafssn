@@ -178,11 +178,11 @@ bool validate_volume(const std::string& kix_path,
         return true;
     }
 
-    // Phase 7d: parallel per-k-mer validation via TBB.  Each k-mer's
-    // walk is independent; per-thread accumulators feed into a final
-    // reduction.  The first error encountered is reported and the
-    // pass returns false.  At nt scale (k=12, D=16M) this drops the
-    // wall time from minutes per volume to seconds.
+    // Parallel per-k-mer validation via TBB.  Each k-mer's walk is
+    // independent; per-thread accumulators feed into a final reduction.
+    // The first error encountered is reported and the pass returns
+    // false.  At nt scale (k=12, D=16M) this drops the wall time from
+    // minutes per volume to seconds.
     std::atomic<bool>     ok{true};
     std::atomic<uint32_t> first_bad_kmer{UINT32_MAX};
     tbb::combinable<std::uint64_t> local_pos{[]{ return std::uint64_t{0}; }};
@@ -253,10 +253,8 @@ bool validate_volume(const std::string& kix_path,
             "validate_volume: header total_position_count=%lu != recomputed %lu",
             static_cast<unsigned long>(kpx.total_position_count()),
             static_cast<unsigned long>(total_position_count));
-        // Soft fail — the header field is informational and v9
-        // filtered builds intentionally report 0 (FIXME path).  Don't
-        // return false here so the validator's structural check still
-        // succeeds.
+        // Soft fail — the header field is informational; don't return
+        // false here so the validator's structural check still succeeds.
     }
 
     return true;
@@ -308,9 +306,7 @@ static bool write_filtered_kix(
     }
     new_kix_offsets[tbl_size] = kix_data_pos;
 
-    // Write header.  Phase 7a: dictionary is Elias-Fano; the legacy
-    // KIX_FLAG_OFFSET32 bit is forced to 0 (preserved as reserved on
-    // the header for byte-stability per Phase 7 design decision #6).
+    // KIX_FLAG_OFFSET32 is reserved and forced to 0.
     KixHeader kix_hdr{};
     std::memcpy(kix_hdr.magic, KIX_MAGIC, sizeof(KIX_MAGIC));
     kix_hdr.format_version = KIX_FORMAT_VERSION;
@@ -333,7 +329,7 @@ static bool write_filtered_kix(
     kix_hdr.tail_codec            = 0;
     kix_hdr.exception_codec_flags = 0;
 
-    // Carry over the v10 fragment-indexing triplet from the input header.
+    // Carry over the fragment-indexing triplet from the input header.
     kix_hdr.min_seq_length   = kix_in.header().min_seq_length;
     kix_hdr.min_length_split = kix_in.header().min_length_split;
     kix_hdr.overlap_length   = kix_in.header().overlap_length;
@@ -347,7 +343,6 @@ static bool write_filtered_kix(
         return false;
     }
 
-    // Write posting file
     if (!posting_buf.empty()) {
         std::fwrite(posting_buf.data(), 1, posting_buf.size(), kix_fp);
     }
@@ -379,10 +374,10 @@ static bool write_filtered_kpx(
     std::vector<uint8_t> posting_buf;
     uint64_t kpx_data_pos = 0;
 
-    // Phase 7e: the offsets array is Elias-Fano encoded and must be
-    // monotonically non-decreasing.  Empty / excluded k-mers therefore
-    // get the same offset as the next non-empty non-excluded k-mer
-    // (forward-fill) rather than retaining the zero-init value.
+    // The offsets array is Elias-Fano encoded and must be monotonically
+    // non-decreasing.  Empty / excluded k-mers therefore get the same
+    // offset as the next non-empty non-excluded k-mer (forward-fill)
+    // rather than retaining the zero-init value.
     for (uint32_t i = 0; i < tbl_size; i++) {
         new_kpx_offsets[i] = kpx_data_pos;
         if (kix_sizes[i] > 0 && !excluded[i]) {
@@ -393,8 +388,8 @@ static bool write_filtered_kpx(
         }
     }
 
-    // Write header.  Phase 7e: pos_offsets dictionary is Elias-Fano;
-    // offset_type takes the EF sentinel byte (0xFF).
+    // pos_offsets dictionary is Elias-Fano; offset_type takes the EF
+    // sentinel byte (0xFF).
     KpxHeader kpx_hdr{};
     std::memcpy(kpx_hdr.magic, KPX_MAGIC, sizeof(KPX_MAGIC));
     kpx_hdr.format_version = KPX_FORMAT_VERSION;
@@ -404,13 +399,13 @@ static bool write_filtered_kpx(
     kpx_hdr.total_position_count = new_total_position_count;
     kpx_hdr.offset_type = 0xFF;  // EF sentinel
 
-    // Reserved codec-extension area (zero in v5).
+    // Reserved codec-extension area.
     kpx_hdr.codec_id      = 0;
     kpx_hdr.codec_version = 0;
     kpx_hdr.block_size    = 0;
     kpx_hdr.tail_codec    = 0;
 
-    // Carry over the v10 fragment-indexing triplet from the input header.
+    // Carry over the fragment-indexing triplet from the input header.
     kpx_hdr.min_seq_length   = kpx_in.header().min_seq_length;
     kpx_hdr.min_length_split = kpx_in.header().min_length_split;
     kpx_hdr.overlap_length   = kpx_in.header().overlap_length;
@@ -424,7 +419,6 @@ static bool write_filtered_kpx(
         return false;
     }
 
-    // Write posting file
     if (!posting_buf.empty()) {
         std::fwrite(posting_buf.data(), 1, posting_buf.size(), kpx_fp);
     }
@@ -500,12 +494,10 @@ static bool filter_one_volume(
         }
     }
 
-    // Phase 7d: walk each non-excluded k-mer's .kpx posting list using
-    // the same logic the validator employs (anonymous-namespace
-    // walk_kpx_posting above).  This finally gets the filtered .kpx
-    // header's total_position_count right — the v8 path read
-    // partition_count and silently mis-reported, and the 7c shim was
-    // a stop-gap zero.
+    // Walk each non-excluded k-mer's .kpx posting list using the same
+    // logic the validator employs (walk_kpx_posting in the anonymous
+    // namespace above) to populate the filtered .kpx header's
+    // total_position_count.
     uint64_t new_total_position_count = 0;
     if (has_kpx_tmp) {
         const uint8_t* kpx_posting_in = kpx_in.posting_file();

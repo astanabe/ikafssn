@@ -8,15 +8,13 @@
 
 namespace ikafssn {
 
-// ============================================================================
 // Accumulator-based spaced seed extraction utilities.
 //
-// These enable O(1) per-position k-mer extraction from a sliding accumulator,
-// replacing the O(t) per-position rebuild in the original scan_spaced().
-// Uses C++20 NTTP (non-type template parameter) for compile-time specialization:
-// at -O3 the extraction loop is fully unrolled with immediate constants,
-// producing assembly equivalent to hand-coded per-template functions (BLAST+ style).
-// ============================================================================
+// These enable O(1) per-position k-mer extraction from a sliding
+// accumulator. Uses C++20 NTTP (non-type template parameter) for
+// compile-time specialization: at -O3 the extraction loop is fully
+// unrolled with immediate constants, producing assembly equivalent to
+// hand-coded per-template functions (BLAST+ style).
 
 inline constexpr int MAX_SPACED_T = 21;         // maximum template length
 inline constexpr int MAX_EXTRACTION_RUNS = 8;    // max contiguous-1-bit runs across all 24 masks
@@ -86,13 +84,12 @@ struct SpacedSeedConfig {
     TemplateType type = TemplateType::kBoth;
 };
 
-// ============================================================================
 // Discontiguous megablast template masks.
 //
-// Each mask is a uint32_t bitmask where bit j (counting from bit 0 = rightmost)
-// corresponds to position (t-1-j) in the window. A set bit means the base at
-// that position contributes to the k-mer value. The number of set bits = k.
-// ============================================================================
+// Each mask is a uint32_t bitmask where bit j (bit 0 = rightmost)
+// corresponds to position (t-1-j) in the window.  A set bit means the
+// base at that position contributes to the k-mer value.  The number
+// of set bits = k.
 
 // Count set bits in a mask (constexpr popcount).
 inline constexpr int popcount32(uint32_t v) {
@@ -133,9 +130,7 @@ inline constexpr uint32_t MASK_K12_T18_OPTIMAL = 0x3ACB7;  // 111010110010110111
 inline constexpr uint32_t MASK_K12_T21_CODING  = 0x12DB2D; // 100101101101100101101
 inline constexpr uint32_t MASK_K12_T21_OPTIMAL = 0x1D2C97; // 111010010110010010111
 
-// ============================================================================
 // Pre-computed constexpr extractors for all 24 template masks.
-// ============================================================================
 
 // K=8 extractors
 inline constexpr SpacedSeedExtractor EXT_K8_T13_COD  = compute_spaced_seed_extractor(MASK_K8_T13_CODING, 13, 8);
@@ -169,11 +164,8 @@ inline constexpr SpacedSeedExtractor EXT_K12_T18_OPT = compute_spaced_seed_extra
 inline constexpr SpacedSeedExtractor EXT_K12_T21_COD = compute_spaced_seed_extractor(MASK_K12_T21_CODING, 21, 12);
 inline constexpr SpacedSeedExtractor EXT_K12_T21_OPT = compute_spaced_seed_extractor(MASK_K12_T21_OPTIMAL, 21, 12);
 
-// ============================================================================
 // NTTP extraction function: compile-time specialized per extractor.
 // At -O3 the loop is fully unrolled with all shifts/masks as immediates.
-// ============================================================================
-
 template <SpacedSeedExtractor Ext, typename KmerInt>
 inline KmerInt extract_kmer_ct(uint64_t accum) {
     KmerInt kmer = 0;
@@ -199,11 +191,9 @@ inline KmerInt extract_spaced_kmer(uint64_t accum, const SpacedSeedExtractor& ex
     return kmer;
 }
 
-// ============================================================================
-// Switch dispatch: selects the NTTP-specialized extraction for a known mask.
-// Branch predictor handles this at ~0 cost since mask is constant per scan.
-// ============================================================================
-
+// Switch dispatch: selects the NTTP-specialized extraction for a known
+// mask.  The branch predictor handles this at ~0 cost since the mask
+// is constant per scan.
 template <typename KmerInt>
 inline KmerInt extract_for_mask(uint64_t accum, uint32_t mask) {
     switch (mask) {

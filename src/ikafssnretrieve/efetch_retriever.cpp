@@ -352,7 +352,7 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                     reverse_complement(subseq);
                 }
 
-                // v10 (Phase 4) defline: kafsss-style `parent_acc:start-end`
+                // defline: kafsss-style `parent_acc:start-end`
                 // where coordinates are 1-based inclusive (consistent with
                 // BLAST's seq_start/seq_stop semantics that this code path
                 // already speaks below).  ext_start / ext_end here are
@@ -410,7 +410,7 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                 reverse_complement(subseq);
             }
 
-            // v10 (Phase 4) defline: same `parent_acc:start-end` form as the
+            // defline: same `parent_acc:start-end` form as the
             // batch path above, using the 1-based (seq_start, seq_stop) we
             // already passed to efetch.
             std::ostringstream header;

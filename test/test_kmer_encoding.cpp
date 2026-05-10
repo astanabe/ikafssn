@@ -237,7 +237,7 @@ static void test_contains_degenerate_base() {
     CHECK(contains_degenerate_base("N"));
     CHECK(contains_degenerate_base("R"));
 
-    // Phase 4a: SIMD chunk-boundary and randomized cases.
+    // SIMD chunk-boundary and randomized cases.
     // (1) Long pure ACGT runs the chunk loop to completion (no hits).
     {
         std::string s(1024, 'A');
@@ -586,7 +586,7 @@ static void test_expand_ambig_kmer_shared() {
     CHECK_EQ(results[1], uint16_t(0x6B));
 }
 
-// Phase 3b: kmer_revcomp_batch must be bit-exact with the scalar
+// kmer_revcomp_batch must be bit-exact with the scalar
 // kmer_revcomp() reference for every supported (k, n) pair.
 template <typename KmerInt>
 static void check_revcomp_batch_for_k(int k, std::mt19937& rng) {
@@ -616,7 +616,7 @@ static void test_revcomp_batch_bit_exact() {
     for (int k : {4, 5, 6, 7, 8}) {
         check_revcomp_batch_for_k<uint16_t>(k, rng);
     }
-    // uint32_t covers k = 9..15 (Phase 7-post: MAX_K = 15).
+    // uint32_t covers k = 9..MAX_K (15).
     for (int k : {9, 10, 11, 12, 13, 14, 15}) {
         check_revcomp_batch_for_k<uint32_t>(k, rng);
     }

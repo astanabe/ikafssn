@@ -1,4 +1,4 @@
-# Cross-compile toolchain file for AArch64 Linux (Phase 5h-prelim).
+# Cross-compile toolchain file for AArch64 Linux.
 #
 # Usage on an x86_64 host with the standard Debian/Ubuntu cross packages
 # installed (`sudo apt install g++-aarch64-linux-gnu qemu-user-static

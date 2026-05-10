@@ -157,16 +157,16 @@ static void test_requeue_orphans() {
     }
 }
 
-// Verifies check_schema() rejects a database that still carries either
-// legacy column (result_blob from <v2 or request_blob from v2).
-// Synthesises one with raw sqlite3 calls (we cannot use JobStore::open
-// since that's exactly what we're testing).
-static void test_legacy_schema_rejected_result_blob() {
-    auto dir = fs::temp_directory_path() / "ikafssn_job_store_legacy_v1";
+// Verifies check_schema() rejects a database that carries a row-level
+// result_blob or request_blob column (incompatible schema).  Synthesises
+// one with raw sqlite3 calls because JobStore::open is exactly what
+// we're testing.
+static void test_incompatible_schema_rejected_result_blob() {
+    auto dir = fs::temp_directory_path() / "ikafssn_job_store_incompat_v1";
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
-    std::string path = (dir / "legacy.db").string();
+    std::string path = (dir / "incompat.db").string();
 
     sqlite3* h = nullptr;
     int rc = sqlite3_open_v2(path.c_str(), &h,
@@ -192,12 +192,12 @@ static void test_legacy_schema_rejected_result_blob() {
     CHECK(err.find("incompatible schema") != std::string::npos);
 }
 
-static void test_legacy_schema_rejected_request_blob() {
-    auto dir = fs::temp_directory_path() / "ikafssn_job_store_legacy_v2";
+static void test_incompatible_schema_rejected_request_blob() {
+    auto dir = fs::temp_directory_path() / "ikafssn_job_store_incompat_v2";
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
-    std::string path = (dir / "legacy.db").string();
+    std::string path = (dir / "incompat.db").string();
 
     sqlite3* h = nullptr;
     int rc = sqlite3_open_v2(path.c_str(), &h,
@@ -214,9 +214,8 @@ static void test_legacy_schema_rejected_request_blob() {
         ");",
         nullptr, nullptr, &eptr);
     if (eptr) sqlite3_free(eptr);
-    // user_version=2 corresponds to the previous (request_blob in row)
-    // schema; with user_version=2 + has_request_blob the new code must
-    // still reject it.
+    // user_version=2 + has_request_blob is an incompatible schema and
+    // must be rejected.
     sqlite3_exec(h, "PRAGMA user_version=2;", nullptr, nullptr, nullptr);
     sqlite3_close(h);
 
@@ -233,8 +232,8 @@ int main() {
     test_requeue_retry();
     test_delete_expired();
     test_requeue_orphans();
-    test_legacy_schema_rejected_result_blob();
-    test_legacy_schema_rejected_request_blob();
+    test_incompatible_schema_rejected_result_blob();
+    test_incompatible_schema_rejected_request_blob();
     TEST_SUMMARY();
     return g_fail_count == 0 ? 0 : 1;
 }

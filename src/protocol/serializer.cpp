@@ -359,12 +359,10 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format (v10 — adds the per-database fragment-indexing triplet
-// {min_seq_length, min_length_split, overlap_length} after the existing
-// per-database fields).  Older clients deserialising a v10 frame will
-// stop at the wrong byte boundary; callers must rebuild client/server
-// together when the format_version triplet at the top of `core/config.hpp`
-// changes.
+// Wire format.  Each per-database section carries the fragment-indexing
+// triplet {min_seq_length, min_length_split, overlap_length}.  Client
+// and server must agree on the format_version triplet at the top of
+// `core/config.hpp`; callers must rebuild together when it changes.
 //   u8   status
 //   u8   default_k
 //   i32  max_queue_size
@@ -375,9 +373,9 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 //     str16 name
 //     u8    default_k
 //     u8    max_mode
-//     u32   min_seq_length     (v10)
-//     u32   min_length_split   (v10)
-//     u32   overlap_length     (v10)
+//     u32   min_seq_length
+//     u32   min_length_split
+//     u32   overlap_length
 //     u16   num_groups
 //     for each group:
 //       u8  k

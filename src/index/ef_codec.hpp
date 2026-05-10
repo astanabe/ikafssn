@@ -1,15 +1,13 @@
 #pragma once
 
-// Phase 7a — Elias-Fano dictionary codec, public API.
+// Elias-Fano dictionary codec, public API.
 //
 // The encoder writes the on-disk EF blob described in ef_format.hpp.
 // EFDictionary opens an mmap'd blob and provides O(1)-amortised
 // random access via select1 + low-bits read.
 //
-// Phase 7a ships only the scalar reference body in ef_codec_tier.cpp
-// (no SIMD dispatch).  Phase 7b adds per-ISA tier objects following
-// the FastPFor / dedup ladder pattern (sse42 / avx2 / avx512bw /
-// avx512vbmi2 + neon).
+// The body lives in ef_codec_tier.cpp, compiled per ISA tier
+// (sse42 / avx2 / avx512bw / avx512vbmi2 on x86_64; neon on aarch64).
 
 #include "index/ef_format.hpp"
 
@@ -72,9 +70,8 @@ public:
     std::uint64_t access(std::uint32_t i) const noexcept;
 
     // Convenience for ``access(i)`` and ``access(i+1)`` together.  The
-    // common pattern in KixReader::posting_byte_length is one such
-    // pair.  A SIMD-aware tier (Phase 7b) may fuse the two select1
-    // calls; for the scalar PoC this is just two access() calls.
+    // common pattern in KixReader::posting_byte_length is one such pair.
+    // SIMD-aware tiers may fuse the two select1 calls into one.
     void access_pair(std::uint32_t i,
                      std::uint64_t& start,
                      std::uint64_t& end) const noexcept;
@@ -97,9 +94,9 @@ private:
     std::uint32_t select_count_ = 0;
 };
 
-// Name of the active EF codec tier ("scalar" in 7a; "sse42" / "avx2"
-// / ... once 7b lands).  First call resolves the tier; subsequent
-// calls are cached.  Useful for diagnostic logging.
+// Name of the active EF codec tier ("sse42" / "avx2" / "avx512bw" /
+// "avx512vbmi2" on x86_64; "neon" on aarch64).  First call resolves
+// the tier; subsequent calls are cached.  Useful for diagnostic logging.
 const char* active_tier_name();
 
 } // namespace ikafssn::ef

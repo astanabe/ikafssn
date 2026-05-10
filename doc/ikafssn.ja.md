@@ -604,8 +604,6 @@ ikafssnhttpd [options]
 
 `POST /api/v1/jobs` はリクエストボディを検証した後、まず `<query_dir>/<ab>/<job_id>.json.zst` (ここで `<ab>` は `job_id` 先頭 2 文字。シャーディングによりディレクトリエントリ数を抑える) に zstd ファイルとして書き出し、その後 SQLite 行を INSERT します。`Content-Type: application/zstd` でアップロードされたボディはクライアントが選んだ圧縮レベルを保ったまま検証後そのまま保存され (再圧縮は行いません)、`Content-Type: application/json` のプレーンテキスト JSON は `-query_compression_level` で圧縮してから保存します。その後ワーカープールがバックエンドへ非同期にディスパッチします。ジョブが正常終了するとワーカーはシリアライズ済み `SearchResponse` を `<result_dir>/<ab>/<job_id>.bin.zst` に書き出し、SQLite 行のステータスを `done` に更新します。`GET /api/v1/jobs/{job_id}/result` はそのファイルを `sendfile(2)` でゼロコピー送出 (`Content-Type: application/zstd`) するため、`ikafssnhttpd` は結果データをメモリに載せません。同じタイミングで対応するクエリファイルも削除されるため、`-query_dir` 配下に残るのは queued / running 中のジョブのみとなり、滞留が `jobs.db` の容量へ波及しません (新スキーマで `jobs.db` はメタデータのみ)。クライアントは `GET /api/v1/jobs/{job_id}` を `done` になるまでポーリングし、結果を取得します。完了 (成功・失敗) ジョブは `-retention_time` 秒間保持され、ハウスキーパが期限切れ行を SQLite から削除した後、対応する結果ファイルおよび残存クエリファイル (保険) を順に削除します。起動時には強制終了で書きかけ状態だった `*.bin.zst.tmp` および `*.json.zst.tmp` を一括スイープし、また定期的なオーファンスイープで SQLite 行が消えた残存結果ファイル・クエリファイル (まれ: `mark_done` 失敗後、または `mark_done` とクエリ unlink の間でのワーカークラッシュ後のみ発生) も回収します。
 
-> **破壊的変更 (v0.1.2026.05.06):** `jobs.db` のスキーマは `user_version=2` → `user_version=3` に更新されました。リクエストボディは行内 `request_blob` 列ではなく `-query_dir` のファイルへ移動しました。旧 `jobs.db` は起動時に明示エラーで拒否されますので、アップグレード前に `jobs.db` を削除し、`-query_dir` を事前に配置していた場合はその中身も空にしてから再起動してください。
-
 **使用例:**
 
 ```bash
@@ -981,7 +979,7 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
 
 **CIGAR `=`/`X` 判定:** 拡張 CIGAR オペレータ `=` (sequence match) と `X` (sequence mismatch) は、厳密な塩基一致ではなくアライメントスコアに基づいて判定されます。スコア行列で正のスコア (score > 0) が付与される位置は `=`、0 以下のスコアが付与される位置は `X` として報告されます。つまり、DEGMATCH 行列では N-A のような縮重塩基ペア (スコア 1) は match (`=`) としてカウントされますが、NUC44/DNAFULL では mismatch (`X`) としてカウントされます。
 
-**カラム名の変更:** 出力カラムの `pident` (配列一致率)、`nident` (一致塩基数)、`mismatch` (ミスマッチ数) は、それぞれ `ppositive` (正スコア率)、`npositive` (正スコア塩基数)、`nnegative` (負スコア数) にリネームされました。これは DEGMATCH 行列では、これらのカウントが厳密な一致位置ではなく正スコア位置を表すことを反映しています。対応するフィルタオプションも `-stage3_min_pident`/`-stage3_min_nident` から `-stage3_min_ppositive`/`-stage3_min_npositive` にリネームされています。
+**カラム名:** 出力カラムは `ppositive` (正スコア率)、`npositive` (正スコア塩基数)、`nnegative` (負スコア数) です。DEGMATCH 行列では、これらのカウントは厳密な一致位置ではなく正スコア位置を表します。対応するフィルタオプションは `-stage3_min_ppositive` / `-stage3_min_npositive` です。
 
 **DEGMATCH 行列 (16×16):**
 
@@ -1298,37 +1296,33 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 
 **マルチアクセッション defline:** 元の BLAST DB が `makeblastdb -parse_seqids` で構築され、`\x01` (`^A`) 区切りの multi-defline レコード（同一塩基配列を複数アクセッションで登録する NCBI 慣習）を含んでいる場合、`ikafssnindex` は OID ごとに**全てのアクセッション**を保持します。`.ksx` のアクセッション文字列は OID ごとに全アクセッションを `\x01` で連結した形で格納され、検索出力 (`sseqid` カラム / SAM RNAME / FASTA defline / プロトコルの `sseqid` フィールド) も同じ `\x01` 連結形のまま emit されます。受け取り側で `\x01` を区切りとして分割してください。`-seqidlist` フィルタと `ikafssnretrieve` は `\x01` 連結形・個別アクセッションのいずれを指定しても解決できます。
 
-**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`、`.kvx`) で **v10** (フラグメントインデキシング系列) です。主な変更点:
+**インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`、`.kvx`) で **v10** です。レイアウト概要:
 
-- **family 全体の v10 bump (フラグメントインデキシング Phase 1):** `.kix` / `.kpx` のマジックは `KIX10` / `KPX10` に拡張されました（従来はヘッダの `format_version` フィールドだけにバージョン番号があった）。4 種すべてのフォーマットヘッダに `{min_seq_length, min_length_split, overlap_length}` の 3 値が追加され、検索側がインデックスの構築意図と `-min_query_length` を相互チェックできるようになりました。
-- **`.ksx` 二段レイアウト:** 配列メタデータファイルは、まず各親 OID の `(parent_length, blast_oid, accession)` を記録し、続いてフラグメントテーブルが各内部 SeqId を `(parent_idx, fragment_start, fragment_end)` にマップします。`KsxReader::seq_length` / `accession` などの簡易アクセサは引き続き SeqId を取り、内部で対応する親に解決します。マジックは `KMSX` のまま。
-- **`.kix` / `.kpx` のコーデックは v9 から変更なし:** Elias-Fano 辞書、2-bit kind map、FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` ボディ。違いはヘッダ 3 値とマジックのみ。
-- **`.kvx` v10:** マニフェストテキストフォーマットは変更なし。`FORMAT_VERSION` 行が 10 に bump。
+- **`.kix` / `.kpx` マジック**は `KIX10` / `KPX10`。4 種すべてのフォーマットヘッダに `{min_seq_length, min_length_split, overlap_length}` の 3 値が含まれ、検索側がインデックスの構築意図と `-min_query_length` を相互チェックできるようになっています。
+- **`.ksx` 二段レイアウト:** まず各親 OID の `(parent_length, blast_oid, accession)` を親テーブルに記録し、続いてフラグメントテーブルが各内部 SeqId を `(parent_idx, fragment_start, fragment_end)` にマップします。`KsxReader::seq_length` / `accession` などの簡易アクセサは SeqId を受け取り、内部で対応する親に解決します。マジックは `KMSX`。
+- **`.kix` / `.kpx` ボディ:** Elias-Fano 辞書、2-bit kind map、FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` ボディ。
+- **`.kvx`:** マニフェストテキスト形式。`FORMAT_VERSION` 行は 10。
 
-フラグメント分割器は kafssstore の `split_long_sequence_positions` (DNA2 モード、ncbi4na==0xF カット、calcsegment2 公式) の C++ ポートです。`-min_length_split 0`（`-mode 2/3` 旧デフォルト）の場合は各親が単一フラグメントとして登録され、v10 レイアウトは新ヘッダフィールドが 0 の v9 相当の 1 行/OID モデルに退化します。
+フラグメント分割器は kafssstore の `split_long_sequence_positions` (DNA2 モード、ncbi4na==0xF カット、calcsegment2 公式) の C++ ポートです。`-min_length_split 0` の場合は各親が単一フラグメントとして登録され、ヘッダの分割関連フィールドは 0 になります。
 
-### マイグレーション (v9 → v10)
-
-ikafssn 0.1.2026.05.10 以降は v10 インデックスを要求します。v9 インデックスは open 時に以下のメッセージで拒否されます:
+`format_version` が一致しないインデックスは open 時に以下のようなメッセージで拒否されます:
 
 ```
 KixReader: index format version mismatch (got 9, expected 10). Please rebuild with the current ikafssnindex.
 ```
 
-(`.kpx` / `.ksx` / `.khx` / `.kvx` も同様)。**インデックスの再構築が必要です。** マイグレーションは BLAST DB から再インデックスしてください:
+(`.kpx` / `.ksx` / `.khx` / `.kvx` も同様)。現行の `ikafssnindex` で再構築してください:
 
 ```
 # デフォルト (mode 1 + フラグメント分割有効)
 ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir>
 
-# 明示的に分割を無効化 (v9 互換レイアウト + v10 ヘッダ)
+# 分割を無効化 (1 親あたり 1 フラグメント)
 ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir> \
     -min_length_split 0 -overlap_length 0
 ```
 
-NCBI nt 規模（~700 ボリューム、k=12 t=21）では 32 コアホストで数十時間程度の所要時間を想定してください。`-min_length_split` を非 0 にするとオーバーラップに比例してディスク上のサイズは増えますが、染色体級の親 OID が以前は 1 ボリューム全体に渡る巨大ポスティングリストになっていたものが、複数の有限長フラグメントに分割されるため Stage 2 のサブジェクト単位メモリ上限が抑えられます。
-
-v9 より前のインデックスは引き続き同じ「rebuild」エラーで拒否されます。アップグレード後に再構築してください。
+NCBI nt 規模（~700 ボリューム、k=12 t=21）では 32 コアホストで数十時間程度の所要時間を想定してください。`-min_length_split` を非 0 にするとオーバーラップに比例してディスク上のサイズは増えますが、染色体級の親 OID は複数の有限長フラグメントに分割されるため Stage 2 のサブジェクト単位メモリ上限が抑えられます。
 
 ## インストール
 

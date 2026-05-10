@@ -1,15 +1,12 @@
 #pragma once
 
-// Phase 6 + 7c — split codec for .kix and .kpx posting lists.
+// Split codec for .kix and .kpx posting lists.
 //
 //   .kix: FastPFor CompositeCodec<SIMDFastPFor<4>, VariableByte>
 //         (PForDelta + VByte tail) over the **distinct seq_id**
-//         delta stream — wire format unchanged from v8 except the
-//         redundant `[u32 body_words]` was removed (Phase 7c dedup B;
-//         body length is derivable from the EF dictionary's
-//         posting_byte_length).  Intra-sequence k-mer duplicates are
-//         removed by a SIMD dedup kernel (src/index/seq_id_dedup.*)
-//         at build time, so the input stream to the codec is
+//         delta stream.  Intra-sequence k-mer duplicates are removed
+//         by a SIMD dedup kernel (src/index/seq_id_dedup.*) at build
+//         time, so the input stream to the codec is
 //         [abs_first, d1, d2, ...] with d_i >= 1 strictly.
 //         Posting list layout on disk:
 //           [u32 distinct_count]         — distinct seq_ids in this k-mer
@@ -18,20 +15,18 @@
 //
 //   .kpx: per-(kmer, seq_id) partitioned position posting list whose
 //         **decoder is driven by the .kix distinct seq_id array**.
-//         Each distinct seq_id is classified into one of three
-//         kinds via a 2-bit kind map; the seq_id itself is not
-//         stored in the .kpx posting list (the .kix decoded array
-//         supplies the resolution between rank and seq_id).
+//         Each distinct seq_id is classified into one of three kinds
+//         via a 2-bit kind map; the seq_id itself is not stored in
+//         the .kpx posting list (the .kix decoded array supplies the
+//         resolution between rank and seq_id).
 //
 //             00 = short_occ1     — exactly 1 position
 //             01 = short_occ_ge2  — between 2 and freq_threshold_part
 //             10 = partition      — strictly more than freq_threshold_part
 //             11 = reserved
 //
-//         Posting list layout on disk (Phase 7c — top header dropped
-//         the redundant `[u32 distinct_count]`; the decoder takes
-//         distinct_count from the kix_count parameter, so the four
-//         remaining u32 fields make up a 16 B fixed header):
+//         Posting list layout on disk (16 B fixed header followed by
+//         the kind map and the per-kind streams):
 //           [u32 partition_count]
 //           [u32 short1_count]                    — # occ=1 clusters
 //           [u32 short2_count]                    — # occ>=2 clusters
@@ -46,18 +41,18 @@
 //
 //            Each FOR-block is 8 + 16*b bytes:
 //                [u32 min][u8 b][3 B pad][16*b bytes bitpacked (value-min)]
-//            Stream tail (proposal D):
+//            Stream tail:
 //                [u8 tail_count]
 //                if tail_count > 0:
 //                  [u32 tail_min][u8 tail_b][bitpacked body: ceil(tail_count*tail_b/8) B]
 //
-//            Decoding is candidate-set-driven and requires the
-//            **decoded .kix distinct seq_id array** as input: the
-//            decoder walks the kind map in lockstep with the .kix
-//            decoded array and the (sorted) candidate list, resolving
-//            each candidate's (kind, rank) pair which then indexes
-//            into the per-kind decoded position buffers (see
-//            open_stream_kpx_for_candidates and PosDecodeScratch).
+//            Decoding is candidate-set-driven and requires the decoded
+//            .kix distinct seq_id array as input: the decoder walks
+//            the kind map in lockstep with the .kix decoded array and
+//            the (sorted) candidate list, resolving each candidate's
+//            (kind, rank) pair which then indexes into the per-kind
+//            decoded position buffers (see open_stream_kpx_for_candidates
+//            and PosDecodeScratch).
 
 #include <cstdint>
 #include <cstddef>
@@ -72,18 +67,16 @@ namespace ikafssn::pfd {
 // 128, matching the plan).
 inline constexpr int kPfdBlockSize = 128;
 
-// Posting list header byte size for .kix.  Phase 7c dedup B removed
-// the redundant `[u32 body_words]` field, so the only fixed-size .kix
-// posting list header is the leading `[u32 distinct_count]`.  The
-// .kpx layout uses its own 16 B fixed header; this constant only
-// describes the .kix posting list.
+// Posting list header byte size for .kix.  The fixed-size .kix posting
+// list header is the leading `[u32 distinct_count]`.  The .kpx layout
+// uses its own 16 B fixed header; this constant only describes .kix.
 inline constexpr size_t kPostingListHeaderBytes = 4;
 
 // === posting-list-level encode wrappers ===
 
-// Encode the distinct seq_id-delta stream for a .kix posting list (v8 wire-
-// compatible with v7).  Writes distinct_count + body_words + body
-// into `out` (appended).  Returns the number of bytes written.
+// Encode the distinct seq_id-delta stream for a .kix posting list.
+// Writes distinct_count + body into `out` (appended).  Returns the
+// number of bytes written.
 size_t encode_posting_kix(const uint32_t* delta_array, uint32_t count,
                           std::vector<uint8_t>& out);
 
@@ -112,7 +105,7 @@ size_t encode_posting_kpx(const uint32_t* distinct_sid,
                           uint32_t freq_threshold_part,
                           std::vector<uint8_t>& out);
 
-// === streaming decode context (for .kix only since v7) ===
+// === streaming decode context (for .kix only) ===
 //
 // open_stream_kix materialises the entire decoded posting list into `decoded`.
 // .kpx decoding moved to a candidate-set-driven API (see below).
@@ -129,22 +122,7 @@ struct StreamCtx {
 // Returns false on header / body size mismatch (corrupt index).
 bool open_stream_kix(const uint8_t* posting_list, size_t bytes, StreamCtx& ctx);
 
-// Read up to `max_count` decoded elements from the stream into `out`.
-// Returns the number of elements actually written (0 once exhausted).
-inline int read_batch(StreamCtx& ctx, uint32_t* out, int max_count) {
-    if (ctx.pos >= ctx.count || max_count <= 0) return 0;
-    int avail = static_cast<int>(ctx.count - ctx.pos);
-    int n = (avail < max_count) ? avail : max_count;
-    std::memcpy(out, ctx.decoded.data() + ctx.pos, n * sizeof(uint32_t));
-    ctx.pos += static_cast<uint32_t>(n);
-    return n;
-}
-
-inline bool stream_has_more(const StreamCtx& ctx) {
-    return ctx.pos < ctx.count;
-}
-
-// === .kpx candidate-set-driven decode (v8) ===
+// === .kpx candidate-set-driven decode ===
 //
 // Reusable per-call scratch buffers — one per worker thread / Stage 2
 // loop.  All vectors are reused across consecutive open_stream_kpx_for_
@@ -176,8 +154,7 @@ bool open_stream_kpx_for_candidates(
 // === posting list inspection (no decode) ===
 
 // Read the distinct_count u32 at the start of a .kix posting list.
-// Returns 0 if the posting list is shorter than the 4-byte header
-// (Phase 7c dedup B).
+// Returns 0 if the posting list is shorter than the 4-byte header.
 inline uint32_t posting_count(const uint8_t* posting_list, size_t bytes) {
     if (bytes < kPostingListHeaderBytes) return 0;
     uint32_t cnt;
@@ -185,14 +162,8 @@ inline uint32_t posting_count(const uint8_t* posting_list, size_t bytes) {
     return cnt;
 }
 
-// Name of the FastPFor ISA tier that the runtime dispatcher selected
-// ("sse42" / "avx2" / "avx512bw" / "avx512vbmi2"; Phase 5f 4-tier ladder).
-// First call resolves the tier; subsequent calls are cached.  Useful for
-// diagnostic logging.
-const char* active_tier_name();
-
-// Phase 7d dedup C: count partition / short1 / short2 entries packed
-// in a 2-bit kind map.  Encoding (per pair) is
+// Count partition / short1 / short2 entries packed in a 2-bit kind map.
+// Encoding (per pair) is
 //
 //   00 -> short_occ1   (incremented into *p_short1)
 //   01 -> short_occ_ge2 (incremented into *p_short2)
@@ -208,9 +179,8 @@ void popcount_kinds(const uint8_t* km,
                     uint32_t* p_short1,
                     uint32_t* p_short2) noexcept;
 
-// Phase 7d dedup D: sum a u8 array.  Returns the total of arr[0..n).
-// The compiler's per-tier auto-vectorisation lowers this to vpsadbw
-// on AVX2 / AVX-512BW.
+// Sum a u8 array.  Returns the total of arr[0..n).  The compiler's
+// per-tier auto-vectorisation lowers this to vpsadbw on AVX2 / AVX-512BW.
 uint32_t horizontal_sum_u8(const uint8_t* arr, uint32_t n) noexcept;
 
 } // namespace ikafssn::pfd

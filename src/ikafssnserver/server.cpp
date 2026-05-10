@@ -190,7 +190,7 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
     // queries shorter than the index's filter are skipped server-side
     // (defence-in-depth — well-behaved clients reject these locally).
     entry.resolved_search_config.min_query_length = entry.min_seq_length;
-    // v10 (Phase 3): adopt the index's overlap_length as the upper bound so
+    // adopt the index's overlap_length as the upper bound so
     // queries longer than overlap_length are skipped with kSkipQueryTooLong.
     // overlap_length == 0 (no fragment splitting) leaves the check disabled.
     entry.resolved_search_config.max_query_length = entry.overlap_length;

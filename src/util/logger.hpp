@@ -12,7 +12,6 @@ public:
 
     explicit Logger(Level level = kInfo) : level_(level) {}
 
-    void set_level(Level level) { level_ = level; }
     Level level() const { return level_; }
     bool verbose() const { return level_ >= kDebug; }
 

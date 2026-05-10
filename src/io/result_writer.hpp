@@ -15,19 +15,19 @@ struct OrchestratorHit;
 
 struct OutputHit {
     std::string qseqid;
-    // v10 (Phase 3): parent OID accession.  When the index uses fragment
-    // splitting (overlap_length > 0), this is the parent accession common
-    // to all fragments of a single OID, NOT a per-fragment accession.
+    // Parent OID accession.  When the index uses fragment splitting
+    // (overlap_length > 0), this is the parent accession common to all
+    // fragments of a single OID, NOT a per-fragment accession.
     std::string sseqid;
     char sstrand;         // '+' or '-'
     uint32_t qstart;
     uint32_t qend;
-    // v10 (Phase 3): parent-OID-relative subject coordinates (1-based).
-    // The orchestrator writes Stage 2 chains in fragment-relative space and
+    // Parent-OID-relative subject coordinates (1-based).  The
+    // orchestrator writes Stage 2 chains in fragment-relative space and
     // the (orchestrator -> output) boundary shifts them by the matching
     // KsxReader::fragment_start() so downstream tools (Stage 3, output
-    // writers, ikafssnretrieve in Phase 4) all see one canonical coordinate
-    // system per parent OID.
+    // writers, ikafssnretrieve) all see one canonical coordinate system
+    // per parent OID.
     uint32_t sstart;
     uint32_t send;
     uint32_t coverscore = 0;
@@ -45,9 +45,9 @@ struct OutputHit {
     std::string qseq;        // aligned query (with gaps, traceback only)
     std::string sseq;        // aligned subject (with gaps, traceback only)
     uint32_t qlen = 0;       // query full sequence length
-    // v10 (Phase 3): subject full sequence length = parent OID length.
-    // Always derived from KsxReader::parent_length(parent_idx); never the
-    // (smaller) fragment length.
+    // Subject full sequence length = parent OID length.  Always derived
+    // from KsxReader::parent_length(parent_idx); never the (smaller)
+    // fragment length.
     uint32_t slen = 0;
 
     // Skip marker: when skip_reason != 0 this OutputHit represents a query

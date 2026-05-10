@@ -31,7 +31,7 @@ struct DatabaseEntry {
     bool context_is_ratio = true;
     double context_ratio = 2.0;
     uint32_t context_abs = 0;
-    // v10 fragment-indexing triplet, sourced from the .kix headers at load
+    // Fragment-indexing triplet, sourced from the .kix headers at load
     // time.  All k-mer groups within a database must agree on these
     // values; the server logs an error and refuses to load otherwise.
     uint32_t min_seq_length   = 0;

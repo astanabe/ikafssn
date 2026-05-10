@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Phase 5a — analyze v3 posting TSV(s) and estimate v4 (SIMD-FastPFOR* +
-Simple-8b) compressed size.
+"""Posting compressibility analyzer.
 
-Reads one or more TSV files produced by tools/dump_postings.cpp (one row per
-non-empty k-mer, columns: kmer / count / seq_id_csv / pos_csv) and emits:
+Reads one or more TSV files produced by tools/dump_postings.cpp (one row
+per non-empty k-mer, columns: kmer / count / seq_id_csv / pos_csv) and
+emits:
 
   * posting count distribution (1, 2-7, 8-127, 128-1023, 1024-)
   * delta distribution for .kix (seq_id deltas, including first abs)
   * delta distribution for .kpx within-seq (and abs position distribution)
-  * estimated v4 byte size with FastPFOR*-style block 128 + Simple-8b tail
-  * v3 vs v4 size comparison (uses --kix-bytes / --kpx-bytes for actuals)
+  * estimated byte size with FastPFOR*-style block 128 + Simple-8b tail
+  * size comparison vs the actual on-disk bytes
+    (uses --kix-bytes / --kpx-bytes for actuals)
 
 The FastPFOR cost model is intentionally simple but matches the published
 behaviour (Lemire & Boytsov 2015) closely enough for go/no-go judgment:
@@ -359,7 +360,7 @@ def main():
     )
 
     md = []
-    md.append("# Phase 5a — `db/tsa_nt` posting analysis\n")
+    md.append("# Posting compressibility analysis\n")
     md.append("Per-volume estimates (FastPFOR* block=128 + Simple-8b tail).\n")
     for r in results:
         md.append(f"## {r['tsv']}\n")
@@ -388,13 +389,12 @@ def main():
         md.append(f"- actual on-disk v3 posting bytes (.kix + .kpx): {actual_v3:,}")
         md.append(f"- estimated v4 vs actual v3 ratio: {size_ratio_actual:.4f}")
 
-    md.append("\n### Phase 5a go/no-go gate\n")
-    md.append("- Gate: (size_ratio <= 0.90) **OR** (speed_ratio <= 0.90)")
+    md.append("\n### Size gate\n")
+    md.append("- Gate: size_ratio <= 0.90")
     if size_ratio_est <= 0.90:
-        md.append(f"- **PASS (size)**: estimated size_ratio = {size_ratio_est:.4f} <= 0.90")
+        md.append(f"- **PASS**: estimated size_ratio = {size_ratio_est:.4f} <= 0.90")
     else:
         md.append(f"- size gate not met: estimated size_ratio = {size_ratio_est:.4f}")
-        md.append("  (need to also check bench_pfd_proto speed_ratio)")
 
     md_text = "\n".join(md) + "\n"
 

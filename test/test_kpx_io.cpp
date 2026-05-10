@@ -271,7 +271,7 @@ static void test_partition_above_255() {
     int k = 5;
     uint32_t ts = table_size(k);
 
-    const uint32_t occ = 1000;  // well above the legacy u8 cap
+    const uint32_t occ = 1000;  // well above the short bucket's u8 cap
     std::vector<KpxWriter::PostingEntry> entries;
     entries.reserve(occ);
     for (uint32_t pos = 0; pos < occ; pos++) {

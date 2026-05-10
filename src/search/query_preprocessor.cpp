@@ -81,8 +81,8 @@ QueryKmerData<KmerInt> preprocess_query(
     result.qlen = static_cast<uint32_t>(query_seq.size());
 
     // 0. Length check.
-    // First, the explicit -min_query_length floor (v10).  Queries shorter
-    // than this are skipped before the span-based check below.
+    // First, the explicit -min_query_length floor.  Queries shorter than
+    // this are skipped before the span-based check below.
     if (config.min_query_length > 0 &&
         query_seq.size() < config.min_query_length) {
         result.skip_reason = kSkipQueryTooShort;
@@ -93,13 +93,13 @@ QueryKmerData<KmerInt> preprocess_query(
         result.skip_detail = buf;
         return result;
     }
-    // Then the v10 (Phase 3) overlap_length ceiling.  The index reports its
-    // overlap_length via the .ksx header; the orchestrator copies it into
-    // SearchConfig::max_query_length.  Queries longer than the overlap are
-    // skipped because the Stage 2/3 dedup keys (parent-relative coordinates)
-    // assume every chain hit fits inside at most two adjacent fragments.
-    // max_query_length == 0 disables the check (degenerate fragment-table
-    // case: min_length_split == 0, no splitting).
+    // Then the overlap_length ceiling.  The index reports its
+    // overlap_length via the .ksx header; the orchestrator copies it
+    // into SearchConfig::max_query_length.  Queries longer than the
+    // overlap are skipped because the Stage 2/3 dedup keys
+    // (parent-relative coordinates) assume every chain hit fits inside
+    // at most two adjacent fragments.  max_query_length == 0 disables
+    // the check (i.e. when fragment splitting is disabled).
     if (config.max_query_length > 0 &&
         query_seq.size() > config.max_query_length) {
         result.skip_reason = kSkipQueryTooLong;
@@ -197,7 +197,6 @@ QueryKmerData<KmerInt> preprocess_query(
 
     // 4. Resolve per-strand thresholds.
     //
-    // Spec (Phase 1 fix):
     //   Nqkmer    = max(0, seq_len - span + 1)   (pure window count)
     //   Nhighfreq = #{p : ANY emitted k-mer at p is .khx-excluded}     (case 1)
     //             + (Nqkmer - #emitted positions)                      (case 2 + case 3)

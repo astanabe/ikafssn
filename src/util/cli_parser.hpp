@@ -28,16 +28,8 @@ public:
     // Get double value for a key. Returns default_val if not found or invalid.
     double get_double(const std::string& key, double default_val = 0.0) const;
 
-    // Get the program name (argv[0]).
-    const std::string& program() const { return program_; }
-
-    // Get positional arguments (those not preceded by a -key).
-    const std::vector<std::string>& positional() const { return positional_; }
-
 private:
-    std::string program_;
     std::unordered_map<std::string, std::vector<std::string>> opts_;
-    std::vector<std::string> positional_;
 };
 
 } // namespace ikafssn

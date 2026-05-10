@@ -304,10 +304,10 @@ static void test_header_matchscore() {
     CHECK_EQ(results[0].matchscore, 42u);
 }
 
-static void test_legacy_no_header() {
-    std::fprintf(stderr, "-- test_legacy_no_header\n");
+static void test_no_header_fallback() {
+    std::fprintf(stderr, "-- test_no_header_fallback\n");
 
-    // No valid header line — should fall back to legacy field-count parser
+    // No valid header line — should fall back to the field-count parser
     std::istringstream iss(
         "q1\tA1\t+\t0\t10\t100\t20\t30\t200\t3\t5\t0\n"
         "q2\tA2\t-\t5\t15\t100\t25\t35\t200\t4\t8\t1\n"
@@ -353,7 +353,7 @@ int main() {
     test_roundtrip_mode3_traceback();
     test_header_reordered_columns();
     test_header_matchscore();
-    test_legacy_no_header();
+    test_no_header_fallback();
     test_windows_line_endings();
 
     std::filesystem::remove_all(g_test_dir);

@@ -16,9 +16,9 @@ namespace ikafssn {
 
 // Drain a JobState by running Stage 2B for every candidate in the order
 // produced by Stage 1.  Used by the volume-level wrappers below; the
-// parallel orchestrator drives Stage 2B as a per-batch parallel_for over
-// (ext_job, sid) pairs immediately after the same Stage 2 batch's
-// Stage 2A phase finishes.
+// parallel orchestrator drives Stage 2B as a per-batch parallel_for
+// over (ext_job, sid) pairs immediately after the same batch's
+// Stage 2A finishes.
 static std::vector<ChainResult>
 drain_stage2b_single_template(const JobState& state) {
     if (state.mode1_only) return state.mode1_results;

@@ -1,4 +1,4 @@
-// Compression analyzer for v8 .kix and .kpx posting lists.
+// Compression analyzer for .kix and .kpx posting lists.
 //
 // Walks the binary directly (no decode into vectors) and reports:
 //
@@ -61,8 +61,7 @@ struct KpxStats {
     uint64_t total_position_count = 0;
     uint64_t total_distinct_count = 0;
 
-    // Phase 7c+7d removed the 5 u32 top-level posting list header.  Field
-    // retained for layout symmetry with older runs but stays at 0 in v9.
+    // Reserved field, always 0 (no top-level posting list header).
     uint64_t bytes_top_header = 0;
     // 2-bit kind map bytes per posting list.
     uint64_t bytes_kind_map = 0;
@@ -95,7 +94,7 @@ struct KixStats {
     uint64_t bytes_posting_list_body = 0;
 };
 
-// Walk a v8 FOR block stream of `count` elements, accumulating stats.
+// Walk a FOR block stream of `count` elements, accumulating stats.
 // Returns advanced bytes; -1 on corruption.
 ssize_t walk_for_stream(const uint8_t* p, const uint8_t* end, uint32_t count,
                         ForStreamStats& s) {
@@ -136,14 +135,13 @@ ssize_t walk_for_stream(const uint8_t* p, const uint8_t* end, uint32_t count,
     return p - p0;
 }
 
-// Phase 7c+7d dedup A/C/D: distinct_count comes from .kix; the four
-// redundant top-header u32 fields were removed.  The body starts
-// directly at the 2-bit kind map.
+// distinct_count comes from .kix; the body starts directly at the
+// 2-bit kind map.
 bool walk_kpx_posting(const uint8_t* p, const uint8_t* end, uint32_t kix_count,
                       KpxStats& st) {
     if (kix_count == 0) {
         // Empty .kix posting list aliases to the next non-empty
-        // k-mer's slice; the v9 .kpx writer emits zero bytes for it.
+        // k-mer's slice; the .kpx writer emits zero bytes for it.
         return true;
     }
 
@@ -274,7 +272,7 @@ void print_kpx_report(const KpxStats& st, uint64_t total_bytes) {
 
     std::printf("\n[top headers + kind map]      : %lu (%.2f%% of file)\n",
                 top_total, 100.0 * double(top_total) / double(total_bytes));
-    std::printf("  top header bytes (Phase 7c+7d removed) : %lu\n", st.bytes_top_header);
+    std::printf("  top header bytes (reserved, always 0)  : %lu\n", st.bytes_top_header);
     std::printf("  2-bit kind map bytes       : %lu\n", st.bytes_kind_map);
 
     std::printf("\n[partition groups] total      : %lu (%.2f%% of file)\n",
@@ -361,7 +359,7 @@ bool walk_kix(const KixReader& kix, KixStats& st, uint64_t& total_bytes) {
         uint64_t off = kix.posting_list_offset(kmer);
         uint64_t len = kix.posting_list_byte_length(kmer);
         if (len == 0) continue;
-        // Phase 7c dedup B: per-posting-list header is just [u32 distinct_count].
+        // Per-posting-list header is just [u32 distinct_count].
         if (len < 4) return false;
         uint32_t count;
         std::memcpy(&count, base + off, 4);
@@ -386,9 +384,9 @@ bool walk_kpx(const KixReader& kix, const KpxReader& kpx,
     const uint32_t tbl = kpx.table_size();
     const uint8_t* end = base + total_bytes;
     uint64_t skipped_empty = 0;
-    // Phase 7c+7d: walk_kpx_posting needs kix_count to size the kind map
-    // and derive per-kind sub-bucket counts.  Read it from the leading
-    // u32 of every .kix posting list.
+    // walk_kpx_posting needs kix_count to size the kind map and derive
+    // per-kind sub-bucket counts.  Read it from the leading u32 of
+    // every .kix posting list.
     const uint8_t* kix_base = kix.posting_file();
     for (uint32_t kmer = 0; kmer < tbl; kmer++) {
         const uint64_t kix_len = kix.posting_list_byte_length(kmer);

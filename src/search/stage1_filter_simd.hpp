@@ -18,8 +18,8 @@ namespace ikafssn {
 // `dirty` is updated in place; `scores_void` and `last_pos_void` are tier-erased
 // SoA pointers (same width as Stage1TierTraits<Tier>::ScoreT/PosT).
 //
-// Phase 2a: scalar fallback only — `flush_batch_simd<Tier>` always dispatches
-// to the scalar implementation. Phase 2b will add SIMD-accelerated kernels.
+// `flush_batch_simd<Tier>` dispatches to the SIMD kernel matching the
+// active CPU tier (or the scalar fallback when SIMD is disabled).
 template <Stage1Tier Tier>
 void flush_batch_simd(
     const SeqId* sid_batch,

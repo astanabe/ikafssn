@@ -1,4 +1,4 @@
-// Phase 5 unit test: confirm src/index/fragment_splitter::split() reproduces
+// unit test: confirm src/index/fragment_splitter::split() reproduces
 // kafssstore.pl's split_long_sequence_positions (DNA2 mode, ncbi4na==0xF
 // cuts, calcsegment2 formula).  We anchor the C++ port both to fixed
 // expected outputs (so a regression in either the segment scan or the

@@ -612,8 +612,6 @@ The `/api/v1/info` response aggregates databases from all healthy backends. For 
 
 `POST /api/v1/jobs` validates the body and persists it to the per-job query store at `<query_dir>/<ab>/<job_id>.json.zst` (sharded by the first two characters of `job_id`) before inserting the SQLite row. Bodies uploaded as `application/zstd` are stored verbatim — the client's compression level is preserved and the daemon never re-compresses; plaintext JSON uploads (`application/json`) are compressed at `-query_compression_level` before they hit disk. The worker pool then dispatches the request asynchronously to a backend. When a job finishes successfully the worker writes its serialized `SearchResponse` to a per-job zstd file at `<result_dir>/<ab>/<job_id>.bin.zst` and stamps the SQLite row to `done`; `GET /api/v1/jobs/{job_id}/result` then streams that file directly via `sendfile(2)` with `Content-Type: application/zstd`, so no in-memory copy of the result is held by `ikafssnhttpd`. The matching query file is unlinked at the same point — only queued / running jobs occupy `-query_dir`, so a backlog never inflates `jobs.db` (which now carries metadata only). Clients poll `GET /api/v1/jobs/{job_id}` until status reaches `done` and download the result. Jobs are kept for `-retention_time` seconds; the housekeeper purges expired rows from SQLite and then removes the matching result file (and any leftover query file as insurance). On startup, leftover `*.bin.zst.tmp` and `*.json.zst.tmp` files (from a hard kill mid-write) are swept once. A periodic orphan sweep also removes result and query files whose SQLite row has already disappeared (rare: only after a failed `mark_done` or a worker crash between `mark_done` and the query unlink).
 
-> **Breaking change (v0.1.2026.05.06):** The SQLite schema for `jobs.db` was bumped from `user_version=2` to `user_version=3` — the request body now lives in `-query_dir`, not in the row's `request_blob` column. Existing `jobs.db` files are rejected at startup with a clear error message; delete `jobs.db` (and empty `-query_dir` if you previously seeded it) before upgrading.
-
 **Examples:**
 
 ```bash
@@ -988,7 +986,7 @@ Stage 3 pairwise alignment uses a configurable scoring matrix specified by `-sta
 
 **CIGAR `=`/`X` determination:** The extended CIGAR operators `=` (sequence match) and `X` (sequence mismatch) are determined based on alignment scores, not strict base identity. A position is reported as `=` when its score in the matrix is positive (score > 0), and as `X` when its score is zero or negative. This means that with the DEGMATCH matrix, a degenerate base pair like N-A (score 1) is counted as a match (`=`), while with NUC44/DNAFULL it would be counted as a mismatch (`X`).
 
-**Column name changes:** The output columns previously named `pident` (percent identity), `nident` (number of identical positions), and `mismatch` (number of mismatches) have been renamed to `ppositive` (percent positive-scoring), `npositive` (number of positive-scoring positions), and `nnegative` (number of negative-scoring positions). This reflects the fact that with the DEGMATCH matrix, these counts represent positive-scoring positions rather than strictly identical positions. The corresponding filter options have been renamed from `-stage3_min_pident`/`-stage3_min_nident` to `-stage3_min_ppositive`/`-stage3_min_npositive`.
+**Column naming:** The output columns are `ppositive` (percent positive-scoring), `npositive` (number of positive-scoring positions), and `nnegative` (number of negative-scoring positions). With the DEGMATCH matrix these counts represent positive-scoring positions rather than strictly identical positions. The matching filter options are `-stage3_min_ppositive` and `-stage3_min_npositive`.
 
 **DEGMATCH matrix (16x16):**
 
@@ -1305,37 +1303,33 @@ Examples:
 
 **Multi-accession deflines:** When the source BLAST DB was built with `makeblastdb -parse_seqids` and carries multi-defline records (the NCBI convention for registering identical sequences under several accessions, separated by `\x01` / `^A` in the FASTA defline), `ikafssnindex` preserves **all** accessions for each OID. The `.ksx` accession string for such OIDs contains every accession joined by `\x01`, and search output emits the same `\x01`-joined string in the `sseqid` column / SAM RNAME / FASTA defline / protocol `sseqid` field. Downstream consumers should split on `\x01` to recover individual accessions. The `-seqidlist` filter and `ikafssnretrieve` accept either the full `\x01`-joined form or any individual constituent accession.
 
-**Index format version:** The current index format is **v10** (fragment-indexing) for all index files (`.kix`, `.kpx`, `.ksx`, `.khx`, `.kvx`). Key changes:
+**Index format version:** The current index format is **v10** for every index file (`.kix`, `.kpx`, `.ksx`, `.khx`, `.kvx`). Layout summary:
 
-- **Family-wide v10 bump (Phase 1 of fragment-indexing):** The `.kix` / `.kpx` magic widens to `KIX10` / `KPX10` (the trailing version byte was previously embedded in the header's `format_version` field only). All four format headers gain a `{min_seq_length, min_length_split, overlap_length}` triplet so the search side can cross-check the index's intent against the user-supplied `-min_query_length`.
-- **`.ksx` two-stage layout:** The sequence-metadata file now records each parent OID's `(parent_length, blast_oid, accession)` first, then a fragment table that maps every internal SeqId to `(parent_idx, fragment_start, fragment_end)`. Convenience accessors (`KsxReader::seq_length` / `accession`) still take a SeqId and resolve to the matching parent under the hood. Magic stays `KMSX`.
-- **`.kix` / `.kpx` codec layouts unchanged from v9:** Elias-Fano dictionary, 2-bit kind map, FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` body. Only the header triplet and magic differ.
-- **`.kvx` v10:** Manifest text format is unchanged; the `FORMAT_VERSION` line bumps to 10.
+- **`.kix` / `.kpx` magic** is `KIX10` / `KPX10`; all four format headers carry a `{min_seq_length, min_length_split, overlap_length}` triplet so the search side can cross-check the index's intent against the user-supplied `-min_query_length`.
+- **`.ksx` two-stage layout:** the sequence-metadata file records each parent OID's `(parent_length, blast_oid, accession)` in a parent table, followed by a fragment table that maps every internal SeqId to `(parent_idx, fragment_start, fragment_end)`. Convenience accessors (`KsxReader::seq_length` / `accession`) take a SeqId and resolve to the matching parent. Magic is `KMSX`.
+- **`.kix` / `.kpx` body:** Elias-Fano dictionary, 2-bit kind map, FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` body.
+- **`.kvx`:** manifest text format with a `FORMAT_VERSION` line set to 10.
 
-The fragment splitter is a port of kafssstore's `split_long_sequence_positions` (DNA2 mode, ncbi4na==0xF cuts, calcsegment2 formula). When `-min_length_split 0` (the historical default for `-mode 2/3`), every parent is registered as a single fragment that spans the whole parent — i.e. the v10 layout reduces to the v9 one-row-per-OID model with the new header fields zeroed out.
+The fragment splitter is a port of kafssstore's `split_long_sequence_positions` (DNA2 mode, ncbi4na==0xF cuts, calcsegment2 formula). When `-min_length_split 0`, every parent is registered as a single fragment that spans the whole parent — i.e. one fragment per OID with the header's split / overlap fields zeroed out.
 
-### Migration (v9 → v10)
-
-ikafssn 0.1.2026.05.10+ requires v10 indexes. v9 indexes are rejected at open with the message:
+Indexes whose `format_version` does not match are rejected at open with a message such as:
 
 ```
 KixReader: index format version mismatch (got 9, expected 10). Please rebuild with the current ikafssnindex.
 ```
 
-(and analogous messages for `.kpx` / `.ksx` / `.khx` / `.kvx`). **An index rebuild is required.** To migrate, re-run the indexer from the BLAST DB:
+(and analogous messages for `.kpx` / `.ksx` / `.khx` / `.kvx`). Rebuild with the current `ikafssnindex`:
 
 ```
-# Default (mode 1, fragment-aware): keeps the new -min_length_split / -overlap_length defaults
+# Default (mode 1, fragment-aware)
 ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir>
 
-# Explicitly disable splitting (v9-equivalent layout with v10 headers)
+# Disable splitting (one fragment per parent)
 ikafssnindex -db <BLAST_DB_prefix> -k <k> -o <out_dir> \
     -min_length_split 0 -overlap_length 0
 ```
 
-For NCBI nt-scale databases (~700 volumes at k=12 t=21), expect tens of hours of rebuild time on a 32-core host. With `-min_length_split` non-zero the on-disk size grows in proportion to the average overlap length per parent; chromosome-scale parents that previously sat in one volume-spanning posting list now contribute multiple fragments, each of bounded length, which bounds Stage 2's per-subject memory.
-
-Indexes built before v9 are still rejected with the same "rebuild your index" message. Rebuild after upgrading.
+For NCBI nt-scale databases (~700 volumes at k=12 t=21), expect tens of hours of rebuild time on a 32-core host. With `-min_length_split` non-zero the on-disk size grows in proportion to the average overlap length per parent, and chromosome-scale parents are split into multiple fragments of bounded length — which bounds Stage 2's per-subject memory.
 
 ## Installation
 

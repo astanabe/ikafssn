@@ -31,17 +31,15 @@ bool filter_volumes_cross_volume(
     int filter_threads,
     const Logger& logger);
 
-// Phase 7d: structural validation for a (.kix, .kpx) volume pair.
+// Structural validation for a (.kix, .kpx) volume pair.
 //
 // Walks every k-mer's posting list and verifies that the byte length
 // recorded in the .kpx EF dictionary matches the bytes actually
 // consumed by the kind map + partition groups + short1 FOR stream +
 // short2 occ_count[] + short2 FOR stream.  Catches silent kind-map
-// or FOR-stream corruption that the v9 dedup'd headers can no longer
-// detect by redundancy.  Also returns the recomputed total position
-// count via `total_position_count_out` so the caller can populate the
-// .kpx header for filtered builds (the legacy v8 recompute path read
-// the wrong field).
+// or FOR-stream corruption.  Also returns the recomputed total
+// position count via `total_position_count_out` so the caller can
+// populate the .kpx header for filtered builds.
 //
 //   kix_path / kpx_path   absolute paths to the volume's index files
 //   total_position_count_out  optional; receives sum of partition

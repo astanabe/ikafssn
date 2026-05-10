@@ -66,8 +66,8 @@ bool JobStore::check_schema(std::string& error_msg) {
     sqlite3_finalize(stmt);
 
     // Probe whether the jobs table exists at all and whether it carries
-    // any legacy column that places the request or result body inside
-    // the SQLite row.
+    // a column that places the request or result body inside the SQLite
+    // row (which the current schema does not allow).
     bool has_jobs         = false;
     bool has_result_blob  = false;
     bool has_request_blob = false;
@@ -98,8 +98,8 @@ bool JobStore::check_schema(std::string& error_msg) {
     }
     if (has_result_blob || has_request_blob || user_version < 3) {
         std::string detail;
-        if (has_result_blob)  detail += ", legacy result_blob column present";
-        if (has_request_blob) detail += ", legacy request_blob column present";
+        if (has_result_blob)  detail += ", result_blob column present";
+        if (has_request_blob) detail += ", request_blob column present";
         error_msg = "jobs.db has incompatible schema (user_version="
                   + std::to_string(user_version)
                   + detail

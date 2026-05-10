@@ -9,9 +9,9 @@
 namespace ikafssn::bench {
 
 // Force a SIMD tier inside a benchmark fixture. force_simd_cap() is
-// downgrade-only (Phase 0 contract), so requesting a tier above the
-// auto-detected cap collapses to Scalar — surface that as a SkipWithError
-// instead of silently producing a misleading datapoint.
+// downgrade-only, so requesting a tier above the auto-detected cap
+// collapses to Scalar — surface that as a SkipWithError instead of
+// silently producing a misleading datapoint.
 inline void apply_force_tier(benchmark::State& state, SimdCap requested) {
     SimdCap got = force_simd_cap(requested);
     if (got != requested) {

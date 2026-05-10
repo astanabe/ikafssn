@@ -308,7 +308,7 @@ int main(int argc, char* argv[]) {
 
     config.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
 
-    // v10 (Phase 1): -min_query_length default 64.  The integrity check
+    // -min_query_length default 64.  The integrity check
     // against the index's min_seq_length runs after the first .kix is
     // opened (search.cpp keeps a single in-memory list of probes).
     {
@@ -626,10 +626,10 @@ int main(int argc, char* argv[]) {
         if (!open_volumes(ctx.vol_files, ctx.volumes, need_kpx)) return 1;
     }
 
-    // v10 (Phase 3): drive max_query_length from the index's overlap_length.
-    // All volumes within an index carry the same overlap_length so the first
-    // .ksx is authoritative.  When overlap_length == 0 (degenerate fragment
-    // table from Phase 1, no splitting) the check stays disabled.
+    // Drive max_query_length from the index's overlap_length.
+    // All volumes within an index carry the same overlap_length so the
+    // first .ksx is authoritative.  When overlap_length == 0 (no
+    // fragment splitting) the check stays disabled.
     if (!ctxs.empty() && !ctxs[0].volumes.empty()) {
         config.max_query_length = ctxs[0].volumes[0].ksx.overlap_length();
     }
@@ -747,10 +747,11 @@ int main(int argc, char* argv[]) {
         logger.info("Generated %zu primer pair queries", primer_pairs.size());
     }
 
-    // Phase 1: preprocess queries in parallel.  Slots are pre-allocated so
-    // each task writes to ctx.pp{16,32}[qi] independently; query_pp_idx
-    // collapses to the identity (qi -> qi).  Warnings and the skip-reason
-    // bookkeeping run in a sequential post-pass for deterministic ordering.
+    // Preprocess queries in parallel.  Slots are pre-allocated so each
+    // task writes to ctx.pp{16,32}[qi] independently; query_pp_idx
+    // collapses to the identity (qi -> qi).  Warnings and the
+    // skip-reason bookkeeping run in a sequential post-pass for
+    // deterministic ordering.
     const bool use_uint16 = (kmer_type_for(k, spaced_t) == 0);
     std::vector<size_t> query_pp_idx(queries.size(), SIZE_MAX);
     for (size_t qi = 0; qi < queries.size(); ++qi) query_pp_idx[qi] = qi;
@@ -999,7 +1000,7 @@ int main(int argc, char* argv[]) {
 
     // Convert OrchestratorHit -> OutputHit at the boundary.
     //
-    // v10 (Phase 3): Stage 2 chains live in fragment-relative coordinates.
+    // Stage 2 chains live in fragment-relative coordinates.
     // Re-map them to parent-OID-relative coordinates for output: sseqid
     // becomes the parent accession, slen becomes the parent length, and
     // sstart/send shift by (fragment_start - 1).
@@ -1056,7 +1057,7 @@ int main(int argc, char* argv[]) {
                               ctx_param.is_ratio, ctx_param.ratio, ctx_param.abs,
                               logger);
         logger.info("Stage 3 complete: %zu hits after filtering.", all_hits.size());
-        // v10 (Phase 3): Stage 3 dedup over parent-relative (send, alnscore).
+        // Stage 3 dedup over parent-relative (send, alnscore).
         // Re-runs after alignment because the alignment can extend / clamp
         // sstart freely, leaving duplicates that survived Stage 2 dedup with
         // distinct (sstart, chainscore) but identical (send, alnscore).

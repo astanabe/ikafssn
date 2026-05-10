@@ -1,8 +1,8 @@
-// Phase 4a — degenerate-base scan SIMD micro-benchmark.
+// degenerate-base scan SIMD micro-benchmark.
 //
-// Measures has_degenerate_base() at each available SIMD tier, plus a scalar
-// baseline that mirrors the pre-Phase-4a inline body. The "clean" input
-// (pure ACGT) exercises the chunk loop to completion; "head_hit" / "tail_hit"
+// Measures has_degenerate_base() at each available SIMD tier, plus a
+// scalar per-byte LUT baseline.  The "clean" input (pure ACGT)
+// exercises the chunk loop to completion; "head_hit" / "tail_hit"
 // exercise the early-exit branches.
 
 #include "core/degenerate_scan_simd.hpp"
@@ -35,7 +35,7 @@ static std::string make_input(std::size_t n, Input kind, std::mt19937& rng) {
     return s;
 }
 
-// Scalar baseline: per-byte LUT lookup (pre-Phase-4a behavior).
+// Scalar baseline: per-byte LUT lookup.
 static void BM_DegenerateScanScalarLoop(benchmark::State& state) {
     std::size_t n = static_cast<std::size_t>(state.range(0));
     Input kind   = static_cast<Input>(state.range(1));

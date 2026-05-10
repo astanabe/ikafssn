@@ -46,7 +46,4 @@ std::vector<DiscoveredVolume> discover_volumes(
     const std::string& ix_prefix, int filter_k = 0,
     uint8_t filter_t = 0, uint8_t filter_template_type = 0);
 
-// Return available k values for the given index prefix.
-std::vector<int> discover_k_values(const std::string& ix_prefix);
-
 } // namespace ikafssn

@@ -2,14 +2,16 @@
 """Compare two bench/run_e2e_search.sh JSON outputs and print a markdown table.
 
 Usage:
-    python3 bench/compare.py bench/v8_baseline.json bench/v9_post_ef.json
+    python3 bench/compare.py <baseline.json> <candidate.json>
 
 Output columns:
-    tier | v8 wall (s) | v9 wall (s) | speedup | v8 RSS (MB) | v9 RSS (MB)
+    tier | baseline wall (s) | candidate wall (s) | speedup
+        | baseline RSS (MB) | candidate RSS (MB)
 
-speedup is reported as "v8 / v9" (>1 means v9 is faster).  Rows are kept
-in the tier order of the v8 input.  Tiers present only in v9 are appended;
-tiers present only in v8 are reported as "-".
+speedup is reported as "baseline / candidate" (>1 means candidate is
+faster).  Rows are kept in the tier order of the baseline input.  Tiers
+present only in the candidate are appended; tiers present only in the
+baseline are reported as "-".
 """
 
 from __future__ import annotations

@@ -26,8 +26,8 @@ namespace ikafssn {
 // jobs.
 //
 // The retry policy lives entirely in this layer: BackendManager::route_search
-// is configured for a single attempt (Phase B reduced its built-in 3-retry
-// loop), so all retry counting is owned by attempts++ in the JobStore.
+// performs a single attempt, and retry counting is owned by attempts++
+// in the JobStore.
 class JobWorker {
 public:
     JobWorker(JobStore& store,

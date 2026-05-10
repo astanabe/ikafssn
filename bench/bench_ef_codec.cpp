@@ -1,9 +1,8 @@
-// Phase 7b — Elias-Fano dictionary codec micro-benchmark.
+// Elias-Fano dictionary codec micro-benchmark.
 //
 // Measures encode_dictionary_ef throughput and EFDictionary::access
 // per-call cost across the runtime SIMD ladder (sse42 / avx2 /
-// avx512bw / avx512vbmi2 on x86; neon on aarch64).  The hot-path
-// access() figure is the eliasfano.md §7 driver — at AVX2-and-above
+// avx512bw / avx512vbmi2 on x86; neon on aarch64).  At AVX2-and-above
 // tiers the inner-word select1 uses BMI2 PDEP+TZCNT; below that it
 // falls back to __builtin_popcountll + bit-stripping __builtin_ctzll.
 

@@ -9,9 +9,10 @@ namespace ikafssn {
 
 // Batch extraction of spaced-seed k-mers from a sliding accumulator stream.
 //
-// Both APIs are bit-exact with extract_kmer_ct() / extract_for_mask() applied
-// element-wise; tier dispatch happens internally via current_simd_cap(); the
-// scalar fallback covers small n and the SIMD-disabled build. (Phase 4b-1, M-3.)
+// Both APIs are bit-exact with extract_kmer_ct() / extract_for_mask()
+// applied element-wise; tier dispatch happens internally via
+// current_simd_cap(); the scalar fallback covers small n and the
+// SIMD-disabled build.
 
 // NTTP-specialized batch extraction. The extractor is known at compile time,
 // allowing the run-application loop to unroll into immediate-shift SIMD ops.

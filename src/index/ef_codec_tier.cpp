@@ -1,4 +1,4 @@
-// Phase 7b — Elias-Fano dictionary codec, per-tier SIMD body.
+// Elias-Fano dictionary codec, per-tier SIMD body.
 //
 // This translation unit is compiled once per ISA tier via the
 // ikafssn_ef_<tier> OBJECT libraries declared in the top-level
