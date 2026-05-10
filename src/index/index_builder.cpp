@@ -84,10 +84,10 @@ bool build_metadata(BlastDbReader& db,
     out.seq_id_to_frag_start.reserve(blast_num_seqs);
     out.seq_id_to_frag_end.reserve(blast_num_seqs);
 
-    // Per-OID results computed in parallel.  CSeqDB's GetRawSeqAndAmbig
-    // / GetSeqLength / accession lookups are MT-safe, so each OID is
-    // independent.  The serial merge below preserves OID order when
-    // registering parents into the KsxWriter (which is thread-unsafe).
+    // CSeqDB lookups are MT-safe, so each OID's slen / accession /
+    // fragments are computed under tbb::parallel_for.  The serial
+    // merge below preserves OID order when registering parents into
+    // the KsxWriter (which is thread-unsafe).
     struct PerOid {
         uint32_t slen = 0;
         bool kept = false;
@@ -155,8 +155,7 @@ bool build_metadata(BlastDbReader& db,
             out.seq_id_to_frag_start.push_back(f.start);
             out.seq_id_to_frag_end.push_back(f.end);
         }
-        // Free the temporary buffers as we go to keep peak memory low
-        // during merge.
+        // Drop per-OID temp buffers as we merge to cap peak memory.
         po.acc.clear(); po.acc.shrink_to_fit();
         po.frags.clear(); po.frags.shrink_to_fit();
     }

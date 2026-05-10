@@ -37,27 +37,24 @@
 
 using namespace ikafssn;
 
-// Per-volume cost estimate for memory-budget-driven batching.
+// Per-volume memory-cost estimate fed to plan_volume_batches().
 struct VolumeCost {
     uint16_t volume_index;
     uint64_t cost;
 };
 
-// One concurrency batch produced by plan_volume_batches().  All volumes
-// inside a batch run in parallel; batches are processed sequentially.
+// Concurrency batch: every listed volume runs in parallel; batches are
+// processed sequentially.  `oversized` flags single-volume batches
+// whose lone volume exceeds memory_budget — those receive the full
+// budget and rely on per-volume partitioning to fit.
 struct VolumeBatch {
     std::vector<uint16_t> vols;
     uint64_t total_cost = 0;
-    bool oversized = false;  // true when the batch holds a single
-                             // volume that alone exceeds memory_budget;
-                             // the per-volume builder must shrink its
-                             // own footprint to fit.
+    bool oversized = false;
 };
 
-// Group volumes into batches whose summed cost stays within
-// memory_budget.  Single volumes that exceed the budget become solo
-// "oversized" batches (the per-volume builder will partition further
-// to fit).  Mirrors plan_stage1_batches() in search_orchestrator.cpp.
+// Greedily pack volumes into batches whose summed cost stays within
+// memory_budget.
 static std::vector<VolumeBatch>
 plan_volume_batches(const std::vector<VolumeCost>& costs,
                     uint64_t memory_budget) {
@@ -681,9 +678,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Metadata cost ~ O(num_oids × per-OID record).  ~256 bytes per
-        // OID covers PerOid + accession + frags vector with comfortable
-        // headroom on nt-class deflines.
+        // ~256 B per OID covers the per-OID accession + frags vector
+        // with headroom for nt-class deflines.
         constexpr uint64_t META_BYTES_PER_OID = 256;
         std::vector<VolumeCost> meta_costs(total_volumes);
         for (uint16_t vi = 0; vi < total_volumes; vi++) {
@@ -732,8 +728,7 @@ int main(int argc, char* argv[]) {
             total_fragments += volume_meta[vi].num_sequences;
         }
 
-        // Resolve max_freq_build to an absolute threshold using the
-        // total fragment count.
+        // Resolve max_freq_build against the total fragment count.
         uint64_t freq_threshold = 1;
         if (freq_filter_active) {
             if (max_freq_build < 1.0) {
@@ -831,13 +826,10 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Postings pass: write per-volume .kix.tmp / .kpx.tmp.  Per-
-        // volume cost is the worst-case TempEntry buffer for the whole
-        // volume (one entry per parent base × overhead).  build_postings
-        // partitions to fit its own memory_limit, so when an entire
-        // batch fits the budget every volume runs concurrently with
-        // num_partitions == 1.  Each batch divides memory_limit equally
-        // between concurrent volumes.
+        // Postings pass: per-volume cost is the worst-case TempEntry
+        // buffer (one entry per base × overhead).  Each batch divides
+        // memory_limit equally among its concurrent volumes;
+        // build_postings partitions to fit its own share.
         if (!build_skipped) {
             const uint64_t entry_overhead = parallel_sort_entry_overhead();
             std::vector<VolumeCost> post_costs(total_volumes);
