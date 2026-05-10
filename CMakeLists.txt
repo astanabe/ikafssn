@@ -560,6 +560,11 @@ set(CPACK_PACKAGE_VERSION "${IKAFSSN_VERSION}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
     "K-mer-based alignment-free similarity search for nucleotide sequences")
 set(CPACK_PACKAGE_CONTACT "Akifumi S. Tanabe")
+# The RPM generator strips debug info via its own debug-info splitting;
+# the DEB generator does not, so without this flag the .deb retains
+# DWARF sections from statically linked dependencies (htslib's
+# ./configure defaults to -O2 -g) and balloons several times over.
+set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_PACKAGE_SECTION "science")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
