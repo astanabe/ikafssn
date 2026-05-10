@@ -84,41 +84,68 @@ bool build_metadata(BlastDbReader& db,
     out.seq_id_to_frag_start.reserve(blast_num_seqs);
     out.seq_id_to_frag_end.reserve(blast_num_seqs);
 
-    KsxWriter ksx;
+    // Per-OID results computed in parallel.  CSeqDB's GetRawSeqAndAmbig
+    // / GetSeqLength / accession lookups are MT-safe, so each OID is
+    // independent.  The serial merge below preserves OID order when
+    // registering parents into the KsxWriter (which is thread-unsafe).
+    struct PerOid {
+        uint32_t slen = 0;
+        bool kept = false;
+        std::string acc;
+        std::vector<fragment_splitter::Fragment> frags;
+    };
+    std::vector<PerOid> per_oid(blast_num_seqs);
+
     Progress prog("Metadata", blast_num_seqs, config.verbose);
+    std::atomic<uint32_t> progress_done{0};
+    tbb::parallel_for(
+        tbb::blocked_range<uint32_t>(0, blast_num_seqs, 256),
+        [&](const tbb::blocked_range<uint32_t>& range) {
+            for (uint32_t oid = range.begin(); oid < range.end(); oid++) {
+                PerOid& po = per_oid[oid];
+                po.slen = db.seq_length(oid);
+                if (po.slen < config.min_seq_length) {
+                    po.kept = false;
+                    continue;
+                }
+                po.kept = true;
+                po.acc = db.get_accession(oid);
+                if (!splitting_enabled) {
+                    po.frags.push_back({1u, po.slen});
+                } else {
+                    auto raw = db.get_raw_sequence(oid);
+                    auto ambig = AmbiguityParser::parse(raw.ambig_data,
+                                                       raw.ambig_bytes);
+                    db.ret_raw_sequence(raw);
+                    po.frags = fragment_splitter::split(po.slen, ambig,
+                                                        config.min_length_split,
+                                                        config.overlap_length);
+                }
+            }
+            uint32_t done = progress_done.fetch_add(
+                range.end() - range.begin(), std::memory_order_relaxed)
+                + (range.end() - range.begin());
+            prog.update(done);
+        });
+    prog.finish();
+
+    KsxWriter ksx;
     uint32_t skipped = 0;
     for (uint32_t blast_oid = 0; blast_oid < blast_num_seqs; blast_oid++) {
-        uint32_t slen = db.seq_length(blast_oid);
-        if (slen < config.min_seq_length) {
+        PerOid& po = per_oid[blast_oid];
+        if (!po.kept) {
             skipped++;
-            prog.update(blast_oid + 1);
             continue;
         }
-        std::string acc = db.get_accession(blast_oid);
-        uint32_t parent_idx = ksx.add_parent(blast_oid, slen, acc);
-
-        // Compute the fragment list for this parent.
-        std::vector<fragment_splitter::Fragment> frags;
-        if (!splitting_enabled) {
-            frags.push_back({1u, slen});
-        } else {
-            auto raw = db.get_raw_sequence(blast_oid);
-            auto ambig = AmbiguityParser::parse(raw.ambig_data,
-                                               raw.ambig_bytes);
-            db.ret_raw_sequence(raw);
-            frags = fragment_splitter::split(slen, ambig,
-                                             config.min_length_split,
-                                             config.overlap_length);
-        }
-
-        for (const auto& f : frags) {
+        uint32_t parent_idx = ksx.add_parent(blast_oid, po.slen, po.acc);
+        for (const auto& f : po.frags) {
             if (out.seq_id_to_blast_oid.size() >= UINT32_MAX) {
                 logger.error("SeqId space exhausted: more than %u fragments "
                              "would be required for this volume "
                              "(BLAST DB OID %u, parent length %u). "
                              "Increase -min_length_split or split the BLAST "
                              "DB into smaller volumes.",
-                             UINT32_MAX, blast_oid, slen);
+                             UINT32_MAX, blast_oid, po.slen);
                 std::remove(ksx_tmp.c_str());
                 return false;
             }
@@ -128,9 +155,11 @@ bool build_metadata(BlastDbReader& db,
             out.seq_id_to_frag_start.push_back(f.start);
             out.seq_id_to_frag_end.push_back(f.end);
         }
-        prog.update(blast_oid + 1);
+        // Free the temporary buffers as we go to keep peak memory low
+        // during merge.
+        po.acc.clear(); po.acc.shrink_to_fit();
+        po.frags.clear(); po.frags.shrink_to_fit();
     }
-    prog.finish();
 
     if (!ksx.write(ksx_tmp)) {
         logger.error("Failed to write %s", ksx_tmp.c_str());

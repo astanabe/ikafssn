@@ -72,6 +72,11 @@ uint32_t BlastDbReader::num_sequences() const {
     return static_cast<uint32_t>(impl_->db->GetNumSeqs());
 }
 
+uint64_t BlastDbReader::total_length() const {
+    if (!impl_->db) return 0;
+    return static_cast<uint64_t>(impl_->db->GetTotalLength());
+}
+
 uint32_t BlastDbReader::seq_length(uint32_t oid) const {
     if (!impl_->db) return 0;
     return static_cast<uint32_t>(impl_->db->GetSeqLength(static_cast<int>(oid)));

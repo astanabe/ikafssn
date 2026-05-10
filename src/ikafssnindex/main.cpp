@@ -11,6 +11,7 @@
 #include "core/spaced_seed.hpp"
 #include "core/types.hpp"
 #include "core/version.hpp"
+#include "index/parallel_sort_dispatch.hpp"
 #include "util/cli_parser.hpp"
 #include "util/common_init.hpp"
 #include "util/simd_dispatch.hpp"
@@ -28,9 +29,68 @@
 #include <vector>
 #include <filesystem>
 
+#include <atomic>
+#include <tbb/blocked_range.h>
 #include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
+#include <tbb/task_arena.h>
 
 using namespace ikafssn;
+
+// Per-volume cost estimate for memory-budget-driven batching.
+struct VolumeCost {
+    uint16_t volume_index;
+    uint64_t cost;
+};
+
+// One concurrency batch produced by plan_volume_batches().  All volumes
+// inside a batch run in parallel; batches are processed sequentially.
+struct VolumeBatch {
+    std::vector<uint16_t> vols;
+    uint64_t total_cost = 0;
+    bool oversized = false;  // true when the batch holds a single
+                             // volume that alone exceeds memory_budget;
+                             // the per-volume builder must shrink its
+                             // own footprint to fit.
+};
+
+// Group volumes into batches whose summed cost stays within
+// memory_budget.  Single volumes that exceed the budget become solo
+// "oversized" batches (the per-volume builder will partition further
+// to fit).  Mirrors plan_stage1_batches() in search_orchestrator.cpp.
+static std::vector<VolumeBatch>
+plan_volume_batches(const std::vector<VolumeCost>& costs,
+                    uint64_t memory_budget) {
+    std::vector<VolumeBatch> batches;
+    VolumeBatch cur;
+
+    auto flush = [&]() {
+        if (!cur.vols.empty()) {
+            batches.push_back(std::move(cur));
+            cur = VolumeBatch{};
+        }
+    };
+
+    for (const auto& vc : costs) {
+        const uint64_t c = std::max<uint64_t>(vc.cost, 1);
+        if (c > memory_budget) {
+            flush();
+            VolumeBatch single;
+            single.vols.push_back(vc.volume_index);
+            single.total_cost = c;
+            single.oversized = true;
+            batches.push_back(std::move(single));
+            continue;
+        }
+        if (cur.total_cost + c > memory_budget && !cur.vols.empty()) {
+            flush();
+        }
+        cur.vols.push_back(vc.volume_index);
+        cur.total_cost += c;
+    }
+    flush();
+    return batches;
+}
 
 // Result of validating an existing .khx file.
 enum class IndexStatus {
@@ -621,18 +681,50 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        logger.info("=== Collecting metadata for %u volume(s) ===",
-                    total_volumes);
+        // Metadata cost ~ O(num_oids × per-OID record).  ~256 bytes per
+        // OID covers PerOid + accession + frags vector with comfortable
+        // headroom on nt-class deflines.
+        constexpr uint64_t META_BYTES_PER_OID = 256;
+        std::vector<VolumeCost> meta_costs(total_volumes);
         for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            logger.info("Metadata %u/%u: %s",
-                        vi + 1, total_volumes, vol_paths[vi].c_str());
-            if (!build_metadata(dbs[vi], config, vol_prefixes_tmp[vi],
-                                volume_meta[vi], logger)) {
-                std::fprintf(stderr,
-                    "Error: metadata build failed for volume %u\n",
-                    static_cast<unsigned>(vi));
-                return 1;
-            }
+            meta_costs[vi] = {vi,
+                static_cast<uint64_t>(dbs[vi].num_sequences()) * META_BYTES_PER_OID};
+        }
+        auto meta_batches = plan_volume_batches(meta_costs, memory_limit);
+        logger.info("=== Collecting metadata for %u volume(s) "
+                    "(threads=%d, %zu batch(es)) ===",
+                    total_volumes, threads, meta_batches.size());
+
+        std::atomic<bool> meta_failed{false};
+        std::atomic<uint16_t> meta_failed_vi{0};
+        for (size_t bi = 0; bi < meta_batches.size(); bi++) {
+            if (meta_failed.load()) break;
+            const auto& batch = meta_batches[bi];
+            const int batch_concurrency = std::min(
+                static_cast<int>(batch.vols.size()), std::max(1, threads));
+            tbb::task_arena meta_arena(batch_concurrency);
+            meta_arena.execute([&] {
+                tbb::parallel_for(size_t(0), batch.vols.size(),
+                    [&](size_t bvi) {
+                        if (meta_failed.load(std::memory_order_relaxed)) return;
+                        uint16_t vi = batch.vols[bvi];
+                        logger.info("Metadata batch %zu/%zu, volume %u: %s",
+                                    bi + 1, meta_batches.size(),
+                                    vi + 1, vol_paths[vi].c_str());
+                        if (!build_metadata(dbs[vi], config, vol_prefixes_tmp[vi],
+                                            volume_meta[vi], logger)) {
+                            uint16_t expected = 0;
+                            meta_failed_vi.compare_exchange_strong(expected, vi);
+                            meta_failed.store(true, std::memory_order_relaxed);
+                        }
+                    });
+            });
+        }
+        if (meta_failed.load()) {
+            std::fprintf(stderr,
+                "Error: metadata build failed for volume %u\n",
+                static_cast<unsigned>(meta_failed_vi.load()));
+            return 1;
         }
 
         uint64_t total_fragments = 0;
@@ -739,29 +831,70 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Postings pass: write per-volume .kix.tmp / .kpx.tmp.
+        // Postings pass: write per-volume .kix.tmp / .kpx.tmp.  Per-
+        // volume cost is the worst-case TempEntry buffer for the whole
+        // volume (one entry per parent base × overhead).  build_postings
+        // partitions to fit its own memory_limit, so when an entire
+        // batch fits the budget every volume runs concurrently with
+        // num_partitions == 1.  Each batch divides memory_limit equally
+        // between concurrent volumes.
         if (!build_skipped) {
-            logger.info("=== Writing postings for %u volume(s) ===",
-                        total_volumes);
+            const uint64_t entry_overhead = parallel_sort_entry_overhead();
+            std::vector<VolumeCost> post_costs(total_volumes);
             for (uint16_t vi = 0; vi < total_volumes; vi++) {
-                logger.info("Postings %u/%u: %s",
-                            vi + 1, total_volumes, vol_paths[vi].c_str());
-                bool ok;
-                if (kmer_type_for(k, spaced_t) == 0) {
-                    ok = build_postings<uint16_t>(dbs[vi], config,
-                        vol_prefixes_tmp[vi], volume_meta[vi],
-                        vi, total_volumes, db_base, logger);
+                post_costs[vi] = {vi, dbs[vi].total_length() * entry_overhead};
+            }
+            auto post_batches = plan_volume_batches(post_costs, memory_limit);
+            logger.info("=== Writing postings for %u volume(s) "
+                        "(threads=%d, %zu batch(es)) ===",
+                        total_volumes, threads, post_batches.size());
+
+            std::atomic<bool> post_failed{false};
+            std::atomic<uint16_t> post_failed_vi{0};
+            for (size_t bi = 0; bi < post_batches.size(); bi++) {
+                if (post_failed.load()) break;
+                const auto& batch = post_batches[bi];
+                const int batch_concurrency = std::min(
+                    static_cast<int>(batch.vols.size()), std::max(1, threads));
+                IndexBuilderConfig batch_config = config;
+                if (batch.oversized || batch_concurrency <= 1) {
+                    batch_config.memory_limit = memory_limit;
                 } else {
-                    ok = build_postings<uint32_t>(dbs[vi], config,
-                        vol_prefixes_tmp[vi], volume_meta[vi],
-                        vi, total_volumes, db_base, logger);
+                    batch_config.memory_limit = memory_limit /
+                        static_cast<uint64_t>(batch_concurrency);
                 }
-                if (!ok) {
-                    std::fprintf(stderr,
-                        "Error: postings build failed for volume %u\n",
-                        static_cast<unsigned>(vi));
-                    return 1;
-                }
+                tbb::task_arena post_arena(batch_concurrency);
+                post_arena.execute([&] {
+                    tbb::parallel_for(size_t(0), batch.vols.size(),
+                        [&](size_t bvi) {
+                            if (post_failed.load(std::memory_order_relaxed)) return;
+                            uint16_t vi = batch.vols[bvi];
+                            logger.info("Postings batch %zu/%zu, volume %u: %s",
+                                        bi + 1, post_batches.size(),
+                                        vi + 1, vol_paths[vi].c_str());
+                            bool ok;
+                            if (kmer_type_for(k, spaced_t) == 0) {
+                                ok = build_postings<uint16_t>(dbs[vi], batch_config,
+                                    vol_prefixes_tmp[vi], volume_meta[vi],
+                                    vi, total_volumes, db_base, logger);
+                            } else {
+                                ok = build_postings<uint32_t>(dbs[vi], batch_config,
+                                    vol_prefixes_tmp[vi], volume_meta[vi],
+                                    vi, total_volumes, db_base, logger);
+                            }
+                            if (!ok) {
+                                uint16_t expected = 0;
+                                post_failed_vi.compare_exchange_strong(expected, vi);
+                                post_failed.store(true, std::memory_order_relaxed);
+                            }
+                        });
+                });
+            }
+            if (post_failed.load()) {
+                std::fprintf(stderr,
+                    "Error: postings build failed for volume %u\n",
+                    static_cast<unsigned>(post_failed_vi.load()));
+                return 1;
             }
         }
 
