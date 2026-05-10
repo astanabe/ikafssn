@@ -11,7 +11,6 @@
 #include "core/spaced_seed.hpp"
 #include "core/types.hpp"
 #include "core/version.hpp"
-#include "index/parallel_sort_dispatch.hpp"
 #include "util/cli_parser.hpp"
 #include "util/common_init.hpp"
 #include "util/simd_dispatch.hpp"
@@ -29,65 +28,8 @@
 #include <vector>
 #include <filesystem>
 
-#include <atomic>
-#include <tbb/blocked_range.h>
 #include <tbb/global_control.h>
-#include <tbb/parallel_for.h>
-#include <tbb/task_arena.h>
-
 using namespace ikafssn;
-
-// Per-volume memory-cost estimate fed to plan_volume_batches().
-struct VolumeCost {
-    uint16_t volume_index;
-    uint64_t cost;
-};
-
-// Concurrency batch: every listed volume runs in parallel; batches are
-// processed sequentially.  `oversized` flags single-volume batches
-// whose lone volume exceeds memory_budget — those receive the full
-// budget and rely on per-volume partitioning to fit.
-struct VolumeBatch {
-    std::vector<uint16_t> vols;
-    uint64_t total_cost = 0;
-    bool oversized = false;
-};
-
-// Greedily pack volumes into batches whose summed cost stays within
-// memory_budget.
-static std::vector<VolumeBatch>
-plan_volume_batches(const std::vector<VolumeCost>& costs,
-                    uint64_t memory_budget) {
-    std::vector<VolumeBatch> batches;
-    VolumeBatch cur;
-
-    auto flush = [&]() {
-        if (!cur.vols.empty()) {
-            batches.push_back(std::move(cur));
-            cur = VolumeBatch{};
-        }
-    };
-
-    for (const auto& vc : costs) {
-        const uint64_t c = std::max<uint64_t>(vc.cost, 1);
-        if (c > memory_budget) {
-            flush();
-            VolumeBatch single;
-            single.vols.push_back(vc.volume_index);
-            single.total_cost = c;
-            single.oversized = true;
-            batches.push_back(std::move(single));
-            continue;
-        }
-        if (cur.total_cost + c > memory_budget && !cur.vols.empty()) {
-            flush();
-        }
-        cur.vols.push_back(vc.volume_index);
-        cur.total_cost += c;
-    }
-    flush();
-    return batches;
-}
 
 // Result of validating an existing .khx file.
 enum class IndexStatus {
@@ -281,7 +223,9 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "  -rebuild <0|1>         Rebuild mode (default: 0)\n"
         "                         0 = skip volumes with valid existing indexes\n"
         "                         1 = always rebuild all volumes from scratch\n"
-        "  -memory_limit <size>   Memory limit (default: %s = half of RAM)\n"
+        "  -memory_limit <size>   Per-volume sort buffer budget (default: %s = half of RAM)\n"
+        "                         Bounds peak RAM during the postings pass by\n"
+        "                         partitioning k-mer entries to fit this budget.\n"
         "                         Accepts K, M, G suffixes\n"
         "  -max_freq_build <num>  Exclude k-mers with cross-volume count > threshold\n"
         "                         1 or 1.0: disable (no exclusion, default)\n"
@@ -678,59 +622,29 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // ~256 B per OID covers the per-OID accession + frags vector
-        // with headroom for nt-class deflines.
-        constexpr uint64_t META_BYTES_PER_OID = 256;
-        std::vector<VolumeCost> meta_costs(total_volumes);
-        for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            meta_costs[vi] = {vi,
-                static_cast<uint64_t>(dbs[vi].num_sequences()) * META_BYTES_PER_OID};
-        }
-        auto meta_batches = plan_volume_batches(meta_costs, memory_limit);
+        // Volumes are processed one at a time so the intra-volume
+        // parallel walks inside build_metadata get the full -nthread
+        // pool of workers.  Inter-volume parallelism would not buy
+        // anything here: `db.get_accession` (= CSeqDBImpl::GetSeqIDs)
+        // takes the singleton CSeqDBAtlas lock per call, which would
+        // serialise concurrent volumes anyway.
         logger.info("=== Collecting metadata for %u volume(s) "
-                    "(threads=%d, %zu batch(es)) ===",
-                    total_volumes, threads, meta_batches.size());
-
-        std::atomic<bool> meta_failed{false};
-        std::atomic<uint16_t> meta_failed_vi{0};
-        for (size_t bi = 0; bi < meta_batches.size(); bi++) {
-            if (meta_failed.load()) break;
-            const auto& batch = meta_batches[bi];
-            const int batch_concurrency = std::min(
-                static_cast<int>(batch.vols.size()), std::max(1, threads));
-            // Pre-fault sequence pages for the volumes in this batch so
-            // page faults don't serialize the per-OID parallel walk.
-            for (uint16_t vi : batch.vols) {
-                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kWillNeed);
+                    "(threads=%d) ===", total_volumes, threads);
+        for (uint16_t vi = 0; vi < total_volumes; vi++) {
+            logger.info("Metadata volume %u/%u: %s",
+                        vi + 1, total_volumes, vol_paths[vi].c_str());
+            dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
+            bool ok = build_metadata(dbs[vi], config, vol_prefixes_tmp[vi],
+                                     volume_meta[vi], logger);
+            // Release the page cache for this volume before moving to
+            // the next so peak page-cache use stays bounded.
+            dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
+            if (!ok) {
+                std::fprintf(stderr,
+                    "Error: metadata build failed for volume %u\n",
+                    static_cast<unsigned>(vi));
+                return 1;
             }
-            tbb::task_arena meta_arena(batch_concurrency);
-            meta_arena.execute([&] {
-                tbb::parallel_for(size_t(0), batch.vols.size(),
-                    [&](size_t bvi) {
-                        if (meta_failed.load(std::memory_order_relaxed)) return;
-                        uint16_t vi = batch.vols[bvi];
-                        logger.info("Metadata batch %zu/%zu, volume %u: %s",
-                                    bi + 1, meta_batches.size(),
-                                    vi + 1, vol_paths[vi].c_str());
-                        if (!build_metadata(dbs[vi], config, vol_prefixes_tmp[vi],
-                                            volume_meta[vi], logger)) {
-                            uint16_t expected = 0;
-                            meta_failed_vi.compare_exchange_strong(expected, vi);
-                            meta_failed.store(true, std::memory_order_relaxed);
-                        }
-                    });
-            });
-            // Release the page cache before the next batch so peak
-            // memory stays bounded by -memory_limit.
-            for (uint16_t vi : batch.vols) {
-                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
-            }
-        }
-        if (meta_failed.load()) {
-            std::fprintf(stderr,
-                "Error: metadata build failed for volume %u\n",
-                static_cast<unsigned>(meta_failed_vi.load()));
-            return 1;
         }
 
         uint64_t total_fragments = 0;
@@ -836,76 +750,38 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Postings pass: per-volume cost is the worst-case TempEntry
-        // buffer (one entry per base × overhead).  Each batch divides
-        // memory_limit equally among its concurrent volumes;
-        // build_postings partitions to fit its own share.
+        // Postings pass: each volume gets the full -memory_limit
+        // budget for sort partitioning.  Volumes are processed one
+        // at a time so the intra-volume parallel walks (counting,
+        // encoding) inside build_postings get the full -nthread
+        // pool.  Inter-volume parallelism is not used: realistic
+        // BLAST DB volumes (~16 Gbase per volume) need >100 GB of
+        // TempEntry buffer, so the per-volume cost almost always
+        // exceeds -memory_limit anyway.
         if (!build_skipped) {
-            const uint64_t entry_overhead = parallel_sort_entry_overhead();
-            std::vector<VolumeCost> post_costs(total_volumes);
-            for (uint16_t vi = 0; vi < total_volumes; vi++) {
-                post_costs[vi] = {vi, dbs[vi].total_length() * entry_overhead};
-            }
-            auto post_batches = plan_volume_batches(post_costs, memory_limit);
             logger.info("=== Writing postings for %u volume(s) "
-                        "(threads=%d, %zu batch(es)) ===",
-                        total_volumes, threads, post_batches.size());
-
-            std::atomic<bool> post_failed{false};
-            std::atomic<uint16_t> post_failed_vi{0};
-            for (size_t bi = 0; bi < post_batches.size(); bi++) {
-                if (post_failed.load()) break;
-                const auto& batch = post_batches[bi];
-                const int batch_concurrency = std::min(
-                    static_cast<int>(batch.vols.size()), std::max(1, threads));
-                IndexBuilderConfig batch_config = config;
-                if (batch.oversized || batch_concurrency <= 1) {
-                    batch_config.memory_limit = memory_limit;
+                        "(threads=%d) ===", total_volumes, threads);
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                logger.info("Postings volume %u/%u: %s",
+                            vi + 1, total_volumes, vol_paths[vi].c_str());
+                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
+                bool ok;
+                if (kmer_type_for(k, spaced_t) == 0) {
+                    ok = build_postings<uint16_t>(dbs[vi], config,
+                        vol_prefixes_tmp[vi], volume_meta[vi],
+                        vi, total_volumes, db_base, logger);
                 } else {
-                    batch_config.memory_limit = memory_limit /
-                        static_cast<uint64_t>(batch_concurrency);
+                    ok = build_postings<uint32_t>(dbs[vi], config,
+                        vol_prefixes_tmp[vi], volume_meta[vi],
+                        vi, total_volumes, db_base, logger);
                 }
-                // Pre-fault sequence pages for the volumes scanned by
-                // this batch; release them once the batch finishes so
-                // peak page-cache use stays bounded.
-                for (uint16_t vi : batch.vols) {
-                    dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kWillNeed);
+                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
+                if (!ok) {
+                    std::fprintf(stderr,
+                        "Error: postings build failed for volume %u\n",
+                        static_cast<unsigned>(vi));
+                    return 1;
                 }
-                tbb::task_arena post_arena(batch_concurrency);
-                post_arena.execute([&] {
-                    tbb::parallel_for(size_t(0), batch.vols.size(),
-                        [&](size_t bvi) {
-                            if (post_failed.load(std::memory_order_relaxed)) return;
-                            uint16_t vi = batch.vols[bvi];
-                            logger.info("Postings batch %zu/%zu, volume %u: %s",
-                                        bi + 1, post_batches.size(),
-                                        vi + 1, vol_paths[vi].c_str());
-                            bool ok;
-                            if (kmer_type_for(k, spaced_t) == 0) {
-                                ok = build_postings<uint16_t>(dbs[vi], batch_config,
-                                    vol_prefixes_tmp[vi], volume_meta[vi],
-                                    vi, total_volumes, db_base, logger);
-                            } else {
-                                ok = build_postings<uint32_t>(dbs[vi], batch_config,
-                                    vol_prefixes_tmp[vi], volume_meta[vi],
-                                    vi, total_volumes, db_base, logger);
-                            }
-                            if (!ok) {
-                                uint16_t expected = 0;
-                                post_failed_vi.compare_exchange_strong(expected, vi);
-                                post_failed.store(true, std::memory_order_relaxed);
-                            }
-                        });
-                });
-                for (uint16_t vi : batch.vols) {
-                    dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
-                }
-            }
-            if (post_failed.load()) {
-                std::fprintf(stderr,
-                    "Error: postings build failed for volume %u\n",
-                    static_cast<unsigned>(post_failed_vi.load()));
-                return 1;
             }
         }
 

@@ -124,12 +124,10 @@ Options:
                           because the parent-relative dedup keys assume
                           every chain hit fits inside at most two adjacent
                           fragments.
-  -memory_limit <size>    Memory budget for the build (default: half of physical RAM)
-                          Accepts K, M, G suffixes.  Used to size posting
-                          partitions and to plan how many volumes are
-                          processed concurrently in the metadata and
-                          postings passes (each batch's summed cost
-                          stays within this budget).
+  -memory_limit <size>    Per-volume sort buffer budget (default: half of physical RAM)
+                          Accepts K, M, G suffixes.  Bounds peak RAM during
+                          the postings pass by partitioning k-mer entries
+                          to fit this budget per volume.
   -max_freq_build <num>   Exclude k-mers with cross-volume count above this threshold
                           1 or 1.0: disable (no exclusion, default)
                           0 < x < 1: fraction of total NSEQ across all volumes
@@ -160,8 +158,9 @@ Options:
                           both: build coding and optimal indexes sequentially
   -nthread <int>          Number of threads (default: all cores)
                           Parallelizes per-volume counting / partition
-                          scan / sort, the per-OID metadata pass, and
-                          inter-volume processing within each batch.
+                          scan / sort and the per-OID metadata pass.
+                          Volumes are processed one at a time; each
+                          volume gets the full -nthread pool.
   -v, --verbose           Verbose output
 ```
 

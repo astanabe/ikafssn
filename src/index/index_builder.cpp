@@ -84,14 +84,17 @@ bool build_metadata(BlastDbReader& db,
     out.seq_id_to_frag_start.reserve(blast_num_seqs);
     out.seq_id_to_frag_end.reserve(blast_num_seqs);
 
-    // CSeqDB lookups are MT-safe, so each OID's slen / accession /
-    // fragments are computed under tbb::parallel_for.  The serial
-    // merge below preserves OID order when registering parents into
-    // the KsxWriter (which is thread-unsafe).
+    // The parallel pass below uses only lock-free CSeqDB calls
+    // (`seq_length`, `get_raw_sequence`) so it scales freely on a
+    // single volume.  `get_accession` (= `CSeqDBImpl::GetSeqIDs`) is
+    // deliberately excluded: it acquires the global
+    // `CSeqDBAtlas::m_Lock` and walks a non-thread-safe defline
+    // cache, so calling it here would serialise the whole loop.
+    // It runs instead in the serial merge below, where a single
+    // thread holds the lock and touches the cache.
     struct PerOid {
         uint32_t slen = 0;
         bool kept = false;
-        std::string acc;
         std::vector<fragment_splitter::Fragment> frags;
     };
     std::vector<PerOid> per_oid(blast_num_seqs);
@@ -109,7 +112,6 @@ bool build_metadata(BlastDbReader& db,
                     continue;
                 }
                 po.kept = true;
-                po.acc = db.get_accession(oid);
                 if (!splitting_enabled) {
                     po.frags.push_back({1u, po.slen});
                 } else {
@@ -137,7 +139,8 @@ bool build_metadata(BlastDbReader& db,
             skipped++;
             continue;
         }
-        uint32_t parent_idx = ksx.add_parent(blast_oid, po.slen, po.acc);
+        std::string acc = db.get_accession(blast_oid);
+        uint32_t parent_idx = ksx.add_parent(blast_oid, po.slen, acc);
         for (const auto& f : po.frags) {
             if (out.seq_id_to_blast_oid.size() >= UINT32_MAX) {
                 logger.error("SeqId space exhausted: more than %u fragments "
@@ -155,8 +158,7 @@ bool build_metadata(BlastDbReader& db,
             out.seq_id_to_frag_start.push_back(f.start);
             out.seq_id_to_frag_end.push_back(f.end);
         }
-        // Drop per-OID temp buffers as we merge to cap peak memory.
-        po.acc.clear(); po.acc.shrink_to_fit();
+        // Drop per-OID frag buffer as we merge to cap peak memory.
         po.frags.clear(); po.frags.shrink_to_fit();
     }
 
