@@ -121,6 +121,21 @@ target_link_libraries(test_v8_rejection PRIVATE ikafssn_util)
 add_ikafssn_test(test_index_filter_validate test_index_filter_validate.cpp)
 target_link_libraries(test_index_filter_validate PRIVATE ikafssn_util)
 
+# ikafssnindex resume / per-volume validation regression.  Spawns the
+# ikafssnindex CLI binary against the SSU fixture.
+add_executable(test_resume_validation test_resume_validation.cpp)
+target_link_libraries(test_resume_validation PRIVATE
+    ikafssn_index ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_resume_validation PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_compile_definitions(test_resume_validation PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME test_resume_validation COMMAND test_resume_validation)
+
 # Per-tier popcount_kinds + horizontal_sum_u8 unit test.  Run across
 # every ISA tier via add_ikafssn_simd_test so AVX2 / AVX-512
 # auto-vectorisation paths get the same coverage as SSE4.2 / NEON.

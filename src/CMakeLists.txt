@@ -26,6 +26,7 @@ add_library(ikafssn_index STATIC
     index/khx_writer.cpp
     index/khx_reader.cpp
     index/index_filter.cpp
+    index/volume_validator.cpp
     index/parallel_sort_dispatch.cpp
     index/pfd_codec.cpp
     index/seq_id_dedup.cpp

@@ -161,6 +161,19 @@ Options:
                           scan / sort and the per-OID metadata pass.
                           Volumes are processed one at a time; each
                           volume gets the full -nthread pool.
+  -force_rebuild <0|1>    Force a full rebuild (default: 0)
+                          0 = per-volume resume: existing .kix / .kpx /
+                              .ksx are strictly validated (file size,
+                              magic / format_version, full posting list
+                              walk).  Volumes that pass are reused;
+                              volumes that fail or are missing are
+                              rebuilt.  .ksx.tmp / .kix.tmp / .kpx.tmp
+                              from an interrupted previous run are also
+                              picked up.  Post-build validation prints
+                              any failing paths and exits non-zero
+                              without deleting them.
+                          1 = delete tmp / final files for this build's
+                              parameters and rebuild every volume.
   -v, --verbose           Verbose output
 ```
 

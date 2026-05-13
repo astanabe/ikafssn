@@ -3,10 +3,8 @@
 #include "index/index_builder.hpp"
 #include "index/index_filter.hpp"
 #include "index/kix_format.hpp"
-#include "index/kix_reader.hpp"
-#include "index/ksx_format.hpp"
-#include "index/khx_format.hpp"
-#include "index/khx_writer.hpp"
+#include "index/ksx_reader.hpp"
+#include "index/volume_validator.hpp"
 #include "core/config.hpp"
 #include "core/spaced_seed.hpp"
 #include "core/types.hpp"
@@ -20,179 +18,51 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <set>
 #include <string>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <vector>
 #include <filesystem>
 
 #include <tbb/global_control.h>
 using namespace ikafssn;
 
-// Result of validating an existing .khx file.
-enum class IndexStatus {
-    kNotFound,   // .khx is missing or fails the size / header checks
-    kValid,      // .khx is present and structurally consistent
+// Per-volume resume state.  Strict validation failures drop a volume
+// one level (after deleting the bad files): kComplete → kPostingsTmp
+// → kMetadataTmp → kNone.
+enum class VolumeState {
+    kComplete,     // final .ksx / .kix (and .kpx) pass strict validation
+    kPostingsTmp,  // .ksx.tmp / .kix.tmp (and .kpx.tmp) pass strict validation
+    kMetadataTmp,  // .ksx.tmp passes strict validation; no usable .kix.tmp
+    kNone          // nothing reusable (or -force_rebuild 1)
 };
 
-struct IndexValidation {
-    IndexStatus status = IndexStatus::kNotFound;
-};
+enum class KhxState { kValid, kNeedsRebuild };
 
-// Return on-disk size of a file, or -1 if it cannot be stat'd.
-static int64_t file_size_or_neg(const std::string& path) {
-    struct stat st;
-    if (::stat(path.c_str(), &st) != 0) return -1;
-    return static_cast<int64_t>(st.st_size);
-}
-
-// Verify the on-disk .ksx size matches the two-stage layout:
-//   header + parent_lengths[P] + parent_blast_oids[P] + parent_acc_offsets[P+1]
-//          + accession-string-table[acc_bytes]
-//          + fragment_parent_idx[N] + fragment_start[N] + fragment_end[N]
-// where P = num_parents, N = num_sequences, and acc_bytes is recorded in
-// parent_acc_offsets[P].
-static bool verify_ksx_file_size(const std::string& ksx_path,
-                                 const Logger& logger) {
-    FILE* fp = std::fopen(ksx_path.c_str(), "rb");
-    if (!fp) return false;
-    KsxHeader hdr{};
-    if (std::fread(&hdr, sizeof(hdr), 1, fp) != 1) {
-        std::fclose(fp);
-        return false;
-    }
-    if (std::memcmp(hdr.magic, KSX_MAGIC, sizeof(KSX_MAGIC)) != 0
-        || hdr.format_version != KSX_FORMAT_VERSION) {
-        std::fclose(fp);
-        return false;
-    }
-    const uint32_t num_sequences = hdr.num_sequences;
-    const uint32_t num_parents   = hdr.num_parents;
-
-    // Read parent_acc_offsets[num_parents] (the sentinel = total acc bytes).
-    const long acc_offsets_pos = static_cast<long>(sizeof(KsxHeader))
-                               + static_cast<long>(sizeof(uint32_t)) * num_parents
-                               + static_cast<long>(sizeof(uint32_t)) * num_parents
-                               + static_cast<long>(sizeof(uint32_t)) * num_parents;
-    if (std::fseek(fp, acc_offsets_pos, SEEK_SET) != 0) {
-        std::fclose(fp);
-        return false;
-    }
-    uint32_t string_table_bytes = 0;
-    if (std::fread(&string_table_bytes, sizeof(uint32_t), 1, fp) != 1) {
-        std::fclose(fp);
-        return false;
-    }
-    std::fclose(fp);
-
-    int64_t expected = static_cast<int64_t>(sizeof(KsxHeader))
-                     + static_cast<int64_t>(sizeof(uint32_t)) * num_parents          // parent_lengths
-                     + static_cast<int64_t>(sizeof(uint32_t)) * num_parents          // parent_blast_oids
-                     + static_cast<int64_t>(sizeof(uint32_t)) * (num_parents + 1)    // parent_acc_offsets
-                     + static_cast<int64_t>(string_table_bytes)                       // accession strings
-                     + static_cast<int64_t>(sizeof(uint32_t)) * num_sequences        // fragment_parent_idx
-                     + static_cast<int64_t>(sizeof(uint32_t)) * num_sequences        // fragment_start
-                     + static_cast<int64_t>(sizeof(uint32_t)) * num_sequences;       // fragment_end
-    int64_t actual = file_size_or_neg(ksx_path);
-    if (actual != expected) {
-        logger.warn("validate: %s file size %ld != expected %ld",
-                    ksx_path.c_str(),
-                    static_cast<long>(actual),
-                    static_cast<long>(expected));
-        return false;
-    }
-    return true;
-}
-
-// Open the .kix via KixReader and verify that its on-disk posting file
-// region exactly matches the EF dictionary's sentinel offset (the
-// expected end of the posting file).  Catches truncation past the
-// dictionary as well as oversized files.  Returns true on match.
-static bool verify_kix_file_size(const std::string& kix_path,
-                                 const Logger& logger) {
-    KixReader kix;
-    if (!kix.open(kix_path)) return false;
-    uint64_t expected_post = kix.posting_list_offset(kix.table_size());
-    uint64_t actual_post = kix.posting_file_size();
-    if (expected_post != actual_post) {
-        logger.warn("validate: %s posting file size %lu != EF sentinel %lu",
-                    kix_path.c_str(),
-                    static_cast<unsigned long>(actual_post),
-                    static_cast<unsigned long>(expected_post));
-        return false;
-    }
-    return true;
-}
-
-// Standalone validation for a .khx file.  Checks magic, format_version,
-// the (k, t, template_type) tuple matches what we are about to build,
-// and the on-disk file size equals header + ceil(4^k / 8).
-// Returns kValid if usable, kNotFound otherwise (callers treat the
-// .khx as missing and trigger a regeneration / rebuild path).
-static IndexValidation validate_khx_standalone(
-    const std::string& khx_path,
-    int k, uint8_t t, uint8_t template_type,
-    const Logger& logger) {
-
-    IndexValidation result;
-    FILE* fp = std::fopen(khx_path.c_str(), "rb");
-    if (!fp) return result; // kNotFound
-
-    KhxHeader hdr{};
-    bool ok = (std::fread(&hdr, sizeof(hdr), 1, fp) == 1);
-    std::fclose(fp);
-    if (!ok) return result;
-
-    if (std::memcmp(hdr.magic, KHX_MAGIC, 4) != 0) {
-        logger.warn("validate: %s has invalid magic", khx_path.c_str());
-        return result;
-    }
-    if (hdr.format_version != KHX_FORMAT_VERSION) {
-        logger.warn("validate: %s format_version=%u != expected %u",
-                    khx_path.c_str(), hdr.format_version, KHX_FORMAT_VERSION);
-        return result;
-    }
-    if (hdr.k != static_cast<uint8_t>(k) ||
-        hdr.t != t ||
-        hdr.template_type != template_type) {
-        logger.warn("validate: %s (k=%u, t=%u, template_type=%u) does not match "
-                    "requested (k=%d, t=%u, template_type=%u)",
-                    khx_path.c_str(), hdr.k, hdr.t, hdr.template_type,
-                    k, t, template_type);
-        return result;
-    }
-
-    int64_t expected = static_cast<int64_t>(sizeof(KhxHeader))
-                     + static_cast<int64_t>((table_size(k) + 7) / 8);
-    int64_t actual = file_size_or_neg(khx_path);
-    if (actual != expected) {
-        logger.warn("validate: %s file size %ld != expected %ld",
-                    khx_path.c_str(),
-                    static_cast<long>(actual),
-                    static_cast<long>(expected));
-        return result;
-    }
-
-    result.status = IndexStatus::kValid;
-    return result;
-}
-
-// Remove .tmp files for a volume prefix.
-static void cleanup_tmp_files(const std::string& output_prefix, bool skip_kpx,
-                              const Logger& logger) {
-    auto remove_tmp = [&logger](const std::string& path) {
-        if (std::filesystem::exists(path)) {
-            std::remove(path.c_str());
-            logger.info("Removed incomplete temp file: %s", path.c_str());
+static void remove_if_exists(const std::string& path, const Logger& logger) {
+    if (std::filesystem::exists(path)) {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        if (ec) {
+            logger.warn("Could not remove %s: %s",
+                        path.c_str(), ec.message().c_str());
+        } else {
+            logger.info("Removed: %s", path.c_str());
         }
-    };
-    remove_tmp(output_prefix + ".kix.tmp");
-    remove_tmp(output_prefix + ".ksx.tmp");
-    if (!skip_kpx) {
-        remove_tmp(output_prefix + ".kpx.tmp");
     }
+}
+
+static void remove_volume_tmp(const std::string& prefix, bool skip_kpx,
+                              const Logger& logger) {
+    remove_if_exists(prefix + ".ksx.tmp", logger);
+    remove_if_exists(prefix + ".kix.tmp", logger);
+    if (!skip_kpx) remove_if_exists(prefix + ".kpx.tmp", logger);
+}
+
+static void remove_volume_final(const std::string& prefix, bool skip_kpx,
+                                const Logger& logger) {
+    remove_if_exists(prefix + ".ksx", logger);
+    remove_if_exists(prefix + ".kix", logger);
+    if (!skip_kpx) remove_if_exists(prefix + ".kpx", logger);
 }
 
 static void print_usage(const char* prog, const std::string& default_mem) {
@@ -220,9 +90,12 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "                         Must be < min_length_split / 2.\n"
         "                         -min_length_split and -overlap_length must both be 0\n"
         "                         (splitting disabled) or both non-zero.\n"
-        "  -rebuild <0|1>         Rebuild mode (default: 0)\n"
-        "                         0 = skip volumes with valid existing indexes\n"
-        "                         1 = always rebuild all volumes from scratch\n"
+        "  -force_rebuild <0|1>   Force a full rebuild (default: 0)\n"
+        "                         0 = per-volume resume: validate existing files\n"
+        "                             and rebuild only the missing or corrupted\n"
+        "                             volumes\n"
+        "                         1 = delete tmp / final files for this build's\n"
+        "                             parameters and rebuild every volume\n"
         "  -memory_limit <size>   Per-volume sort buffer budget (default: %s = half of RAM)\n"
         "                         Bounds peak RAM during the postings pass by\n"
         "                         partitioning k-mer entries to fit this budget.\n"
@@ -248,10 +121,6 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         "  -template_type <str>   Template type: coding, optimal, or both (required with -t)\n"
         "                         both: builds coding and optimal indexes sequentially\n"
         "  -nthread <int>         Number of threads (default: all cores)\n"
-        "  -no_validate           Skip the post-build structural validation pass\n"
-        "                         (default-on; walks each k-mer's .kpx posting\n"
-        "                         list and checks its byte length against the\n"
-        "                         EF dictionary)\n"
         "  -v, --verbose          Verbose output\n",
         prog, MIN_K, MAX_K, default_mem.c_str());
 }
@@ -405,10 +274,6 @@ int main(int argc, char* argv[]) {
         mem_limit_str = default_mem_str;
     }
 
-    // Post-build structural validation is on by default; -no_validate
-    // opts out (e.g. when building a known-good index for benchmarking).
-    const bool run_validate = !cli.has("-no_validate");
-
     double max_freq_build = 1.0; // default: disabled (no exclusion)
     if (cli.has("-max_freq_build")) {
         max_freq_build = cli.get_double("-max_freq_build", 1.0);
@@ -460,9 +325,9 @@ int main(int argc, char* argv[]) {
         nthread_highfreq_filter = std::min(8, threads);
     }
 
-    int rebuild_mode = cli.get_int("-rebuild", 0);
-    if (rebuild_mode != 0 && rebuild_mode != 1) {
-        std::fprintf(stderr, "Error: -rebuild must be 0 or 1\n");
+    int force_rebuild = cli.get_int("-force_rebuild", 0);
+    if (force_rebuild != 0 && force_rebuild != 1) {
+        std::fprintf(stderr, "Error: -force_rebuild must be 0 or 1\n");
         return 1;
     }
 
@@ -587,10 +452,8 @@ int main(int argc, char* argv[]) {
 
         config.template_type = cur_tt;
 
-        // Per-volume "tmp" prefixes omit max_freq_build / max_degen_expand
-        // because the absolute threshold is only known after the metadata
-        // pass.  The final prefix encodes the resolved values and is used
-        // for the rename / filter output.
+        // Tmp prefix omits max_freq_build / max_degen_expand because
+        // the absolute threshold is only known after the metadata pass.
         auto tmp_prefix_for = [&](const std::string& vb) {
             return index_file_stem(out_dir, vb, k, spaced_t, cur_tt,
                                    min_seq_length, min_length_split, overlap_length,
@@ -602,58 +465,328 @@ int main(int argc, char* argv[]) {
             vol_prefixes_tmp[vi] = tmp_prefix_for(vol_basenames[vi]);
         }
 
-        // Metadata pass: collect parent / fragment tables and write the
-        // .ksx.tmp for every volume.  BlastDbReader is mmap-based and
-        // CSeqDB is thread-safe, so each reader is opened once here and
-        // re-used by the postings pass.
-        std::vector<VolumeMetadata> volume_meta(total_volumes);
-        std::vector<BlastDbReader> dbs(total_volumes);
-        for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            if (!dbs[vi].open(vol_paths[vi])) {
-                std::fprintf(stderr, "Error: cannot open volume '%s'\n",
-                             vol_paths[vi].c_str());
-                return 1;
-            }
-        }
-
-        if (rebuild_mode == 1) {
+        std::vector<std::string> vol_prefixes_final(total_volumes);
+        std::string khx_path;
+        std::string kvx_path;
+        auto refresh_final_paths = [&](uint64_t freq_threshold) {
+            auto final_prefix_for = [&](const std::string& vb) {
+                return index_file_stem(out_dir, vb, k, spaced_t, cur_tt,
+                                       min_seq_length, min_length_split, overlap_length,
+                                       freq_threshold,
+                                       static_cast<uint32_t>(max_degen_expand));
+            };
             for (uint16_t vi = 0; vi < total_volumes; vi++) {
-                cleanup_tmp_files(vol_prefixes_tmp[vi], config.skip_kpx, logger);
+                vol_prefixes_final[vi] = final_prefix_for(vol_basenames[vi]);
+            }
+            khx_path = khx_path_for(out_dir, db_base, k, spaced_t, cur_tt,
+                                    min_seq_length, min_length_split, overlap_length,
+                                    freq_threshold,
+                                    static_cast<uint32_t>(max_degen_expand));
+            kvx_path = index_file_stem(out_dir, db_base, k, spaced_t, cur_tt,
+                                       min_seq_length, min_length_split, overlap_length,
+                                       freq_threshold,
+                                       static_cast<uint32_t>(max_degen_expand))
+                      + ".kvx";
+        };
+        // Provisional value equals the resolved threshold when
+        // -max_freq_build is disabled (=1) or an absolute integer (>1).
+        // For a fractional value the resolved threshold needs
+        // total_fragments and is substituted by the peek pass below.
+        uint64_t freq_threshold_provisional =
+            freq_filter_active && max_freq_build >= 1.0
+                ? static_cast<uint64_t>(max_freq_build)
+                : 1;
+        refresh_final_paths(freq_threshold_provisional);
+
+        if (freq_filter_active && max_freq_build < 1.0) {
+            uint64_t total_fragments_peek = 0;
+            bool peek_ok = true;
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                std::string ksx_path;
+                std::string ksx_tmp = vol_prefixes_tmp[vi] + ".ksx.tmp";
+                if (std::filesystem::exists(ksx_tmp)) {
+                    ksx_path = ksx_tmp;
+                } else {
+                    std::error_code ec;
+                    for (auto& entry : std::filesystem::directory_iterator(out_dir, ec)) {
+                        if (!entry.is_regular_file()) continue;
+                        std::string p = entry.path().string();
+                        if (p.size() < 4 || p.substr(p.size() - 4) != ".ksx") continue;
+                        IndexFilenameParts parts;
+                        if (!parse_index_filename(p, parts)) continue;
+                        // parts.has_vol is false for single-volume DBs (the
+                        // basename has no numeric suffix), so we match on
+                        // vol_basename alone to cover both single and
+                        // multi-volume layouts.
+                        if (parts.vol_basename != vol_basenames[vi]) continue;
+                        if (parts.k != k) continue;
+                        if (parts.t != spaced_t) continue;
+                        if (parts.template_type != cur_tt) continue;
+                        if (parts.min_seq_length != min_seq_length) continue;
+                        if (parts.min_length_split != min_length_split) continue;
+                        if (parts.overlap_length != overlap_length) continue;
+                        if (parts.max_degen_expand !=
+                            static_cast<uint32_t>(max_degen_expand)) continue;
+                        ksx_path = p;
+                        break;
+                    }
+                }
+                if (ksx_path.empty()) {
+                    peek_ok = false;
+                    break;
+                }
+                KsxReader reader;
+                if (!reader.open(ksx_path)) {
+                    peek_ok = false;
+                    break;
+                }
+                total_fragments_peek += reader.num_sequences();
+                reader.close();
+            }
+            if (peek_ok && total_fragments_peek > 0) {
+                double resolved = std::ceil(max_freq_build *
+                                            static_cast<double>(total_fragments_peek));
+                if (resolved < 1.0) resolved = 1.0;
+                uint64_t peek_threshold = static_cast<uint64_t>(resolved);
+                if (peek_threshold != freq_threshold_provisional) {
+                    freq_threshold_provisional = peek_threshold;
+                    refresh_final_paths(freq_threshold_provisional);
+                    logger.info(
+                        "Resolved -max_freq_build=%.6g against existing "
+                        "metadata (total_fragments=%lu) -> threshold=%lu",
+                        max_freq_build,
+                        static_cast<unsigned long>(total_fragments_peek),
+                        static_cast<unsigned long>(peek_threshold));
+                }
             }
         }
 
-        // Volumes are processed one at a time so the intra-volume
-        // parallel walks inside build_metadata get the full -nthread
-        // pool of workers.  Inter-volume parallelism would not buy
-        // anything here: `db.get_accession` (= CSeqDBImpl::GetSeqIDs)
-        // takes the singleton CSeqDBAtlas lock per call, which would
-        // serialise concurrent volumes anyway.
-        logger.info("=== Collecting metadata for %u volume(s) "
-                    "(threads=%d) ===", total_volumes, threads);
+        // -force_rebuild 1: wipe tmp / final files before classification.
+        if (force_rebuild == 1) {
+            logger.info("-force_rebuild 1: deleting existing tmp / final files");
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                remove_volume_tmp(vol_prefixes_tmp[vi], config.skip_kpx, logger);
+                remove_volume_final(vol_prefixes_final[vi], config.skip_kpx, logger);
+                remove_if_exists(vol_prefixes_final[vi] + ".kvx", logger);
+            }
+            if (freq_filter_active) {
+                remove_if_exists(khx_path, logger);
+            }
+        }
+
+        // Classify each volume.  Validation failures emit a warning,
+        // delete the offending files, and downgrade to the next state.
+        std::vector<VolumeState> state(total_volumes, VolumeState::kNone);
+        if (force_rebuild == 0) {
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                const std::string& fp = vol_prefixes_final[vi];
+                const std::string& tp = vol_prefixes_tmp[vi];
+                const bool has_final =
+                    std::filesystem::exists(fp + ".ksx") &&
+                    std::filesystem::exists(fp + ".kix") &&
+                    (config.skip_kpx || std::filesystem::exists(fp + ".kpx"));
+                if (has_final) {
+                    if (validate_volume_final_strict(fp, config.skip_kpx, logger)) {
+                        state[vi] = VolumeState::kComplete;
+                        continue;
+                    }
+                    logger.warn(
+                        "Existing final files for volume %u failed strict "
+                        "validation; deleting and rebuilding this volume.",
+                        static_cast<unsigned>(vi));
+                    remove_volume_final(fp, config.skip_kpx, logger);
+                    if (freq_filter_active) {
+                        // Stale .khx no longer matches the surviving
+                        // volumes; drop it so the filter pass regenerates.
+                        remove_if_exists(khx_path, logger);
+                    }
+                }
+
+                const bool has_tmp_full =
+                    std::filesystem::exists(tp + ".ksx.tmp") &&
+                    std::filesystem::exists(tp + ".kix.tmp") &&
+                    (config.skip_kpx || std::filesystem::exists(tp + ".kpx.tmp"));
+                if (has_tmp_full) {
+                    if (validate_volume_tmp_strict(tp, config.skip_kpx, logger)) {
+                        state[vi] = VolumeState::kPostingsTmp;
+                        continue;
+                    }
+                    logger.warn(
+                        "Existing tmp postings files for volume %u failed "
+                        "strict validation; deleting and rebuilding this volume.",
+                        static_cast<unsigned>(vi));
+                    remove_if_exists(tp + ".kix.tmp", logger);
+                    if (!config.skip_kpx) remove_if_exists(tp + ".kpx.tmp", logger);
+                    // .ksx.tmp may still be salvageable; re-evaluate below.
+                }
+
+                const bool has_ksx_tmp = std::filesystem::exists(tp + ".ksx.tmp");
+                if (has_ksx_tmp) {
+                    if (validate_ksx_file_strict(tp + ".ksx.tmp", logger)) {
+                        state[vi] = VolumeState::kMetadataTmp;
+                        continue;
+                    }
+                    logger.warn(
+                        "Existing .ksx.tmp for volume %u failed strict "
+                        "validation; deleting and rebuilding this volume.",
+                        static_cast<unsigned>(vi));
+                    remove_if_exists(tp + ".ksx.tmp", logger);
+                }
+
+                state[vi] = VolumeState::kNone;
+            }
+        }
+
+        // Cross-volume frequency counts (and .khx) are only consistent
+        // when every volume is rebuilt together: if any volume is not
+        // kComplete or .khx fails strict validation, demote every
+        // volume to kNone so the filter pass sees identical inputs
+        // across volumes.
+        KhxState khx_state = KhxState::kNeedsRebuild;
+        if (freq_filter_active) {
+            bool all_complete = true;
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                if (state[vi] != VolumeState::kComplete) {
+                    all_complete = false;
+                    break;
+                }
+            }
+            bool khx_valid = all_complete &&
+                validate_khx_file_strict(khx_path, k, spaced_t, cur_tt, logger);
+            if (all_complete && khx_valid) {
+                khx_state = KhxState::kValid;
+            } else {
+                if (all_complete && !khx_valid) {
+                    logger.warn(
+                        ".khx (%s) failed strict validation; demoting all "
+                        "volumes to a full rebuild so the cross-volume "
+                        "frequency filter sees identical inputs.",
+                        khx_path.c_str());
+                }
+                for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                    if (state[vi] == VolumeState::kComplete) {
+                        logger.info(
+                            "Demoting volume %u to full rebuild "
+                            "(-max_freq_build active requires every "
+                            "volume to participate in the filter pass).",
+                            static_cast<unsigned>(vi));
+                        remove_volume_final(vol_prefixes_final[vi],
+                                            config.skip_kpx, logger);
+                    }
+                    state[vi] = VolumeState::kNone;
+                }
+                remove_if_exists(khx_path, logger);
+            }
+        }
+
+        // Open BLAST DB volumes once; shared by metadata and postings.
+        std::vector<BlastDbReader> dbs(total_volumes);
+        bool need_dbs = false;
         for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            logger.info("Metadata volume %u/%u: %s",
-                        vi + 1, total_volumes, vol_paths[vi].c_str());
-            dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
-            bool ok = build_metadata(dbs[vi], config, vol_prefixes_tmp[vi],
-                                     volume_meta[vi], logger);
-            // Release the page cache for this volume before moving to
-            // the next so peak page-cache use stays bounded.
-            dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
-            if (!ok) {
-                std::fprintf(stderr,
-                    "Error: metadata build failed for volume %u\n",
-                    static_cast<unsigned>(vi));
-                return 1;
+            if (state[vi] == VolumeState::kNone ||
+                state[vi] == VolumeState::kMetadataTmp) {
+                need_dbs = true;
+                break;
+            }
+        }
+        if (need_dbs) {
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                if (!dbs[vi].open(vol_paths[vi])) {
+                    std::fprintf(stderr, "Error: cannot open volume '%s'\n",
+                                 vol_paths[vi].c_str());
+                    return 1;
+                }
             }
         }
 
+        // Metadata pass.  kNone: run build_metadata (writes .ksx.tmp).
+        // kMetadataTmp: reuse existing .ksx.tmp.  kPostingsTmp /
+        // kComplete: fetch num_sequences only, and only when
+        // freq_filter_active needs total_fragments.
+        std::vector<VolumeMetadata> volume_meta(total_volumes);
+        int n_complete_reuse = 0, n_postings_tmp_reuse = 0;
+        {
+            int n_to_build = 0, n_to_reuse_ksx = 0;
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                switch (state[vi]) {
+                    case VolumeState::kNone:        n_to_build++; break;
+                    case VolumeState::kMetadataTmp: n_to_reuse_ksx++; break;
+                    case VolumeState::kPostingsTmp: n_postings_tmp_reuse++; break;
+                    case VolumeState::kComplete:    n_complete_reuse++; break;
+                }
+            }
+            if (n_to_build > 0 || n_to_reuse_ksx > 0) {
+                logger.info("=== Collecting metadata for %d of %u volume(s) "
+                            "(build=%d, reuse-ksx=%d, threads=%d) ===",
+                            n_to_build + n_to_reuse_ksx, total_volumes,
+                            n_to_build, n_to_reuse_ksx, threads);
+            } else if (n_complete_reuse + n_postings_tmp_reuse > 0) {
+                logger.info("Reusing %d complete + %d postings-tmp volume(s); "
+                            "no metadata pass needed.",
+                            n_complete_reuse, n_postings_tmp_reuse);
+            }
+        }
+        for (uint16_t vi = 0; vi < total_volumes; vi++) {
+            if (state[vi] == VolumeState::kNone) {
+                logger.info("Metadata volume %u/%u: %s",
+                            vi + 1, total_volumes, vol_paths[vi].c_str());
+                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
+                bool ok = build_metadata(dbs[vi], config, vol_prefixes_tmp[vi],
+                                         volume_meta[vi], logger);
+                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
+                if (!ok) {
+                    std::fprintf(stderr,
+                        "Error: metadata build failed for volume %u\n",
+                        static_cast<unsigned>(vi));
+                    return 1;
+                }
+            } else if (state[vi] == VolumeState::kMetadataTmp) {
+                // Reconstruct VolumeMetadata from the existing .ksx.tmp
+                // so the postings pass sees the same tables it would
+                // have got from build_metadata.
+                KsxReader reader;
+                if (!reader.open(vol_prefixes_tmp[vi] + ".ksx.tmp")) {
+                    std::fprintf(stderr,
+                        "Error: cannot re-open %s.ksx.tmp\n",
+                        vol_prefixes_tmp[vi].c_str());
+                    return 1;
+                }
+                const uint32_t N = reader.num_sequences();
+                volume_meta[vi].num_sequences = N;
+                volume_meta[vi].num_parents   = reader.num_parents();
+                volume_meta[vi].seq_id_to_blast_oid.resize(N);
+                volume_meta[vi].seq_id_to_frag_start.resize(N);
+                volume_meta[vi].seq_id_to_frag_end.resize(N);
+                for (uint32_t i = 0; i < N; ++i) {
+                    volume_meta[vi].seq_id_to_blast_oid[i] =
+                        reader.blast_oid(reader.parent_index(i));
+                    volume_meta[vi].seq_id_to_frag_start[i] = reader.fragment_start(i);
+                    volume_meta[vi].seq_id_to_frag_end[i]   = reader.fragment_end(i);
+                }
+                reader.close();
+            } else if (state[vi] == VolumeState::kPostingsTmp ||
+                       state[vi] == VolumeState::kComplete) {
+                // The freq-filter recompute below needs num_sequences
+                // for total_fragments; the full arrays are unused here.
+                if (freq_filter_active) {
+                    const std::string ksx = (state[vi] == VolumeState::kPostingsTmp)
+                        ? (vol_prefixes_tmp[vi] + ".ksx.tmp")
+                        : (vol_prefixes_final[vi] + ".ksx");
+                    KsxReader reader;
+                    if (reader.open(ksx)) {
+                        volume_meta[vi].num_sequences = reader.num_sequences();
+                        reader.close();
+                    }
+                }
+            }
+        }
+
+        // Resolve max_freq_build against the total fragment count.
         uint64_t total_fragments = 0;
         for (uint16_t vi = 0; vi < total_volumes; vi++) {
             total_fragments += volume_meta[vi].num_sequences;
         }
-
-        // Resolve max_freq_build against the total fragment count.
-        uint64_t freq_threshold = 1;
+        uint64_t freq_threshold = freq_threshold_provisional;
         if (freq_filter_active) {
             if (max_freq_build < 1.0) {
                 double resolved = std::ceil(max_freq_build *
@@ -669,123 +802,51 @@ int main(int argc, char* argv[]) {
             } else {
                 freq_threshold = static_cast<uint64_t>(max_freq_build);
             }
+            // Refresh the final prefixes if the resolved threshold
+            // differs from the provisional one.
+            if (freq_threshold != freq_threshold_provisional) {
+                refresh_final_paths(freq_threshold);
+            }
         }
 
-        auto final_prefix_for = [&](const std::string& vb) {
-            return index_file_stem(out_dir, vb, k, spaced_t, cur_tt,
-                                   min_seq_length, min_length_split, overlap_length,
-                                   freq_threshold,
-                                   static_cast<uint32_t>(max_degen_expand));
-        };
-        std::vector<std::string> vol_prefixes_final(total_volumes);
+        // Postings pass for kNone / kMetadataTmp volumes.
+        {
+            int n_to_build = 0;
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                if (state[vi] == VolumeState::kNone ||
+                    state[vi] == VolumeState::kMetadataTmp) n_to_build++;
+            }
+            if (n_to_build > 0) {
+                logger.info("=== Writing postings for %d volume(s) "
+                            "(threads=%d) ===", n_to_build, threads);
+            }
+        }
         for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            vol_prefixes_final[vi] = final_prefix_for(vol_basenames[vi]);
-        }
-        std::string khx_path = khx_path_for(out_dir, db_base, k, spaced_t, cur_tt,
-                                            min_seq_length, min_length_split, overlap_length,
-                                            freq_threshold,
-                                            static_cast<uint32_t>(max_degen_expand));
-        std::string kvx_path = index_file_stem(out_dir, db_base, k, spaced_t, cur_tt,
-                                                min_seq_length, min_length_split, overlap_length,
-                                                freq_threshold,
-                                                static_cast<uint32_t>(max_degen_expand))
-                              + ".kvx";
-
-        // Skip the postings / filter / rename steps when -rebuild=0 and
-        // all final files already exist.  The .ksx.tmp from the metadata
-        // pass is harmless (it is left for the next run's resume path).
-        bool build_skipped = false;
-        if (rebuild_mode == 0) {
-            bool all_final_present = true;
-            for (uint16_t vi = 0; vi < total_volumes; vi++) {
-                std::string kix = vol_prefixes_final[vi] + ".kix";
-                std::string ksx = vol_prefixes_final[vi] + ".ksx";
-                std::string kpx = vol_prefixes_final[vi] + ".kpx";
-                if (!std::filesystem::exists(kix) ||
-                    !std::filesystem::exists(ksx) ||
-                    (!config.skip_kpx && !std::filesystem::exists(kpx))) {
-                    all_final_present = false;
-                    break;
-                }
+            if (state[vi] != VolumeState::kNone &&
+                state[vi] != VolumeState::kMetadataTmp) continue;
+            logger.info("Postings volume %u/%u: %s",
+                        vi + 1, total_volumes, vol_paths[vi].c_str());
+            dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
+            bool ok;
+            if (kmer_type_for(k, spaced_t) == 0) {
+                ok = build_postings<uint16_t>(dbs[vi], config,
+                    vol_prefixes_tmp[vi], volume_meta[vi],
+                    vi, total_volumes, db_base, logger);
+            } else {
+                ok = build_postings<uint32_t>(dbs[vi], config,
+                    vol_prefixes_tmp[vi], volume_meta[vi],
+                    vi, total_volumes, db_base, logger);
             }
-            bool khx_present = !freq_filter_active ||
-                std::filesystem::exists(khx_path);
-            if (all_final_present && khx_present) {
-                logger.info("All %d volumes have valid final indexes; "
-                            "skipping rebuild (-rebuild 0)",
-                            total_volumes);
-                build_skipped = true;
-
-                // Deep validation walk so corruption is detected before
-                // we report success.
-                if (run_validate) {
-                    for (size_t vi = 0; vi < total_volumes; vi++) {
-                        const std::string& prefix = vol_prefixes_final[vi];
-                        std::string kix_path = prefix + ".kix";
-                        std::string ksx_path = prefix + ".ksx";
-                        std::string kpx_path = config.skip_kpx
-                            ? std::string{} : (prefix + ".kpx");
-                        if (!verify_kix_file_size(kix_path, logger) ||
-                            !verify_ksx_file_size(ksx_path, logger) ||
-                            !validate_volume(kix_path, kpx_path, nullptr, logger)) {
-                            std::fprintf(stderr,
-                                "Error: existing index validation failed for %s; "
-                                "delete and re-run with -rebuild 1\n",
-                                prefix.c_str());
-                            return 1;
-                        }
-                    }
-                    if (freq_filter_active) {
-                        auto khx_val = validate_khx_standalone(
-                            khx_path, k, spaced_t, cur_tt, logger);
-                        if (khx_val.status != IndexStatus::kValid) {
-                            std::fprintf(stderr,
-                                "Error: existing .khx validation failed for %s; "
-                                "delete and re-run with -rebuild 1\n",
-                                khx_path.c_str());
-                            return 1;
-                        }
-                    }
-                }
+            dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
+            if (!ok) {
+                std::fprintf(stderr,
+                    "Error: postings build failed for volume %u\n",
+                    static_cast<unsigned>(vi));
+                return 1;
             }
         }
 
-        // Postings pass: each volume gets the full -memory_limit
-        // budget for sort partitioning.  Volumes are processed one
-        // at a time so the intra-volume parallel walks (counting,
-        // encoding) inside build_postings get the full -nthread
-        // pool.  Inter-volume parallelism is not used: realistic
-        // BLAST DB volumes (~16 Gbase per volume) need >100 GB of
-        // TempEntry buffer, so the per-volume cost almost always
-        // exceeds -memory_limit anyway.
-        if (!build_skipped) {
-            logger.info("=== Writing postings for %u volume(s) "
-                        "(threads=%d) ===", total_volumes, threads);
-            for (uint16_t vi = 0; vi < total_volumes; vi++) {
-                logger.info("Postings volume %u/%u: %s",
-                            vi + 1, total_volumes, vol_paths[vi].c_str());
-                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
-                bool ok;
-                if (kmer_type_for(k, spaced_t) == 0) {
-                    ok = build_postings<uint16_t>(dbs[vi], config,
-                        vol_prefixes_tmp[vi], volume_meta[vi],
-                        vi, total_volumes, db_base, logger);
-                } else {
-                    ok = build_postings<uint32_t>(dbs[vi], config,
-                        vol_prefixes_tmp[vi], volume_meta[vi],
-                        vi, total_volumes, db_base, logger);
-                }
-                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
-                if (!ok) {
-                    std::fprintf(stderr,
-                        "Error: postings build failed for volume %u\n",
-                        static_cast<unsigned>(vi));
-                    return 1;
-                }
-            }
-        }
-
-        // Write .kvx manifest for this template type.
+        // .kvx manifest; re-written every run.
         {
             FILE* fp = std::fopen(kvx_path.c_str(), "w");
             if (!fp) {
@@ -804,23 +865,29 @@ int main(int argc, char* argv[]) {
             logger.info("Wrote volume manifest: %s", kvx_path.c_str());
         }
 
-        // Cross-volume frequency filtering: consumes .tmp, emits final
-        // .kix / .kpx / .ksx and the shared .khx.
-        if (!build_skipped && freq_filter_active) {
-            if (!filter_volumes_cross_volume(vol_prefixes_tmp,
-                                             vol_prefixes_final,
-                                             khx_path, k,
-                                             freq_threshold,
-                                             nthread_highfreq_filter,
-                                             logger)) {
-                std::fprintf(stderr, "Error: cross-volume filtering failed\n");
-                return 1;
-            }
-        }
-
-        // Rename .tmp -> final when no cross-volume filter pass ran.
-        if (!build_skipped && !freq_filter_active) {
+        // Filter (freq_filter_active) or .tmp → final rename.
+        if (freq_filter_active) {
+            bool all_complete = true;
             for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                if (state[vi] != VolumeState::kComplete) {
+                    all_complete = false;
+                    break;
+                }
+            }
+            if (!all_complete || khx_state != KhxState::kValid) {
+                if (!filter_volumes_cross_volume(vol_prefixes_tmp,
+                                                 vol_prefixes_final,
+                                                 khx_path, k,
+                                                 freq_threshold,
+                                                 nthread_highfreq_filter,
+                                                 logger)) {
+                    std::fprintf(stderr, "Error: cross-volume filtering failed\n");
+                    return 1;
+                }
+            }
+        } else {
+            for (uint16_t vi = 0; vi < total_volumes; vi++) {
+                if (state[vi] == VolumeState::kComplete) continue;
                 const std::string& tp = vol_prefixes_tmp[vi];
                 const std::string& fp = vol_prefixes_final[vi];
                 auto rename_one = [&](const char* ext) {
@@ -841,52 +908,47 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Structural validation on the finalised .kix / .kpx pair, plus
-        // .kix / .ksx / .khx file size checks.
-        if (run_validate && !build_skipped) {
-            for (size_t vi = 0; vi < vol_prefixes_final.size(); vi++) {
-                const std::string& prefix = vol_prefixes_final[vi];
-                std::string kix_path = prefix + ".kix";
-                std::string ksx_path = prefix + ".ksx";
-                std::string kpx_path = config.skip_kpx ? std::string{} : (prefix + ".kpx");
-                if (!verify_kix_file_size(kix_path, logger)) {
-                    std::fprintf(stderr,
-                        "Error: post-build .kix file size check failed for %s\n",
-                        kix_path.c_str());
-                    return 1;
-                }
-                if (!verify_ksx_file_size(ksx_path, logger)) {
-                    std::fprintf(stderr,
-                        "Error: post-build .ksx file size check failed for %s\n",
-                        ksx_path.c_str());
-                    return 1;
-                }
-                if (!validate_volume(kix_path, kpx_path, nullptr, logger)) {
-                    std::fprintf(stderr,
-                        "Error: post-build validation failed for volume %s\n",
-                        prefix.c_str());
-                    return 1;
-                }
+        // Post-build validation.  On failure, list the offending paths
+        // and exit non-zero; never delete files automatically.
+        std::vector<std::string> failed_files;
+        for (uint16_t vi = 0; vi < total_volumes; vi++) {
+            const std::string& prefix = vol_prefixes_final[vi];
+            const std::string ksx = prefix + ".ksx";
+            const std::string kix = prefix + ".kix";
+            const std::string kpx = config.skip_kpx ? std::string{} : (prefix + ".kpx");
+            if (!validate_ksx_file_strict(ksx, logger)) {
+                failed_files.push_back(ksx);
+            }
+            if (!validate_kix_kpx_strict(kix, kpx, logger)) {
+                failed_files.push_back(kix);
+                if (!kpx.empty()) failed_files.push_back(kpx);
+            } else {
                 logger.info("Validated volume: %s", prefix.c_str());
             }
-            if (freq_filter_active) {
-                auto khx_val = validate_khx_standalone(khx_path, k, spaced_t,
-                                                       cur_tt, logger);
-                if (khx_val.status != IndexStatus::kValid) {
-                    std::fprintf(stderr,
-                        "Error: post-build .khx validation failed for %s\n",
-                        khx_path.c_str());
-                    return 1;
-                }
+        }
+        if (freq_filter_active) {
+            if (!validate_khx_file_strict(khx_path, k, spaced_t, cur_tt, logger)) {
+                failed_files.push_back(khx_path);
+            } else {
                 logger.info("Validated .khx: %s", khx_path.c_str());
             }
+        }
+        if (!failed_files.empty()) {
+            std::fprintf(stderr,
+                "Error: post-build validation failed for the following file(s):\n");
+            for (const auto& p : failed_files) {
+                std::fprintf(stderr, "  %s\n", p.c_str());
+            }
+            std::fprintf(stderr,
+                "Delete these files and re-run ikafssnindex to rebuild them.\n");
+            return 1;
         }
 
         if (build_types.size() > 1) {
             logger.info("========== %s template completed ==========",
                         template_type_to_string(cur_type).c_str());
         }
-    } // end for each build_type
+    }
 
     logger.info("All volumes completed successfully.");
     return 0;
