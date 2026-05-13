@@ -796,10 +796,7 @@ jobs:
       - name: Import GPG signing key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.IKAFSSN_GPG_PRIVATE_KEY }}
-          IKAFSSN_GPG_KEYID: ${{ secrets.IKAFSSN_GPG_KEYID }}
-        run: |
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-          echo "${IKAFSSN_GPG_KEYID}:6:" | gpg --import-ownertrust
+        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
 
       - name: Checkout deb-ikafssn
         uses: actions/checkout@v6
@@ -872,10 +869,7 @@ jobs:
       - name: Import GPG signing key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.IKAFSSN_GPG_PRIVATE_KEY }}
-          IKAFSSN_GPG_KEYID: ${{ secrets.IKAFSSN_GPG_KEYID }}
-        run: |
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-          echo "${IKAFSSN_GPG_KEYID}:6:" | gpg --import-ownertrust
+        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
 
       - name: Checkout rpm-ikafssn
         uses: actions/checkout@v6
