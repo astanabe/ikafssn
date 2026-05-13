@@ -123,6 +123,17 @@ Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eu
   3. Begin planning only after this explicit instruction is received.
 - When presenting a plan, display the **absolute path** of the plan file (`.md`).
 
+## Implementation Rules
+
+- **Do not begin implementation autonomously.** Start editing source / test / build files (anything under `src/`, `include/`, `test/`, `CMakeLists.txt`, `.github/workflows/`, `recipe/`, etc.) only after the user explicitly instructs you to.
+- Standard workflow:
+  1. Discuss the cause, approach, and trade-offs with the user.
+  2. Investigate the codebase as needed — read-only exploration (`Read`, `git log`, `grep`, etc.) does not require explicit instruction.
+  3. Once the approach is agreed upon, the user issues an implementation instruction such as "実装して" / "実装してください" / "修正して" / "implement" / "go ahead" / "fix it".
+  4. Begin code edits only after this explicit instruction is received.
+- Drafting a fix in the conversation (describing what would be changed, listing intended edits, or outlining file-level diffs) is part of discussion, not implementation; do not write or edit files based on it without an explicit go-ahead.
+- This rule applies regardless of how clear the bug or fix appears.
+
 ## Version Management
 
 - The version number is managed via `IKAFSSN_VERSION` in `CMakeLists.txt`. Format: `"0.1.YYYY.MM.DD"` (the date the program source code was last modified).
