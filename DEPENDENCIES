@@ -90,6 +90,38 @@ Conda channel (https://conda.ikafssn.org; runtime deps from conda-forge):
 
   Client requirements: conda 23.7+ or micromamba 2.0+ (for base_url).
 
+APT channel (https://deb.ikafssn.org; .deb hosted in-channel):
+
+  Suites available:
+    jammy   Ubuntu 22.04 LTS
+    noble   Ubuntu 24.04 LTS
+  Architectures: amd64, arm64
+
+  Runtime dependencies match the corresponding Ubuntu .deb variant
+  above (libtbb12 / liblmdb0 / ... ); dpkg resolves them from the
+  distribution's own archives at install time.
+
+  Client requirements: apt, curl, gnupg.
+  Signing: GPG-signed Release / InRelease / Release.gpg per suite,
+  verified by apt against the channel's public key.
+
+DNF channel (https://rpm.ikafssn.org; .rpm hosted in-channel):
+
+  releasevers available:
+    9    AlmaLinux / Rocky Linux / RHEL 9
+    10   AlmaLinux / Rocky Linux / RHEL 10
+  Architectures: x86_64, aarch64
+
+  Runtime dependencies match the corresponding EL .rpm variant above
+  (tbb / lmdb-libs / ... ); dnf resolves them from the distribution's
+  own repositories at install time.
+
+  Client requirements: dnf.
+  Signing: each .rpm is re-signed with rpm --addsign, and repomd.xml
+  carries a detached GPG signature. Both gpgcheck=1 and
+  repo_gpgcheck=1 in the .repo file are verified against the
+  channel's public key.
+
 Build dependencies (from source)
 ----------------------------------
 

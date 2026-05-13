@@ -4,58 +4,7 @@ Installation instructions for ikafssn
 A. Installing pre-built packages
 ==================================
 
-A1. Ubuntu (.deb package)
----------------------------
-
-Pre-built .deb packages are available for Ubuntu 22.04 and 24.04 (amd64/arm64).
-Download the appropriate .deb file from the GitHub Releases page:
-
-  https://github.com/astanabe/ikafssn/releases
-
-Package naming convention:
-
-  ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
-
-Examples:
-  ikafssn_0.1.2026.02.28_ubuntu-24.04_amd64.deb
-  ikafssn_0.1.2026.02.28_ubuntu-22.04_arm64.deb
-
-Install the package:
-
-  sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
-
-Verify:
-
-  ikafssnindex --version
-
-
-A2. EL 9 / EL 10 (.rpm package)
----------------------------------
-
-Pre-built .rpm packages are available for EL 9 (AlmaLinux/Rocky/RHEL 9)
-and EL 10 (AlmaLinux/Rocky/RHEL 10) on x86_64 and aarch64.
-Download the appropriate .rpm file from the GitHub Releases page:
-
-  https://github.com/astanabe/ikafssn/releases
-
-Package naming convention:
-
-  ikafssn-<version>.el<ver>.<arch>.rpm
-
-Examples:
-  ikafssn-0.1.2026.04.08.el9.x86_64.rpm
-  ikafssn-0.1.2026.04.08.el10.aarch64.rpm
-
-Install the package:
-
-  sudo dnf install ./ikafssn-<version>.el<ver>.<arch>.rpm
-
-Verify:
-
-  ikafssnindex --version
-
-
-A3. macOS 26 Tahoe (Homebrew)
+A1. macOS 26 Tahoe (Homebrew)
 -------------------------------
 
 On macOS 26 (Tahoe) with Apple Silicon (aarch64), install via the
@@ -72,7 +21,7 @@ Verify:
   ikafssnindex --version
 
 
-A4. Conda (channel)
+A2. Conda (channel)
 ---------------------
 
 ikafssn is distributed through a dedicated Conda channel hosted at
@@ -98,6 +47,111 @@ mechanism.
 Requirements:
   - conda 23.7+ or micromamba 2.0+
     (older clients silently ignore base_url and fail with HTTP 404)
+
+Verify:
+
+  ikafssnindex --version
+
+
+A3. Ubuntu (APT channel)
+--------------------------
+
+ikafssn is distributed through a signed APT channel hosted at
+https://deb.ikafssn.org. The channel always reflects the latest
+release; older versions are not retained in the channel.
+
+Suites:
+  jammy   Ubuntu 22.04 LTS  (amd64, arm64)
+  noble   Ubuntu 24.04 LTS  (amd64, arm64)
+
+One-time setup (run as root or via sudo):
+
+  sudo install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://deb.ikafssn.org/ikafssn-archive-keyring.asc \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/ikafssn-archive-keyring.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/ikafssn-archive-keyring.gpg] https://deb.ikafssn.org/ $(lsb_release -cs) main" \
+    | sudo tee /etc/apt/sources.list.d/ikafssn.list
+  sudo apt update
+  sudo apt install ikafssn
+
+Subsequent upgrades:
+
+  sudo apt update && sudo apt upgrade ikafssn
+
+Verify:
+
+  ikafssnindex --version
+
+
+A4. EL 9 / EL 10 (DNF / YUM channel)
+--------------------------------------
+
+ikafssn is distributed through a signed DNF channel hosted at
+https://rpm.ikafssn.org. The channel always reflects the latest
+release; older versions are not retained in the channel.
+
+releasevers:
+  9    AlmaLinux / Rocky Linux / RHEL 9   (x86_64, aarch64)
+  10   AlmaLinux / Rocky Linux / RHEL 10  (x86_64, aarch64)
+
+One-time setup (run as root or via sudo):
+
+  sudo tee /etc/yum.repos.d/ikafssn.repo > /dev/null <<'EOF'
+  [ikafssn]
+  name=ikafssn
+  baseurl=https://rpm.ikafssn.org/el$releasever/$basearch/
+  enabled=1
+  gpgcheck=1
+  repo_gpgcheck=1
+  gpgkey=https://rpm.ikafssn.org/ikafssn-archive-keyring.asc
+  EOF
+  sudo dnf install ikafssn
+
+Subsequent upgrades:
+
+  sudo dnf upgrade ikafssn
+
+Both the package signature (gpgcheck=1) and the repository metadata
+signature (repo_gpgcheck=1) are verified against the channel's
+public key.
+
+Verify:
+
+  ikafssnindex --version
+
+
+A5. Direct download (fallback)
+--------------------------------
+
+If installing through Homebrew / Conda / APT / DNF is not an option,
+the same .deb, .rpm, .conda, and Homebrew bottle artifacts can be
+downloaded directly from the GitHub Releases page:
+
+  https://github.com/astanabe/ikafssn/releases
+
+Package naming conventions:
+
+  ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+    Ubuntu 22.04 / 24.04, amd64 / arm64
+    e.g. ikafssn_0.1.2026.02.28_ubuntu-24.04_amd64.deb
+
+  ikafssn-<version>.el<ver>.<arch>.rpm
+    EL 9 / 10, x86_64 / aarch64
+    e.g. ikafssn-0.1.2026.04.08.el9.x86_64.rpm
+
+  ikafssn_<version>_<conda_subdir>.conda
+    linux-64 / linux-aarch64 / osx-arm64
+
+  ikafssn-<version>.arm64_tahoe.bottle.tar.gz
+    macOS 26 (Tahoe) arm64 Homebrew bottle
+
+Install a downloaded .deb:
+
+  sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+
+Install a downloaded .rpm:
+
+  sudo dnf install ./ikafssn-<version>.el<ver>.<arch>.rpm
 
 Verify:
 

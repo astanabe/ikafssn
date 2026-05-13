@@ -25,6 +25,12 @@ homebrew-ikafssn/
 # Conda channel (separate repository)
 conda-ikafssn/
 
+# APT channel (separate repository)
+deb-ikafssn/
+
+# DNF channel (separate repository)
+rpm-ikafssn/
+
 # Claude Code conversation logs
 claude*.txt
 

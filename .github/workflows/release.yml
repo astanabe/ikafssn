@@ -756,3 +756,156 @@ jobs:
           git add Formula/ikafssn.rb
           git commit -m "Update formula for ikafssn v${{ steps.version.outputs.version }}"
           git push origin HEAD:main
+
+  update-deb-channel:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read version
+        id: version
+        run: echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release has all four .deb assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          missing=()
+          for ubuntu_ver in 22.04 24.04; do
+            for arch in amd64 arm64; do
+              asset="ikafssn_${{ steps.version.outputs.version }}_ubuntu-${ubuntu_ver}_${arch}.deb"
+              if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
+                    --json assets --jq '.assets[].name' | grep -Fxq "${asset}"; then
+                missing+=("${asset}")
+              fi
+            done
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::Missing release assets: %s\n' "${missing[*]}"
+            echo "::error::If the build matrix all succeeded, the build job likely skipped because CMakeLists.txt's IKAFSSN_VERSION did not match inputs.version (=${{ steps.version.outputs.version }}). Verify both agree and re-dispatch."
+            exit 1
+          fi
+
+      - name: Install APT tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils dpkg-dev gnupg
+
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.IKAFSSN_GPG_PRIVATE_KEY }}
+          IKAFSSN_GPG_KEYID: ${{ secrets.IKAFSSN_GPG_KEYID }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "${IKAFSSN_GPG_KEYID}:6:" | gpg --import-ownertrust
+
+      - name: Checkout deb-ikafssn
+        uses: actions/checkout@v6
+        with:
+          repository: astanabe/deb-ikafssn
+          token: ${{ secrets.DEB_IKAFSSN_TOKEN }}
+          path: deb-ikafssn
+
+      - name: Regenerate APT channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IKAFSSN_VERSION: ${{ steps.version.outputs.version }}
+          IKAFSSN_GPG_KEYID: ${{ secrets.IKAFSSN_GPG_KEYID }}
+          GPG_PASSPHRASE: ${{ secrets.IKAFSSN_GPG_PASSPHRASE }}
+        run: bash recipe/deb-publish.sh deb-ikafssn
+
+      - name: Commit and push APT channel
+        run: |
+          cd deb-ikafssn
+          git config user.name "ikafssn-release-bot"
+          git config user.email "noreply@ikafssn.org"
+          git add -A pool dists
+          if git diff --cached --quiet; then
+            echo "::notice::APT channel unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "Publish ikafssn v${{ steps.version.outputs.version }}"
+          git push origin HEAD:main
+
+  update-rpm-channel:
+    needs: build
+    runs-on: ubuntu-24.04
+    container: almalinux:10
+    steps:
+      - name: Install container tooling
+        run: |
+          dnf install -y \
+            createrepo_c rpm-sign rpm-build gnupg2 git tar zstd \
+            ca-certificates
+          dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+          dnf install -y gh
+
+      - uses: actions/checkout@v6
+
+      - name: Read version
+        id: version
+        run: echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release has all four .rpm assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          missing=()
+          for el_ver in 9 10; do
+            for arch in x86_64 aarch64; do
+              asset="ikafssn-${{ steps.version.outputs.version }}.el${el_ver}.${arch}.rpm"
+              if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
+                    --json assets --jq '.assets[].name' | grep -Fxq "${asset}"; then
+                missing+=("${asset}")
+              fi
+            done
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::Missing release assets: %s\n' "${missing[*]}"
+            echo "::error::If the build matrix all succeeded, the build job likely skipped because CMakeLists.txt's IKAFSSN_VERSION did not match inputs.version (=${{ steps.version.outputs.version }}). Verify both agree and re-dispatch."
+            exit 1
+          fi
+
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.IKAFSSN_GPG_PRIVATE_KEY }}
+          IKAFSSN_GPG_KEYID: ${{ secrets.IKAFSSN_GPG_KEYID }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "${IKAFSSN_GPG_KEYID}:6:" | gpg --import-ownertrust
+
+      - name: Checkout rpm-ikafssn
+        uses: actions/checkout@v6
+        with:
+          repository: astanabe/rpm-ikafssn
+          token: ${{ secrets.RPM_IKAFSSN_TOKEN }}
+          path: rpm-ikafssn
+
+      - name: Mark checkouts as safe
+        run: |
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}/rpm-ikafssn"
+
+      - name: Regenerate DNF channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IKAFSSN_VERSION: ${{ steps.version.outputs.version }}
+          IKAFSSN_GPG_KEYID: ${{ secrets.IKAFSSN_GPG_KEYID }}
+          GPG_PASSPHRASE: ${{ secrets.IKAFSSN_GPG_PASSPHRASE }}
+        run: bash recipe/rpm-publish.sh rpm-ikafssn
+
+      - name: Commit and push DNF channel
+        run: |
+          cd rpm-ikafssn
+          git config user.name "ikafssn-release-bot"
+          git config user.email "noreply@ikafssn.org"
+          git add -A el9 el10
+          if git diff --cached --quiet; then
+            echo "::notice::DNF channel unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "Publish ikafssn v${{ steps.version.outputs.version }}"
+          git push origin HEAD:main

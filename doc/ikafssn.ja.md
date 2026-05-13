@@ -1338,40 +1338,6 @@ NCBI nt 規模（~700 ボリューム、k=12 t=21）では 32 コアホストで
 
 ## インストール
 
-### Ubuntu (.deb パッケージ)
-
-Ubuntu 22.04 および 24.04 (amd64/arm64) 向けのビルド済み `.deb` パッケージが提供されています。[GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから適切なパッケージをダウンロードしてください。
-
-パッケージ命名規則:
-
-```
-ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
-```
-
-パッケージのインストール:
-
-```bash
-sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
-```
-
-### Enterprise Linux (.rpm パッケージ)
-
-AlmaLinux / RHEL / Rocky Linux 9 および 10 (x86_64/aarch64) 向けのビルド済み `.rpm` パッケージが [GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから提供されています。
-
-パッケージ命名規則:
-
-```
-ikafssn-<version>.el<el_ver>.<arch>.rpm
-```
-
-`<el_ver>` は `9` または `10`、`<arch>` は `x86_64` または `aarch64` です。
-
-パッケージのインストール:
-
-```bash
-sudo dnf install ./ikafssn-<version>.el<el_ver>.<arch>.rpm
-```
-
 ### macOS 26 Tahoe (Homebrew)
 
 macOS 26 (Tahoe) の Apple Silicon (aarch64) 環境では、Homebrew Tap 経由でインストールできます:
@@ -1403,6 +1369,92 @@ mamba create -n ikafssn -c https://conda.ikafssn.org -c conda-forge ikafssn
 
 要件:
 - `conda` 23.7 以上 または `micromamba` 2.0 以上 (これより古いクライアントは `base_url` を無視するため、パッケージダウンロード時に HTTP 404 で失敗します)。
+
+### Ubuntu (APT チャンネル)
+
+ikafssn は署名付き APT チャンネル `https://deb.ikafssn.org` 経由で配布されます。チャンネルは常に最新リリースのみを保持し、過去バージョンは保持されません。
+
+| Suite | Ubuntu リリース | アーキテクチャ |
+|---|---|---|
+| `jammy` | Ubuntu 22.04 LTS | `amd64`, `arm64` |
+| `noble` | Ubuntu 24.04 LTS | `amd64`, `arm64` |
+
+初回セットアップ (root または `sudo` で実行):
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://deb.ikafssn.org/ikafssn-archive-keyring.asc \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/ikafssn-archive-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/ikafssn-archive-keyring.gpg] https://deb.ikafssn.org/ $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/ikafssn.list
+sudo apt update
+sudo apt install ikafssn
+```
+
+以降のアップグレード:
+
+```bash
+sudo apt update && sudo apt upgrade ikafssn
+```
+
+チャンネルは `.deb` バイナリ本体と suite 別の `Packages` / `Release` / `InRelease` / `Release.gpg` メタデータを配信します。公開鍵のフィンガープリントは [astanabe/ikafssn](https://github.com/astanabe/ikafssn) リポジトリ root に commit されている `ikafssn-archive-keyring.asc` でも検証できます。
+
+### Enterprise Linux (DNF / YUM チャンネル)
+
+ikafssn は署名付き DNF チャンネル `https://rpm.ikafssn.org` 経由で配布されます。チャンネルは常に最新リリースのみを保持し、過去バージョンは保持されません。
+
+| `releasever` | ディストリビューション | アーキテクチャ |
+|---|---|---|
+| `9` | AlmaLinux / Rocky Linux / RHEL 9 | `x86_64`, `aarch64` |
+| `10` | AlmaLinux / Rocky Linux / RHEL 10 | `x86_64`, `aarch64` |
+
+初回セットアップ (root または `sudo` で実行):
+
+```bash
+sudo tee /etc/yum.repos.d/ikafssn.repo > /dev/null <<'EOF'
+[ikafssn]
+name=ikafssn
+baseurl=https://rpm.ikafssn.org/el$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://rpm.ikafssn.org/ikafssn-archive-keyring.asc
+EOF
+sudo dnf install ikafssn
+```
+
+以降のアップグレード:
+
+```bash
+sudo dnf upgrade ikafssn
+```
+
+パッケージ署名 (`gpgcheck=1`) とリポジトリメタデータ署名 (`repo_gpgcheck=1`) の両方がチャンネル公開鍵で検証されます。
+
+### 直接ダウンロード (フォールバック)
+
+Homebrew / Conda / APT / DNF が使用できない環境向けに、同じ `.deb`、`.rpm`、`.conda`、Bottle 成果物を [GitHub Releases](https://github.com/astanabe/ikafssn/releases) ページから直接ダウンロードできます。
+
+パッケージ命名規則:
+
+```
+ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb         # Ubuntu 22.04 / 24.04, amd64 / arm64
+ikafssn-<version>.el<el_ver>.<arch>.rpm                   # EL 9 / 10, x86_64 / aarch64
+ikafssn_<version>_<conda_subdir>.conda                    # linux-64 / linux-aarch64 / osx-arm64
+ikafssn-<version>.arm64_tahoe.bottle.tar.gz               # macOS 26 (Tahoe) arm64 用 Homebrew Bottle
+```
+
+ダウンロードした `.deb` のインストール:
+
+```bash
+sudo apt install ./ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
+```
+
+ダウンロードした `.rpm` のインストール:
+
+```bash
+sudo dnf install ./ikafssn-<version>.el<el_ver>.<arch>.rpm
+```
 
 ### インストールの確認
 

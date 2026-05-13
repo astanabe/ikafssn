@@ -157,7 +157,7 @@ Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eu
   1. **OS-dependent headers** — confirm no Linux-only / x86-only `#include` was added that would break the macOS build.
   2. **Test updates** — make sure tests covering the changed behaviour exist and pass.
   3. **Documentation updates** — `doc/ikafssn.en.md`, `doc/ikafssn.ja.md`, and any other relevant docs reflect the change.
-  4. **Binary-generation system updates** — `.github/workflows/release.yml`, `recipe/` (conda), and the formula in the `homebrew-ikafssn` repository are consistent with the change.
+  4. **Binary-generation system updates** — `.github/workflows/release.yml`, `recipe/` (conda, `deb-publish.sh`, `rpm-publish.sh`), the formula in the `homebrew-ikafssn` repository, and the channel layouts in `deb-ikafssn` / `rpm-ikafssn` are consistent with the change.
   5. **`IKAFSSN_VERSION`** — bump to today's date if the to-be-pushed changes touch program source code (per the Version Management rule).
   6. **Comment / identifier hygiene** — remove unused functions and identifiers, drop unnecessary or low-value comments, drop any "Phase X" wording, fix any term used with multiple inconsistent meanings, shorten long comments, and remove anything that doesn't belong (per the Code Comments and Documentation rule).
 - **Plan-implementation completeness check.** When the user instructs a push that follows the implementation of a plan, also verify — without being asked — that every step of the plan has actually been implemented; if any step is missing, complete and commit it before pushing.
