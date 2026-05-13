@@ -17,6 +17,7 @@
 #include "util/logger.hpp"
 #include "util/progress.hpp"
 
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
@@ -211,6 +212,46 @@ bool build_postings(BlastDbReader& db,
     const uint32_t tbl_size = table_size(k);
     const int effective_bits = 2 * k;
 
+    // Group fragments by parent so each parent's k-mer stream is
+    // scanned once and split into fragment coordinates inline.  All
+    // fragments of one parent occupy a contiguous seq_id range with
+    // frag_start in ascending order (see build_metadata).
+    struct ParentGroup {
+        uint32_t blast_oid;
+        uint32_t seq_id_lo;  // inclusive
+        uint32_t seq_id_hi;  // exclusive
+    };
+    std::vector<ParentGroup> groups;
+    groups.reserve(meta.num_parents);
+    for (uint32_t s = 0; s < num_seqs; ) {
+        const uint32_t oid = seq_id_to_blast_oid[s];
+        uint32_t e = s + 1;
+        while (e < num_seqs && seq_id_to_blast_oid[e] == oid) {
+            assert(seq_id_to_frag_start[e] >= seq_id_to_frag_start[e - 1]);
+            ++e;
+        }
+        groups.push_back({oid, s, e});
+        s = e;
+    }
+    const uint32_t num_groups = static_cast<uint32_t>(groups.size());
+
+    // Per-fragment parent-relative k-mer pos bounds (0-based leftmost
+    // base of the k-mer window).  Fragments shorter than k host no
+    // k-mer; for those we set frag_pos_lo to UINT32_MAX so the range
+    // check fails unconditionally.
+    std::vector<uint32_t> frag_pos_lo(num_seqs);
+    std::vector<uint32_t> frag_pos_hi(num_seqs);
+    for (uint32_t i = 0; i < num_seqs; i++) {
+        const uint32_t fs = seq_id_to_frag_start[i];
+        const uint32_t fe = seq_id_to_frag_end[i];
+        const bool long_enough =
+            (fe >= fs + static_cast<uint32_t>(k) - 1u);
+        frag_pos_lo[i] = long_enough ? (fs - 1u) : UINT32_MAX;
+        frag_pos_hi[i] = long_enough
+            ? (fe - static_cast<uint32_t>(k))
+            : 0u;
+    }
+
     // Counting pass (TBB parallel).
     logger.info("Counting k-mers (threads=%d)...", config.threads);
     std::vector<uint64_t> counts64(tbl_size, 0);
@@ -221,91 +262,62 @@ bool build_postings(BlastDbReader& db,
             [&tbl_size]() { return std::vector<uint64_t>(tbl_size, 0); });
 
         tbb::parallel_for(
-            tbb::blocked_range<uint32_t>(0, num_seqs, 64),
+            tbb::blocked_range<uint32_t>(0, num_groups, 4),
             [&](const tbb::blocked_range<uint32_t>& range) {
                 auto& my_counts = local_counts.local();
                 PackedKmerScanner<KmerInt> scanner(k);
-                // Cache the most-recently-loaded parent inside this TBB
-                // task so consecutive fragments belonging to the same
-                // parent reuse the parsed ambiguity table.  Fragments
-                // are emitted in parent registration order during the
-                // metadata pass, so adjacency is the common case.
-                uint32_t cached_oid = UINT32_MAX;
-                BlastDbReader::RawSequence cached_raw{};
-                std::vector<AmbiguityEntry> cached_ambig;
-                auto release_cache = [&]() {
-                    if (cached_oid != UINT32_MAX) {
-                        db.ret_raw_sequence(cached_raw);
-                        cached_oid = UINT32_MAX;
-                    }
-                };
-                for (uint32_t seq_id = range.begin(); seq_id < range.end(); seq_id++) {
-                    const uint32_t blast_oid = seq_id_to_blast_oid[seq_id];
-                    if (blast_oid != cached_oid) {
-                        release_cache();
-                        cached_raw = db.get_raw_sequence(blast_oid);
-                        cached_ambig = AmbiguityParser::parse(
-                            cached_raw.ambig_data, cached_raw.ambig_bytes);
-                        cached_oid = blast_oid;
-                    }
-                    // Fragment-relative position filter.  The scanner emits
-                    // pos = leftmost-base index (0-based) of each k-mer
-                    // (kmer_start in PackedKmerScanner); a valid k-mer for
-                    // this fragment has its leftmost base in
-                    // [frag_start - 1, frag_end - k] (0-based, inclusive).
-                    // Counting only needs the in-range condition;
-                    // positions are not stored in this pass.
-                    const uint32_t fs = seq_id_to_frag_start[seq_id];
-                    const uint32_t fe = seq_id_to_frag_end[seq_id];
-                    const uint32_t pos_lo = fs - 1u;
-                    // fe - k >= 0 because fragments shorter than k cannot
-                    // contribute any k-mer; we still emit them to .ksx but
-                    // pos_hi being below pos_lo here makes the in-range
-                    // check unconditionally false, which is the desired
-                    // skip-this-fragment behaviour.
-                    const uint32_t pos_hi =
-                        (fe >= static_cast<uint32_t>(k))
-                        ? (fe - static_cast<uint32_t>(k))
-                        : 0u;
-                    const bool fragment_too_short =
-                        (fe < fs + static_cast<uint32_t>(k) - 1u);
-                    if (fragment_too_short) continue;
+                for (uint32_t gi = range.begin(); gi < range.end(); gi++) {
+                    const ParentGroup& group = groups[gi];
+                    auto raw = db.get_raw_sequence(group.blast_oid);
+                    auto ambig = AmbiguityParser::parse(
+                        raw.ambig_data, raw.ambig_bytes);
+                    // Scanner emits pos non-decreasing, so one
+                    // forward pointer resolves covering fragment(s) in
+                    // O(1) amortised; overlap_length < min_length_split / 2
+                    // (CLI validation) caps the cover at two consecutive
+                    // fragments.
+                    uint32_t frag_idx = group.seq_id_lo;
+                    auto emit_for = [&](uint32_t pos, auto&& on_hit) {
+                        while (frag_idx < group.seq_id_hi
+                               && pos > frag_pos_hi[frag_idx]) ++frag_idx;
+                        if (frag_idx >= group.seq_id_hi) return;
+                        if (pos >= frag_pos_lo[frag_idx]) on_hit(frag_idx);
+                        const uint32_t nxt = frag_idx + 1;
+                        if (nxt < group.seq_id_hi
+                            && pos >= frag_pos_lo[nxt]
+                            && pos <= frag_pos_hi[nxt]) {
+                            on_hit(nxt);
+                        }
+                    };
+
+                    auto normal_cb = [&](uint32_t pos, KmerInt kmer) {
+                        emit_for(pos, [&](uint32_t /*sid*/) {
+                            my_counts[kmer]++;
+                        });
+                    };
+                    auto ambig_cb = [&](uint32_t pos, KmerInt base_kmer,
+                                        const AmbigInfo* infos, int count) {
+                        emit_for(pos, [&](uint32_t /*sid*/) {
+                            expand_ambig_kmer_multi<KmerInt>(
+                                base_kmer, infos, count,
+                                [&](KmerInt expanded) {
+                                    my_counts[expanded]++;
+                                });
+                        });
+                    };
+
                     if (config.t > 0) {
-                        scanner.scan_spaced(cached_raw.ncbi2na_data,
-                            cached_raw.seq_length, cached_ambig,
+                        scanner.scan_spaced(raw.ncbi2na_data,
+                            raw.seq_length, ambig,
                             seed_masks, static_cast<int>(config.t),
-                            [&](uint32_t pos, KmerInt kmer) {
-                                if (pos < pos_lo || pos > pos_hi) return;
-                                my_counts[kmer]++;
-                            },
-                            [&](uint32_t pos, KmerInt base_kmer,
-                                const AmbigInfo* infos, int count) {
-                                if (pos < pos_lo || pos > pos_hi) return;
-                                expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
-                                    [&](KmerInt expanded) {
-                                        my_counts[expanded]++;
-                                    });
-                            },
-                            config.max_degen_expand);
+                            normal_cb, ambig_cb, config.max_degen_expand);
                     } else {
-                        scanner.scan(cached_raw.ncbi2na_data,
-                            cached_raw.seq_length, cached_ambig,
-                            [&](uint32_t pos, KmerInt kmer) {
-                                if (pos < pos_lo || pos > pos_hi) return;
-                                my_counts[kmer]++;
-                            },
-                            [&](uint32_t pos, KmerInt base_kmer,
-                                const AmbigInfo* infos, int count) {
-                                if (pos < pos_lo || pos > pos_hi) return;
-                                expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
-                                    [&](KmerInt expanded) {
-                                        my_counts[expanded]++;
-                                    });
-                            },
+                        scanner.scan(raw.ncbi2na_data, raw.seq_length,
+                            ambig, normal_cb, ambig_cb,
                             config.max_degen_expand);
                     }
+                    db.ret_raw_sequence(raw);
                 }
-                release_cache();
             });
 
         // Reduce thread-local counts.  Walking each thread-local vector
@@ -457,80 +469,73 @@ bool build_postings(BlastDbReader& db,
         auto progress_start = std::chrono::steady_clock::now();
 
         tbb::parallel_for(
-            tbb::blocked_range<uint32_t>(0, num_seqs, 64),
+            tbb::blocked_range<uint32_t>(0, num_groups, 4),
             [&](const tbb::blocked_range<uint32_t>& range) {
                 auto& my_buffer = local_buffers.local();
                 PackedKmerScanner<KmerInt> scanner(k);
-                // Cache the most-recently-loaded parent (same rationale
-                // as the counting pass: consecutive seq_ids tend to
-                // share a parent).
-                uint32_t cached_oid = UINT32_MAX;
-                BlastDbReader::RawSequence cached_raw{};
-                std::vector<AmbiguityEntry> cached_ambig;
-                auto release_cache = [&]() {
-                    if (cached_oid != UINT32_MAX) {
-                        db.ret_raw_sequence(cached_raw);
-                        cached_oid = UINT32_MAX;
-                    }
-                };
-                for (uint32_t seq_id = range.begin(); seq_id < range.end(); seq_id++) {
-                    const uint32_t blast_oid = seq_id_to_blast_oid[seq_id];
-                    if (blast_oid != cached_oid) {
-                        release_cache();
-                        cached_raw = db.get_raw_sequence(blast_oid);
-                        cached_ambig = AmbiguityParser::parse(
-                            cached_raw.ambig_data, cached_raw.ambig_bytes);
-                        cached_oid = blast_oid;
-                    }
-                    // Fragment-relative position arithmetic.  shift
-                    // converts the scanner's parent-relative (kmer_start)
-                    // pos to a fragment-relative pos that the .kpx layout
-                    // stores: positions persisted under each fragment
-                    // SeqId are fragment-relative (0-based, leftmost base
-                    // of the k-mer window).
-                    const uint32_t fs = seq_id_to_frag_start[seq_id];
-                    const uint32_t fe = seq_id_to_frag_end[seq_id];
-                    const uint32_t pos_lo = fs - 1u;
-                    const uint32_t pos_hi =
-                        (fe >= static_cast<uint32_t>(k))
-                        ? (fe - static_cast<uint32_t>(k))
-                        : 0u;
-                    const uint32_t shift  = fs - 1u;
-                    const bool fragment_too_short =
-                        (fe < fs + static_cast<uint32_t>(k) - 1u);
+                for (uint32_t gi = range.begin(); gi < range.end(); gi++) {
+                    const ParentGroup& group = groups[gi];
+                    auto raw = db.get_raw_sequence(group.blast_oid);
+                    auto ambig = AmbiguityParser::parse(
+                        raw.ambig_data, raw.ambig_bytes);
+                    uint32_t frag_idx = group.seq_id_lo;
+                    auto emit_for = [&](uint32_t pos, auto&& on_hit) {
+                        while (frag_idx < group.seq_id_hi
+                               && pos > frag_pos_hi[frag_idx]) ++frag_idx;
+                        if (frag_idx >= group.seq_id_hi) return;
+                        if (pos >= frag_pos_lo[frag_idx]) on_hit(frag_idx);
+                        const uint32_t nxt = frag_idx + 1;
+                        if (nxt < group.seq_id_hi
+                            && pos >= frag_pos_lo[nxt]
+                            && pos <= frag_pos_hi[nxt]) {
+                            on_hit(nxt);
+                        }
+                    };
+
+                    // .kpx positions are fragment-relative; subtract
+                    // frag_pos_lo[sid] from the parent-relative pos.
                     auto normal_cb = [&](uint32_t pos, KmerInt kmer) {
-                        if (pos < pos_lo || pos > pos_hi) return;
-                        uint32_t kval = static_cast<uint32_t>(kmer);
+                        const uint32_t kval = static_cast<uint32_t>(kmer);
                         if (counts[kval] == 0) return;
-                        if (static_cast<int>(partition_of(kval, partition_bits, effective_bits)) != p) return;
-                        my_buffer.push_back({kval, seq_id, pos - shift});
+                        if (static_cast<int>(partition_of(
+                                kval, partition_bits, effective_bits)) != p)
+                            return;
+                        emit_for(pos, [&](uint32_t sid) {
+                            my_buffer.push_back({kval, sid,
+                                pos - frag_pos_lo[sid]});
+                        });
                     };
                     auto ambig_cb = [&](uint32_t pos, KmerInt base_kmer,
                                         const AmbigInfo* infos, int count) {
-                        if (pos < pos_lo || pos > pos_hi) return;
-                        expand_ambig_kmer_multi<KmerInt>(base_kmer, infos, count,
-                            [&](KmerInt expanded) {
-                                uint32_t kval = static_cast<uint32_t>(expanded);
-                                if (counts[kval] == 0) return;
-                                if (static_cast<int>(partition_of(kval, partition_bits, effective_bits)) != p) return;
-                                my_buffer.push_back({kval, seq_id, pos - shift});
-                            });
+                        emit_for(pos, [&](uint32_t sid) {
+                            const uint32_t shift = frag_pos_lo[sid];
+                            expand_ambig_kmer_multi<KmerInt>(
+                                base_kmer, infos, count,
+                                [&](KmerInt expanded) {
+                                    const uint32_t kval =
+                                        static_cast<uint32_t>(expanded);
+                                    if (counts[kval] == 0) return;
+                                    if (static_cast<int>(partition_of(
+                                            kval, partition_bits,
+                                            effective_bits)) != p) return;
+                                    my_buffer.push_back({kval, sid,
+                                        pos - shift});
+                                });
+                        });
                     };
-                    if (fragment_too_short) continue;
+
                     if (config.t > 0) {
-                        scanner.scan_spaced(cached_raw.ncbi2na_data,
-                            cached_raw.seq_length, cached_ambig,
+                        scanner.scan_spaced(raw.ncbi2na_data,
+                            raw.seq_length, ambig,
                             seed_masks, static_cast<int>(config.t),
-                            normal_cb, ambig_cb,
-                            config.max_degen_expand);
+                            normal_cb, ambig_cb, config.max_degen_expand);
                     } else {
-                        scanner.scan(cached_raw.ncbi2na_data,
-                            cached_raw.seq_length, cached_ambig,
-                            normal_cb, ambig_cb,
+                        scanner.scan(raw.ncbi2na_data, raw.seq_length,
+                            ambig, normal_cb, ambig_cb,
                             config.max_degen_expand);
                     }
+                    db.ret_raw_sequence(raw);
                 }
-                release_cache();
                 // Atomic progress update (coarse-grained per chunk)
                 uint32_t done = progress_counter.fetch_add(
                     range.end() - range.begin(), std::memory_order_relaxed)
@@ -540,7 +545,7 @@ bool build_postings(BlastDbReader& db,
                     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                         now - progress_start).count();
                     std::fprintf(stderr, "\r  Partition scan: %.1f%% (%u/%u) [%lds]",
-                                 100.0 * done / num_seqs, done, num_seqs,
+                                 100.0 * done / num_groups, done, num_groups,
                                  static_cast<long>(elapsed));
                     std::fflush(stderr);
                 }
@@ -550,8 +555,8 @@ bool build_postings(BlastDbReader& db,
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                 now - progress_start).count();
-            std::fprintf(stderr, "\r  Partition scan: done (%u items, %lds)\n",
-                         num_seqs, static_cast<long>(elapsed));
+            std::fprintf(stderr, "\r  Partition scan: done (%u parents, %lds)\n",
+                         num_groups, static_cast<long>(elapsed));
             std::fflush(stderr);
         }
 
