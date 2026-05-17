@@ -11,8 +11,6 @@
 #include "util/common_init.hpp"
 #include "util/logger.hpp"
 
-#include <sys/mman.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <iterator>
@@ -98,13 +96,6 @@ uint64_t total_range_bytes(const std::vector<ByteRange>& ranges) {
     uint64_t total = 0;
     for (auto& r : ranges) total += r.second;
     return total;
-}
-
-void apply_range_willneed(MmapFile& mmap, const std::vector<ByteRange>& ranges) {
-    for (auto& r : ranges) {
-        if (r.second == 0) continue;
-        mmap.advise(r.first, r.second, MADV_WILLNEED);
-    }
 }
 
 // Collect the set of unique k-mers each volume must probe in Stage 1 and
