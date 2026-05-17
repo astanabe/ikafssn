@@ -607,3 +607,15 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
 - 観察: SIMD 全変種 (`test_stage1_force_*`) も含めて回帰なし。マイクロベンチ結果と本番ベンチは別マシン実施待ち
 - 残課題 / 次フェーズへの引き継ぎ: なし。Phase 2 (C8) へ進む
 
+### Phase 2: C8 — OidFilter HasFilter NTTP specialization
+- 日付: 2026-05-17
+- 主な変更:
+  - `src/search/stage1_filter.cpp` の `stage1_filter_accumulate_impl` に `bool HasFilter` NTTP を追加し、`HasFilter == false` では `filter.pass(sid)` 分岐を `if constexpr` で完全に除去
+  - 新ヘルパ `dispatch_accumulate_by_filter<KmerInt, Tier>` で `filter.mode() == OidFilterMode::kNone` を見て 2 つの特殊化に振り分け
+  - `stage1_filter_impl` / `stage1_filter_accumulate` は両方この新ディスパッチを経由
+  - 公開シンボル (`stage1_filter<KmerInt>` / `stage1_filter_accumulate<KmerInt>`) のシグネチャ・external instantiation は不変
+  - `test/test_stage1.cpp` に `test_stage1_filter_none_vs_pass_all` を追加 (kNone 経路と全 OID 通過 kInclude 経路の数値同値性)
+- テスト: `ctest --test-dir build` 全 158 件 pass。`test_oid_filter` の include/exclude 経路も pass
+- 観察: `filter.pass()` 呼出が hot loop から消えるため per-sid 分岐が 1 個減る。本番ベンチでの elapsed 変化は別マシン測定待ち
+- 残課題 / 次フェーズへの引き継ぎ: なし。Phase 3 (C2) へ進む
+

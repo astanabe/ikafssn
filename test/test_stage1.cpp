@@ -361,6 +361,61 @@ static void test_stage1_fractional_with_highfreq() {
     ksx.close();
 }
 
+// Cover the HasFilter NTTP dispatch: a default-constructed OidFilter (kNone)
+// must produce identical results to an explicit kInclude filter that lists
+// every OID. The two paths exercise different compiled functions in
+// stage1_filter_accumulate_impl.
+static void test_stage1_filter_none_vs_pass_all() {
+    std::fprintf(stderr, "-- test_stage1_filter_none_vs_pass_all\n");
+
+    KixReader kix;
+    KsxReader ksx;
+    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
+    CHECK(ksx.open(g_index_dir + "/test.00.07mer.ksx"));
+
+    std::vector<uint32_t> positions;
+    std::vector<uint16_t> kmer_values;
+    KmerScanner<uint16_t> scanner(7);
+    scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
+        positions.push_back(pos);
+        kmer_values.push_back(kmer);
+    });
+
+    OidFilter none_filter;  // kNone — HasFilter=false specialization
+
+    // Build a kInclude filter listing every accession in this index volume.
+    OidFilter pass_all;
+    std::vector<std::string> all_accs;
+    for (uint32_t oid = 0; oid < ksx.num_sequences(); oid++) {
+        std::string_view acc = ksx.accession(oid);
+        if (!acc.empty()) all_accs.emplace_back(acc);
+    }
+    pass_all.build(all_accs, ksx, OidFilterMode::kInclude);
+
+    Stage1Config config;
+    config.stage1_topn = 0;
+    config.min_stage1_score = 1;
+
+    Stage1Buffer buf_none, buf_all;
+    auto a = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, none_filter, config, buf_none);
+    auto b = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, pass_all, config, buf_all);
+
+    CHECK(a.size() == b.size());
+    auto sort_by_id = [](std::vector<Stage1Candidate>& v) {
+        std::sort(v.begin(), v.end(),
+                  [](const Stage1Candidate& x, const Stage1Candidate& y) { return x.id < y.id; });
+    };
+    sort_by_id(a);
+    sort_by_id(b);
+    for (size_t i = 0; i < a.size(); i++) {
+        CHECK(a[i].id == b[i].id);
+        CHECK(a[i].score == b[i].score);
+    }
+
+    kix.close();
+    ksx.close();
+}
+
 // Reach the high-dirty branch of clear_dirty_typed by marking more than
 // capacity/8 sids dirty. Verifies that after clearing, every score / last_pos
 // slot has returned to the post-reset_all values (zero score, sentinel pos).
@@ -507,6 +562,7 @@ int main() {
     test_stage1_fractional_with_highfreq();
     test_clear_dirty_bulk_reset();
     test_stage1_finish_no_side_effects();
+    test_stage1_filter_none_vs_pass_all();
     test_adaptive_min_score();
 
     std::filesystem::remove_all(g_index_dir);

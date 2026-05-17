@@ -82,8 +82,9 @@ template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T32>();
 
 // Internal: accumulate per-(kix, q_pos) updates into buf without clearing dirty.
 // Used by both stage1_filter (single template) and stage1_filter_accumulate
-// (cross-template "both" mode).
-template <typename KmerInt, Stage1Tier Tier>
+// (cross-template "both" mode). HasFilter is a compile-time switch that lets
+// the no-filter case drop the per-sid pass() branch entirely.
+template <typename KmerInt, Stage1Tier Tier, bool HasFilter>
 static void stage1_filter_accumulate_impl(
     const uint32_t* positions, const KmerInt* kmers, size_t n,
     const KixReader& kix,
@@ -126,7 +127,9 @@ static void stage1_filter_accumulate_impl(
             for (int i = 0; i < n_dec; i++) {
                 SeqId sid = raw_sids[i];
                 if (use_coverscore && !was_new[i]) continue;
-                if (!filter.pass(sid)) continue;
+                if constexpr (HasFilter) {
+                    if (!filter.pass(sid)) continue;
+                }
                 sid_batch[batch_count++] = sid;
                 if (batch_count == kBatch) {
                     flush_batch_simd<Tier>(sid_batch, kBatch, q_pos,
@@ -140,6 +143,23 @@ static void stage1_filter_accumulate_impl(
                                    scores, last_pos, buf.dirty);
             batch_count = 0;
         }
+    }
+}
+
+// Dispatch by filter mode to one of the HasFilter specializations.
+template <typename KmerInt, Stage1Tier Tier>
+static inline void dispatch_accumulate_by_filter(
+    const uint32_t* positions, const KmerInt* kmers, size_t n,
+    const KixReader& kix,
+    const OidFilter& filter,
+    const Stage1Config& config,
+    Stage1Buffer& buf) {
+    if (filter.mode() == OidFilterMode::kNone) {
+        stage1_filter_accumulate_impl<KmerInt, Tier, /*HasFilter=*/false>(
+            positions, kmers, n, kix, filter, config, buf);
+    } else {
+        stage1_filter_accumulate_impl<KmerInt, Tier, /*HasFilter=*/true>(
+            positions, kmers, n, kix, filter, config, buf);
     }
 }
 
@@ -214,7 +234,7 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     Stage1Buffer& buf) {
 
     if (n == 0) return {};
-    stage1_filter_accumulate_impl<KmerInt, Tier>(
+    dispatch_accumulate_by_filter<KmerInt, Tier>(
         positions, kmers, n, kix, filter, config, buf);
     return stage1_filter_finish_impl<Tier>(buf, config);
 }
@@ -253,16 +273,16 @@ void stage1_filter_accumulate(
 
     switch (buf.tier) {
     case Stage1Tier::T8:
-        stage1_filter_accumulate_impl<KmerInt, Stage1Tier::T8>(
+        dispatch_accumulate_by_filter<KmerInt, Stage1Tier::T8>(
             positions, kmers, n, kix, filter, config, buf);
         break;
     case Stage1Tier::T16:
-        stage1_filter_accumulate_impl<KmerInt, Stage1Tier::T16>(
+        dispatch_accumulate_by_filter<KmerInt, Stage1Tier::T16>(
             positions, kmers, n, kix, filter, config, buf);
         break;
     case Stage1Tier::T32:
     default:
-        stage1_filter_accumulate_impl<KmerInt, Stage1Tier::T32>(
+        dispatch_accumulate_by_filter<KmerInt, Stage1Tier::T32>(
             positions, kmers, n, kix, filter, config, buf);
         break;
     }
