@@ -59,12 +59,19 @@ template <Stage1Tier Tier>
 void Stage1Buffer::clear_dirty_typed() {
     using PosT = typename Stage1TierTraits<Tier>::PosT;
     using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
-    auto* s = score_ptr<Tier>(*this);
-    auto* p = last_pos_ptr<Tier>(*this);
-    constexpr PosT sentinel = std::numeric_limits<PosT>::max();
-    for (uint32_t idx : dirty) {
-        s[idx] = ScoreT{0};
-        p[idx] = sentinel;
+    // When the dirty fraction is high enough, a sequential memset/reset over
+    // the whole buffer beats random per-index writes (avoids touching the
+    // dirty index list twice and stays linear in cache lines).
+    if (dirty.size() * 8 > capacity) {
+        reset_all_typed<Tier>(*this);
+    } else {
+        auto* s = score_ptr<Tier>(*this);
+        auto* p = last_pos_ptr<Tier>(*this);
+        constexpr PosT sentinel = std::numeric_limits<PosT>::max();
+        for (uint32_t idx : dirty) {
+            s[idx] = ScoreT{0};
+            p[idx] = sentinel;
+        }
     }
     dirty.clear();
 }
@@ -140,9 +147,42 @@ static void stage1_filter_accumulate_impl(
 template <Stage1Tier Tier>
 static std::vector<Stage1Candidate> stage1_filter_finish_impl(
     Stage1Buffer& buf, const Stage1Config& config) {
+    using PosT = typename Stage1TierTraits<Tier>::PosT;
+    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
     auto* scores = score_ptr<Tier>(buf);
 
     std::vector<Stage1Candidate> candidates;
+
+    if (config.stage1_topn == 0) {
+        // Fused path: in the unlimited-topn case we know the dirty list
+        // will be consumed and reset right away, so walk it once and do
+        // the per-index reset in the same iteration (instead of running
+        // a separate clear_dirty_typed pass over the same indices).
+        // The bulk-reset fallback in clear_dirty_typed is still desirable
+        // when dirty is dense, so honour the same threshold here.
+        if (buf.dirty.size() * 8 > buf.capacity) {
+            for (uint32_t sid : buf.dirty) {
+                if (scores[sid] >= config.min_stage1_score) {
+                    candidates.push_back({sid, static_cast<uint32_t>(scores[sid])});
+                }
+            }
+            reset_all_typed<Tier>(buf);
+        } else {
+            auto* last_pos = last_pos_ptr<Tier>(buf);
+            constexpr PosT sentinel = std::numeric_limits<PosT>::max();
+            for (uint32_t sid : buf.dirty) {
+                ScoreT s = scores[sid];
+                if (s >= config.min_stage1_score) {
+                    candidates.push_back({sid, static_cast<uint32_t>(s)});
+                }
+                scores[sid] = ScoreT{0};
+                last_pos[sid] = sentinel;
+            }
+        }
+        buf.dirty.clear();
+        return candidates;
+    }
+
     for (uint32_t sid : buf.dirty) {
         if (scores[sid] >= config.min_stage1_score) {
             candidates.push_back({sid, static_cast<uint32_t>(scores[sid])});
@@ -150,8 +190,6 @@ static std::vector<Stage1Candidate> stage1_filter_finish_impl(
     }
 
     buf.clear_dirty_typed<Tier>();
-
-    if (config.stage1_topn == 0) return candidates;
 
     auto cmp = [](const Stage1Candidate& a, const Stage1Candidate& b) {
         return a.score > b.score;

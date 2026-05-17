@@ -77,6 +77,54 @@ void RegisterArgs(benchmark::internal::Benchmark* b) {
 
 BENCHMARK(BM_Stage1FlushBatchT32)->Apply(RegisterArgs)->UseRealTime();
 
+// Measure clear_dirty_typed cost across dirty ratios. The kernel takes the
+// per-index reset path below the threshold (dirty.size()*8 <= capacity) and
+// the bulk reset_all path above it; both are exercised here.
+void BM_Stage1ClearDirtyT32(benchmark::State& state) {
+    const size_t num_seqs    = static_cast<size_t>(state.range(0));
+    const size_t num_dirty   = static_cast<size_t>(state.range(1));
+
+    Stage1Buffer buf;
+    buf.tier = Stage1Tier::T32;
+    buf.ensure_capacity(static_cast<uint32_t>(num_seqs));
+
+    std::mt19937 rng(0xBADF00D);
+    std::vector<uint32_t> sample;
+    sample.reserve(num_dirty);
+    for (size_t i = 0; i < num_dirty; i++) {
+        sample.push_back(static_cast<uint32_t>(rng() % num_seqs));
+    }
+
+    auto* scores   = score_ptr<Stage1Tier::T32>(buf);
+    auto* last_pos = last_pos_ptr<Stage1Tier::T32>(buf);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        buf.dirty.clear();
+        for (uint32_t sid : sample) {
+            scores[sid]   = 1;
+            last_pos[sid] = 7;
+            buf.dirty.push_back(sid);
+        }
+        state.ResumeTiming();
+        buf.clear_dirty_typed<Stage1Tier::T32>();
+    }
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * num_dirty);
+}
+
+void RegisterClearDirtyArgs(benchmark::internal::Benchmark* b) {
+    static constexpr int64_t kNumSeqs[]  = {1 << 16, 1 << 20};
+    // dirty fractions: 1/64, 1/16, 1/8, 1/2 — straddling the bulk-reset threshold.
+    static constexpr int kDirtyDenoms[]  = {64, 16, 8, 2};
+    for (int64_t ns : kNumSeqs) {
+        for (int denom : kDirtyDenoms) {
+            b->Args({ns, ns / denom});
+        }
+    }
+}
+
+BENCHMARK(BM_Stage1ClearDirtyT32)->Apply(RegisterClearDirtyArgs)->UseRealTime();
+
 int main(int argc, char** argv) {
     init_simd_dispatch(nullptr);
     benchmark::Initialize(&argc, argv);

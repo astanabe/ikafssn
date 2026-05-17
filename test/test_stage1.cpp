@@ -16,8 +16,10 @@
 #include "util/logger.hpp"
 #include "util/simd_dispatch.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <unordered_set>
 
@@ -359,6 +361,79 @@ static void test_stage1_fractional_with_highfreq() {
     ksx.close();
 }
 
+// Reach the high-dirty branch of clear_dirty_typed by marking more than
+// capacity/8 sids dirty. Verifies that after clearing, every score / last_pos
+// slot has returned to the post-reset_all values (zero score, sentinel pos).
+static void test_clear_dirty_bulk_reset() {
+    std::fprintf(stderr, "-- test_clear_dirty_bulk_reset\n");
+
+    Stage1Buffer buf;
+    buf.tier = Stage1Tier::T32;
+    buf.ensure_capacity(64);  // small capacity so 9 dirty entries trip the threshold
+
+    using PosT   = Stage1TierTraits<Stage1Tier::T32>::PosT;
+    using ScoreT = Stage1TierTraits<Stage1Tier::T32>::ScoreT;
+    auto* scores   = score_ptr<Stage1Tier::T32>(buf);
+    auto* last_pos = last_pos_ptr<Stage1Tier::T32>(buf);
+
+    constexpr PosT sentinel = std::numeric_limits<PosT>::max();
+
+    // 9 of 64 -> dirty.size()*8 = 72 > capacity (64): bulk path taken.
+    for (uint32_t i = 0; i < 9; i++) {
+        uint32_t sid = i * 5;
+        scores[sid]   = static_cast<ScoreT>(i + 1);
+        last_pos[sid] = static_cast<PosT>(i);
+        buf.dirty.push_back(sid);
+    }
+
+    buf.clear_dirty_typed<Stage1Tier::T32>();
+    CHECK(buf.dirty.empty());
+    for (uint32_t i = 0; i < buf.capacity; i++) {
+        CHECK(scores[i] == ScoreT{0});
+        CHECK(last_pos[i] == sentinel);
+    }
+}
+
+// Reproduce the finish-fusion path by calling stage1_filter twice with
+// stage1_topn == 0. The second call must produce the same candidates as the
+// first, proving that finish leaves no leftover score / last_pos / dirty state.
+static void test_stage1_finish_no_side_effects() {
+    std::fprintf(stderr, "-- test_stage1_finish_no_side_effects\n");
+
+    KixReader kix;
+    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
+
+    std::vector<uint32_t> positions;
+    std::vector<uint16_t> kmer_values;
+    KmerScanner<uint16_t> scanner(7);
+    scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
+        positions.push_back(pos);
+        kmer_values.push_back(kmer);
+    });
+
+    OidFilter filter;
+    Stage1Config config;
+    config.stage1_topn = 0;          // finish-fusion path
+    config.min_stage1_score = 1;
+
+    Stage1Buffer buf;
+    auto a = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config, buf);
+    auto b = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config, buf);
+
+    CHECK(a.size() == b.size());
+    auto sort_by_id = [](std::vector<Stage1Candidate>& v) {
+        std::sort(v.begin(), v.end(),
+                  [](const Stage1Candidate& x, const Stage1Candidate& y) { return x.id < y.id; });
+    };
+    sort_by_id(a);
+    sort_by_id(b);
+    for (size_t i = 0; i < a.size(); i++) {
+        CHECK(a[i].id == b[i].id);
+        CHECK(a[i].score == b[i].score);
+    }
+    kix.close();
+}
+
 static void test_adaptive_min_score() {
     std::fprintf(stderr, "-- test_adaptive_min_score\n");
 
@@ -430,6 +505,8 @@ int main() {
     test_stage1_topn_zero();
     test_stage1_fractional_threshold();
     test_stage1_fractional_with_highfreq();
+    test_clear_dirty_bulk_reset();
+    test_stage1_finish_no_side_effects();
     test_adaptive_min_score();
 
     std::filesystem::remove_all(g_index_dir);
