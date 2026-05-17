@@ -10,6 +10,8 @@
 #include "io/volume_discovery.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
+#include "search/search_orchestrator.hpp"
+#include "search/stage1_filter.hpp"
 #include "search/volume_searcher.hpp"
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
@@ -508,6 +510,101 @@ static void test_multivolume_k9() {
     }
 }
 
+// Drive run_search<>() directly with a multi-volume index, in mode 1, with
+// two different posting_budget values: one large enough to fit both
+// volumes in a single Stage 1 batch, one small enough to force two
+// batches. The orchestrator's per-batch mode1_results fold (Phase 4a / C5-a)
+// must produce identical output across both batch shapes.
+static void test_mode1_batched_equals_single() {
+    std::fprintf(stderr, "-- test_mode1_batched_equals_single (Phase 4a)\n");
+    const int k = 7;
+    const std::string db_base = "mvtest";  // index built by earlier test
+
+    auto discovered = discover_volumes(g_test_dir + "/" + db_base, k);
+    CHECK_EQ(discovered.size(), 2u);
+
+    // Per-volume readers (opened once for sizing + ksx, orchestrator
+    // reopens kix internally per batch).
+    std::vector<KsxReader> ksxs(2);
+    std::vector<VolumeMeta> volumes_cod(2);
+    for (size_t vi = 0; vi < 2; vi++) {
+        const auto& vf = discovered[vi];
+        CHECK(ksxs[vi].open(vf.ksx_path));
+        KixReader probe;
+        CHECK(probe.open(vf.kix_path));
+        volumes_cod[vi].files            = vf;
+        volumes_cod[vi].kix_posting_size = probe.posting_file_size();
+        volumes_cod[vi].kix_full_size    = probe.willneed_size_full();
+        volumes_cod[vi].volume_index     = static_cast<uint16_t>(vi);
+        volumes_cod[vi].num_sequences    = probe.num_sequences();
+        probe.close();
+    }
+
+    SearchConfig config;
+    config.stage1.stage1_topn = 100;
+    config.stage1.min_stage1_score = 1;
+    config.nresult = 0;
+    config.mode = 1;
+
+    auto qdata = preprocess_query<uint16_t>(g_query_fj, k, nullptr, config);
+    std::vector<QueryBundle<uint16_t>> bundles(1);
+    bundles[0].query_id = &g_query_fj;  // string pointer (test-only lifetime ok)
+    bundles[0].qdata_primary = &qdata;
+    std::vector<uint8_t> skip_reason(1, 0);
+
+    Logger logger(Logger::kError);
+    uint32_t max_num_seqs = 0;
+    for (auto& v : volumes_cod) max_num_seqs = std::max(max_num_seqs, v.num_sequences);
+
+    auto run_with_budget = [&](uint64_t budget) {
+        RunSearchInputs<uint16_t> in;
+        in.volumes_cod      = volumes_cod;  // copy: orchestrator reads only
+        in.ksx_per_volume.resize(2);
+        in.oid_filters.resize(2);
+        for (size_t vi = 0; vi < 2; vi++) in.ksx_per_volume[vi] = &ksxs[vi];
+        in.queries           = &bundles;
+        in.query_skip_reason = &skip_reason;
+        in.config            = config;
+        in.both_mode         = false;
+        in.k                 = k;
+        in.nthread           = 2;
+        in.posting_budget    = budget;
+        in.logger            = &logger;
+        in.max_num_seqs      = max_num_seqs;
+        in.tier              = Stage1Tier::T32;
+        return run_search<uint16_t>(in);
+    };
+
+    // Large budget: single batch over both volumes.
+    uint64_t single_budget = 0;
+    for (auto& v : volumes_cod) single_budget += v.kix_full_size;
+    single_budget = std::max<uint64_t>(single_budget * 2, 1u << 20);
+    auto big = run_with_budget(single_budget);
+
+    // Small budget: each volume's kix_full_size on its own exceeds the
+    // budget, so plan_stage1_batches emits one (tier1) batch per volume.
+    uint64_t small_budget = 1;  // any positive < per-volume size
+    auto small = run_with_budget(small_budget);
+
+    auto key = [](const OrchestratorHit& h) {
+        return std::tuple<size_t, uint16_t, uint16_t, uint32_t, uint32_t>(
+            h.query_idx, h.volume_idx, h.volume_index,
+            h.cr.seq_id, h.cr.stage1_score);
+    };
+    auto sorted_keys = [&](const std::vector<OrchestratorHit>& v) {
+        std::vector<decltype(key(v.front()))> ks;
+        ks.reserve(v.size());
+        for (auto& h : v) ks.push_back(key(h));
+        std::sort(ks.begin(), ks.end());
+        return ks;
+    };
+
+    CHECK_EQ(big.size(), small.size());
+    CHECK(sorted_keys(big) == sorted_keys(small));
+
+    for (auto& ksx : ksxs) ksx.close();
+}
+
 int main() {
     check_ssu_available();
     check_derived_data_ready();
@@ -539,6 +636,7 @@ int main() {
 
     test_multivolume_search();
     test_parallel_equals_sequential();
+    test_mode1_batched_equals_single();
     test_result_merge_ordering();
     test_parallel_counting_pass();
     test_multivolume_k9();

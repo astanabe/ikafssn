@@ -631,3 +631,13 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
 - 観察: hot loop での per-probe heap alloc 2 箇所 (`std::vector<uint32_t> codec_in` と `StreamCtx::decoded` の再 grow) が両方とも消える。both-mode では cod / opt 双方で発火していたためコスト削減幅は単一テンプレ経路の 2 倍見込み。本番ベンチでの elapsed / IPC / L3 ミス変化は別マシン測定待ち
 - 残課題 / 次フェーズへの引き継ぎ: なし。Phase 4a (C5-a) へ進む
 
+### Phase 4a: C5-a — Stage 1 バッチ末 mode1_results flush + capacity 解放
+- 日付: 2026-05-17
+- 主な変更:
+  - `src/search/search_orchestrator.cpp`: Stage 1 バッチループの先頭で関数ローカルな `std::vector<OrchestratorHit> mode1_results` を導入。`run_stage1_jobs` の戻り直後に、`in.config.mode == 1` 限定で `idxs` をなめて `states[ji].mode1_results` を `OrchestratorHit` に変換しながら `mode1_results` に move-append し、直後 `std::vector<ChainResult>().swap(st.mode1_results)` で capacity ごと解放
+  - 旧 mode 1 fast path (Stage 2 直前で全 ext_jobs を 1 スレッドで fold していたループ) はバッチ末で既に drain 済みのため、`return mode1_results;` のみに簡略化
+  - `test/test_multivolume.cpp` に `test_mode1_batched_equals_single` を追加。`run_search<uint16_t>` を直接呼び、posting_budget を大 (両ボリュームが 1 バッチに収まる) / 1 (各ボリュームが単独 Tier1 バッチに落ちる) で 2 回実行し、結果のキー集合 (qi, vi, volume_index, seq_id, stage1_score) が完全一致することを確認
+- テスト: `ctest --test-dir build` 全 158 件 pass。`test_multivolume` の新ケースも pass
+- 観察: バッチ末で per-ji の `mode1_results` capacity が即解放されるため、Stage 1 全体での anonymous heap が `posting_budget` 相当に bound される (本番ベンチで観察された SwapPss 5 GiB は本フェーズで消える見込み — 別マシン測定待ち)
+- 残課題 / 次フェーズへの引き継ぎ: 現状の per-batch fold は単一スレッド逐次。バッチ数縮小 (Phase 5 後) に伴い 1 バッチ内 candidate 数が増えるため、Phase 4b (parallel_scan) は Phase 5 後に効果を再計測する価値あり
+

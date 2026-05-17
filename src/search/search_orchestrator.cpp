@@ -308,6 +308,12 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                      s1_batches.size(), num_volumes, n4, n1);
     }
 
+    // Mode 1 fast path uses this batch-local accumulator: each Stage 1
+    // batch flushes its mode1_results into it and releases the per-ji
+    // capacity, so the orchestrator's peak heap stays bounded by one
+    // batch's worth of candidates instead of all batches combined.
+    std::vector<OrchestratorHit> mode1_results;
+
     for (auto& batch : s1_batches) {
         // Open kix readers for the batch.
         for (uint16_t vi : batch.vols) {
@@ -336,6 +342,24 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                                   in.k, in.config, in.both_mode,
                                   states, arena, tls_bufs);
 
+        // Mode 1 only: drain mode1_results for this batch and release the
+        // capacity so it does not accumulate across all batches.
+        if (in.config.mode == 1) {
+            for (size_t ji : idxs) {
+                const ExtJob& ej = ext_jobs[ji];
+                JobState& st = states[ji];
+                for (auto& cr : st.mode1_results) {
+                    OrchestratorHit oh;
+                    oh.query_idx     = ej.qi;
+                    oh.volume_idx    = ej.vi;
+                    oh.volume_index  = volume_indices[ej.vi];
+                    oh.cr            = std::move(cr);
+                    mode1_results.push_back(std::move(oh));
+                }
+                std::vector<ChainResult>().swap(st.mode1_results);
+            }
+        }
+
         for (uint16_t vi : batch.vols) {
             release_stage1_madvise(kix_cod[vi], batch.tier);
             kix_cod[vi].close();
@@ -356,24 +380,10 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     }
 
     // ----------------------------------------------------------------
-    // Mode 1 fast path
+    // Mode 1 fast path: all per-batch folds were drained above.
     // ----------------------------------------------------------------
     if (in.config.mode == 1) {
-        std::vector<OrchestratorHit> results;
-        for (size_t ji = 0; ji < ext_jobs.size(); ++ji) {
-            const ExtJob& ej = ext_jobs[ji];
-            JobState& st = states[ji];
-            for (auto& cr : st.mode1_results) {
-                OrchestratorHit oh;
-                oh.query_idx = ej.qi;
-                oh.volume_idx = ej.vi;
-                oh.volume_index = volume_indices[ej.vi];
-                oh.cr = std::move(cr);
-                results.push_back(std::move(oh));
-            }
-            st.mode1_results.clear();
-        }
-        return results;
+        return mode1_results;
     }
 
     // ----------------------------------------------------------------
