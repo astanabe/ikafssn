@@ -655,3 +655,14 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
 - 観察: per-batch の単一スレッド fold (O(batch_candidates)) が並列に置き換わる。バッチ数が少ない (Phase 5 で 57 → 1 想定) ケースほど fold サイズが大きくなるため、本フェーズの効果は Phase 5 後により顕著になる見込み
 - 残課題 / 次フェーズへの引き継ぎ: なし。Phase 4.5 (both-mode integration テスト追加) へ進む
 
+### Phase 4.5: both-mode integration テストの追加
+- 日付: 2026-05-17
+- 主な変更:
+  - `test/test_search_integration.cpp`: ヘルパ `build_both_template_indexes(k, t, ...)` を追加 (cod / opt インデックスペアを `g_test_dir` に build。再ビルド回避のため `.kix` 存在チェックで memoize)
+  - 新ケース `test_search_mode1_both_template()` を追加 — mode 1 + both-template の e2e。`search_volume_both` を `config.mode = 1` で実行し、FJ876973.1 が検出され、ChainResult の chain フィールド (`q_start/q_end/s_start/s_end/chainscore`) がすべて 0、`stage1_score` が `[1, Nqkmer]` に収まることを検証
+  - 新ケース `test_search_stage1_both_template()` を追加 — `stage1_one_strand_both<uint32_t>` を直接呼出 (fresh `JobState` + `Stage1Buffer`)。FJ876973.1 が candidates に含まれ、cod / opt 双方ヒットしても per-(sid, q_pos) dedup により score が `Nqkmer` を超えないことを検証
+  - `setup_ssu_testdata.sh` への追加は不要 (テスト内で cod / opt をビルドする既存パターンを再利用)
+- テスト: `ctest --test-dir build` 全 158 件 pass。新規 2 ケースも pass
+- 観察: 既存 `test_search_both_template` は mode 2 経路のみカバーしていたため、mode 1 + both と stage1_one_strand_both の直接呼出を今回追加。Phase 5 (C1) 以降の改造で both-mode 経路の同値性を回帰検出できる
+- 残課題 / 次フェーズへの引き継ぎ: なし。Phase 5 (C1) へ進む
+

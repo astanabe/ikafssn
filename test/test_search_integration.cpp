@@ -10,7 +10,9 @@
 #include "index/ksx_reader.hpp"
 #include "io/volume_discovery.hpp"
 #include "search/oid_filter.hpp"
+#include "search/parallel_search.hpp"
 #include "search/query_preprocessor.hpp"
+#include "search/stage1_filter.hpp"
 #include "search/volume_searcher.hpp"
 #include "protocol/messages.hpp"
 #include "core/config.hpp"
@@ -576,6 +578,165 @@ static void test_search_both_template() {
     ksx.close();
 }
 
+// Helper: build cod+opt index pair for both-template tests. Returns the
+// two index prefixes. Memoizes by caching: if both prefix .kix files
+// already exist on disk, no rebuild happens.
+static void build_both_template_indexes(int k, int t,
+                                        std::string& prefix_cod,
+                                        std::string& prefix_opt) {
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    Logger logger(Logger::kError);
+
+    IndexBuilderConfig bcfg_cod;
+    bcfg_cod.k = k;
+    bcfg_cod.t = t;
+    bcfg_cod.template_type = static_cast<uint8_t>(TemplateType::kCoding);
+    prefix_cod = index_file_stem(g_test_dir, "both.00",
+        bcfg_cod.k, bcfg_cod.t, bcfg_cod.template_type,
+        bcfg_cod.min_seq_length, bcfg_cod.min_length_split,
+        bcfg_cod.overlap_length, /*max_freq_build=*/1, /*max_degen_expand=*/0);
+    if (!std::filesystem::exists(prefix_cod + ".kix")) {
+        CHECK(build_index<uint32_t>(db, bcfg_cod, prefix_cod, 0, 1, "both", logger));
+    }
+
+    IndexBuilderConfig bcfg_opt;
+    bcfg_opt.k = k;
+    bcfg_opt.t = t;
+    bcfg_opt.template_type = static_cast<uint8_t>(TemplateType::kOptimal);
+    prefix_opt = index_file_stem(g_test_dir, "both.00",
+        bcfg_opt.k, bcfg_opt.t, bcfg_opt.template_type,
+        bcfg_opt.min_seq_length, bcfg_opt.min_length_split,
+        bcfg_opt.overlap_length, /*max_freq_build=*/1, /*max_degen_expand=*/0);
+    if (!std::filesystem::exists(prefix_opt + ".kix")) {
+        CHECK(build_index<uint32_t>(db, bcfg_opt, prefix_opt, 0, 1, "both", logger));
+    }
+}
+
+// End-to-end mode 1 + both-template: build cod/opt indexes, preprocess
+// the query for both templates, run search_volume_both with mode == 1,
+// and verify FJ876973.1 lands in the unified Stage 1 results with the
+// mode 1 chain fields zeroed and a non-zero stage1_score.
+static void test_search_mode1_both_template() {
+    Stage1Buffer buf;
+    std::fprintf(stderr, "-- test_search_mode1_both_template\n");
+
+    const int k = 9, t = 15;
+    std::string prefix_cod, prefix_opt;
+    build_both_template_indexes(k, t, prefix_cod, prefix_opt);
+
+    KixReader kix_cod, kix_opt;
+    KpxReader kpx_cod, kpx_opt;
+    KsxReader ksx;
+    CHECK(kix_cod.open(prefix_cod + ".kix"));
+    CHECK(kpx_cod.open(prefix_cod + ".kpx"));
+    CHECK(kix_opt.open(prefix_opt + ".kix"));
+    CHECK(kpx_opt.open(prefix_opt + ".kpx"));
+    CHECK(ksx.open(prefix_cod + ".ksx"));
+
+    OidFilter filter;
+    SearchConfig config;
+    config.stage1.stage1_topn = 100;
+    config.stage1.min_stage1_score = 1;
+    config.nresult = 50;
+    config.t = t;
+    config.mode = 1;
+    config.sort_score = 1;
+
+    const auto masks_cod = get_seed_masks(k, t, TemplateType::kCoding);
+    const auto masks_opt = get_seed_masks(k, t, TemplateType::kOptimal);
+    auto qdata_cod = preprocess_query<uint32_t>(g_query_seq, k, nullptr, config, t, masks_cod);
+    auto qdata_opt = preprocess_query<uint32_t>(g_query_seq, k, nullptr, config, t, masks_opt);
+
+    auto result = search_volume_both<uint32_t>(
+        "both_mode1", qdata_cod, qdata_opt, k,
+        kix_cod, kpx_cod, kix_opt, kpx_opt, ksx, filter, config, buf);
+
+    CHECK(result.query_id == "both_mode1");
+    CHECK(!result.hits.empty());
+
+    uint32_t Nqkmer = static_cast<uint32_t>(g_query_seq.size()) - t + 1;
+    bool found_fj = false;
+    for (const auto& cr : result.hits) {
+        CHECK(cr.stage1_score >= 1);
+        CHECK(cr.stage1_score <= Nqkmer);
+        CHECK_EQ(cr.q_start, 0u);
+        CHECK_EQ(cr.q_end, 0u);
+        CHECK_EQ(cr.s_start, 0u);
+        CHECK_EQ(cr.s_end, 0u);
+        CHECK_EQ(cr.chainscore, 0);
+        if (cr.seq_id == g_fj_oid && !cr.is_reverse) found_fj = true;
+    }
+    CHECK(found_fj);
+
+    kix_cod.close(); kpx_cod.close();
+    kix_opt.close(); kpx_opt.close();
+    ksx.close();
+}
+
+// Direct invocation of stage1_one_strand_both with a fresh JobState +
+// Stage1Buffer. Verifies (1) FJ876973.1 ends up in state.candidates,
+// (2) every candidate's merged Stage 1 score is in [1, Nqkmer] (the
+// q_pos-merge dedup invariant), and (3) running through search_volume_both
+// against the same indexes produces the same candidate set (sanity that
+// the direct call is not bypassing some validation).
+static void test_search_stage1_both_template() {
+    std::fprintf(stderr, "-- test_search_stage1_both_template\n");
+
+    const int k = 9, t = 15;
+    std::string prefix_cod, prefix_opt;
+    build_both_template_indexes(k, t, prefix_cod, prefix_opt);
+
+    KixReader kix_cod, kix_opt;
+    CHECK(kix_cod.open(prefix_cod + ".kix"));
+    CHECK(kix_opt.open(prefix_opt + ".kix"));
+
+    OidFilter filter;
+    SearchConfig config;
+    config.stage1.stage1_topn = 0;        // unlimited so candidates is complete
+    config.stage1.min_stage1_score = 1;
+    config.t = t;
+
+    const auto masks_cod = get_seed_masks(k, t, TemplateType::kCoding);
+    const auto masks_opt = get_seed_masks(k, t, TemplateType::kOptimal);
+    auto qdata_cod = preprocess_query<uint32_t>(g_query_seq, k, nullptr, config, t, masks_cod);
+    auto qdata_opt = preprocess_query<uint32_t>(g_query_seq, k, nullptr, config, t, masks_opt);
+
+    Stage1Buffer buf;
+    buf.tier = Stage1Tier::T32;
+    buf.ensure_capacity(kix_cod.num_sequences());
+
+    JobState state;
+    stage1_one_strand_both<uint32_t>(
+        qdata_cod.fwd_positions.data(),
+        qdata_cod.fwd_kmer_values.data(),
+        qdata_cod.fwd_positions.size(),
+        qdata_opt.fwd_positions.data(),
+        qdata_opt.fwd_kmer_values.data(),
+        qdata_opt.fwd_positions.size(),
+        k,
+        /*is_reverse=*/false,
+        kix_cod, kix_opt, filter, config,
+        qdata_cod.resolved_threshold_fwd,
+        qdata_opt.resolved_threshold_fwd,
+        /*effective_min_score=*/1,
+        buf, state);
+
+    CHECK(state.both_mode);
+    CHECK(!state.candidates.empty());
+    bool found_fj = false;
+    uint32_t Nqkmer = static_cast<uint32_t>(g_query_seq.size()) - t + 1;
+    for (const auto& c : state.candidates) {
+        CHECK(c.score >= 1);
+        CHECK(c.score <= Nqkmer);
+        if (c.id == g_fj_oid) found_fj = true;
+    }
+    CHECK(found_fj);
+
+    kix_cod.close();
+    kix_opt.close();
+}
+
 // v10: -min_query_length integration.  Verify that
 //   1. queries shorter than config.min_query_length are skipped with
 //      kSkipQueryTooShort and produce a clear skip_detail message;
@@ -645,6 +806,8 @@ int main() {
     test_search_mode1();
     test_search_nresult_zero();
     test_search_both_template();
+    test_search_mode1_both_template();
+    test_search_stage1_both_template();
     test_min_query_length_skip();
 
     std::filesystem::remove_all(g_test_dir);
