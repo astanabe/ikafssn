@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 #include "io/mmap_file.hpp"
 #include "index/ef_codec.hpp"
@@ -46,6 +47,27 @@ public:
     // when a single volume's posting body is larger than the WILLNEED
     // budget allows.
     void   apply_madvise_posting_random();
+
+    // Dictionary-only WILLNEED + HUGEPAGE.  The posting body is left
+    // untouched (no MADV_WILLNEED, no MADV_RANDOM).  Used by the
+    // range-WILLNEED batch path: the orchestrator separately issues
+    // MADV_WILLNEED for the exact posting-list ranges this batch will
+    // probe, so the body should not also be marked RANDOM (which would
+    // suppress the orchestrator's range-level prefetch).
+    void   apply_madvise_dict_only();
+
+    // Byte size of the dictionary region (header + Elias-Fano blob).
+    // The first dict_size() bytes of the mapping are the dictionary;
+    // everything beyond is the posting body.
+    size_t dict_size() const;
+
+    // Apply MADV_WILLNEED to a set of posting-body ranges. Each pair is
+    // (offset, length) in posting-file coordinates — the same coordinate
+    // space returned by posting_list_range. Used by the orchestrator's
+    // range-WILLNEED path so the kernel only prefetches the posting
+    // lists this batch will actually probe.
+    void apply_madvise_posting_ranges(
+        const std::vector<std::pair<uint64_t, uint64_t>>& ranges);
 
     // Get posting list byte offset for a k-mer
     uint64_t posting_list_offset(uint32_t kmer) const {

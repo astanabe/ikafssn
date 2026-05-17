@@ -666,3 +666,32 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
 - 観察: 既存 `test_search_both_template` は mode 2 経路のみカバーしていたため、mode 1 + both と stage1_one_strand_both の直接呼出を今回追加。Phase 5 (C1) 以降の改造で both-mode 経路の同値性を回帰検出できる
 - 残課題 / 次フェーズへの引き継ぎ: なし。Phase 5 (C1) へ進む
 
+### Phase 5: C1 (a+b+c+d) — byte-accurate batch planning + range-specific WILLNEED (kix + kpx)
+- 日付: 2026-05-17
+- 主な変更:
+  - **reader 側** (`src/index/kix_reader.{hpp,cpp}` / `src/index/kpx_reader.{hpp,cpp}`):
+    - 新 API `apply_madvise_dict_only()` を追加 (dict のみ WILLNEED + HUGEPAGE、posting body は触らない)
+    - 新 API `dict_size()` を追加 (mmap 内での posting body 先頭オフセット = dict 領域サイズ)
+    - 新 API `apply_madvise_posting_ranges(ranges)` を追加 — posting-file 座標の `(offset, length)` ペア群に対し、`dict_size()` を加算した mmap 座標で `MADV_WILLNEED` を発行
+  - **orchestrator** (`src/search/search_orchestrator.cpp`):
+    - `VolumePlan` 構造体を追加 (stage1_bytes / stage2_bytes と、kix_cod / kix_opt / kpx_cod / kpx_opt の coalesced range vectors)
+    - `collect_unique_kmers<KmerInt>` を追加 — strand 設定 (1/-1/2/0) に応じて fwd / rc を選択し、全 query から sorted unique k-mer 集合を生成
+    - `compute_kix_ranges<KmerInt>` / `compute_kpx_ranges<KmerInt>` を追加 — 各ボリュームを open し全 unique k-mer に対し `posting_list_range` / `pos_offset_range` を呼んで `(off, len)` 列を構築
+    - `coalesce_ranges` を追加 — sorted range 列を gap ≤ 4096 で連結統合
+    - `compute_volume_plans<KmerInt>` を追加 — 全ボリュームに対し dict_size + range bytes を集計し `VolumePlan` 配列を返す
+    - `plan_stage1_batches(plans, posting_budget)` / `plan_stage2_batches(plans, posting_budget)` を refactor — コスト単位をボリューム全体サイズから `VolumePlan::stage1_bytes` / `stage2_bytes` (= dict + needed posting bytes) に置換。tier4 / tier1 (Stage 1) と tier4/3/2/1 (Stage 2) のフォールバック分岐構造は維持
+    - `apply_stage1_madvise(kix, tier, ranges)` を refactor — tier4 では `apply_madvise_dict_only` + `apply_madvise_posting_ranges(ranges)`、tier1 では従来の `apply_madvise_posting_random`
+    - `apply_stage2a_madvise(kix, kpx, tier, kix_ranges, kpx_ranges)` を同形に refactor (4 tier すべて対応)
+    - `release_*_madvise` は no-op に簡略化 (mapping close で破棄されるため)
+    - `run_search` 本体: `collect_unique_kmers` → `compute_volume_plans` → planner → per-batch open + madvise (ranges 経由) のフロー。`-v` ログに unique k-mer 数と needed_bytes 合計を追加 (`Planning: %zu unique kmers ...`, `Stage 1 batch plan: ... needed_bytes total=%llu`, `Stage 2 batch plan: ... needed_bytes total=%llu`)
+  - **テスト** (`test/test_multivolume.cpp`):
+    - 新規 `test_mode2_batched_equals_single` を追加 — mode 2 で `posting_budget` を大 / 1 で 2 回 `run_search<uint16_t>` を実行し、`(qi, vi, volume_index, seq_id, chainscore, q_start, q_end, s_start, s_end)` のソート済キー集合が完全一致することを確認 (kix + kpx 両側の range planning と Tier1 フォールバックを網羅)
+    - 既存 `test_mode1_batched_equals_single` は Phase 4a の検証だが本フェーズの mode 1 経路の同値性も保証
+  - **canonical vocabulary** 遵守: 新識別子はすべて `posting_list_range` / `posting body` / `posting file` / `dict` を使用。`offset table` / `payload` / `document` などの forbidden term は導入していない
+- テスト: `ctest --test-dir build` 全 158 件 pass。新規 mode 2 ケースも pass
+- 観察:
+  - 本番ベンチでの主指標 (`/proc/$PID/io` の `read_bytes` 4.68 TB → 数十 GB、`Stage 1 batch plan: 57 → ?`、`folio_wait_bit_common` 待ち消失) は別マシン測定待ち
+  - planning の up-front コストとして 287 vol × open + dict probe × unique kmer 数 が発生。SSU multivolume テストでは検出不能 (即時完了)。NCBI nt 規模では数十秒〜数分の planning が乗るが、batch 数縮小の I/O 削減でペイバック想定
+  - mode 2/3 の kpx 側も同形に range-WILLNEED 化済み (C1-d)
+- 残課題 / 次フェーズへの引き継ぎ: なし。本タスク (Phase 5) は当初計画の最大スコープ。Phase 6 (C3 — PFD ブロック単位 stream decode + prefix-sum SIMD 化) と Phase 7 (C7 — dict huge page 戦略予測性向上) は任意 (improveplan.md §6) のため、本セッションでは未着手。本番ベンチ計測後に効果を判断
+

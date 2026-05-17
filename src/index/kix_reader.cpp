@@ -115,6 +115,29 @@ void KixReader::apply_madvise_posting_random() {
         mmap_.advise(dict_size, mmap_.size() - dict_size, MADV_RANDOM);
 }
 
+void KixReader::apply_madvise_dict_only() {
+    if (!mmap_.is_open()) return;
+    const size_t dict = willneed_size();
+    mmap_.advise(0, dict, MADV_WILLNEED);
+#ifdef MADV_HUGEPAGE
+    mmap_.advise(0, dict, MADV_HUGEPAGE);
+#endif
+}
+
+size_t KixReader::dict_size() const {
+    return willneed_size();
+}
+
+void KixReader::apply_madvise_posting_ranges(
+    const std::vector<std::pair<uint64_t, uint64_t>>& ranges) {
+    if (!mmap_.is_open()) return;
+    const size_t base = dict_size();
+    for (const auto& r : ranges) {
+        if (r.second == 0) continue;
+        mmap_.advise(base + r.first, r.second, MADV_WILLNEED);
+    }
+}
+
 std::vector<uint32_t> KixReader::bulk_count_postings() const {
     std::vector<uint32_t> counts(table_size_, 0);
     // Walk the dictionary once with sequential access_pair calls so the

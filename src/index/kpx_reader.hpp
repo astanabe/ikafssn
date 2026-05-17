@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 #include "io/mmap_file.hpp"
 #include "index/ef_codec.hpp"
 #include "index/kpx_format.hpp"
@@ -60,6 +62,21 @@ public:
     // Hint that the posting body will be touched at random; pos_offsets
     // dictionary head stays WILLNEED + HUGEPAGE.
     void   apply_madvise_posting_random();
+
+    // Dictionary-only WILLNEED + HUGEPAGE; posting body left untouched.
+    // Mirror of KixReader::apply_madvise_dict_only — used by the
+    // range-WILLNEED Stage 2A path so the orchestrator's per-range
+    // prefetch is not pre-empted by a MADV_RANDOM on the body.
+    void   apply_madvise_dict_only();
+
+    // Byte size of the dictionary region (header + Elias-Fano blob).
+    size_t dict_size() const;
+
+    // Apply MADV_WILLNEED to a set of posting-body ranges. Each pair is
+    // (offset, length) in posting-file coordinates (the space returned by
+    // pos_offset_range). Mirror of KixReader::apply_madvise_posting_ranges.
+    void apply_madvise_posting_ranges(
+        const std::vector<std::pair<uint64_t, uint64_t>>& ranges);
 
 private:
     MmapFile mmap_;
