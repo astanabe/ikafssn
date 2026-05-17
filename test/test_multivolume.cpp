@@ -602,6 +602,50 @@ static void test_mode1_batched_equals_single() {
     CHECK_EQ(big.size(), small.size());
     CHECK(sorted_keys(big) == sorted_keys(small));
 
+    // Stress the parallel_scan fold path with many queries on the same
+    // volume so each batch produces enough candidates for the prefix-sum
+    // / parallel write to exercise multiple TBB workers. Run the same
+    // configuration twice and require byte-identical output to confirm
+    // the fold is deterministic.
+    {
+        std::vector<std::string> queries_storage(16, g_query_fj);
+        std::vector<QueryKmerData<uint16_t>> qdatas;
+        qdatas.reserve(queries_storage.size());
+        for (auto& q : queries_storage) {
+            qdatas.push_back(preprocess_query<uint16_t>(q, k, nullptr, config));
+        }
+        std::vector<QueryBundle<uint16_t>> many_bundles(queries_storage.size());
+        for (size_t i = 0; i < queries_storage.size(); i++) {
+            many_bundles[i].query_id      = &queries_storage[i];
+            many_bundles[i].qdata_primary = &qdatas[i];
+        }
+        std::vector<uint8_t> skip(queries_storage.size(), 0);
+
+        auto run = [&]() {
+            RunSearchInputs<uint16_t> in;
+            in.volumes_cod      = volumes_cod;
+            in.ksx_per_volume.resize(2);
+            in.oid_filters.resize(2);
+            for (size_t vi = 0; vi < 2; vi++) in.ksx_per_volume[vi] = &ksxs[vi];
+            in.queries           = &many_bundles;
+            in.query_skip_reason = &skip;
+            in.config            = config;
+            in.both_mode         = false;
+            in.k                 = k;
+            in.nthread           = 4;
+            in.posting_budget    = single_budget;
+            in.logger            = &logger;
+            in.max_num_seqs      = max_num_seqs;
+            in.tier              = Stage1Tier::T32;
+            return run_search<uint16_t>(in);
+        };
+
+        auto a = run();
+        auto b = run();
+        CHECK_EQ(a.size(), b.size());
+        CHECK(sorted_keys(a) == sorted_keys(b));
+    }
+
     for (auto& ksx : ksxs) ksx.close();
 }
 

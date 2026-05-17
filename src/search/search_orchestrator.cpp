@@ -15,7 +15,10 @@
 #include <iterator>
 #include <utility>
 
+#include <tbb/blocked_range.h>
 #include <tbb/enumerable_thread_specific.h>
+#include <tbb/parallel_for.h>
+#include <tbb/parallel_scan.h>
 #include <tbb/task_arena.h>
 
 namespace ikafssn {
@@ -343,20 +346,65 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                                   states, arena, tls_bufs);
 
         // Mode 1 only: drain mode1_results for this batch and release the
-        // capacity so it does not accumulate across all batches.
-        if (in.config.mode == 1) {
-            for (size_t ji : idxs) {
-                const ExtJob& ej = ext_jobs[ji];
-                JobState& st = states[ji];
-                for (auto& cr : st.mode1_results) {
-                    OrchestratorHit oh;
-                    oh.query_idx     = ej.qi;
-                    oh.volume_idx    = ej.vi;
-                    oh.volume_index  = volume_indices[ej.vi];
-                    oh.cr            = std::move(cr);
-                    mode1_results.push_back(std::move(oh));
-                }
-                std::vector<ChainResult>().swap(st.mode1_results);
+        // capacity so it does not accumulate across all batches. The fold
+        // runs as a 2-pass parallel_scan: pass 1 produces per-ji prefix
+        // sums of mode1_results.size(); pass 2 writes each ji's entries
+        // into a pre-resized contiguous region at offsets[ji], with no
+        // synchronization.
+        if (in.config.mode == 1 && !idxs.empty()) {
+            const size_t n_batch = idxs.size();
+            std::vector<size_t> offsets(n_batch + 1, 0);
+            arena.execute([&] {
+                tbb::parallel_scan(
+                    tbb::blocked_range<size_t>(0, n_batch),
+                    size_t{0},
+                    [&](const tbb::blocked_range<size_t>& r, size_t acc, bool is_final) {
+                        size_t sum = acc;
+                        for (size_t i = r.begin(); i != r.end(); ++i) {
+                            if (is_final) offsets[i] = sum;
+                            sum += states[idxs[i]].mode1_results.size();
+                        }
+                        if (is_final && r.end() == n_batch) offsets[n_batch] = sum;
+                        return sum;
+                    },
+                    [](size_t a, size_t b) { return a + b; });
+            });
+
+            const size_t batch_total = offsets[n_batch];
+            if (batch_total > 0) {
+                const size_t base = mode1_results.size();
+                mode1_results.resize(base + batch_total);
+                arena.execute([&] {
+                    tbb::parallel_for(
+                        tbb::blocked_range<size_t>(0, n_batch),
+                        [&](const tbb::blocked_range<size_t>& r) {
+                            for (size_t i = r.begin(); i != r.end(); ++i) {
+                                const size_t ji = idxs[i];
+                                const ExtJob& ej = ext_jobs[ji];
+                                JobState& st = states[ji];
+                                size_t dst = base + offsets[i];
+                                for (auto& cr : st.mode1_results) {
+                                    OrchestratorHit& oh = mode1_results[dst++];
+                                    oh.query_idx    = ej.qi;
+                                    oh.volume_idx   = ej.vi;
+                                    oh.volume_index = volume_indices[ej.vi];
+                                    oh.cr           = std::move(cr);
+                                }
+                                std::vector<ChainResult>().swap(st.mode1_results);
+                            }
+                        });
+                });
+            } else {
+                arena.execute([&] {
+                    tbb::parallel_for(
+                        tbb::blocked_range<size_t>(0, n_batch),
+                        [&](const tbb::blocked_range<size_t>& r) {
+                            for (size_t i = r.begin(); i != r.end(); ++i) {
+                                std::vector<ChainResult>().swap(
+                                    states[idxs[i]].mode1_results);
+                            }
+                        });
+                });
             }
         }
 

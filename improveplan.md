@@ -641,3 +641,17 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
 - 観察: バッチ末で per-ji の `mode1_results` capacity が即解放されるため、Stage 1 全体での anonymous heap が `posting_budget` 相当に bound される (本番ベンチで観察された SwapPss 5 GiB は本フェーズで消える見込み — 別マシン測定待ち)
 - 残課題 / 次フェーズへの引き継ぎ: 現状の per-batch fold は単一スレッド逐次。バッチ数縮小 (Phase 5 後) に伴い 1 バッチ内 candidate 数が増えるため、Phase 4b (parallel_scan) は Phase 5 後に効果を再計測する価値あり
 
+### Phase 4b: C5-b-iii — mode1 fold を tbb::parallel_scan で並列化
+- 日付: 2026-05-17
+- 主な変更:
+  - `src/search/search_orchestrator.cpp`: Phase 4a で導入した per-batch fold を 2 パス並列化:
+    1. `tbb::parallel_scan` で `offsets[i] = prefix_sum(states[idxs[i]].mode1_results.size())` を計算 (`offsets[n_batch]` がバッチ合計)
+    2. `mode1_results.resize(base + batch_total)` を 1 回行い、`tbb::parallel_for` で各 `i` が `mode1_results[base + offsets[i] + k]` にロック不要で書き込み
+    3. 各 `ji` のキャパシティ解放 (`std::vector<ChainResult>().swap(...)`) も同じ parallel_for で実施
+    - 全てのバッチサイズで対応 (空バッチや batch_total==0 でも安全に解放)
+  - `tbb::task_arena arena` (line 286 で既に構築) 内で `arena.execute([&] { ... })` 経由で発火し、ネストした並列化からの worker fairness を保証
+  - `test/test_multivolume.cpp::test_mode1_batched_equals_single` を拡張: 16 query × 2 vol を 4 thread で 2 回連続実行し、ソート済みキー集合が完全一致することを確認 (parallel_scan / parallel_for の決定論性検証)
+- テスト: `ctest --test-dir build` 全 158 件 pass
+- 観察: per-batch の単一スレッド fold (O(batch_candidates)) が並列に置き換わる。バッチ数が少ない (Phase 5 で 57 → 1 想定) ケースほど fold サイズが大きくなるため、本フェーズの効果は Phase 5 後により顕著になる見込み
+- 残課題 / 次フェーズへの引き継ぎ: なし。Phase 4.5 (both-mode integration テスト追加) へ進む
+
