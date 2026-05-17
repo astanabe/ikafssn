@@ -695,3 +695,23 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
   - mode 2/3 の kpx 側も同形に range-WILLNEED 化済み (C1-d)
 - 残課題 / 次フェーズへの引き継ぎ: なし。本タスク (Phase 5) は当初計画の最大スコープ。Phase 6 (C3 — PFD ブロック単位 stream decode + prefix-sum SIMD 化) と Phase 7 (C7 — dict huge page 戦略予測性向上) は任意 (improveplan.md §6) のため、本セッションでは未着手。本番ベンチ計測後に効果を判断
 
+### Phase 5b: incremental WILLNEED-then-check planner (Phase 5 refactor)
+- 日付: 2026-05-17
+- 動機: Phase 5 の up-front planner は 287 vol を直列に open + dict 走査してから検索を開始するため、本番ベンチで `Stage 1 batch plan` 出力までの待ち時間が支配項になっていた (ユーザー報告)。さらに各 vol を planning + 検索の 2 回 open しており、無駄が大きい
+- 主な変更 (`src/search/search_orchestrator.cpp`):
+  - `VolumePlan` / `compute_volume_plans` / `plan_stage1_batches` / `plan_stage2_batches` / `Stage1Batch` / `Stage2Batch` / `release_*_madvise` を全削除
+  - `compute_kix_ranges` / `compute_kpx_ranges` を「既に open 済みのリーダを受け取る」シグネチャに変更 (path 経由の open は止める)
+  - Stage 1 ループを incremental に再構築:
+    - vol[vi] を 1 度だけ open → `compute_kix_ranges` で cost 算出 → `vi_bytes > posting_budget` なら現バッチを flush して単独 Tier1 バッチで実行、それ以外は WILLNEED を発行して現バッチに追加 → 累積が `>= posting_budget` で flush (`>=` なので超過する vol を含めたまま flush)
+    - per-batch mode 1 fold (parallel_scan + parallel_for) は `run_stage1_batch_and_close` ラムダ内に統合
+    - 各バッチで `Stage 1 batch N: %zu vol(s), %zu ext_job(s), tier%u, needed_bytes=%llu` を逐次ログ
+  - Stage 2 ループも同形に再構築 (kix + kpx 両方の cost を加算、単独 fallback は kpx-only / kix-only がそれぞれ予算内かで Tier2 / Tier3 / Tier1 を決定)
+- メモリ予算: 超過上限は 1 vol の needed_bytes (NCBI nt なら ~200 MB)。`-memory_limit` 自体が `.khx`/`.ksx` 控除後の概算で page cache の eviction も opportunistic のため、この僅かな超過は実害なし
+- テスト: `ctest --test-dir build` 全 158 件 pass。`test_mode1_batched_equals_single` / `test_mode2_batched_equals_single` の同値性も維持
+- コード規模: `search_orchestrator.cpp` で net -134 行 (218 insertions / 352 deletions)
+- 観察:
+  - 最初の Stage 1 バッチが満ちた時点で検索が開始されるため、本番ベンチでの長時間 planning 待ちが消える見込み
+  - 各 vol の dict 走査は 1 回のみ (cost 計算 == prefetch 計画)、検索時の `posting_list_range` 呼出と temporally local
+  - vol open は 1 回 (planning + 実行で重複しない)
+- 残課題: なし。本番ベンチで効果を計測
+
