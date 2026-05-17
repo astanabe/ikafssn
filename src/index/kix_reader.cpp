@@ -122,6 +122,8 @@ void KixReader::apply_madvise_dict_only() {
 #ifdef MADV_HUGEPAGE
     mmap_.advise(0, dict, MADV_HUGEPAGE);
 #endif
+    if (mmap_.size() > dict)
+        mmap_.advise(dict, mmap_.size() - dict, MADV_RANDOM);
 }
 
 size_t KixReader::dict_size() const {

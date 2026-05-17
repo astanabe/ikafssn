@@ -63,10 +63,9 @@ public:
     // dictionary head stays WILLNEED + HUGEPAGE.
     void   apply_madvise_posting_random();
 
-    // Dictionary-only WILLNEED + HUGEPAGE; posting body left untouched.
-    // Mirror of KixReader::apply_madvise_dict_only — used by the
-    // range-WILLNEED Stage 2A path so the orchestrator's per-range
-    // prefetch is not pre-empted by a MADV_RANDOM on the body.
+    // Dictionary WILLNEED + HUGEPAGE, posting body MADV_RANDOM (suppress
+    // default readahead).  A subsequent apply_madvise_posting_ranges()
+    // actively pre-faults the requested ranges regardless of the hint.
     void   apply_madvise_dict_only();
 
     // Byte size of the dictionary region (header + Elias-Fano blob).

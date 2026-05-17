@@ -48,12 +48,9 @@ public:
     // budget allows.
     void   apply_madvise_posting_random();
 
-    // Dictionary-only WILLNEED + HUGEPAGE.  The posting body is left
-    // untouched (no MADV_WILLNEED, no MADV_RANDOM).  Used by the
-    // range-WILLNEED batch path: the orchestrator separately issues
-    // MADV_WILLNEED for the exact posting-list ranges this batch will
-    // probe, so the body should not also be marked RANDOM (which would
-    // suppress the orchestrator's range-level prefetch).
+    // Dictionary WILLNEED + HUGEPAGE, posting body MADV_RANDOM (suppress
+    // default readahead).  A subsequent apply_madvise_posting_ranges()
+    // actively pre-faults the requested ranges regardless of the hint.
     void   apply_madvise_dict_only();
 
     // Byte size of the dictionary region (header + Elias-Fano blob).
