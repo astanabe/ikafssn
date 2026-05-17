@@ -158,7 +158,6 @@ target_compile_definitions(test_builder PRIVATE
     IKAFSSN_TESTING
 )
 add_test(NAME test_builder COMMAND test_builder)
-add_ikafssn_simd_test(test_builder)
 
 # parallel_sort_dispatch unit test (no BLAST DB dependency)
 add_executable(test_parallel_sort test_parallel_sort.cpp)

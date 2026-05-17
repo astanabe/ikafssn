@@ -517,7 +517,7 @@ static void test_multivolume_k9() {
 // the range-WILLNEED planner the per-volume kpx ranges must match the
 // single-batch result.
 static void test_mode2_batched_equals_single() {
-    std::fprintf(stderr, "-- test_mode2_batched_equals_single (Phase 5)\n");
+    std::fprintf(stderr, "-- test_mode2_batched_equals_single\n");
     const int k = 7;
     const std::string db_base = "mvtest";
 
@@ -613,10 +613,10 @@ static void test_mode2_batched_equals_single() {
 // Drive run_search<>() directly with a multi-volume index, in mode 1, with
 // two different posting_budget values: one large enough to fit both
 // volumes in a single Stage 1 batch, one small enough to force two
-// batches. The orchestrator's per-batch mode1_results fold (Phase 4a / C5-a)
-// must produce identical output across both batch shapes.
+// batches. The orchestrator's per-batch mode1_results fold must produce
+// identical output across both batch shapes.
 static void test_mode1_batched_equals_single() {
-    std::fprintf(stderr, "-- test_mode1_batched_equals_single (Phase 4a)\n");
+    std::fprintf(stderr, "-- test_mode1_batched_equals_single\n");
     const int k = 7;
     const std::string db_base = "mvtest";  // index built by earlier test
 
