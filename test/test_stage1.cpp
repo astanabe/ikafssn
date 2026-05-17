@@ -449,6 +449,75 @@ static void test_clear_dirty_bulk_reset() {
     }
 }
 
+// Drive the thread_local SeqIdDecoder through three consecutive runs with
+// different query inputs on the same thread. If reset() forgot any field
+// (first_, prev_id_, ctx_.pos / count), the result of run 2 or 3 would
+// differ from the result computed in isolation by a fresh call.
+static void test_seq_id_decoder_reset_across_runs() {
+    std::fprintf(stderr, "-- test_seq_id_decoder_reset_across_runs\n");
+
+    KixReader kix;
+    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
+
+    auto scan = [&](const std::string& seq,
+                    std::vector<uint32_t>& positions,
+                    std::vector<uint16_t>& kmers) {
+        KmerScanner<uint16_t> scanner(7);
+        scanner.scan(seq.data(), seq.size(), [&](uint32_t pos, uint16_t kmer) {
+            positions.push_back(pos);
+            kmers.push_back(kmer);
+        });
+    };
+
+    std::vector<uint32_t> p1, p2, p3;
+    std::vector<uint16_t> k1, k2, k3;
+    scan(g_query_seq, p1, k1);
+    scan(g_query_seq.substr(0, 50), p2, k2);
+    scan(g_query_seq.substr(20), p3, k3);
+
+    OidFilter filter;
+    Stage1Config config;
+    config.stage1_topn = 0;
+    config.min_stage1_score = 1;
+
+    auto canonical = [&](const std::vector<uint32_t>& p,
+                         const std::vector<uint16_t>& k) {
+        Stage1Buffer buf;
+        return stage1_filter(p.data(), k.data(), p.size(), kix, filter, config, buf);
+    };
+
+    // Reference values from independent buffers.
+    auto r1 = canonical(p1, k1);
+    auto r2 = canonical(p2, k2);
+    auto r3 = canonical(p3, k3);
+
+    // Now run the same three calls back-to-back on a shared buffer so the
+    // thread_local SeqIdDecoder is exercised across runs.
+    Stage1Buffer shared;
+    auto s1 = stage1_filter(p1.data(), k1.data(), p1.size(), kix, filter, config, shared);
+    auto s2 = stage1_filter(p2.data(), k2.data(), p2.size(), kix, filter, config, shared);
+    auto s3 = stage1_filter(p3.data(), k3.data(), p3.size(), kix, filter, config, shared);
+
+    auto compare = [](std::vector<Stage1Candidate> a, std::vector<Stage1Candidate> b) {
+        CHECK(a.size() == b.size());
+        auto sort_by_id = [](std::vector<Stage1Candidate>& v) {
+            std::sort(v.begin(), v.end(),
+                      [](const Stage1Candidate& x, const Stage1Candidate& y) { return x.id < y.id; });
+        };
+        sort_by_id(a);
+        sort_by_id(b);
+        for (size_t i = 0; i < a.size(); i++) {
+            CHECK(a[i].id == b[i].id);
+            CHECK(a[i].score == b[i].score);
+        }
+    };
+    compare(r1, s1);
+    compare(r2, s2);
+    compare(r3, s3);
+
+    kix.close();
+}
+
 // Reproduce the finish-fusion path by calling stage1_filter twice with
 // stage1_topn == 0. The second call must produce the same candidates as the
 // first, proving that finish leaves no leftover score / last_pos / dirty state.
@@ -562,6 +631,7 @@ int main() {
     test_stage1_fractional_with_highfreq();
     test_clear_dirty_bulk_reset();
     test_stage1_finish_no_side_effects();
+    test_seq_id_decoder_reset_across_runs();
     test_stage1_filter_none_vs_pass_all();
     test_adaptive_min_score();
 

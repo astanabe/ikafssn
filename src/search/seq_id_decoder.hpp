@@ -23,10 +23,27 @@ public:
     static constexpr int kMaxBatch = 16;
 
     SeqIdDecoder() = default;
-    explicit SeqIdDecoder(const uint8_t* data) : data_(data), bytes_(0) {}
     SeqIdDecoder(const uint8_t* data, const uint8_t* end)
         : data_(data),
           bytes_(end && end >= data ? static_cast<std::size_t>(end - data) : 0) {}
+
+    // Reset to point at a new posting list without reconstructing the
+    // object. Reuses the StreamCtx::decoded heap buffer so the next
+    // ensure_decoded() does not have to re-grow it from zero.
+    void reset(const uint8_t* data, const uint8_t* end) {
+        data_ = data;
+        bytes_ = (end && end >= data)
+                     ? static_cast<std::size_t>(end - data)
+                     : 0;
+        decoded_     = false;
+        first_       = true;
+        was_new_seq_ = false;
+        prev_id_     = 0;
+        ctx_.count   = 0;
+        ctx_.pos     = 0;
+        // Keep ctx_.decoded capacity intact so the upcoming
+        // open_stream_kix can resize() in-place.
+    }
 
     void ensure_decoded() {
         if (decoded_) return;

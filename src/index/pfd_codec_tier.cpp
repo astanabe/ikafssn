@@ -497,12 +497,27 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
     const std::uint32_t body_words = static_cast<std::uint32_t>(
         body_bytes_avail / sizeof(std::uint32_t));
 
-    std::vector<std::uint32_t> codec_in(body_words);
-    std::memcpy(codec_in.data(), posting_list + 4, body_bytes_avail);
+    // Encoder writes posting lists as [u32 header][u32-aligned body], and
+    // each posting list is itself an integer number of u32 words, so the
+    // body offset relative to the posting file base is always 4-byte
+    // aligned. When the underlying pointer is u32-aligned we hand it to
+    // FastPFor directly to skip the per-call memcpy + heap allocation.
+    // Otherwise we fall back to a per-thread scratch vector that grows
+    // monotonically — never per-call heap allocation.
+    const std::uint8_t* body_bytes_ptr = posting_list + 4;
+    const std::uint32_t* codec_in_ptr;
+    if ((reinterpret_cast<std::uintptr_t>(body_bytes_ptr) % alignof(std::uint32_t)) == 0) {
+        codec_in_ptr = reinterpret_cast<const std::uint32_t*>(body_bytes_ptr);
+    } else {
+        thread_local std::vector<std::uint32_t> codec_in_scratch;
+        if (codec_in_scratch.size() < body_words) codec_in_scratch.resize(body_words);
+        std::memcpy(codec_in_scratch.data(), body_bytes_ptr, body_bytes_avail);
+        codec_in_ptr = codec_in_scratch.data();
+    }
 
     ctx.decoded.resize(count);
     std::size_t nvalue = ctx.decoded.size();
-    kix_codec().decodeArray(codec_in.data(), body_words,
+    kix_codec().decodeArray(codec_in_ptr, body_words,
                             ctx.decoded.data(), nvalue);
     if (nvalue != count) return false;
 

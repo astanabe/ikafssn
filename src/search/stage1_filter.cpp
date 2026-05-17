@@ -113,6 +113,12 @@ static void stage1_filter_accumulate_impl(
     SeqId   raw_sids[kDecBatch];
     uint8_t was_new[kDecBatch];
 
+    // Hoisted out of the qi loop so the underlying StreamCtx::decoded
+    // capacity (which can grow to millions of u32 for conserved k-mers)
+    // is reused across all probes on this thread instead of being
+    // allocated and freed per probe.
+    thread_local SeqIdDecoder decoder;
+
     for (size_t qi = 0; qi < n; qi++) {
         auto q_pos = static_cast<PosT>(positions[qi]);
         auto kmer_idx = kmers[qi];
@@ -120,7 +126,7 @@ static void stage1_filter_accumulate_impl(
         kix.posting_list_range(kmer_idx, off, byte_len);
         if (byte_len == 0) continue;
 
-        SeqIdDecoder decoder(posting_file + off, posting_file + off + byte_len);
+        decoder.reset(posting_file + off, posting_file + off + byte_len);
         while (decoder.has_more()) {
             int n_dec = decoder.next_batch(raw_sids, was_new, kDecBatch);
             if (n_dec == 0) break;

@@ -65,6 +65,10 @@ static void collect_position_hits(
     const uint8_t* pos_data = kpx.posting_file();
     pfd::PosDecodeScratch& scratch = tls_pos_scratch();
 
+    // Hoisted out of the qi loop so the StreamCtx::decoded buffer is
+    // reused across all per-thread probes.
+    thread_local SeqIdDecoder kix_dec;
+
     for (size_t qi = 0; qi < n_kmers; qi++) {
         uint32_t q_pos = positions[qi];
         auto kmer_idx = kmers[qi];
@@ -73,8 +77,8 @@ static void collect_position_hits(
         kix.posting_list_range(kmer_idx, kix_off, kix_len);
         if (kix_len == 0) continue;
 
-        SeqIdDecoder kix_dec(kix_data + kix_off,
-                             kix_data + kix_off + kix_len);
+        kix_dec.reset(kix_data + kix_off,
+                      kix_data + kix_off + kix_len);
         kix_dec.ensure_decoded();
 
         PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),

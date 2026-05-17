@@ -619,3 +619,15 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
 - 観察: `filter.pass()` 呼出が hot loop から消えるため per-sid 分岐が 1 個減る。本番ベンチでの elapsed 変化は別マシン測定待ち
 - 残課題 / 次フェーズへの引き継ぎ: なし。Phase 3 (C2) へ進む
 
+### Phase 3: C2 — SeqIdDecoder thread_local + open_stream_kix heap alloc 排除
+- 日付: 2026-05-17
+- 主な変更:
+  - `src/search/seq_id_decoder.hpp` に `reset(const uint8_t*, const uint8_t*)` API を追加 (StreamCtx::decoded の capacity を保持したまま状態リセット)。未使用の `explicit SeqIdDecoder(const uint8_t*)` ctor を削除
+  - `src/index/pfd_codec_tier.cpp::open_stream_kix` の `std::vector<uint32_t> codec_in(body_words)` を排除。`posting_list + 4` が u32-aligned (常に成立) なら FastPFor へ直接 pass、不揃いなら `thread_local std::vector<uint32_t> codec_in_scratch` に fall back (どちらも per-call heap alloc なし)
+  - `src/search/stage1_filter.cpp::stage1_filter_accumulate_impl` の qi ループ内で `SeqIdDecoder decoder(...)` を構築していたのを、関数先頭の `thread_local SeqIdDecoder decoder` を `decoder.reset(...)` で再利用する形に hoist
+  - `src/search/parallel_search.cpp::collect_position_hits` (mode 2/3 共有経路) でも同形に hoist
+  - `test/test_stage1.cpp` に `test_seq_id_decoder_reset_across_runs` を追加 (3 種類の query を 1 スレッド上で連続呼出 → 独立呼出結果と同値であることを確認)
+- テスト: `ctest --test-dir build` 全 158 件 pass。全 SIMD 強制バリアントも pass
+- 観察: hot loop での per-probe heap alloc 2 箇所 (`std::vector<uint32_t> codec_in` と `StreamCtx::decoded` の再 grow) が両方とも消える。both-mode では cod / opt 双方で発火していたためコスト削減幅は単一テンプレ経路の 2 倍見込み。本番ベンチでの elapsed / IPC / L3 ミス変化は別マシン測定待ち
+- 残課題 / 次フェーズへの引き継ぎ: なし。Phase 4a (C5-a) へ進む
+
