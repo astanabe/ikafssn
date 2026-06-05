@@ -52,7 +52,7 @@ static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
 // group cannot be split across batches.  Groups are bin-packed greedily
 // against `posting_budget` (the residual heap budget already plumbed from
 // Stage 1/2 madvise accounting).  A group whose own cost exceeds the budget
-// falls back to a solo batch (tier-1 style), matching `plan_stage1_batches`.
+// is processed in a solo batch (over-budget).
 // ---------------------------------------------------------------------------
 
 static uint64_t compute_hit_cost(const OutputHit& h,
@@ -79,7 +79,7 @@ struct Stage3Group {
 struct Stage3Batch {
     std::vector<size_t> group_idxs; // indices into the ordered groups vector
     uint64_t cost = 0;
-    bool tier1_oversize = false;
+    bool solo_oversize = false;
 };
 
 static std::vector<Stage3Batch>
@@ -101,7 +101,7 @@ plan_stage3_batches(const std::vector<Stage3Group>& groups_ordered,
             Stage3Batch solo;
             solo.group_idxs.push_back(gi);
             solo.cost = g.cost;
-            solo.tier1_oversize = true;
+            solo.solo_oversize = true;
             batches.push_back(std::move(solo));
             continue;
         }
@@ -228,13 +228,13 @@ std::vector<OutputHit> run_stage3(
     auto batches = plan_stage3_batches(groups, config.posting_budget);
 
     {
-        size_t tier1 = 0;
-        for (const auto& b : batches) if (b.tier1_oversize) ++tier1;
+        size_t n_solo = 0;
+        for (const auto& b : batches) if (b.solo_oversize) ++n_solo;
         logger.info("Stage 3 batch plan: %zu batch(es) over %zu group(s) "
-                    "(budget=%llu, tier1_oversize=%zu)",
+                    "(budget=%llu, solo_oversize=%zu)",
                     batches.size(), groups.size(),
                     static_cast<unsigned long long>(config.posting_budget),
-                    tier1);
+                    n_solo);
     }
 
     // 7. Per-hit scratch storage.  Sized to hits.size() so we can index by
@@ -272,8 +272,8 @@ std::vector<OutputHit> run_stage3(
                      bi + 1, batches.size(),
                      batch.group_idxs.size(), batch_hit_count,
                      static_cast<unsigned long long>(batch.cost),
-                     batch.tier1_oversize ? " [tier1 oversize]" : "");
-        if (batch.tier1_oversize) {
+                     batch.solo_oversize ? " [solo oversize]" : "");
+        if (batch.solo_oversize) {
             logger.warn("Stage 3 batch %zu/%zu: single group exceeds posting_budget "
                         "(%llu > %llu); processing solo (over-budget)",
                         bi + 1, batches.size(),
@@ -281,17 +281,11 @@ std::vector<OutputHit> run_stage3(
                         static_cast<unsigned long long>(config.posting_budget));
         }
 
-        // 8b. Fetch subseqs.  Flatten the per-volume OID-sorted hit
-        // lists into one ordered index sequence and walk it with a
-        // single hit-parallel parallel_for in the default arena (=
-        // -nthread).  Within one TBB task the iterations are
-        // contiguous in (volume, OID) order, preserving sequential
-        // mmap access locality, while across tasks the full -nthread
-        // pool is engaged.  `get_subsequence` is lock-free
-        // (CSeqDBImpl::GetRawSeqAndAmbig does not take the
-        // CSeqDBAtlas lock and only does mmap pointer arithmetic +
-        // ncbi2na decode + ambig-table lookup), so concurrent calls
-        // on the same or different volumes are safe.
+        // 8b. Fetch subseqs.  Flatten the per-volume OID-sorted hit lists
+        // into one ordered index sequence and walk it with a hit-parallel
+        // parallel_for; iterations within a task stay in (volume, OID) order
+        // for sequential mmap locality.  get_subsequence is lock-free, so
+        // concurrent calls are safe.
         std::vector<size_t> ordered_hits;
         ordered_hits.reserve(batch_hit_count);
         for (size_t ri = 0; ri < readers.size(); ri++) {

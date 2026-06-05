@@ -88,22 +88,6 @@ size_t KixReader::willneed_size_full() const {
     return mmap_.size();
 }
 
-void KixReader::apply_madvise_full(bool willneed) {
-    if (!mmap_.is_open()) return;
-    const size_t dict_size = willneed_size();
-    if (willneed) {
-        mmap_.advise(0, dict_size, MADV_WILLNEED);
-#ifdef MADV_HUGEPAGE
-        mmap_.advise(0, dict_size, MADV_HUGEPAGE);
-#endif
-        if (mmap_.size() > dict_size)
-            mmap_.advise(dict_size, mmap_.size() - dict_size, MADV_WILLNEED);
-    } else {
-        if (mmap_.size() > dict_size)
-            mmap_.advise(dict_size, mmap_.size() - dict_size, MADV_DONTNEED);
-    }
-}
-
 void KixReader::apply_madvise_posting_random() {
     if (!mmap_.is_open()) return;
     const size_t dict_size = willneed_size();
@@ -143,10 +127,9 @@ void KixReader::apply_madvise_posting_ranges(
 std::vector<uint32_t> KixReader::bulk_count_postings() const {
     std::vector<uint32_t> counts(table_size_, 0);
     // Walk the dictionary once with sequential access_pair calls so the
-    // EF select1 sample lookup is amortised across consecutive k-mers.
-    // (7b SIMD will turn this into a streaming decode; for the 7a scalar
-    // PoC the per-call cost is acceptable since this path runs only at
-    // ikafssnindex finalize / ikafssninfo time.)
+    // EF select1 sample lookup is amortised across consecutive k-mers.  The
+    // per-call cost is acceptable because this runs only at ikafssnindex
+    // finalize / ikafssninfo time.
     uint64_t s = dict_.access(0);
     for (uint32_t i = 0; i < table_size_; i++) {
         uint64_t e = dict_.access(i + 1);

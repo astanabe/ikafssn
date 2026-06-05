@@ -2,6 +2,7 @@
 #include "search/stage1_filter_simd.hpp"
 #include "search/oid_filter.hpp"
 #include "search/seq_id_decoder.hpp"
+#include "search/decode_cache.hpp"
 #include "index/kix_reader.hpp"
 #include "core/config.hpp"
 #include "core/varint.hpp"
@@ -99,6 +100,7 @@ static void stage1_filter_accumulate_impl(
 
     const uint8_t* posting_file = kix.posting_file();
     const bool use_coverscore = (config.stage1_score_type == 1);
+    const DecodedKmerCache* dc = kix.decode_cache();
 
     buf.ensure_capacity(num_seqs);
     auto* scores   = score_ptr<Tier>(buf);
@@ -107,6 +109,12 @@ static void stage1_filter_accumulate_impl(
     constexpr int kBatch = 16;
     SeqId sid_batch[kBatch];
     int batch_count = 0;
+
+    // Cap a single flush_batch_simd call's count to stay within `int` even
+    // for a conserved k-mer present in billions of sequences.  Cached sids
+    // are distinct within one posting list, so splitting at any boundary
+    // gives the identical per-sid result as a single call.
+    constexpr uint32_t kFlushChunk = 1u << 24;
 
     constexpr int kDecBatch = SeqIdDecoder::kMaxBatch;
     static_assert(kDecBatch >= 1, "kDecBatch must be positive");
@@ -122,6 +130,50 @@ static void stage1_filter_accumulate_impl(
     for (size_t qi = 0; qi < n; qi++) {
         auto q_pos = static_cast<PosT>(positions[qi]);
         auto kmer_idx = kmers[qi];
+
+        if (dc) {
+            auto lk = dc->lookup(static_cast<uint32_t>(kmer_idx));
+            if (lk.sids != nullptr) {
+                // Cached probe: lk.sids is the same ascending-distinct array
+                // open_stream_kix would decode, so the flush semantics are
+                // independent of chunk boundaries and the result is identical
+                // to the uncached path.  An empty posting list matches the
+                // uncached `byte_len == 0 => continue`.
+                if (lk.count == 0) continue;
+                if constexpr (!HasFilter) {
+                    // The cache stores distinct seq_ids, so the
+                    // `use_coverscore && !was_new` skip is always a no-op
+                    // here; there are no intra-list duplicates to drop.
+                    for (uint32_t base = 0; base < lk.count; base += kFlushChunk) {
+                        int chunk = static_cast<int>(
+                            std::min<uint32_t>(kFlushChunk, lk.count - base));
+                        flush_batch_simd<Tier>(lk.sids + base, chunk, q_pos,
+                                               scores, last_pos, buf.dirty);
+                    }
+                } else {
+                    for (uint32_t i = 0; i < lk.count; i++) {
+                        SeqId sid = lk.sids[i];
+                        if (!filter.pass(sid)) continue;
+                        sid_batch[batch_count++] = sid;
+                        if (batch_count == kBatch) {
+                            flush_batch_simd<Tier>(sid_batch, kBatch, q_pos,
+                                                   scores, last_pos, buf.dirty);
+                            batch_count = 0;
+                        }
+                    }
+                    if (batch_count > 0) {
+                        flush_batch_simd<Tier>(sid_batch, batch_count, q_pos,
+                                               scores, last_pos, buf.dirty);
+                        batch_count = 0;
+                    }
+                }
+                continue;
+            }
+            // Lookup miss (invariant: every probed k-mer is in the filled
+            // unique set, so this is only an insurance path) falls through
+            // to the on-the-fly decode below.
+        }
+
         uint64_t off, byte_len;
         kix.posting_list_range(kmer_idx, off, byte_len);
         if (byte_len == 0) continue;

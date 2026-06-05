@@ -43,12 +43,6 @@ public:
         buf_.insert(buf_.end(), s.begin(), s.end());
     }
 
-    // Append raw bytes (no prefix).
-    void bytes(const void* data, size_t n) {
-        const auto* p = static_cast<const uint8_t*>(data);
-        buf_.insert(buf_.end(), p, p + n);
-    }
-
 private:
     std::vector<uint8_t>& buf_;
 };
@@ -62,8 +56,6 @@ public:
 
     bool has(size_t n) const { return pos_ + n <= size_; }
     size_t remaining() const { return size_ - pos_; }
-    size_t position() const { return pos_; }
-    const uint8_t* current() const { return data_ + pos_; }
 
     bool get_u8(uint8_t& v) {
         if (!has(1)) return false;

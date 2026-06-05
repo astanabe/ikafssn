@@ -53,7 +53,7 @@ ikafssnsearch -mode 1 -ix /work/shimotsuki/ncbi_nt_20260107/nt \
 ### 1.4 実行経路 (本ベンチで通る code path)
 
 - `-template_type both` 指定のため Stage 1 の active path は `stage1_one_strand_both` (`src/search/parallel_search.cpp:160-243`)。cod / opt の query stream を q_pos 整列でマージし、各 q_pos ブロックで `stage1_filter_accumulate` を 1〜2 回呼ぶ。1 ext_job あたり kix を **2 本** (cod + opt) 読みに行くため、B2 のヒープ確保コストは単一テンプレ経路の最大 2 倍。
-- `-mode 1` 指定のため `search_orchestrator.cpp:361-377` の fast path に入り、**Stage 2A / Stage 2B はスキップ** される。よって本ベンチで効くのは Stage 1 関連 (B1〜B5, B7, C1〜C4, C6〜C8) と mode 1 fold (B6, C5) のみ。Stage 2 系の改善は別ベンチで評価する。
+- `-mode 1` 指定のため `search_orchestrator.cpp:361-377` の fast path に入り、**Stage 2A / Stage 2B はスキップ** される。よって本ベンチで効くのは Stage 1 関連 (B1〜B5, B7, C1〜C4, C6〜C9) と mode 1 fold (B6, C5) のみ。Stage 2 系の改善は別ベンチで評価する。
 - ext_jobs 数 = 500 query × 287 vol × 1 strand = **143,500**。`states` ベクタも同サイズ。
 
 ---
@@ -181,7 +181,7 @@ Linux の Transparent Huge Page は **file-backed mmap 領域** に対しては 
 
 詳細計画立案前に確定した方針。改善案 C1–C8 はこの前提に従って実装する。
 
-- **C4 スコープ**: per-thread `Stage1Buffer` を維持したまま、外ループを unique kmer に転置 (内ループで `(qi, q_pos)` を回す)。per-query Stage1Buffer 案 (500 query × num_seqs × 4 B で数百 GB) は採用しない。per-kmer bitset 等のさらに深い再設計も本タスクのスコープ外。
+- **C4 + C9 スコープ**: C4 は **decode キャッシュ型 (B-2、実装済み)** — volume 内の全 unique k-mer を 1 度だけ decode してキャッシュし、消費は現状の cod/opt 位置マージ順を維持する (both-mode 完全互換、per-volume 完全 dedup)。query tiling は不要と確定。kmer-major 全面転置・per-query Stage1Buffer (500 query × num_seqs で数百 GB)・per-kmer bitset はいずれも不採用。C9 は閾値による早期切り捨て (`score[sid] + remaining < T` で dead 確定 → scatter 省略) で、スカラ `last_pos` dedup を温存するため **k-mer 単位ではなく位置グループ単位**でコスト昇順に並べ替える。詳細は §3 C4 + C9。
 - **C1 `needed_bytes[vi]` 計算タイミング**: バッチ planning 時に全 287 ボリュームを順に open して `posting_list_range` を全 unique k-mer に対して呼び、事前計算してからバッチを組む。スタートアップに数十秒〜数分の追加コストが乗るが、batch 計画を確定できるトレードオフを取る。
 - **C1-d (KPX 側)**: C1 本体と同時実装。コード対称性を保ち、mode 2/3 ベンチの実施時にすぐ効果が出るようにする。
 - **完了判定**: 目標値は事前に設定しない。各改善 (C1〜C8) を順次入れて §7 の計測値を残し、効果を実測で評価する。ある時点で「これ以上は効果が小さい」と判断したらそこで止める。
@@ -320,39 +320,6 @@ mode 1 のステージ1 は「各 sid に対し `last_pos != q_pos` なら score
 
 **期待効果**: working set が 128 × 4 B = 512 B となり L1 で完結。長い posting list でアロケーション量も削減。
 
-### C4. k-mer 単位への転置 (query-major → kmer-major)
-
-**対象**:
-- `src/search/parallel_search.cpp:434-463` (`run_stage1_jobs`) のジョブ単位を再設計
-- `src/search/parallel_search.cpp:160-243` (`stage1_one_strand_both`) — both-mode の q_pos マージ構造も影響
-- `src/search/query_preprocessor.hpp:15-29` (`QueryKmerData`) — kmer→(qi, q_pos)\* の inverted view を追加するか、preprocess_query で同時生成するか要設計判断
-
-**確定方針 (3.0 による)**: per-thread `Stage1Buffer` を維持したまま、k-mer 単位の外ループで posting list を 1 度だけ decode し、内ループで `(qi, q_pos)` ペアを回す hybrid 構成を採用する。per-query Stage1Buffer (500 query × num_seqs × 4 B = 数百 GB) は採用しない。
-
-バッチに入る全 query から `(qi, q_pos, kmer)` を集めて kmer でグループ化:
-
-```
-バッチ前処理:
-  triples = [(qi, q_pos, kmer) for qi in queries for (q_pos, kmer) in query]
-  group_by_kmer(triples)  // ハッシュ or 基数ソート
-
-ステージ1 ループ (per-thread Stage1Buffer + kmer-major 外ループ):
-  parallel_for each kmer_idx in unique_kmers:
-    open_stream_kix(kmer_idx) once → SeqIdDecoder (thread_local)
-    while decoder.has_more():
-      sid_batch = decoder.next_batch(...)
-      for each (qi, q_pos) referencing kmer_idx:
-        flush_batch_simd<Tier>(sid_batch, count, q_pos,
-                               scores[qi], last_pos[qi], dirty[qi])
-```
-
-検討事項:
-- **スコアバッファの軸**: per-thread Stage1Buffer を維持するが、論理的には (qi × sid) 二軸が必要になる。3.0 の確定方針では Stage1Buffer 1 個を qi で切り替え、kmer ループの外側 (またはバッチごと) で qi を回す擬似 hybrid にする。具体的な切り替え方は plan モードで詰める。
-- **both-mode との統合**: `stage1_one_strand_both` の cod / opt 統合は kmer-major 化と相性が良い (q_pos マージループ自体が不要になる)。ただし `stage1_filter_accumulate` の per-position dedup (`last_pos[sid] != q_pos`) が cod / opt をまたいでも保たれるよう、kmer iteration 順を q_pos 昇順に保つ必要がある。
-- mifish のような common k-mer 集中型クエリで効果大。
-
-**期待効果**: 同一 k-mer の重複 decode を排除 (mifish のような conserved primer で 10–50×)。
-
 ### C5. mode 1 結果集約の並列化 + バッチ末解放
 
 **対象**: `src/search/search_orchestrator.cpp:361-377` (mode 1 fast path), `:480-486` (Stage 2 バッチ末解放 — mode 1 では未実行)
@@ -412,6 +379,105 @@ template <typename KmerInt, Stage1Tier Tier, bool HasFilter>
 static void stage1_filter_accumulate_impl(...);
 ```
 として、呼出側で `filter.mode() == OidFilterMode::kNone` で分岐ディスパッチする。本ベンチでは `-seqidlist` 未指定のため `kNone` 経路に入る。
+
+### C4 + C9. decode 重複排除 (decode キャッシュ) + 閾値による早期切り捨て
+
+C4 と C9 は別々のボトルネックを叩く相補的な 2 改善である。**C4 は decode (B2/B4) を、C9 は scatter (B3) を削る**。kmer-major への全面転置は both-mode の per-position dedup と衝突するため採らず、消費順を現状維持できる **decode キャッシュ型 (B-2)** を採用する。C4 は実装済み (per-volume decode キャッシュ、完全 dedup)。C9 はスカラ `last_pos` dedup を温存するため、k-mer 単位ではなく **位置グループ単位**でコスト昇順に並べ替える (未実装、C4 の上に後付け)。
+
+**対象**:
+- `src/search/decode_cache.{hpp,cpp}` (`DecodedKmerCache`) — volume 単位・全 unique k-mer の arena decode キャッシュ (`fill`/`release`/`lookup`、C4、実装済み)
+- `src/search/stage1_filter.cpp` (`stage1_filter_accumulate_impl`) — decode キャッシュ参照 (C4、実装済み) + cutoff 判定 (C9)
+- `src/index/pfd_codec.{hpp,cpp}` / `src/index/pfd_codec_tier.cpp` (`decode_kix_into`) — decode 実装の一本化、`open_stream_kix` が委譲 (C4、実装済み)
+- `src/index/kix_reader.hpp` (`set_decode_cache` / `decode_cache`) — キャッシュハンドル (C4、実装済み)
+- `src/search/search_orchestrator.cpp` (`run_stage1_batch_and_close` + Stage 1 外側バッチループ) — 統合予算課金 (WILLNEED + decode heap) と バッチ単位 bind/run/unbind/release (C4、実装済み)
+- `src/search/parallel_search.cpp` (`stage1_one_strand_single` / `stage1_one_strand_both`) — 位置グループ単位の消費ループに改造 (C9)
+- `src/search/stage1_filter_simd.cpp` (`flush_avx512_t32`) — dead レーンの scatter マスク (C9)
+- `src/search/query_preprocessor.{hpp,cpp}` — 位置グループ化と per-group コスト (posting list 長合計) の事前計算 (C9)
+
+#### 確定方針 (3.0 + 本節の追加決定)
+
+- **C4 は B-2 decode キャッシュ型 (実装済み)**。volume 内の全 unique k-mer の posting list を 1 度だけ decode してキャッシュし、消費は現状の cod/opt 位置マージ順を維持する。kmer-major 全面転置 (外ループ k-mer・内ループ全 query) は採らない。query tiling は不要と確定し、**volume 単位で全 unique k-mer を一括 decode する完全 dedup** とした (query 数 → 1)。
+- **score / last_pos バッファは現状どおり 1 query / thread** (約 num_seqs × (ScoreT+PosT) ≈ T32 で 8 B/fragment)。同時に複数 query 分のスコア配列を保持しないため、メモリは現状と同等。
+- **統合予算でバッチング (単一ルート)**。decode キャッシュ heap を WILLNEED page cache と**同じバッチ予算 (`posting_budget` ≈ `-memory_limit`) に合算課金**する。`set_decode_cache` は KixReader 単位の bind なので、1 バッチ内に cached / uncached volume が混在してよく、hot loop の `if (dc) … else decode` 分岐が volume ごとに振り分ける。専用の uncached ルートは持たない。
+- **per-query Stage1Buffer / per-kmer bitset は不採用** (memory)。
+- **C9 の並べ替えは k-mer 単位ではなく位置グループ単位**。スカラ `last_pos[sid] != q_pos` による per-position dedup は「同一位置の k-mer が連続処理される」ことを要求するため、k-mer 単位の並べ替えは dedup を壊す (C9-b)。
+
+#### C4-a: decode キャッシュ (実装済み)
+
+volume 内の各 unique k-mer を 1 度だけ decode し、`DecodedKmerCache` の単一 arena (`offsets_` で uidx→先頭、`storage_` に decode 済み distinct sid) に保持する (cod 用 / opt 用に別キャッシュ)。消費側 (`stage1_filter_accumulate_impl`) は `posting_list_range → decoder.reset → decode` の代わりに `kix.decode_cache()->lookup(kmer)` を参照する。キャッシュ未バインド (uncached volume / Tier1) または lookup 未ヒット時は現状の decode 経路へ fallback する。
+
+- キャッシュは read-only で volume 内の全 query が共有。decode 回数は「k-mer × query」から「k-mer × 1」へ減る (**完全 dedup**、削減率 = 似た query 数ぶん、最大 query 数倍)。
+- `fill()` は 2-pass: Pass 1 (serial) で各 k-mer の posting list header の distinct_count を prefix-sum して arena offset と decode 後バイト数を確定し、予算超過なら decode せず false を返す (異常 volume の逃がし)。Pass 2 (`tbb::parallel_for`) で互いに disjoint な arena slot へ `decode_kix_into` で並列 decode。`fill()` は volume の WILLNEED 適用後に呼ぶので、header 読みも decode も prefetch に乗る。
+- 破損 posting body (`decode_kix_into` が失敗) のときは `fill()` が false を返し、その volume だけ uncached に fallback (`open_stream_kix` が false を返す現状経路と同値)。
+- 消費順序・scatter・dedup・finish は現状と完全に同一 → **出力は数値的に完全一致** (`test_multivolume` / `test_search_integration` の cached vs uncached byte 同値検証で確認済み。matchscore / coverscore / degenerate 展開クエリ・both-mode の各経路を網羅)。
+
+#### C4-b: 統合予算バッチングとメモリ (実装済み)
+
+ext_job 軸は「query × volume × strand」のまま (tiling は導入しない)。Stage 1 の WILLNEED バッチループ (`run_stage1_batch_and_close`) を、各 volume に **`vi_bytes` (WILLNEED page cache) + `decoded_bytes` (decode キャッシュ heap) を合算課金**するよう拡張する。
+
+- **`-memory_limit` はソフトリミット**。バッチは add-then-check (volume を加えてから累計が `posting_budget` を超えたら close) で、**超過は 1 volume 分まで許容**する。`materialize` を採用確定後に回す厳密 (check-before-add) は不要と判断し、融合 `fill()` を採る。
+- **`-memory_limit` を上げるほど 1 バッチに入る volume 数が増え、`run_stage1_jobs` の cross-volume 並列性が比例して上がる**。少クエリ時は decode が小さく多数 volume が 1 バッチに収まり、従来の cross-volume 並列性をほぼ保つ。
+- `set_decode_cache` は KixReader 単位の bind なので、1 バッチ内に cached / uncached volume が混在してよく、hot loop の `if (dc) … else decode` 分岐が volume ごとに振り分ける (**単一ルート**、専用 uncached ルートなし)。バッチ実行後に `release()` で decode heap を即解放。
+- decode サイズ単体が `posting_budget` を超える異常 volume、または WILLNEED 自体が超える volume (従来 Tier1) は uncached (bind しないだけ)。both-mode は opt を残予算で `fill` し、cod+opt の合計を 1 予算内に収める。
+- volume バッチ計画 (C1) との関係: C1 の WILLNEED レンジ算出はそのまま。バッチ境界の予算式に decode heap を足した点のみが差分。
+
+#### C9-a: 早期切り捨ての条件
+
+クエリの distinct 位置数を `Nq` (= 実質 `Nqkmer`)、解決済み閾値を `T`、ある時点での処理済み位置数を `m`、残り位置数を `remaining = Nq - m` とする。スコアは各位置で最大 +1 の単調増加なので、ある sid は
+
+```
+score[sid] + remaining < T
+```
+
+になった瞬間、最終的に `T` へ到達不能 (dead) が確定する。dead な sid に対しては scatter (score / last_pos の書込) と dirty push を省略する。`remaining` は前処理で `Nqkmer` が既知なので、処理済み位置グループ数を引くだけで求まる。matchscore の場合は `remaining` を残り k-mer 数とする。
+
+dead の枝刈りは更新を省くだけで candidate 集合・スコアは不変 → **出力は数値的に完全一致**。
+
+#### C9-b: 位置グループ コスト昇順並べ替え (both-mode 互換の要)
+
+C9 が効くのは `remaining < T` の領域、すなわち長い posting list を「`remaining` が小さくなった後」で処理したときである。そのため処理順を制御したいが、**k-mer 単位の並べ替えは per-position dedup を壊す**:
+
+```
+pos5(k-mer A), pos10(k-mer B), pos5(k-mer C, 別テンプレ/degen) の順で処理すると
+  A: last_pos=5,  score=1
+  B: last_pos=10, score=2
+  C: last_pos=10≠5 → 誤って再加点 → score=3 (位置5を二重カウント)
+```
+
+スカラ `last_pos` 1 個では位置の重複検出ができないためである。一方、**位置グループ (同一位置の cod+opt+degen 全 k-mer のかたまり) をまるごと並べ替える分には連続性が保たれ、dedup は壊れない**:
+
+```
+G5={A,C}(pos5), G10={B}(pos10) を G10→G5 で処理
+  G10: B → last_pos=10, score=1
+  G5 : A → last_pos=10≠5 → 加点 last_pos=5 score=2 / C → last_pos=5==5 → skip
+  → score=2 (位置5,10 各1回) 正しい
+```
+
+そこで処理順は「**位置グループをコスト昇順 (グループ内 k-mer の posting list 長合計が小さい順) に並べ替える**」とする。安い位置を先に処理してスコアを積み、conserved primer 等の高コスト位置を `remaining` が小さくなった後ろで処理することで、そこに現れる新規 (score 低) sid の大半が dead 確定 → 最も高コストな長い list の scatter を集中的に間引ける。mifish の conserved primer は連続位置レンジに固まるため、自然に高コストグループとして後ろへ回り、噛み合わせが良い。
+
+譲歩: C9 の枝刈り粒度は per-k-mer から per-位置グループへ粗くなる (同一位置に短い list と長い list が混在すると分離できない)。both-mode では元々同一位置の cod/opt をまとめて処理する設計なので、この粒度は自然で実害は小さい。
+
+#### C9-c: flush カーネルへの cutoff 統合
+
+`flush_avx512_t32` (`stage1_filter_simd.cpp:43-125`) は 1 バッチあたり 2 gather (score, last_pos) + 2 scatter (score, last_pos) + dirty push を発行する。cutoff 統合後:
+
+1. まず `score[sid]` を gather (deadness 判定に必須)。
+2. `dead = (sc_old + remaining < T)` で dead マスクを作る。
+3. dead レーンは last_pos gather・2 scatter・dirty push をすべて省略 (4 つのランダムメモリ操作のうち 3 つを削減)。
+
+`remaining` と `T` はバッチ内で定数なのでベクタ即値で渡せる。
+
+#### both-mode 互換性
+
+- **消費順 (cod/opt 位置マージ) を維持**するので `stage1_one_strand_both` の per-position dedup 構造はそのまま。C4 は decode をキャッシュ参照に置換するだけ、C9 は位置グループの順序入替と dead 枝刈りのみで、いずれも candidate 集合・スコアを変えない。
+- 位置グループ並べ替えは各位置内の連続性を保つため、スカラ `last_pos` dedup は不変。
+- 検証は `test_search_stage1_both_template` / `test_search_mode1_both_template` (Phase 4.5 で追加済み) の数値同値性を最重点に置く。degenerate 展開 (同一位置複数 k-mer) のケースも位置グループ連続性に依存するため必ず通す。
+
+#### 期待効果
+
+- **C4**: 同一 k-mer の重複 decode を volume 内で完全排除 (削減率 = 似た query 数ぶん、conserved primer 集中型クエリで特に大)。scatter は削らない。
+- **C9**: dead 確定 sid の scatter (B3 の支配項) を間引く。閾値が高いほど、また位置グループのコスト昇順並べ替えにより低閾値でも効く。decode は削らない。
+- 2 つは独立に効くため併用で乗算的。優先順位は本番ベンチの perf で scatter / decode のどちらが支配的かを切り分けて決める。
 
 ---
 
@@ -489,14 +555,15 @@ pass 3 (write):   results.resize(total);
 |---|---|---|---|
 | 高 | **C2** thread_local StreamCtx + memcpy 排除 | プローブごとの確保 0 化、CPU 数十 % 減 (both-mode で 2 倍効く) | 中 |
 | 高 | **C1** バッチ planner を実需要バイト単位に + 範囲特化 prefetch | I/O 4.68 TB → 数十 GB (理論下限 ~60 GB)、バッチ数 57 → 1、`folio_wait_bit_common` 待ち解消、低速ディスクで決定的 | 中〜高 |
-| 高 | **C4** k-mer 単位への転置 | conserved query で decode 10–50× 減 | 高 (再設計) |
+| 高 | **C4** decode キャッシュ (重複 decode 排除, B-2, 実装済み) | conserved query で decode を query 数倍削減 (B4)、per-volume 完全 dedup | 高 (再設計) |
+| 高 | **C9** 閾値による早期切り捨て (位置グループ コスト昇順 + cutoff) | dead 確定 sid の scatter を間引き (B3)、閾値・コスト順で増幅 | 中〜高 |
 | 中 | **C5** mode 1 fold 並列化 + Stage 1 バッチ末解放 (§4 の (iii) 推奨) | swap 流入解消、テール時間短縮 | 中 |
 | 中 | **C3** ブロック単位 stream decode | L1 局在化、cumsum SIMD 化 | 中 |
 | 中 | **C6** dirty reset の閾値切替 + 走査 1 パス化 | 低 threshold 時の reset O(n) → O(1) | 低 |
 | 低 | **C7** dict huge page 戦略の予測性向上 | 副次的、TLB ミス減 | 低 |
 | 低 | **C8** OidFilter 無し時の hot loop 特殊化 | 分岐 1 個削減 | 低 |
 
-CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の順 (見込み)。I/O が支配項になる別環境では **C1** が最大効果。本ベンチは `-template_type both` のため C2 の効果は実質 2 倍と見込まれる (cod / opt 双方の qi ループで毎回 `SeqIdDecoder` を構築している)。
+CPU 律速の現状を最も大きく改善するのは **C2 → C4 + C9 → C5** の順 (見込み)。I/O が支配項になる別環境では **C1** が最大効果。本ベンチは `-template_type both` のため C2 の効果は実質 2 倍と見込まれる (cod / opt 双方の qi ループで毎回 `SeqIdDecoder` を構築している)。
 
 ただし表内の「期待効果」はあくまで分析からの推定であり、数値目標ではない (3.0 の決定参照)。各改善後に §7 の計測を行って実値を残す運用。
 
@@ -513,7 +580,8 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
    - C1-c (単一ボリューム fallback) は既存 Tier1 分岐をそのまま流用、必要に応じて閾値計算だけ差し替え
    - C1-d (KPX 側) はコード対称性のため同時に投入
 6. **C3** (FastPFor の block 単位 decode API 追加, prefix-sum SIMD 化)
-7. **C4** (k-mer 単位への転置, ステージ1 再設計) — 最も影響範囲が広いので最後
+7. **C4** (per-volume decode キャッシュ B-2, 消費順は現状維持, 実装済み) — both-mode 完全互換。volume 内の重複 decode を完全排除し、decode 削減を単独で計測。query tiling は不要と確定
+8. **C9** (位置グループ コスト昇順並べ替え + flush の cutoff マスク) — C4 の per-volume / 消費構造の上に後付け。scatter 削減を単独で計測 — 最も影響範囲が広いので最後
 
 各ステップ後に下記 §7 の検証手順で効果を測る。C2 と C5 は独立に効くため、どちらを先に入れても他方の効果測定を歪めない。C1 は I/O 量変化が主指標なので CPU 律速環境では elapsed が大きく動かない可能性がある — その場合は `/proc/$PID/io` の `read_bytes` 差分とバッチ数 (`logger->info("Stage 1 batch plan: ...")` `src/search/search_orchestrator.cpp:306-308`) の変化で判断する。
 
@@ -542,9 +610,9 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 → C5** の
 - 改善前後で出力 TSV が **完全一致** することを `diff` で確認。順序が変わる場合は `sort -k1,1 -k2,2 -k3,3 | sha256sum` で同値性を担保。
 - `test/` 配下の既存テストすべてが pass すること。特に:
   - `test/ssu_test_fixture.hpp` を使う mode 1 / mode 2 / mode 3 テスト
-  - both-mode (`-template_type both`) を含むテスト — `stage1_one_strand_both` の挙動が C2/C4 で変わるため必須
+  - both-mode (`-template_type both`) を含むテスト — `stage1_one_strand_both` の挙動が C2/C4/C9 で変わるため必須
   - `-seqidlist` を使うテスト — C8 の `OidFilter::pass` 経路を網羅
-- C4 (kmer-major 化) は per-position dedup の不変条件 (`last_pos[sid] != q_pos` で +1) を壊しやすいので、both-mode テストの数値同値性を最重点で確認する。
+- C4 (decode キャッシュ) / C9 (位置グループ並べ替え + cutoff) は per-position dedup の不変条件 (`last_pos[sid] != q_pos` で +1) を壊しやすいので、both-mode テストの数値同値性を最重点で確認する。特に C9 の位置グループ並べ替えが degenerate 展開・cod/opt 同一位置のケースで連続性 (= 同一位置 k-mer の連続処理) を保つことを検証する。
 
 ### 7.4 ログメトリクス追加 (任意)
 - 既存 `logger->info` (`src/search/search_orchestrator.cpp:306-308, :354-355`) に加え、バッチごとの: ユニーク probed k-mer 数 / 実 madvise バイト数 / decode 回数 / dirty.size() ピーク を `-v` 時に出力させると、各改善の効果が定量で見える。

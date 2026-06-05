@@ -139,15 +139,11 @@ int main(int argc, char* argv[]) {
         std::string db_path = cli.get_string("-db");
 
         if (ctx_param.is_ratio) {
-            // Per-hit context calculation using q_length
-            // Set per-hit context in RetrieveOptions for each hit
-            // We modify hits' context by setting a per-hit effective context,
-            // passing each hit individually with its computed context
+            // Per-hit context = qlen * ratio; retrieve each hit individually.
             logger.info("Retrieving from local BLAST DB: %s (context ratio=%.4f)",
                         db_path.c_str(), ctx_param.ratio);
             for (auto& hit : hits) {
                 uint32_t ctx = static_cast<uint32_t>(hit.qlen * ctx_param.ratio);
-                // Temporarily store per-hit context using a single-hit retrieval approach
                 RetrieveOptions opts;
                 opts.context = ctx;
                 std::vector<OutputHit> single_hit = {hit};
@@ -165,9 +161,7 @@ int main(int argc, char* argv[]) {
         // Remote retrieval via NCBI efetch
         EfetchOptions opts;
         if (ctx_param.is_ratio) {
-            // For remote, per-hit context: use max q_length * ratio as approximation
-            // or handle per-hit in efetch_retriever
-            // For simplicity, compute per-hit max context
+            // Remote path uses the maximum per-hit context (qlen * ratio).
             uint32_t max_ctx = 0;
             for (const auto& hit : hits) {
                 uint32_t ctx = static_cast<uint32_t>(hit.qlen * ctx_param.ratio);

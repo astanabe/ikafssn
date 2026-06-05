@@ -118,6 +118,7 @@ add_library(ikafssn_search STATIC
     search/volume_searcher.cpp
     search/parallel_search.cpp
     search/search_orchestrator.cpp
+    search/decode_cache.cpp
     search/result_dedup.cpp
     search/result_writer_mode1.cpp
 )

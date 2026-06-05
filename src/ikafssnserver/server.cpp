@@ -352,8 +352,8 @@ int Server::run(const ServerConfig& config_in) {
     }
 
     // Configure the inter-request posting-budget pool.  floor == 0 disables
-    // blocking entirely (pass-through mode = historical behaviour: every
-    // request sees the full posting_budget).  When -max_concurrent_search
+    // blocking entirely (pass-through mode: every request sees the full
+    // posting_budget).  When -max_concurrent_search
     // is >= 1, residual posting_budget is divided into N slices floored at
     // 1 MiB so at most N concurrent requests run the budget-bound stages.
     {

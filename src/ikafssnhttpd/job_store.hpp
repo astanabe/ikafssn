@@ -139,8 +139,6 @@ private:
     mutable std::mutex     mu_;
 
     bool exec_(const char* sql, std::string& error_msg);
-    bool prepare_or_load_(const char* key, const char* sql, sqlite3_stmt** out,
-                          std::string& error_msg);
 };
 
 } // namespace ikafssn

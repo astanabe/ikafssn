@@ -243,14 +243,6 @@ std::vector<std::string> list_groups(const std::string& root) {
     return out;
 }
 
-std::vector<std::string> list_jobs(const std::string& root,
-                                   const std::string& group_id) {
-    GroupMeta gm;
-    std::string err;
-    if (!read_group_meta(root, group_id, gm, err)) return {};
-    return gm.job_ids;
-}
-
 bool resolve_id(const std::string& root, const std::string& id,
                 bool& is_group, std::string& group_id_out,
                 std::string& job_id_out) {
@@ -316,10 +308,10 @@ bool write_job_result(const std::string& root,
                       const std::string& job_id,
                       const std::vector<uint8_t>& blob,
                       std::string& error_msg) {
-    // Server-side ResultStore now hands us the bytes already in a single
-    // zstd frame, so we simply persist them verbatim — re-compressing
-    // would create a zstd-of-zstd file that the existing
-    // zstd_decompress_file in read_job_result could not unpack.
+    // The server-side ResultStore hands us the bytes already in a single
+    // zstd frame, so we persist them verbatim — re-compressing would create
+    // a zstd-of-zstd file that zstd_decompress_file in read_job_result could
+    // not unpack.
     fs::path p = job_result_path(root, group_id, job_id);
     std::error_code ec;
     fs::create_directories(p.parent_path(), ec);

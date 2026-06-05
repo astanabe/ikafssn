@@ -58,7 +58,7 @@ void tbb_sort_fallback(std::vector<TempEntry>& buf) {
 //      std::sort the val slice to recover (kmer, seq_id, pos) total order.
 // keyvalue_qsort is unstable for duplicate keys, so step 4 is required to
 // make the (pos) tail match the TBB path.
-void simd_sort_strategy_e(std::vector<TempEntry>& buf) {
+void simd_sort_keyvalue(std::vector<TempEntry>& buf) {
     const std::size_t n = buf.size();
     std::vector<uint64_t> key(n);
     std::vector<uint32_t> val(n);
@@ -97,7 +97,7 @@ void parallel_sort_temp_entries(std::vector<TempEntry>& buf) {
 
 #if IKAFSSN_HAS_X86_SIMD_SORT
     if (parallel_sort_simd_active() && buf.size() <= kSimdSortMaxN) {
-        simd_sort_strategy_e(buf);
+        simd_sort_keyvalue(buf);
         return;
     }
 #endif

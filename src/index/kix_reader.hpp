@@ -10,6 +10,8 @@
 
 namespace ikafssn {
 
+class DecodedKmerCache;
+
 class KixReader {
 public:
     bool open(const std::string& path);
@@ -32,14 +34,9 @@ public:
     size_t willneed_size() const;
     void apply_madvise(bool willneed);
 
-    // Full-mapping budget API: counts the dictionary head and the entire
-    // posting file.  Used by ikafssnsearch to charge a per-volume batch
-    // against the madvise WILLNEED budget — including the posting body —
-    // so that the batched search loop pre-faults a whole volume's payload
-    // before issuing query × volume jobs, then releases it for the next
-    // batch.
+    // Byte size of the whole mapping (dictionary head + posting file).  Used
+    // to charge a volume against the madvise WILLNEED budget.
     size_t willneed_size_full() const;
-    void   apply_madvise_full(bool willneed);
 
     // Hint that the posting body will be touched at random (page cache is
     // preserved but readahead is suppressed).  The dictionary head is
@@ -96,6 +93,16 @@ public:
     // build-time exclusion via .khx; not used on the search hot path.
     std::vector<uint32_t> bulk_count_postings() const;
 
+    // Optional per-volume decode cache shared read-only by every Stage 1
+    // probe on this volume.  The orchestrator publishes the cache on the
+    // mutable reader before entering the parallel Stage 1 region (publish-
+    // once, full barrier => happens-before) and clears it afterwards, so
+    // the hot path reads decode_cache() without a data race.  When set,
+    // stage1_filter looks each k-mer up here before falling back to an
+    // on-the-fly posting-list decode.
+    void set_decode_cache(const DecodedKmerCache* c) { decode_cache_ = c; }
+    const DecodedKmerCache* decode_cache() const { return decode_cache_; }
+
 private:
     MmapFile mmap_;
     const KixHeader* header_ = nullptr;
@@ -103,6 +110,7 @@ private:
     const uint8_t* posting_file_ = nullptr;
     size_t posting_file_size_ = 0;
     uint32_t table_size_ = 0;
+    const DecodedKmerCache* decode_cache_ = nullptr;
 };
 
 } // namespace ikafssn

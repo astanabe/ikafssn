@@ -39,9 +39,9 @@ static void print_usage(const char* prog) {
         "  -max_queue_size <int>    Max concurrent query sequences globally (default: 1024)\n"
         "  -max_nseq_per_req <int>  Max sequences accepted per request (default: thread count)\n"
         "  -max_concurrent_search <int>  Limit concurrent requests at budget-bound stages\n"
-        "                           (Stage 1 / 2A / 3). 0 = unlimited (default, current\n"
-        "                           behavior). When N >= 1, requests share -memory_limit's\n"
-        "                           residual posting_budget so in-flight heap stays bounded.\n"
+        "                           (Stage 1 / 2A / 3). 0 = unlimited (default). When N >= 1,\n"
+        "                           requests share -memory_limit's residual posting_budget so\n"
+        "                           in-flight heap stays bounded.\n"
         "  -pid <path>              PID file path\n"
         "  -db <path>               BLAST DB path for mode 3 (repeatable, paired with -ix;\n"
         "                           default: same as corresponding -ix prefix)\n"
@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
     init_simd_dispatch(&logger);
     config.log_level = logger.level();
 
-    // Search config (renamed options)
+    // Search config
     config.search_config.stage1.stage1_topn =
         static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
     {

@@ -1019,11 +1019,12 @@ int main(int argc, char* argv[]) {
     uint8_t resp_mode = 0;
     uint8_t resp_stage1_score = 0;
     bool resp_stage3_traceback = false;
+    // first_response stays true until a response is seen; if there is no
+    // remaining work and the checkpoint already has response metadata, the
+    // first response was already recorded.
     bool first_response = true;
-    if (!remaining.empty() || !ckpt.read_response_meta(resp_mode, resp_stage1_score,
-                                                        resp_stage3_traceback)) {
-        // wait for first response
-    } else {
+    if (remaining.empty() && ckpt.read_response_meta(resp_mode, resp_stage1_score,
+                                                     resp_stage3_traceback)) {
         first_response = false;
     }
 

@@ -348,13 +348,6 @@ SimdCap current_simd_cap() noexcept {
     return g_current.load(std::memory_order_acquire);
 }
 
-SimdAuxFlags current_simd_flags() noexcept {
-    SimdAuxFlags flags;
-    flags.slow_bmi2        = g_slow_bmi2.load(std::memory_order_acquire);
-    flags.has_avx512f_only = g_avx512f_only.load(std::memory_order_acquire);
-    return flags;
-}
-
 SimdCap auto_detected_simd_cap() noexcept {
     return g_auto_cap.load(std::memory_order_acquire);
 }

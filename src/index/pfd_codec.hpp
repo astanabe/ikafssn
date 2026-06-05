@@ -64,7 +64,7 @@ namespace ikafssn::pfd {
 
 // FastPFor SIMD block size (the codec we wrap is simdfastpfor128 =
 // CompositeCodec<SIMDFastPFor<4>, VariableByte>; per-block element count is
-// 128, matching the plan).
+// 128).
 inline constexpr int kPfdBlockSize = 128;
 
 // Posting list header byte size for .kix.  The fixed-size .kix posting
@@ -80,7 +80,7 @@ inline constexpr size_t kPostingListHeaderBytes = 4;
 size_t encode_posting_kix(const uint32_t* delta_array, uint32_t count,
                           std::vector<uint8_t>& out);
 
-// Encode the absolute-position stream for a .kpx posting list (v8).
+// Encode the absolute-position stream for a .kpx posting list.
 //   distinct_sid          length = distinct_count, sorted ascending, no dups
 //   occ_count             length = distinct_count, occurrence per distinct_sid
 //                         (u32 — large genomic contigs may have > 255
@@ -108,7 +108,7 @@ size_t encode_posting_kpx(const uint32_t* distinct_sid,
 // === streaming decode context (for .kix only) ===
 //
 // open_stream_kix materialises the entire decoded posting list into `decoded`.
-// .kpx decoding moved to a candidate-set-driven API (see below).
+// .kpx decoding uses a candidate-set-driven API (see below).
 struct StreamCtx {
     std::vector<uint32_t> decoded;
     uint32_t count = 0;     // total elements in `decoded`
@@ -121,6 +121,18 @@ struct StreamCtx {
 //
 // Returns false on header / body size mismatch (corrupt index).
 bool open_stream_kix(const uint8_t* posting_list, size_t bytes, StreamCtx& ctx);
+
+// Decode a .kix posting list directly into `out`, a buffer with `cap` u32
+// slots that must be >= the header distinct_count.  Writes the cumulative-
+// summed absolute distinct seq_ids into out[0..count) and returns count.
+// Returns 0 for an empty list; returns SIZE_MAX on corrupt input or
+// insufficient capacity (out left in an unspecified state on error).
+//
+// This is the single .kix decode implementation: open_stream_kix sizes
+// StreamCtx::decoded and delegates here, and DecodedKmerCache fills its
+// per-k-mer arena slots through the same routine.
+size_t decode_kix_into(const uint8_t* posting_list, size_t bytes,
+                       uint32_t* out, size_t cap);
 
 // === .kpx candidate-set-driven decode ===
 //

@@ -55,9 +55,6 @@ void init_simd_dispatch(Logger* logger = nullptr) noexcept;
 // IKAFSSN_ENABLE_SIMD=0 build-time disable).
 [[nodiscard]] SimdCap         current_simd_cap()       noexcept;
 
-// Auxiliary flags reflecting the actual CPU (not affected by force/downgrade).
-[[nodiscard]] SimdAuxFlags    current_simd_flags()     noexcept;
-
 // CPU-detected capability before any IKAFSSN_FORCE_SIMD downgrade.
 [[nodiscard]] SimdCap         auto_detected_simd_cap() noexcept;
 

@@ -6,18 +6,15 @@
 
 namespace ikafssn {
 
-// Streaming decoder for v7 .kix posting lists.
+// Streaming decoder for .kix posting lists.
 //
-// In v7 the .kix posting list stream contains **distinct** seq_ids only
+// The .kix posting list stream contains **distinct** seq_ids only
 // (intra-sequence k-mer duplicates are removed by a SIMD dedup kernel
 // at build time).  The codec returns absolute distinct seq_ids in
 // StreamCtx::decoded; this class is a thin "absolute id iterator" over
-// that buffer.
-//
-// `was_new_seq()` reports whether the last emitted id differs from the
-// previous emitted id.  In v7 it is **always true** after the first
-// emission because all stored ids are distinct; the field is preserved
-// for source compatibility with callers that still consume it.
+// that buffer.  next_batch() also reports, per id, whether it differs
+// from the previous id (always true given the distinctness above), which
+// the coverscore path consumes.
 class SeqIdDecoder {
 public:
     static constexpr int kMaxBatch = 16;
@@ -37,7 +34,6 @@ public:
                      : 0;
         decoded_     = false;
         first_       = true;
-        was_new_seq_ = false;
         prev_id_     = 0;
         ctx_.count   = 0;
         ctx_.pos     = 0;
@@ -60,24 +56,9 @@ public:
 
     uint32_t next() {
         ensure_decoded();
-        uint32_t id = 0;
-        if (ctx_.pos < ctx_.count) {
-            id = ctx_.decoded[ctx_.pos++];
-        }
-        if (first_) {
-            prev_id_ = id;
-            first_ = false;
-            was_new_seq_ = true;
-        } else {
-            was_new_seq_ = (id != prev_id_);
-            prev_id_ = id;
-        }
-        return id;
+        if (ctx_.pos < ctx_.count) return ctx_.decoded[ctx_.pos++];
+        return 0;
     }
-
-    bool was_new_seq() const { return was_new_seq_; }
-
-    const uint8_t* ptr() const { return data_; }
 
     // Zero-copy view of the decoded distinct seq_id array.
     const uint32_t* decoded_data() const { return ctx_.decoded.data(); }
@@ -102,7 +83,6 @@ public:
             out_sids[i] = id;
         }
         ctx_.pos += n;
-        if (n > 0) was_new_seq_ = (out_was_new[n - 1] != 0);
         return n;
     }
 
@@ -113,7 +93,6 @@ private:
     bool decoded_ = false;
     uint32_t prev_id_ = 0;
     bool first_ = true;
-    bool was_new_seq_ = false;
 };
 
 } // namespace ikafssn

@@ -415,7 +415,7 @@ bool build_postings(BlastDbReader& db,
     std::vector<uint64_t> kix_offsets(tbl_size + 1, 0);
     std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, kix_fp);
 
-    // posting file starts here (no counts table in format v3)
+    // posting file starts here (no counts table)
     const uint64_t kix_posting_start = kix_offsets_pos + sizeof(uint64_t) * (tbl_size + 1);
 
     // Write kpx header placeholder (skip if mode 1)

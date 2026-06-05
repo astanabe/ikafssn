@@ -511,12 +511,5 @@ int64_t JobStore::requeue_orphans(std::string& error_msg) {
     return sqlite3_changes(db_);
 }
 
-bool JobStore::prepare_or_load_(const char*, const char*, sqlite3_stmt**,
-                                std::string&) {
-    // Reserved for a future prepared-statement cache.  All current call
-    // sites prepare and finalize per call to keep the implementation
-    // simple under the global mutex.
-    return false;
-}
 
 } // namespace ikafssn

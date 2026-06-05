@@ -21,7 +21,7 @@ struct Stage3Config {
     // hit set is processed in a single batch.  When > 0, hits are grouped
     // by (qseqid, sseqid, sstrand) and bin-packed into batches whose
     // estimated heap footprint stays under this budget.  A single
-    // oversize group falls back to a tier-1 solo batch.
+    // oversize group falls back to a solo batch.
     uint64_t posting_budget = 0;
 };
 

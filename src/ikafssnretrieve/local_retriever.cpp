@@ -22,12 +22,9 @@ static void reverse_complement(std::string& seq) {
     }
 }
 
-// Pick the first accession token from an sseqid that may carry a
-// multi-defline '\x01'-joined string.  writes the parent
-// OID's accession into hit.sseqid verbatim, so when the BLAST DB volume
-// was built with `makeblastdb -parse_seqids` the field can still be a
-// joined form.  We use the first token for the FASTA defline so the
-// kafsss-style `parent_acc:start-end` header stays well-formed.
+// Return the first accession token of an sseqid, which may be a multi-defline
+// '\x01'-joined string (BLAST DBs built with `makeblastdb -parse_seqids`).
+// The first token keeps the `parent_acc:start-end` FASTA defline well-formed.
 static std::string first_accession_token(const std::string& sseqid) {
     auto tokens = split_accessions(sseqid);
     if (tokens.empty()) return sseqid;

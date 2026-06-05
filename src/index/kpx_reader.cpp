@@ -86,21 +86,6 @@ size_t KpxReader::willneed_size_full() const {
     return mmap_.size();
 }
 
-void KpxReader::apply_madvise_full(bool willneed) {
-    if (!mmap_.is_open()) return;
-    const size_t dict_size = willneed_size();
-    if (willneed) {
-        mmap_.advise(0, dict_size, MADV_WILLNEED);
-#ifdef MADV_HUGEPAGE
-        mmap_.advise(0, dict_size, MADV_HUGEPAGE);
-#endif
-        if (mmap_.size() > dict_size)
-            mmap_.advise(dict_size, mmap_.size() - dict_size, MADV_WILLNEED);
-    } else {
-        if (mmap_.size() > dict_size)
-            mmap_.advise(dict_size, mmap_.size() - dict_size, MADV_DONTNEED);
-    }
-}
 
 void KpxReader::apply_madvise_posting_random() {
     if (!mmap_.is_open()) return;

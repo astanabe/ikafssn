@@ -10,12 +10,12 @@ class KixReader;
 class KhxReader;
 struct SearchConfig;
 
-// Pre-processed query k-mer data with global high-freq filtering applied.
-// Generated once per query before the volume loop.
+// Pre-processed query k-mer data, generated once per query before the
+// volume loop.
 template <typename KmerInt>
 struct QueryKmerData {
-    std::vector<uint32_t> fwd_positions;  // query positions (high-freq removed)
-    std::vector<KmerInt>  fwd_kmer_values; // k-mer values (high-freq removed)
+    std::vector<uint32_t> fwd_positions;  // query positions
+    std::vector<KmerInt>  fwd_kmer_values; // k-mer values
     std::vector<uint32_t> rc_positions;
     std::vector<KmerInt>  rc_kmer_values;
     uint32_t resolved_threshold_fwd = 0;  // resolved Stage 1 absolute threshold (fwd)

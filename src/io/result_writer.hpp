@@ -111,8 +111,8 @@ void write_results(std::ostream& out,
 // directly, format per-thread chunk strings via std::to_chars, and let
 // the caller drive the (serial) compressed output sink.
 //
-// Mode 2 / Mode 3 still go through the OutputHit-based writers above —
-// those carry chain / Stage 3 / SAM fields and are unchanged.
+// Mode 2 / Mode 3 go through the OutputHit-based writers above, which
+// carry chain / Stage 3 / SAM fields.
 // -------------------------------------------------------------------------
 struct Mode1ParallelInputs {
     const std::vector<OrchestratorHit>* hits = nullptr;

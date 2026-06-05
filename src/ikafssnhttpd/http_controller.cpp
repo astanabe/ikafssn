@@ -107,9 +107,8 @@ void HttpController::submit_job(
     // ikafssnclient always sends application/zstd.  application/json (and
     // an empty Content-Type) is also accepted so external tools — curl
     // and any one-off scripts — can submit a job without having to pipe
-    // the body through `zstd` first.  This is NOT a back-compat path for
-    // the previous ikafssnclient release; it is a documented entry point
-    // for ad-hoc HTTP clients.
+    // the body through `zstd` first; it is a documented entry point for
+    // ad-hoc HTTP clients.
     std::string body;
     bool client_sent_zstd = false;
     if (media_type == "application/zstd") {

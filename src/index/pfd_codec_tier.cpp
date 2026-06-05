@@ -476,24 +476,22 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
     return out.size() - before;
 }
 
-// ===== open_stream_kix: decode the entire .kix posting list list into the StreamCtx =====
+// ===== decode_kix_into: the single .kix decode implementation =====
 
-bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
-                     ikafssn::pfd::StreamCtx& ctx) {
-    ctx.decoded.clear();
-    ctx.count = 0;
-    ctx.pos = 0;
-    if (bytes == 0) return true;
-    if (bytes < 4) return false;  // header is just [u32 distinct_count]
+std::size_t decode_kix_into(const std::uint8_t* posting_list, std::size_t bytes,
+                            std::uint32_t* out, std::size_t cap) {
+    if (bytes == 0) return 0;
+    if (bytes < 4) return SIZE_MAX;  // header is just [u32 distinct_count]
 
     std::uint32_t count;
     std::memcpy(&count, posting_list, sizeof(std::uint32_t));
-    if (count == 0) return true;
+    if (count == 0) return 0;
+    if (count > cap) return SIZE_MAX;
 
     // body_words is derived from the posting list byte length supplied
     // by the EF dictionary (no on-wire body_words).
     const std::size_t body_bytes_avail = bytes - 4;
-    if ((body_bytes_avail % sizeof(std::uint32_t)) != 0) return false;
+    if ((body_bytes_avail % sizeof(std::uint32_t)) != 0) return SIZE_MAX;
     const std::uint32_t body_words = static_cast<std::uint32_t>(
         body_bytes_avail / sizeof(std::uint32_t));
 
@@ -515,17 +513,35 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
         codec_in_ptr = codec_in_scratch.data();
     }
 
-    ctx.decoded.resize(count);
-    std::size_t nvalue = ctx.decoded.size();
-    kix_codec().decodeArray(codec_in_ptr, body_words,
-                            ctx.decoded.data(), nvalue);
-    if (nvalue != count) return false;
+    std::size_t nvalue = count;
+    kix_codec().decodeArray(codec_in_ptr, body_words, out, nvalue);
+    if (nvalue != count) return SIZE_MAX;
 
     // Encoder writes [abs_first, d1, d2, ...] over the **distinct**
     // seq_id stream; cumulative sum reconstructs absolute distinct seq_ids.
     for (std::uint32_t i = 1; i < count; i++) {
-        ctx.decoded[i] += ctx.decoded[i - 1];
+        out[i] += out[i - 1];
     }
+    return count;
+}
+
+// ===== open_stream_kix: decode the entire .kix posting list into the StreamCtx =====
+
+bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
+                     ikafssn::pfd::StreamCtx& ctx) {
+    ctx.decoded.clear();
+    ctx.count = 0;
+    ctx.pos = 0;
+    if (bytes == 0) return true;
+    if (bytes < 4) return false;  // header is just [u32 distinct_count]
+
+    std::uint32_t count;
+    std::memcpy(&count, posting_list, sizeof(std::uint32_t));
+    if (count == 0) return true;
+
+    ctx.decoded.resize(count);
+    std::size_t got = decode_kix_into(posting_list, bytes, ctx.decoded.data(), count);
+    if (got != count) return false;
 
     ctx.count = count;
     ctx.pos = 0;

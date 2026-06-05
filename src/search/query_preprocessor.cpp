@@ -181,7 +181,7 @@ QueryKmerData<KmerInt> preprocess_query(
     }
 
     // 3. SoA conversion (no search-time high-freq filtering; build-time
-    //    exclusion via .khx is the only frequency gate now).
+    //    exclusion via .khx is the only frequency gate).
     auto to_soa = [](const std::vector<std::pair<uint32_t, KmerInt>>& pairs,
                      std::vector<uint32_t>& positions,
                      std::vector<KmerInt>& kmer_values) {

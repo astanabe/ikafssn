@@ -496,10 +496,9 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Primer pair parsing will be completed after k and seed_masks are determined.
-        // For now, store the raw records for later processing.
-        // We need k to be resolved first, so use a temporary flag.
-        queries.reserve(primer_records.size()); // temporary; will be replaced
+        // Store the raw primer records; pairing is resolved later, once k and
+        // seed_masks are known.
+        queries.reserve(primer_records.size());
         for (auto& r : primer_records) {
             queries.push_back(std::move(r));
         }

@@ -71,10 +71,6 @@ bool read_job_meta(const std::string& root, const std::string& group_id,
 // List all group_ids under <root>, ordered by GroupMeta.submitted_at.
 std::vector<std::string> list_groups(const std::string& root);
 
-// List all job_ids inside a single group.
-std::vector<std::string> list_jobs(const std::string& root,
-                                   const std::string& group_id);
-
 // Given an arbitrary id supplied to -resume / -job_detail, work out
 // whether it names a group or a job (and if a job, which group).  On
 // success returns true; sets `is_group=true` and `group_id=id` for a

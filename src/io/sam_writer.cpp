@@ -138,13 +138,9 @@ static void write_sam_bam_impl(const std::string& output_path,
         int32_t tid = sam_hdr_name2tid(hdr, h.sseqid.c_str());
         hts_pos_t pos = static_cast<hts_pos_t>(h.sstart); // 0-based in htslib
 
-        // Parse CIGAR
         auto cigar = parse_cigar_to_htslib(h.cigar);
-
-        // Get ungapped query sequence
         std::string seq = ungap_sequence(h.qseq);
 
-        // Set the record
         bam_set1(b,
                  h.qseqid.size(), h.qseqid.c_str(),
                  flag, tid, pos, 255,

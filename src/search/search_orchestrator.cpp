@@ -3,6 +3,7 @@
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
 #include "index/ksx_reader.hpp"
+#include "search/decode_cache.hpp"
 #include "search/parallel_search.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
@@ -27,17 +28,32 @@ namespace ikafssn {
 
 namespace {
 
-enum class Stage1Tier4 : uint8_t {
-    kTier4 = 4,  // multi-volume WILLNEED
-    kTier1 = 1,  // single-volume RANDOM
+// Stage 1 posting-body madvise mode.
+enum class Stage1Madvise : uint8_t {
+    kBatchWillneed,  // multi-volume batch: WILLNEED the needed ranges
+    kSoloRandom,     // single over-budget volume: posting body RANDOM
 };
 
-enum class Stage2ATier : uint8_t {
-    kTier4 = 4,  // multi-volume WILLNEED for both kix and kpx
-    kTier2 = 2,  // single-volume kpx WILLNEED + kix RANDOM
-    kTier3 = 3,  // single-volume kix WILLNEED + kpx RANDOM
-    kTier1 = 1,  // single-volume both RANDOM
+// Stage 2A madvise mode: which of kix / kpx get WILLNEED vs RANDOM.
+enum class Stage2AMadvise : uint8_t {
+    kBothWillneed,
+    kKpxWillneedKixRandom,
+    kKixWillneedKpxRandom,
+    kBothRandom,
 };
+
+inline const char* madvise_name(Stage1Madvise m) {
+    return m == Stage1Madvise::kBatchWillneed ? "batch-willneed" : "solo-random";
+}
+inline const char* madvise_name(Stage2AMadvise m) {
+    switch (m) {
+        case Stage2AMadvise::kBothWillneed:         return "both-willneed";
+        case Stage2AMadvise::kKpxWillneedKixRandom: return "kpx-willneed/kix-random";
+        case Stage2AMadvise::kKixWillneedKpxRandom: return "kix-willneed/kpx-random";
+        case Stage2AMadvise::kBothRandom:           return "both-random";
+    }
+    return "?";
+}
 
 // (offset, length) into a posting file.
 using ByteRange = std::pair<uint64_t, uint64_t>;
@@ -147,16 +163,15 @@ std::vector<ByteRange> compute_kpx_ranges(
     return ranges;
 }
 
-// Stage 1 madvise: dict is always pinned (WILLNEED + HUGEPAGE); the
-// posting body is either prefetched as a set of coalesced ranges (kTier4
-// — multi-volume batches that fit the budget) or marked RANDOM (kTier1 —
-// single-volume fallback where even one volume's needed bytes exceed the
-// budget). The ranges are the exact (offset, length) pairs the batch
-// will actually probe, so the kernel's readahead window is bounded by
-// real demand instead of the full posting file.
-void apply_stage1_madvise(KixReader& kix, Stage1Tier4 tier,
+// Stage 1 madvise: dict is always pinned (WILLNEED + HUGEPAGE); the posting
+// body is either prefetched as coalesced ranges (kBatchWillneed — the batch
+// fits the budget) or marked RANDOM (kSoloRandom — one volume's needed bytes
+// exceed the budget). The ranges are the exact (offset, length) pairs the
+// batch will probe, so the kernel's readahead window tracks real demand
+// instead of the full posting file.
+void apply_stage1_madvise(KixReader& kix, Stage1Madvise mode,
                           const std::vector<ByteRange>& ranges) {
-    if (tier == Stage1Tier4::kTier4) {
+    if (mode == Stage1Madvise::kBatchWillneed) {
         kix.apply_madvise_dict_only();
         kix.apply_madvise_posting_ranges(ranges);
     } else {
@@ -164,27 +179,27 @@ void apply_stage1_madvise(KixReader& kix, Stage1Tier4 tier,
     }
 }
 
-void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx, Stage2ATier tier,
+void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx, Stage2AMadvise mode,
                            const std::vector<ByteRange>& kix_ranges,
                            const std::vector<ByteRange>& kpx_ranges) {
-    switch (tier) {
-        case Stage2ATier::kTier4:
+    switch (mode) {
+        case Stage2AMadvise::kBothWillneed:
             kix.apply_madvise_dict_only();
             kpx.apply_madvise_dict_only();
             kix.apply_madvise_posting_ranges(kix_ranges);
             kpx.apply_madvise_posting_ranges(kpx_ranges);
             break;
-        case Stage2ATier::kTier2:
+        case Stage2AMadvise::kKpxWillneedKixRandom:
             kix.apply_madvise_posting_random();
             kpx.apply_madvise_dict_only();
             kpx.apply_madvise_posting_ranges(kpx_ranges);
             break;
-        case Stage2ATier::kTier3:
+        case Stage2AMadvise::kKixWillneedKpxRandom:
             kix.apply_madvise_dict_only();
             kix.apply_madvise_posting_ranges(kix_ranges);
             kpx.apply_madvise_posting_random();
             break;
-        case Stage2ATier::kTier1:
+        case Stage2AMadvise::kBothRandom:
             kix.apply_madvise_posting_random();
             kpx.apply_madvise_posting_random();
             break;
@@ -267,6 +282,16 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         kpx_opt.resize(num_volumes);
     }
 
+    // Per-volume Stage 1 decode caches (one slot per volume; addresses stay
+    // stable so set_decode_cache pointers remain valid).  A volume's cache is
+    // materialised in the open loop when it joins a batch and released right
+    // after the batch runs, so resident decode heap is bounded by the batch's
+    // charged decode bytes.  s1_cacheable[vi] records whether vi's cache fit
+    // the budget and was materialised.
+    std::vector<DecodedKmerCache> caches_cod(num_volumes), caches_opt;
+    if (in.both_mode) caches_opt.resize(num_volumes);
+    std::vector<uint8_t> s1_cacheable(num_volumes, 0);
+
     // Per-volume bundle storage; pointers refilled per batch, identical
     // shape across stages.
     std::vector<VolumeBundle<KmerInt>> bundles(num_volumes);
@@ -289,8 +314,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     // Pre-compute the set of unique k-mers each batch must probe.  The
     // Stage 1 / Stage 2 batch loops walk every volume's dictionary
     // incrementally and decide on the fly whether the next volume fits
-    // in the current batch's posting_budget, so there is no separate
-    // up-front planning phase.
+    // in the current batch's posting_budget.
     // ----------------------------------------------------------------
     auto unique_cod = collect_unique_kmers<KmerInt>(
         queries, in.query_skip_reason, in.config.strand, /*secondary=*/false);
@@ -321,12 +345,38 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     uint64_t              s1_cur_bytes = 0;
     size_t                s1_batch_seq = 0;
 
-    auto run_stage1_batch_and_close = [&](Stage1Tier4 tier) {
+    auto run_stage1_batch_and_close = [&](Stage1Madvise mode) {
         if (s1_cur_vols.empty()) return;
         auto idxs = indices_for_batch(ext_jobs, s1_cur_vols);
+
+        // Bind the decode cache of every cacheable volume in the batch (the
+        // caches were materialised in the open loop).  set_decode_cache is a
+        // per-KixReader handle, so a batch may hold a mix of cached and
+        // uncached volumes; the Stage 1 hot loop reads kix.decode_cache() per
+        // volume and falls back to on-the-fly decode where unbound.  All batch
+        // volumes then run in one parallel pass, so cross-volume parallelism
+        // scales with how many volumes the memory budget admits.
+        for (uint16_t vi : s1_cur_vols) {
+            if (!s1_cacheable[vi]) continue;
+            kix_cod[vi].set_decode_cache(&caches_cod[vi]);
+            if (in.both_mode) kix_opt[vi].set_decode_cache(&caches_opt[vi]);
+        }
+
         run_stage1_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
                                   in.k, in.config, in.both_mode,
                                   states, arena, tls_bufs);
+
+        // Unbind and free the batch's decode caches now that the pass is done,
+        // bounding resident decode heap to one batch's charged bytes.
+        for (uint16_t vi : s1_cur_vols) {
+            if (!s1_cacheable[vi]) continue;
+            kix_cod[vi].set_decode_cache(nullptr);
+            caches_cod[vi].release();
+            if (in.both_mode) {
+                kix_opt[vi].set_decode_cache(nullptr);
+                caches_opt[vi].release();
+            }
+        }
 
         // Mode 1: drain this batch's mode1_results into the run
         // accumulator using a 2-pass parallel_scan + parallel_for so
@@ -390,9 +440,9 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         }
 
         if (logger) {
-            logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s), tier%u, needed_bytes=%llu",
+            logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s), madvise=%s, charged_bytes=%llu (WILLNEED + decode heap)",
                          s1_batch_seq, s1_cur_vols.size(), idxs.size(),
-                         static_cast<unsigned>(tier),
+                         madvise_name(mode),
                          static_cast<unsigned long long>(s1_cur_bytes));
         }
         ++s1_batch_seq;
@@ -442,33 +492,69 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         }
 
         if (vi_bytes > in.posting_budget) {
-            // Single-volume Tier1 fallback: drain any volumes already
-            // accumulated for the current Tier4 batch, then run this
-            // volume on its own with MADV_RANDOM on the posting body.
-            run_stage1_batch_and_close(Stage1Tier4::kTier4);
+            // Over-budget volume: the WILLNEED bytes alone exceed the budget,
+            // so drain the current batch, then run this volume on its own with
+            // MADV_RANDOM on the posting body and no decode cache (it is
+            // already memory-pressured).
+            run_stage1_batch_and_close(Stage1Madvise::kBatchWillneed);
 
-            apply_stage1_madvise(kix_cod[vi], Stage1Tier4::kTier1, ranges_cod);
+            apply_stage1_madvise(kix_cod[vi], Stage1Madvise::kSoloRandom, ranges_cod);
             if (in.both_mode) {
-                apply_stage1_madvise(kix_opt[vi], Stage1Tier4::kTier1, ranges_opt);
+                apply_stage1_madvise(kix_opt[vi], Stage1Madvise::kSoloRandom, ranges_opt);
             }
+            s1_cacheable[vi] = 0;
             s1_cur_vols.push_back(static_cast<uint16_t>(vi));
             s1_cur_bytes = vi_bytes;
-            run_stage1_batch_and_close(Stage1Tier4::kTier1);
+            run_stage1_batch_and_close(Stage1Madvise::kSoloRandom);
         } else {
-            apply_stage1_madvise(kix_cod[vi], Stage1Tier4::kTier4, ranges_cod);
+            // Apply the volume's WILLNEED first so the decode cache fill below
+            // (header sizing + parallel decode) rides the prefetch.
+            apply_stage1_madvise(kix_cod[vi], Stage1Madvise::kBatchWillneed, ranges_cod);
             if (in.both_mode) {
-                apply_stage1_madvise(kix_opt[vi], Stage1Tier4::kTier4, ranges_opt);
+                apply_stage1_madvise(kix_opt[vi], Stage1Madvise::kBatchWillneed, ranges_opt);
             }
+
+            // Build the decode cache and charge its heap against the same
+            // (soft) budget as the WILLNEED page cache.  fill() returns false
+            // for an over-budget or corrupt volume, which then runs uncached
+            // (on-the-fly decode) but is still WILLNEED-batched.  In both-mode
+            // the opt cache must fit alongside the cod cache, so it is filled
+            // with the residual budget to keep the pair within one budget.
+            uint64_t decoded_vi = 0;
+            bool cacheable = caches_cod[vi].fill(kix_cod[vi], unique_cod,
+                                                 arena, in.posting_budget);
+            if (cacheable) decoded_vi = caches_cod[vi].decoded_bytes();
+            if (cacheable && in.both_mode) {
+                size_t remaining = (in.posting_budget > decoded_vi)
+                    ? in.posting_budget - decoded_vi : 0;
+                if (caches_opt[vi].fill(kix_opt[vi], unique_opt, arena, remaining)) {
+                    decoded_vi += caches_opt[vi].decoded_bytes();
+                } else {
+                    caches_cod[vi].release();
+                    cacheable = false;
+                    decoded_vi = 0;
+                }
+            }
+            s1_cacheable[vi] = cacheable ? 1 : 0;
+            if (logger) {
+                logger->info("Stage 1 vol %zu: decode cache %s (%llu decoded byte(s))",
+                             vi, cacheable ? "cached" : "uncached",
+                             static_cast<unsigned long long>(decoded_vi));
+            }
+
             s1_cur_vols.push_back(static_cast<uint16_t>(vi));
-            s1_cur_bytes += vi_bytes;
-            // Overshoot is bounded by one volume's needed bytes — small
-            // relative to posting_budget for typical multi-volume DBs.
+            // Charge WILLNEED page cache + decode heap against the soft budget.
+            // Add-then-check: the volume that crosses joins this batch (the
+            // tolerated one-volume overshoot of the soft -memory_limit); more
+            // volumes per batch as the budget grows raises cross-volume
+            // parallelism.  Caches are released when the batch closes.
+            s1_cur_bytes += vi_bytes + decoded_vi;
             if (s1_cur_bytes >= in.posting_budget) {
-                run_stage1_batch_and_close(Stage1Tier4::kTier4);
+                run_stage1_batch_and_close(Stage1Madvise::kBatchWillneed);
             }
         }
     }
-    run_stage1_batch_and_close(Stage1Tier4::kTier4);
+    run_stage1_batch_and_close(Stage1Madvise::kBatchWillneed);
 
     if (logger) {
         size_t total_candidates = 0;
@@ -498,7 +584,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     uint64_t              s2_cur_bytes = 0;
     size_t                s2_batch_seq = 0;
 
-    auto run_stage2_batch_and_close = [&](Stage2ATier tier) {
+    auto run_stage2_batch_and_close = [&](Stage2AMadvise mode) {
         if (s2_cur_vols.empty()) return;
         auto idxs = indices_for_batch(ext_jobs, s2_cur_vols);
         run_stage2a_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
@@ -526,9 +612,9 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                     batch_hits += kv.second.size();
             }
             total_stage2a_hits += batch_hits;
-            logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), tier%u, needed_bytes=%llu, %zu hit(s)",
+            logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), madvise=%s, needed_bytes=%llu, %zu hit(s)",
                          s2_batch_seq, s2_cur_vols.size(), idxs.size(),
-                         static_cast<unsigned>(tier),
+                         madvise_name(mode),
                          static_cast<unsigned long long>(s2_cur_bytes),
                          batch_hits);
         }
@@ -606,43 +692,43 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         const uint64_t vi_bytes = kix_bytes + kpx_bytes;
 
         if (vi_bytes > in.posting_budget) {
-            // Single-volume fallback. Drain accumulated Tier4 vols
-            // first, then pick the tightest tier that fits.
-            run_stage2_batch_and_close(Stage2ATier::kTier4);
+            // Over-budget volume: drain the accumulated batch first, then pick
+            // the tightest madvise mode that fits the budget.
+            run_stage2_batch_and_close(Stage2AMadvise::kBothWillneed);
 
-            Stage2ATier solo_tier;
+            Stage2AMadvise solo_mode;
             if (kpx_bytes <= in.posting_budget) {
-                solo_tier = Stage2ATier::kTier2;   // kpx WILLNEED, kix RANDOM
+                solo_mode = Stage2AMadvise::kKpxWillneedKixRandom;
             } else if (kix_bytes <= in.posting_budget) {
-                solo_tier = Stage2ATier::kTier3;   // kix WILLNEED, kpx RANDOM
+                solo_mode = Stage2AMadvise::kKixWillneedKpxRandom;
             } else {
-                solo_tier = Stage2ATier::kTier1;   // both RANDOM
+                solo_mode = Stage2AMadvise::kBothRandom;
             }
 
-            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi], solo_tier,
+            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi], solo_mode,
                                   kix_ranges_cod, kpx_ranges_cod);
             if (in.both_mode) {
-                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi], solo_tier,
+                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi], solo_mode,
                                       kix_ranges_opt, kpx_ranges_opt);
             }
             s2_cur_vols.push_back(static_cast<uint16_t>(vi));
             s2_cur_bytes = vi_bytes;
-            run_stage2_batch_and_close(solo_tier);
+            run_stage2_batch_and_close(solo_mode);
         } else {
-            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi], Stage2ATier::kTier4,
+            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi], Stage2AMadvise::kBothWillneed,
                                   kix_ranges_cod, kpx_ranges_cod);
             if (in.both_mode) {
-                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi], Stage2ATier::kTier4,
+                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi], Stage2AMadvise::kBothWillneed,
                                       kix_ranges_opt, kpx_ranges_opt);
             }
             s2_cur_vols.push_back(static_cast<uint16_t>(vi));
             s2_cur_bytes += vi_bytes;
             if (s2_cur_bytes >= in.posting_budget) {
-                run_stage2_batch_and_close(Stage2ATier::kTier4);
+                run_stage2_batch_and_close(Stage2AMadvise::kBothWillneed);
             }
         }
     }
-    run_stage2_batch_and_close(Stage2ATier::kTier4);
+    run_stage2_batch_and_close(Stage2AMadvise::kBothWillneed);
 
     if (logger) {
         logger->info("Stage 2A complete: %zu hit(s) collected (aggregated)",
