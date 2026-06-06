@@ -112,6 +112,12 @@ Usage documentation is maintained in two languages:
 
 Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eukaryote_rRNA` is used for all BLAST-DB-dependent tests. `test/scripts/setup_ssu_testdata.sh` generates derived test data (ambig DB, multi-volume DBs, queries) in `/tmp/ikafssn_ssu_test/`. Shared fixture: `test/ssu_test_fixture.hpp`.
 
+## Testing and Verification Policy
+
+- Keep testing, verification, and benchmarking to the minimum. However, do not cause rework — do not skip something only to have to redo it later.
+- Do not verify every tiny change one by one when there is no conceivable way it could introduce a bug.
+- Keep each test / verification / benchmark within one minute whenever possible.
+
 ## Plan Mode Rules
 
 - **Do not enter plan mode autonomously.** Enter plan mode only when the user explicitly instructs you to do so.
