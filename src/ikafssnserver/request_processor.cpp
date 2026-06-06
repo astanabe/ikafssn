@@ -14,7 +14,7 @@
 #include "search/query_preprocessor.hpp"
 #include "search/result_dedup.hpp"
 #include "search/search_orchestrator.hpp"
-#include "search/width_selection.hpp"
+#include "search/tier_selection.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -367,7 +367,7 @@ SearchResponse process_search_request(
         max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp16);
         max_kmer_positions = accumulate_max_kmer_positions(max_kmer_positions, pp32);
     }
-    Stage1Width width = select_width(max_kmer_positions, max_kmer_positions);
+    Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
 
     // Number of volumes for the search loop
     size_t num_volumes = is_both_mode ? group_cod->volumes.size() : group.volumes.size();
@@ -428,7 +428,7 @@ SearchResponse process_search_request(
         in.posting_budget = posting_budget;
         in.logger = nullptr;  // server avoids per-request stage logs
         in.max_num_seqs = max_num_seqs;
-        in.width = width;
+        in.tier = tier;
 
         in.volumes_cod.resize(num_volumes);
         if (is_both_mode) in.volumes_opt.resize(num_volumes);

@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <functional>
 #include <limits>
 #include <string>
 #include <unordered_set>
@@ -227,73 +226,10 @@ static void test_stage1_topn_zero() {
     // Unlimited should return >= limited count
     CHECK(unlimited.size() >= limited.size());
 
-    // Top-N is ties-inclusive: the limited set keeps at least topn candidates
-    // (more when ties straddle the cutoff), and every returned score is >= the
-    // N-th largest score among all qualifying candidates.
-    if (unlimited.size() >= 2) {
-        CHECK(limited.size() >= 2);
-        std::vector<uint32_t> scs;
-        scs.reserve(unlimited.size());
-        for (const auto& c : unlimited) scs.push_back(c.score);
-        std::sort(scs.begin(), scs.end(), std::greater<uint32_t>());
-        uint32_t nth = scs[1];  // 2nd-largest score
-        for (const auto& c : limited) CHECK(c.score >= nth);
-    } else {
-        CHECK(limited.size() == unlimited.size());
-    }
+    // Limited should return at most 2
+    CHECK(limited.size() <= 2);
 
     kix.close();
-}
-
-// Synthetic ties-inclusive check: populate a buffer with scores tied at the
-// top-N boundary and verify stage1_filter_finish keeps every tied candidate
-// (size >= topn) and returns them in the deterministic (score desc, id asc)
-// order.
-static void test_stage1_topn_ties_inclusive() {
-    std::fprintf(stderr, "-- test_stage1_topn_ties_inclusive\n");
-
-    auto populate = [](Stage1Buffer& buf) {
-        buf.width = Stage1Width::T32;
-        buf.ensure_capacity(64);
-        auto* scores   = score_ptr<Stage1Width::T32>(buf);
-        auto* last_pos = last_pos_ptr<Stage1Width::T32>(buf);
-        // sids 1,2,3 tie at 5; sids 4,5 tie at 3; sid 6 at 1.
-        auto set = [&](uint32_t sid, uint32_t sc) {
-            scores[sid] = sc; last_pos[sid] = 0; buf.dirty.push_back(sid);
-        };
-        set(1, 5); set(2, 5); set(3, 5); set(4, 3); set(5, 3); set(6, 1);
-    };
-
-    // topn=2: the 2nd-largest score is 5 (three-way tie), all three retained.
-    {
-        Stage1Buffer buf;
-        populate(buf);
-        Stage1Config cfg;
-        cfg.stage1_topn = 2;
-        cfg.min_stage1_score = 1;
-        auto out = stage1_filter_finish(buf, cfg);
-        CHECK(out.size() == 3);
-        for (const auto& c : out) CHECK(c.score == 5);
-        CHECK(out[0].id == 1 && out[1].id == 2 && out[2].id == 3);
-    }
-
-    // topn=4: the 4th-largest score is 3, so sids 1..5 (>=3) are all retained.
-    {
-        Stage1Buffer buf;
-        populate(buf);
-        Stage1Config cfg;
-        cfg.stage1_topn = 4;
-        cfg.min_stage1_score = 1;
-        auto out = stage1_filter_finish(buf, cfg);
-        CHECK(out.size() == 5);
-        CHECK(out[0].score == 5 && out[4].score == 3);
-        // deterministic order: score desc, then id asc.
-        for (size_t i = 1; i < out.size(); i++) {
-            bool ordered = (out[i - 1].score > out[i].score) ||
-                           (out[i - 1].score == out[i].score && out[i - 1].id < out[i].id);
-            CHECK(ordered);
-        }
-    }
 }
 
 static std::string g_maxfreq_index_dir;
@@ -487,13 +423,13 @@ static void test_clear_dirty_bulk_reset() {
     std::fprintf(stderr, "-- test_clear_dirty_bulk_reset\n");
 
     Stage1Buffer buf;
-    buf.width = Stage1Width::T32;
+    buf.tier = Stage1Tier::T32;
     buf.ensure_capacity(64);  // small capacity so 9 dirty entries trip the threshold
 
-    using PosT   = Stage1WidthTraits<Stage1Width::T32>::PosT;
-    using ScoreT = Stage1WidthTraits<Stage1Width::T32>::ScoreT;
-    auto* scores   = score_ptr<Stage1Width::T32>(buf);
-    auto* last_pos = last_pos_ptr<Stage1Width::T32>(buf);
+    using PosT   = Stage1TierTraits<Stage1Tier::T32>::PosT;
+    using ScoreT = Stage1TierTraits<Stage1Tier::T32>::ScoreT;
+    auto* scores   = score_ptr<Stage1Tier::T32>(buf);
+    auto* last_pos = last_pos_ptr<Stage1Tier::T32>(buf);
 
     constexpr PosT sentinel = std::numeric_limits<PosT>::max();
 
@@ -505,7 +441,7 @@ static void test_clear_dirty_bulk_reset() {
         buf.dirty.push_back(sid);
     }
 
-    buf.clear_dirty_typed<Stage1Width::T32>();
+    buf.clear_dirty_typed<Stage1Tier::T32>();
     CHECK(buf.dirty.empty());
     for (uint32_t i = 0; i < buf.capacity; i++) {
         CHECK(scores[i] == ScoreT{0});
@@ -691,7 +627,6 @@ int main() {
     test_stage1_with_oid_filter();
     test_stage1_coverscore_vs_matchscore();
     test_stage1_topn_zero();
-    test_stage1_topn_ties_inclusive();
     test_stage1_fractional_threshold();
     test_stage1_fractional_with_highfreq();
     test_clear_dirty_bulk_reset();

@@ -576,7 +576,7 @@ static void test_build_parallel_scan() {
     kpx_st.close(); kpx_mt.close();
 }
 
-// -min_seq_length filter.  Build the same DB twice with different
+// v10: -min_seq_length filter.  Build the same DB twice with different
 // thresholds and verify that the higher threshold produces a strictly
 // smaller / equal index (more sequences excluded).
 static void test_min_seq_length_filter() {

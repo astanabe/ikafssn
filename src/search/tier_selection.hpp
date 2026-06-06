@@ -1,9 +1,9 @@
 #pragma once
 
-// Score/position width selection helper shared by ikafssnsearch and ikafssnserver.
-// Both pick `Stage1Width` from the maximum per-strand k-mer position count
+// Tier selection helper shared by ikafssnsearch and ikafssnserver.
+// Both pick `Stage1Tier` from the maximum per-strand k-mer position count
 // observed across all preprocessed queries; the ladder is computed by
-// `select_width()` in stage1_filter.hpp.
+// `select_tier()` in stage1_filter.hpp.
 
 #include <algorithm>
 #include <cstddef>

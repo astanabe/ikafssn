@@ -319,9 +319,11 @@ static void kmer_revcomp_batch_sve_u32(const std::uint32_t* in,
                                        std::uint32_t* out,
                                        std::size_t n, int k) noexcept {
     // SVE does not provide a clean byte-reverse-per-dword equivalent of
-    // vrev32q_u8 in a single instruction, and there is no rbit-style
-    // accelerator for this pattern, so a scalar body in an SVE-attribute
-    // function is the simplest correct path; the OoO core keeps up.
+    // vrev32q_u8 in a single instruction; fall back to NEON-style scalar
+    // for the batch and rely on the OoO core to keep up. The advisory in
+    // the plan rates SVE/SVE2 wins on this kernel as small (no rbit-style
+    // accelerator for this particular pattern), so a scalar body in an
+    // SVE-attribute function is the simplest correct path.
     (void)k;
     for (std::size_t i = 0; i < n; ++i) out[i] = kmer_revcomp<std::uint32_t>(in[i], k);
 }

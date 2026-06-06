@@ -53,8 +53,6 @@ namespace ikafssn::pfd {
                                        std::uint32_t,                         \
                                        std::vector<std::uint8_t>&);           \
         bool open_stream_kix(const std::uint8_t*, std::size_t, StreamCtx&);   \
-        std::size_t decode_kix_into(const std::uint8_t*, std::size_t,         \
-                                    std::uint32_t*, std::size_t);             \
         bool open_stream_kpx_for_candidates(                                  \
             const std::uint8_t*, std::size_t,                                 \
             const std::uint32_t*, std::size_t,                                \
@@ -94,8 +92,6 @@ struct VTable {
                               std::uint32_t,
                               std::vector<std::uint8_t>&);
     bool (*open_kix)(const std::uint8_t*, std::size_t, StreamCtx&);
-    std::size_t (*decode_kix)(const std::uint8_t*, std::size_t,
-                              std::uint32_t*, std::size_t);
     bool (*open_kpx)(const std::uint8_t*, std::size_t,
                      const std::uint32_t*, std::size_t,
                      const std::uint32_t*, std::size_t,
@@ -118,7 +114,6 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx512vbmi2::encode_posting_kix,
                 ikafssn_pfd_avx512vbmi2::encode_posting_kpx,
                 ikafssn_pfd_avx512vbmi2::open_stream_kix,
-                ikafssn_pfd_avx512vbmi2::decode_kix_into,
                 ikafssn_pfd_avx512vbmi2::open_stream_kpx_for_candidates,
                 ikafssn_pfd_avx512vbmi2::popcount_kinds,
                 ikafssn_pfd_avx512vbmi2::horizontal_sum_u8,
@@ -129,7 +124,6 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx512bw::encode_posting_kix,
                 ikafssn_pfd_avx512bw::encode_posting_kpx,
                 ikafssn_pfd_avx512bw::open_stream_kix,
-                ikafssn_pfd_avx512bw::decode_kix_into,
                 ikafssn_pfd_avx512bw::open_stream_kpx_for_candidates,
                 ikafssn_pfd_avx512bw::popcount_kinds,
                 ikafssn_pfd_avx512bw::horizontal_sum_u8,
@@ -140,7 +134,6 @@ const VTable& active_vtable() {
                 ikafssn_pfd_avx2::encode_posting_kix,
                 ikafssn_pfd_avx2::encode_posting_kpx,
                 ikafssn_pfd_avx2::open_stream_kix,
-                ikafssn_pfd_avx2::decode_kix_into,
                 ikafssn_pfd_avx2::open_stream_kpx_for_candidates,
                 ikafssn_pfd_avx2::popcount_kinds,
                 ikafssn_pfd_avx2::horizontal_sum_u8,
@@ -151,7 +144,6 @@ const VTable& active_vtable() {
                 ikafssn_pfd_sse42::encode_posting_kix,
                 ikafssn_pfd_sse42::encode_posting_kpx,
                 ikafssn_pfd_sse42::open_stream_kix,
-                ikafssn_pfd_sse42::decode_kix_into,
                 ikafssn_pfd_sse42::open_stream_kpx_for_candidates,
                 ikafssn_pfd_sse42::popcount_kinds,
                 ikafssn_pfd_sse42::horizontal_sum_u8,
@@ -168,7 +160,6 @@ const VTable& active_vtable() {
                 ikafssn_pfd_neon::encode_posting_kix,
                 ikafssn_pfd_neon::encode_posting_kpx,
                 ikafssn_pfd_neon::open_stream_kix,
-                ikafssn_pfd_neon::decode_kix_into,
                 ikafssn_pfd_neon::open_stream_kpx_for_candidates,
                 ikafssn_pfd_neon::popcount_kinds,
                 ikafssn_pfd_neon::horizontal_sum_u8,
@@ -212,11 +203,6 @@ std::size_t encode_posting_kpx(const std::uint32_t* distinct_sid,
 bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
                      StreamCtx& ctx) {
     return active_vtable().open_kix(posting_list, bytes, ctx);
-}
-
-std::size_t decode_kix_into(const std::uint8_t* posting_list, std::size_t bytes,
-                            std::uint32_t* out, std::size_t cap) {
-    return active_vtable().decode_kix(posting_list, bytes, out, cap);
 }
 
 bool open_stream_kpx_for_candidates(const std::uint8_t* posting_list, std::size_t bytes,

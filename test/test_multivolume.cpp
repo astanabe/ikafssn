@@ -512,7 +512,7 @@ static void test_multivolume_k9() {
 
 // Drive run_search<>() in mode 2 with two different posting_budget
 // values: one large enough that Stage 1 + Stage 2 share a single batch,
-// one tiny enough that each volume goes through a Stage 2 minimum-budget
+// one tiny enough that each volume goes through a Stage 2 Tier1
 // fallback (range planner emits per-volume single-vol batches). With
 // the range-WILLNEED planner the per-volume kpx ranges must match the
 // single-batch result.
@@ -578,7 +578,7 @@ static void test_mode2_batched_equals_single() {
         in.posting_budget    = budget;
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
-        in.width             = Stage1Width::T32;
+        in.tier              = Stage1Tier::T32;
         return run_search<uint16_t>(in);
     };
 
@@ -587,7 +587,7 @@ static void test_mode2_batched_equals_single() {
     big_budget = std::max<uint64_t>(big_budget * 2, 1u << 20);
     auto big = run_with_budget(big_budget);
 
-    auto small = run_with_budget(1);  // forces single-volume minimum-budget batches
+    auto small = run_with_budget(1);  // forces single-volume Tier1 batches
 
     auto key = [](const OrchestratorHit& h) {
         return std::tuple<size_t, uint16_t, uint16_t, uint32_t, int32_t,
@@ -671,7 +671,7 @@ static void test_mode1_batched_equals_single() {
         in.posting_budget    = budget;
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
-        in.width             = Stage1Width::T32;
+        in.tier              = Stage1Tier::T32;
         return run_search<uint16_t>(in);
     };
 
@@ -682,7 +682,7 @@ static void test_mode1_batched_equals_single() {
     auto big = run_with_budget(single_budget);
 
     // Small budget: each volume's kix_full_size on its own exceeds the
-    // budget, so plan_stage1_batches emits one minimum-budget batch per volume.
+    // budget, so plan_stage1_batches emits one (tier1) batch per volume.
     uint64_t small_budget = 1;  // any positive < per-volume size
     auto small = run_with_budget(small_budget);
 
@@ -704,14 +704,9 @@ static void test_mode1_batched_equals_single() {
 
     // Stress the parallel_scan fold path with many queries on the same
     // volume so each batch produces enough candidates for the prefix-sum
-    // / parallel write to exercise multiple TBB workers. This many-query,
-    // shared-conserved-k-mer shape is exactly the decode cache's target:
-    // every query re-probes the same k-mers in one volume. Run with a
-    // large budget (decode cache engaged), and again with budget 1
-    // (minimum budget => uncached on-the-fly decode), and require byte-identical
-    // output to confirm the per-volume decode cache changes only
-    // performance, never the result. A repeat of the cached run also pins
-    // the fold's determinism.
+    // / parallel write to exercise multiple TBB workers. Run the same
+    // configuration twice and require byte-identical output to confirm
+    // the fold is deterministic.
     {
         std::vector<std::string> queries_storage(16, g_query_fj);
         std::vector<QueryKmerData<uint16_t>> qdatas;
@@ -726,7 +721,7 @@ static void test_mode1_batched_equals_single() {
         }
         std::vector<uint8_t> skip(queries_storage.size(), 0);
 
-        auto run = [&](uint64_t budget) {
+        auto run = [&]() {
             RunSearchInputs<uint16_t> in;
             in.volumes_cod      = volumes_cod;
             in.ksx_per_volume.resize(2);
@@ -738,183 +733,17 @@ static void test_mode1_batched_equals_single() {
             in.both_mode         = false;
             in.k                 = k;
             in.nthread           = 4;
-            in.posting_budget    = budget;
+            in.posting_budget    = single_budget;
             in.logger            = &logger;
             in.max_num_seqs      = max_num_seqs;
-            in.width             = Stage1Width::T32;
+            in.tier              = Stage1Tier::T32;
             return run_search<uint16_t>(in);
         };
 
-        auto cached  = run(single_budget);  // large budget: decode cache engaged
-        auto cached2 = run(single_budget);  // determinism repeat
-        auto uncached = run(1);             // minimum budget: on-the-fly decode
-        CHECK_EQ(cached.size(), cached2.size());
-        CHECK(sorted_keys(cached) == sorted_keys(cached2));
-        CHECK_EQ(cached.size(), uncached.size());
-        CHECK(sorted_keys(cached) == sorted_keys(uncached));
-    }
-
-    for (auto& ksx : ksxs) ksx.close();
-}
-
-// Confirm the per-volume decode cache is byte-identical to the on-the-fly
-// decode path across the Stage 1 variants the plan calls out: matchscore
-// (stage1_score_type=0; coverscore=1 is already exercised by the default
-// config in test_mode1_batched_equals_single) and a degenerate-expansion
-// query (multiple k-mers at one position, exercising per-position dedup).
-// Each variant runs run_search<>() once with a large budget (decode cache
-// engaged) and once with budget 1 (uncached) and requires identical output.
-static void test_mode1_cached_equals_uncached_variants() {
-    std::fprintf(stderr, "-- test_mode1_cached_equals_uncached_variants\n");
-    const int k = 7;
-    const std::string db_base = "mvtest";
-
-    auto discovered = discover_volumes(g_test_dir + "/" + db_base, k);
-    CHECK_EQ(discovered.size(), 2u);
-
-    std::vector<KsxReader> ksxs(2);
-    std::vector<VolumeMeta> volumes_cod(2);
-    for (size_t vi = 0; vi < 2; vi++) {
-        const auto& vf = discovered[vi];
-        CHECK(ksxs[vi].open(vf.ksx_path));
-        KixReader probe;
-        CHECK(probe.open(vf.kix_path));
-        volumes_cod[vi].files            = vf;
-        volumes_cod[vi].kix_posting_size = probe.posting_file_size();
-        volumes_cod[vi].kix_full_size    = probe.willneed_size_full();
-        volumes_cod[vi].volume_index     = static_cast<uint16_t>(vi);
-        volumes_cod[vi].num_sequences    = probe.num_sequences();
-        probe.close();
-    }
-    uint32_t max_num_seqs = 0;
-    for (auto& v : volumes_cod) max_num_seqs = std::max(max_num_seqs, v.num_sequences);
-    uint64_t big_budget = 0;
-    for (auto& v : volumes_cod) big_budget += v.kix_full_size;
-    big_budget = std::max<uint64_t>(big_budget * 2, 1u << 20);
-    Logger logger(Logger::kError);
-
-    auto key = [](const OrchestratorHit& h) {
-        return std::tuple<size_t, uint16_t, uint16_t, uint32_t, uint32_t>(
-            h.query_idx, h.volume_idx, h.volume_index, h.cr.seq_id,
-            h.cr.stage1_score);
-    };
-    auto sorted_keys = [&](const std::vector<OrchestratorHit>& v) {
-        std::vector<decltype(key(v.front()))> ks;
-        ks.reserve(v.size());
-        for (auto& h : v) ks.push_back(key(h));
-        std::sort(ks.begin(), ks.end());
-        return ks;
-    };
-
-    auto compare = [&](const char* label, const std::string& qseq,
-                       const SearchConfig& cfg) {
-        std::fprintf(stderr, "   variant: %s\n", label);
-        auto qdata = preprocess_query<uint16_t>(qseq, k, nullptr, cfg);
-        std::vector<QueryBundle<uint16_t>> bundles(1);
-        bundles[0].query_id      = &qseq;
-        bundles[0].qdata_primary = &qdata;
-        std::vector<uint8_t> skip(1, 0);
-
-        auto run = [&](uint64_t budget) {
-            RunSearchInputs<uint16_t> in;
-            in.volumes_cod      = volumes_cod;
-            in.ksx_per_volume.resize(2);
-            in.oid_filters.resize(2);
-            for (size_t vi = 0; vi < 2; vi++) in.ksx_per_volume[vi] = &ksxs[vi];
-            in.queries           = &bundles;
-            in.query_skip_reason = &skip;
-            in.config            = cfg;
-            in.both_mode         = false;
-            in.k                 = k;
-            in.nthread           = 4;
-            in.posting_budget    = budget;
-            in.logger            = &logger;
-            in.max_num_seqs      = max_num_seqs;
-            in.width             = Stage1Width::T32;
-            return run_search<uint16_t>(in);
-        };
-
-        auto cached   = run(big_budget);  // decode cache engaged
-        auto uncached = run(1);           // on-the-fly decode
-        CHECK_EQ(cached.size(), uncached.size());
-        CHECK(sorted_keys(cached) == sorted_keys(uncached));
-    };
-
-    // matchscore (stage1_score_type = 0)
-    {
-        SearchConfig cfg;
-        cfg.stage1.stage1_topn        = 100;
-        cfg.stage1.min_stage1_score   = 1;
-        cfg.stage1.stage1_score_type  = 0;
-        cfg.nresult                   = 0;
-        cfg.mode                      = 1;
-        compare("matchscore", g_query_fj, cfg);
-    }
-
-    // Degenerate-expansion query: inject an IUPAC ambiguity so multiple
-    // k-mers land at the same position.
-    {
-        std::string degen_query = g_query_fj;
-        CHECK(degen_query.size() > 60);
-        degen_query[50] = 'R';  // A/G -> >=2 k-mers per affected window
-        SearchConfig cfg;
-        cfg.stage1.stage1_topn      = 100;
-        cfg.stage1.min_stage1_score = 1;
-        cfg.accept_qdegen           = 1;
-        cfg.max_degen_expand        = 16;
-        cfg.nresult                 = 0;
-        cfg.mode                    = 1;
-        compare("degenerate", degen_query, cfg);
-    }
-
-    // Cutoff-firing threshold (T = 5 > 1) with top-N off: the single-mode
-    // cost-ordered reorder + cutoff must still match the uncached path.
-    {
-        SearchConfig cfg;
-        cfg.stage1.stage1_topn      = 0;
-        cfg.stage1.min_stage1_score = 5;
-        cfg.nresult                 = 0;
-        cfg.mode                    = 1;
-        compare("coverscore_T5", g_query_fj, cfg);
-    }
-
-    // matchscore + cutoff: the cutoff's `remaining` is the distinct-position
-    // count, which upper-bounds the flush score for matchscore too (the kernel
-    // dedups by last_pos == q_pos regardless of score type).  Verify the
-    // pruning leaves the matchscore candidate set unchanged at T > 1.
-    {
-        SearchConfig cfg;
-        cfg.stage1.stage1_topn       = 0;
-        cfg.stage1.min_stage1_score  = 5;
-        cfg.stage1.stage1_score_type = 0;  // matchscore
-        cfg.nresult                  = 0;
-        cfg.mode                     = 1;
-        compare("matchscore_T5", g_query_fj, cfg);
-    }
-
-    // Cutoff firing AND top-N on (ties-inclusive) under the reorder.
-    {
-        SearchConfig cfg;
-        cfg.stage1.stage1_topn      = 3;
-        cfg.stage1.min_stage1_score = 5;
-        cfg.nresult                 = 0;
-        cfg.mode                    = 1;
-        compare("topn3_T5", g_query_fj, cfg);
-    }
-
-    // Cutoff firing on a degenerate query (multi-k-mer position groups).
-    {
-        std::string degen_query = g_query_fj;
-        CHECK(degen_query.size() > 60);
-        degen_query[50] = 'R';
-        SearchConfig cfg;
-        cfg.stage1.stage1_topn      = 0;
-        cfg.stage1.min_stage1_score = 3;
-        cfg.accept_qdegen           = 1;
-        cfg.max_degen_expand        = 16;
-        cfg.nresult                 = 0;
-        cfg.mode                    = 1;
-        compare("degenerate_T3", degen_query, cfg);
+        auto a = run();
+        auto b = run();
+        CHECK_EQ(a.size(), b.size());
+        CHECK(sorted_keys(a) == sorted_keys(b));
     }
 
     for (auto& ksx : ksxs) ksx.close();
@@ -952,7 +781,6 @@ int main() {
     test_multivolume_search();
     test_parallel_equals_sequential();
     test_mode1_batched_equals_single();
-    test_mode1_cached_equals_uncached_variants();
     test_mode2_batched_equals_single();
     test_result_merge_ordering();
     test_parallel_counting_pass();

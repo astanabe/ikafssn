@@ -35,8 +35,9 @@ private:
 // capacity; concurrent requests share that capacity through lease/release.
 //
 // floor_min == 0 enables pass-through mode (no contention, no decrement);
-// each acquire() returns lease(total) immediately and never blocks, so every
-// request sees the full posting_budget.  This is the default.
+// each acquire() returns lease(total) immediately and never blocks.  This is
+// the default and matches the historical "every request sees the full
+// posting_budget" behaviour.
 //
 // floor_min > 0 enables blocking mode.  acquire(min, max) blocks on a
 // condition variable until at least max(min, floor_min_) bytes are free,

@@ -52,7 +52,7 @@ static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
 // group cannot be split across batches.  Groups are bin-packed greedily
 // against `posting_budget` (the residual heap budget already plumbed from
 // Stage 1/2 madvise accounting).  A group whose own cost exceeds the budget
-// is processed in a solo batch (over-budget).
+// falls back to a solo batch (tier-1 style), matching `plan_stage1_batches`.
 // ---------------------------------------------------------------------------
 
 static uint64_t compute_hit_cost(const OutputHit& h,
@@ -79,7 +79,7 @@ struct Stage3Group {
 struct Stage3Batch {
     std::vector<size_t> group_idxs; // indices into the ordered groups vector
     uint64_t cost = 0;
-    bool solo_oversize = false;
+    bool tier1_oversize = false;
 };
 
 static std::vector<Stage3Batch>
@@ -101,7 +101,7 @@ plan_stage3_batches(const std::vector<Stage3Group>& groups_ordered,
             Stage3Batch solo;
             solo.group_idxs.push_back(gi);
             solo.cost = g.cost;
-            solo.solo_oversize = true;
+            solo.tier1_oversize = true;
             batches.push_back(std::move(solo));
             continue;
         }
@@ -127,7 +127,7 @@ std::vector<OutputHit> run_stage3(
 {
     if (hits.empty()) return {};
 
-    // Open BLAST DB volumes
+    // 1. Open BLAST DB volumes
     auto vol_paths = BlastDbReader::find_volume_paths(db_path);
     if (vol_paths.empty()) {
         logger.error("Stage 3: no BLAST DB volumes found at '%s'", db_path.c_str());
@@ -142,13 +142,13 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // Build query lookup: query_id -> index in queries[]
+    // 2. Build query lookup: query_id -> index in queries[]
     std::unordered_map<std::string, size_t> query_map;
     for (size_t i = 0; i < queries.size(); i++) {
         query_map[queries[i].id] = i;
     }
 
-    // Validate hit volumes
+    // 3. Validate hit volumes
     std::vector<bool> hit_valid(hits.size(), true);
     for (size_t i = 0; i < hits.size(); i++) {
         if (hits[i].volume >= readers.size()) {
@@ -158,8 +158,8 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // Build profiles up front (per unique query_idx x strand).  Profiles
-    // are small and shared across all batches.
+    // 4. Build profiles up front (per unique query_idx x strand).  Profiles
+    //    are small and shared across all batches.
     const parasail_matrix_t* matrix = parasail_matrix_lookup(config.score_matrix.c_str());
     if (!matrix) {
         logger.error("Stage 3: unknown score matrix '%s'", config.score_matrix.c_str());
@@ -189,10 +189,10 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // Build atomic groups keyed by (qseqid, sseqid, sstrand).
-    // The overlap-resolution loop assumes each group is visible whole, so
-    // groups are the unit of batching.  Groups are stored in a parallel
-    // vector so plan_stage3_batches can index them.
+    // 5. Build atomic groups keyed by (qseqid, sseqid, sstrand).
+    //    The overlap-resolution loop assumes each group is visible whole, so
+    //    groups are the unit of batching.  Groups are stored in a parallel
+    //    vector so plan_stage3_batches can index them.
     std::unordered_map<std::string, size_t> group_index;
     std::vector<Stage3Group> groups;
     groups.reserve(64);
@@ -224,22 +224,22 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // Plan batches.
+    // 6. Plan batches.
     auto batches = plan_stage3_batches(groups, config.posting_budget);
 
     {
-        size_t n_solo = 0;
-        for (const auto& b : batches) if (b.solo_oversize) ++n_solo;
+        size_t tier1 = 0;
+        for (const auto& b : batches) if (b.tier1_oversize) ++tier1;
         logger.info("Stage 3 batch plan: %zu batch(es) over %zu group(s) "
-                    "(budget=%llu, solo_oversize=%zu)",
+                    "(budget=%llu, tier1_oversize=%zu)",
                     batches.size(), groups.size(),
                     static_cast<unsigned long long>(config.posting_budget),
-                    n_solo);
+                    tier1);
     }
 
-    // Per-hit scratch storage.  Sized to hits.size() so we can index by
-    // the original hit index, but each batch only fills entries for its
-    // own hits and clears them when the batch ends.
+    // 7. Per-hit scratch storage.  Sized to hits.size() so we can index by
+    //    the original hit index, but each batch only fills entries for its
+    //    own hits and clears them when the batch ends.
     std::vector<std::string> subject_subseqs(hits.size());
     std::vector<uint32_t> ext_starts(hits.size(), 0);
 
@@ -248,12 +248,12 @@ std::vector<OutputHit> run_stage3(
 
     bool has_context = context_is_ratio ? (context_ratio > 0) : (context_abs > 0);
 
-    // Per-batch loop.
+    // 8. Per-batch loop.
     for (size_t bi = 0; bi < batches.size(); bi++) {
         const auto& batch = batches[bi];
 
-        // Collect this batch's hit indices grouped by volume for
-        // sequential mmap access.
+        // 8a. Collect this batch's hit indices grouped by volume for
+        //     sequential mmap access.
         std::vector<std::vector<size_t>> hits_by_reader(readers.size());
         size_t batch_hit_count = 0;
         for (size_t gi : batch.group_idxs) {
@@ -272,8 +272,8 @@ std::vector<OutputHit> run_stage3(
                      bi + 1, batches.size(),
                      batch.group_idxs.size(), batch_hit_count,
                      static_cast<unsigned long long>(batch.cost),
-                     batch.solo_oversize ? " [solo oversize]" : "");
-        if (batch.solo_oversize) {
+                     batch.tier1_oversize ? " [tier1 oversize]" : "");
+        if (batch.tier1_oversize) {
             logger.warn("Stage 3 batch %zu/%zu: single group exceeds posting_budget "
                         "(%llu > %llu); processing solo (over-budget)",
                         bi + 1, batches.size(),
@@ -281,11 +281,17 @@ std::vector<OutputHit> run_stage3(
                         static_cast<unsigned long long>(config.posting_budget));
         }
 
-        // Fetch subseqs.  Flatten the per-volume OID-sorted hit lists
-        // into one ordered index sequence and walk it with a hit-parallel
-        // parallel_for; iterations within a task stay in (volume, OID) order
-        // for sequential mmap locality.  get_subsequence is lock-free, so
-        // concurrent calls are safe.
+        // 8b. Fetch subseqs.  Flatten the per-volume OID-sorted hit
+        // lists into one ordered index sequence and walk it with a
+        // single hit-parallel parallel_for in the default arena (=
+        // -nthread).  Within one TBB task the iterations are
+        // contiguous in (volume, OID) order, preserving sequential
+        // mmap access locality, while across tasks the full -nthread
+        // pool is engaged.  `get_subsequence` is lock-free
+        // (CSeqDBImpl::GetRawSeqAndAmbig does not take the
+        // CSeqDBAtlas lock and only does mmap pointer arithmetic +
+        // ncbi2na decode + ambig-table lookup), so concurrent calls
+        // on the same or different volumes are safe.
         std::vector<size_t> ordered_hits;
         ordered_hits.reserve(batch_hit_count);
         for (size_t ri = 0; ri < readers.size(); ri++) {
@@ -332,7 +338,7 @@ std::vector<OutputHit> run_stage3(
             readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
         }
 
-        // Collect valid hit indices for parallel alignment.
+        // 8c. Collect valid hit indices for parallel alignment.
         std::vector<size_t> valid_indices;
         valid_indices.reserve(batch_hit_count);
         for (size_t gi : batch.group_idxs) {
@@ -343,7 +349,7 @@ std::vector<OutputHit> run_stage3(
             }
         }
 
-        // Parallel alignment.
+        // 8d. Parallel alignment.
         tbb::parallel_for(size_t(0), valid_indices.size(), [&](size_t vi) {
             size_t idx = valid_indices[vi];
             auto qit = query_map.find(hits[idx].qseqid);
@@ -399,9 +405,9 @@ std::vector<OutputHit> run_stage3(
             }
         });
 
-        // Overlap resolution for multi-chain hits in this batch's groups
-        // (context > 0 only).  Groups in different batches share no
-        // state, so the loop is naturally batch-local.
+        // 8e. Overlap resolution for multi-chain hits in this batch's groups
+        //     (context > 0 only).  Groups in different batches share no
+        //     state, so the loop is naturally batch-local.
         if (has_context) {
             for (size_t gi : batch.group_idxs) {
                 auto& group = groups[gi];
@@ -541,8 +547,8 @@ std::vector<OutputHit> run_stage3(
             }
         }
 
-        // Filter survivors into `filtered` and release this batch's
-        // batch-local heap.
+        // 8f. Filter survivors into `filtered` and release this batch's
+        //     batch-local heap.
         for (size_t gi : batch.group_idxs) {
             for (size_t idx : groups[gi].indices) {
                 if (!hit_valid[idx] || subject_subseqs[idx].empty()) continue;
@@ -574,7 +580,7 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // Free profiles
+    // 9. Free profiles
     for (auto& [key, pe] : profiles) {
         if (pe.profile) parasail_profile_free(pe.profile);
     }

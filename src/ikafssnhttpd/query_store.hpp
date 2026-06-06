@@ -12,8 +12,8 @@ namespace ikafssn {
 //   where <ab> = the first two characters of <job_id> (or padded).
 // The file body is always a single zstd frame whose plaintext is the
 // JSON request body (the same shape that POST /api/v1/jobs accepts).
-// The queue persistence path stores this JSON form; the binary
-// `protocol::serialize(SearchRequest)` form is reserved for the wire
+// `protocol::serialize(SearchRequest)` is no longer involved in the
+// queue persistence path; that binary form is reserved for the wire
 // (httpd -> backend ikafssnserver) only.
 //
 // Two write entry points are provided:

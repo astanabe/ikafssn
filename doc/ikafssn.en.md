@@ -240,7 +240,7 @@ Options:
   -db <path>              BLAST DB path for mode 3 (default: same as -ix)
   -stage1_score <1|2>     Stage 1 score type (default: 1)
                           1=coverscore, 2=matchscore
-  -stage1_topn <int>      Stage 1 candidate limit, ties-inclusive, 0=unlimited (default: 0)
+  -stage1_topn <int>      Stage 1 candidate limit, 0=unlimited (default: 0)
   -stage1_min_score <num> Stage 1 minimum score (default: 0.5)
                           Integer (>= 1): absolute threshold
                           Fraction (0 < P < 1): proportion of query k-mers,
@@ -495,7 +495,7 @@ Options:
   -pid <path>             PID file path
   -db <path>              BLAST DB path for mode 3 (repeatable, paired with -ix;
                           default: same as corresponding -ix prefix)
-  -stage1_topn <int>      Default Stage 1 candidate limit, ties-inclusive (default: 0)
+  -stage1_topn <int>      Default Stage 1 candidate limit (default: 0)
   -stage1_min_score <num> Default Stage 1 minimum score (default: 0.5)
                           Integer (>= 1) or fraction (0 < P < 1)
   -stage2_min_score <int> Default minimum chain score (default: 0 = adaptive)
@@ -683,7 +683,7 @@ Options:
   -k <int>                 K-mer size (default: server default)
   -mode <1|2|3>            Search mode (default: server default)
   -stage1_score <1|2>      Stage 1 score type (default: server default)
-  -stage1_topn <int>       Stage 1 candidate limit, ties-inclusive (default: server default)
+  -stage1_topn <int>       Stage 1 candidate limit (default: server default)
   -stage1_min_score <num>  Stage 1 minimum score (default: server default)
                            Integer (>= 1) or fraction (0 < P < 1)
   -stage2_min_score <int>  Minimum chain score (default: server default)
@@ -865,7 +865,7 @@ ikafssn uses a three-stage search pipeline:
 
 The default parameters prioritize throughput: `stage1_topn=0` and `nresult=0` disable sorting, and `stage1_min_score=0.5` (fractional) filters candidates by requiring at least 50% of query k-mers to match. To get ranked output, set positive values for `-stage1_topn` and/or `-nresult`, which triggers sorting but may reduce speed for large result sets.
 
-1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `stage1_min_score` are selected as candidates. When `stage1_topn > 0`, the top N candidates by score are returned, ties-inclusive: candidates tied with the N-th highest score are all kept, so more than N candidates may be returned. When `stage1_topn = 0` (default), all qualifying candidates are returned.
+1. **Stage 1 (Candidate Selection):** Scans ID postings for each query k-mer and accumulates scores per sequence. Two score types are available: **coverscore** (number of distinct query k-mers matching the sequence) and **matchscore** (total k-mer position matches). Sequences exceeding `stage1_min_score` are selected as candidates. When `stage1_topn > 0`, candidates are sorted by score and truncated. When `stage1_topn = 0` (default), all qualifying candidates are returned without sorting.
 
 2. **Stage 2 (Collinear Chaining):** For each candidate, collects position-level hits from the `.kpx` file, applies a diagonal filter, and runs a chaining DP to find the best collinear chain. The chain length is reported as **chainscore**. Chains with `chainscore >= stage2_min_score` are reported. The DP inner loop is limited by `-stage2_max_lookback` (default: 64), restricting each hit to consider only the preceding B hits as potential chain predecessors. This reduces worst-case complexity from O(n²) to O(n×B) when a single query×subject pair has a very large number of hits. Set to 0 for unlimited (original O(n²) behavior). When `-stage2_max_nhit_per_subject` is greater than 1 (or 0 for unlimited), multiple non-overlapping chains are extracted per subject using greedy best-chain removal: the best chain is found and its hits are removed, then the DP is re-run on the remaining hits, repeating until the limit is reached or no chain meets `min_score`.
 

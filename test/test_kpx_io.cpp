@@ -13,7 +13,7 @@ using namespace ikafssn;
 
 static const char* TEST_FILE = "/tmp/test_ikafssn.kpx";
 
-// Decode position posting lists from a .kpx posting list via the
+// Decode position posting lists from a v8 .kpx posting list via the
 // candidate-set API.  Builds the kix_decoded array as the sorted union
 // of `candidates` (treating it as the full distinct seq_id list for the
 // k-mer — for these tests the writer adds postings only for those sids,

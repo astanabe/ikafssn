@@ -459,8 +459,8 @@ static void test_stage3_batching_equivalence() {
     }
 }
 
-static void test_stage3_oversize_group_min_budget() {
-    std::fprintf(stderr, "-- test_stage3_oversize_group_min_budget (single group exceeds budget)\n");
+static void test_stage3_oversize_group_tier1() {
+    std::fprintf(stderr, "-- test_stage3_oversize_group_tier1 (single group exceeds budget)\n");
     Logger logger(Logger::kError);
 
     std::vector<OutputHit> hits;
@@ -480,7 +480,7 @@ static void test_stage3_oversize_group_min_budget() {
     // make the group dominant by adding many copies with identical
     // coordinates — they will collide in overlap resolution but that is
     // exactly what should also happen in the unbatched path, and what we
-    // care about here is that the planner emits a minimum-budget solo batch.
+    // care about here is that the planner emits a tier-1 solo batch.
     OutputHit base = hits[0];
     std::vector<OutputHit> baseline = hits;  // for equivalence comparison
     for (int i = 0; i < 8; i++) hits.push_back(base);
@@ -495,7 +495,7 @@ static void test_stage3_oversize_group_min_budget() {
     auto unbatched = run_stage3(hits, queries, g_testdb_path, cfg,
                                 false, 0.0, 0, logger);
 
-    cfg.posting_budget = 1;  // any positive group cost > 1 forces minimum-budget batching
+    cfg.posting_budget = 1;  // any positive group cost > 1 forces tier-1
     auto batched = run_stage3(baseline, queries, g_testdb_path, cfg,
                               false, 0.0, 0, logger);
 
@@ -514,7 +514,7 @@ int main() {
     test_stage3_score_only();
     test_stage3_context();
     test_stage3_batching_equivalence();
-    test_stage3_oversize_group_min_budget();
+    test_stage3_oversize_group_tier1();
 
     // Cleanup
     std::filesystem::remove_all(g_test_dir);

@@ -3,7 +3,6 @@
 #include "search/oid_filter.hpp"
 #include "search/seq_id_decoder.hpp"
 #include "search/posting_decoder.hpp"
-#include "search/decode_cache.hpp"
 #include "search/stage1_filter.hpp"
 #include "search/stage2_chaining.hpp"
 #include "search/query_preprocessor.hpp"
@@ -125,45 +124,8 @@ void stage1_one_strand_single(
     Stage1Config stage1_config = config.stage1;
     stage1_config.min_stage1_score = resolved_threshold;
 
-    const DecodedKmerCache* dc = kix.decode_cache();
-    if (dc == nullptr) {
-        // Uncached volume: cost is unavailable, so run the original single
-        // pass with the cutoff disabled.
-        state.candidates =
-            stage1_filter(positions, kmers, n_kmers, kix, filter, stage1_config, buf);
-    } else {
-        // Cost-ordered position groups: enumerate each distinct query position
-        // as one group, order groups by ascending decode cost (= number of
-        // scatter writes), and accumulate cheapest-first so the cutoff prunes
-        // the most sids before the expensive conserved k-mers run.  remaining =
-        // G - g upper-bounds the score a sid can still gain after group g.
-        struct PosGroup { uint32_t start; uint32_t count; uint64_t cost; };
-        thread_local std::vector<PosGroup> groups;
-        groups.clear();
-        for (size_t i = 0; i < n_kmers;) {
-            uint32_t cur = positions[i];
-            size_t end = i;
-            uint64_t cost = 0;
-            while (end < n_kmers && positions[end] == cur) {
-                cost += dc->lookup(static_cast<uint32_t>(kmers[end])).count;
-                end++;
-            }
-            groups.push_back({static_cast<uint32_t>(i),
-                              static_cast<uint32_t>(end - i), cost});
-            i = end;
-        }
-        std::sort(groups.begin(), groups.end(),
-                  [](const PosGroup& a, const PosGroup& b) { return a.cost < b.cost; });
-
-        const uint32_t G = static_cast<uint32_t>(groups.size());
-        for (uint32_t g = 0; g < G; g++) {
-            const PosGroup& grp = groups[g];
-            stage1_filter_accumulate(positions + grp.start, kmers + grp.start,
-                                     grp.count, kix, filter, stage1_config, buf,
-                                     /*remaining=*/G - g);
-        }
-        state.candidates = stage1_filter_finish(buf, stage1_config);
-    }
+    state.candidates =
+        stage1_filter(positions, kmers, n_kmers, kix, filter, stage1_config, buf);
     if (state.candidates.empty()) return;
 
     if (config.mode == 1) {
@@ -231,27 +193,10 @@ void stage1_one_strand_both(
     }
     if (unified_threshold == 0) return;
 
-    // The cutoff_T fed to the flush kernel comes from min_stage1_score; the
-    // accumulate path only reads it when remaining > 0, so setting it to the
-    // unified threshold leaves the uncached (remaining == 0) behaviour unchanged.
     Stage1Config s1cfg_acc = config.stage1;
-    s1cfg_acc.min_stage1_score = unified_threshold;
+    s1cfg_acc.min_stage1_score = 1;
     s1cfg_acc.stage1_topn = 0;
 
-    // Enumerate one position group per distinct query position, carrying the
-    // cod/opt slices that land at that position.  Cost-order the groups only
-    // when BOTH volumes are cached (decode cost is available for both
-    // templates); otherwise keep the merge order and disable the cutoff.
-    const DecodedKmerCache* dc_cod = kix_cod.decode_cache();
-    const DecodedKmerCache* dc_opt = kix_opt.decode_cache();
-    const bool c9 = (dc_cod != nullptr && dc_opt != nullptr);
-
-    struct PosGroup {
-        uint32_t cod_start, cod_count, opt_start, opt_count;
-        uint64_t cost;
-    };
-    thread_local std::vector<PosGroup> groups;
-    groups.clear();
     {
         size_t ic = 0, io = 0;
         while (ic < n_cod || io < n_opt) {
@@ -259,52 +204,22 @@ void stage1_one_strand_both(
             uint32_t p_o = (io < n_opt) ? pos_opt[io] : UINT32_MAX;
             uint32_t cur = (p_c < p_o) ? p_c : p_o;
 
-            PosGroup grp{static_cast<uint32_t>(ic), 0,
-                         static_cast<uint32_t>(io), 0, 0};
             if (p_c == cur) {
                 size_t end = ic;
-                while (end < n_cod && pos_cod[end] == cur) {
-                    if (c9) grp.cost += dc_cod->lookup(
-                        static_cast<uint32_t>(kmers_cod[end])).count;
-                    end++;
-                }
-                grp.cod_count = static_cast<uint32_t>(end - ic);
+                while (end < n_cod && pos_cod[end] == cur) end++;
+                stage1_filter_accumulate(pos_cod + ic, kmers_cod + ic,
+                                         end - ic, kix_cod, filter,
+                                         s1cfg_acc, buf);
                 ic = end;
             }
             if (p_o == cur) {
                 size_t end = io;
-                while (end < n_opt && pos_opt[end] == cur) {
-                    if (c9) grp.cost += dc_opt->lookup(
-                        static_cast<uint32_t>(kmers_opt[end])).count;
-                    end++;
-                }
-                grp.opt_count = static_cast<uint32_t>(end - io);
+                while (end < n_opt && pos_opt[end] == cur) end++;
+                stage1_filter_accumulate(pos_opt + io, kmers_opt + io,
+                                         end - io, kix_opt, filter,
+                                         s1cfg_acc, buf);
                 io = end;
             }
-            groups.push_back(grp);
-        }
-    }
-
-    const uint32_t G = static_cast<uint32_t>(groups.size());
-    if (c9) {
-        std::sort(groups.begin(), groups.end(),
-                  [](const PosGroup& a, const PosGroup& b) { return a.cost < b.cost; });
-    }
-
-    for (uint32_t g = 0; g < G; g++) {
-        const PosGroup& grp = groups[g];
-        // cod and opt at one position dedup to at most +1 in the unified score,
-        // so G - g upper-bounds the score still attainable after group g.
-        const uint32_t remaining = c9 ? (G - g) : 0;
-        if (grp.cod_count > 0) {
-            stage1_filter_accumulate(pos_cod + grp.cod_start, kmers_cod + grp.cod_start,
-                                     grp.cod_count, kix_cod, filter,
-                                     s1cfg_acc, buf, remaining);
-        }
-        if (grp.opt_count > 0) {
-            stage1_filter_accumulate(pos_opt + grp.opt_start, kmers_opt + grp.opt_start,
-                                     grp.opt_count, kix_opt, filter,
-                                     s1cfg_acc, buf, remaining);
         }
     }
 

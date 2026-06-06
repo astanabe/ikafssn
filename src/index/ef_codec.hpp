@@ -29,8 +29,9 @@ namespace ikafssn::ef {
 //   out       appended-to output buffer.  On return ``out`` contains
 //             [EFHeader][lower bits][upper bits][select samples].
 //
-// Returns the byte length of the EF blob (excludes any pre-existing
-// ``out`` content).
+// Returns the total number of bytes written into ``out`` (including
+// any pre-existing ``out`` content is not counted; this is the byte
+// length of just the EF blob).
 std::size_t encode_dictionary_ef(const std::uint64_t* offsets,
                                  std::size_t D,
                                  std::uint64_t U_raw,

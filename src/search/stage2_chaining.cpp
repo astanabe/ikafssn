@@ -14,7 +14,7 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
                                     const Stage2Config& config) {
     if (raw_hits.empty()) return {};
 
-    // Deduplicate (q_pos, s_pos) pairs from degenerate base expansion
+    // Step 1: deduplicate (q_pos, s_pos) pairs from degenerate base expansion
     std::vector<Hit> deduped = raw_hits;
     std::sort(deduped.begin(), deduped.end(), [](const Hit& a, const Hit& b) {
         return a.q_pos < b.q_pos || (a.q_pos == b.q_pos && a.s_pos < b.s_pos);
@@ -24,7 +24,7 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
             return a.q_pos == b.q_pos && a.s_pos == b.s_pos;
         }), deduped.end());
 
-    // Diagonal filter
+    // Step 2: diagonal filter
     std::vector<Hit> hits = diagonal_filter(deduped, config.min_nhit_diag);
     if (hits.empty()) return {};
 

@@ -50,7 +50,7 @@ struct SearchResult {
 
 // Search a single volume using pre-processed query k-mer data.
 // High-freq k-mers have already been removed and thresholds resolved globally.
-// buf: thread-local Stage1Buffer (must have buf.width set) to avoid per-call
+// buf: thread-local Stage1Buffer (must have buf.tier set) to avoid per-call
 // allocation. Required.
 template <typename KmerInt>
 SearchResult search_volume(
