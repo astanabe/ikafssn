@@ -37,7 +37,7 @@ DROGON_PREFIX="${SRC_DIR}/_drogon"
 # ---- Parasail (static) ----
 
 cd "${SRC_DIR}"
-curl --retry 5 --retry-delay 2 -fsSL -o parasail.tar.gz \
+curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fsSL -o parasail.tar.gz \
   "https://github.com/jeffdaily/parasail/archive/refs/tags/v${PARASAIL_VER}.tar.gz"
 mkdir -p parasail-src
 tar xf parasail.tar.gz -C parasail-src --strip-components=1
@@ -59,7 +59,7 @@ cp -r ../parasail.h ../parasail "${PARASAIL_PREFIX}/include/"
 # ---- htslib (static) ----
 
 cd "${SRC_DIR}"
-curl --retry 5 --retry-delay 2 -fsSL -o htslib.tar.bz2 \
+curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fsSL -o htslib.tar.bz2 \
   "https://github.com/samtools/htslib/releases/download/${HTSLIB_VER}/htslib-${HTSLIB_VER}.tar.bz2"
 mkdir -p htslib-src
 tar xf htslib.tar.bz2 -C htslib-src --strip-components=1
@@ -77,7 +77,7 @@ make install
 # ---- NCBI C++ Toolkit (static) ----
 
 cd "${SRC_DIR}"
-curl --retry 5 --retry-delay 2 -fsSL -o ncbi.tar.gz \
+curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fsSL -o ncbi.tar.gz \
   "https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/${NCBI_VER}.tar.gz"
 mkdir -p ncbi-src
 tar xf ncbi.tar.gz -C ncbi-src --strip-components=1
@@ -214,14 +214,14 @@ fi
 # ---- Drogon (static) ----
 
 cd "${SRC_DIR}"
-curl --retry 5 --retry-delay 2 -fsSL -o drogon.tar.gz \
+curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fsSL -o drogon.tar.gz \
   "https://github.com/drogonframework/drogon/archive/refs/tags/v${DROGON_VER}.tar.gz"
 mkdir -p drogon-src
 tar xf drogon.tar.gz -C drogon-src --strip-components=1
 
 # Drogon's release tarball does not contain the trantor submodule contents;
 # fetch the matching trantor release and place it at drogon-src/trantor.
-curl --retry 5 --retry-delay 2 -fsSL -o trantor.tar.gz \
+curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fsSL -o trantor.tar.gz \
   "https://github.com/an-tao/trantor/archive/refs/tags/v${TRANTOR_VER}.tar.gz"
 rmdir drogon-src/trantor
 mkdir -p drogon-src/trantor
