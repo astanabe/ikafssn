@@ -132,9 +132,8 @@ static std::vector<std::string> read_binary_seqidlist(const std::string& path) {
     // Byte 0: null byte (already verified by is_binary_seqidlist)
     p += 1;
 
-    // Bytes 1-8: file_size (uint64)
+    // Bytes 1-8: file_size (uint64), not validated
     if (p + 8 > end) return result;
-    // uint64_t header_file_size = read_u64(p); // for validation
     p += 8;
 
     // Bytes 9-16: num_ids (uint64)

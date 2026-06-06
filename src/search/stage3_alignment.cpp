@@ -50,9 +50,9 @@ static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
 // Hits sharing the same (qseqid, sseqid, sstrand) form an atomic group: the
 // overlap-resolution loop assumes all such hits are visible at once, so a
 // group cannot be split across batches.  Groups are bin-packed greedily
-// against `posting_budget` (the residual heap budget already plumbed from
-// Stage 1/2 madvise accounting).  A group whose own cost exceeds the budget
-// falls back to a solo batch (tier-1 style), matching `plan_stage1_batches`.
+// against `posting_budget` (the residual heap budget plumbed from
+// `-memory_limit`).  A group whose own cost exceeds the budget is processed
+// as its own solo batch.
 // ---------------------------------------------------------------------------
 
 static uint64_t compute_hit_cost(const OutputHit& h,
@@ -79,7 +79,7 @@ struct Stage3Group {
 struct Stage3Batch {
     std::vector<size_t> group_idxs; // indices into the ordered groups vector
     uint64_t cost = 0;
-    bool tier1_oversize = false;
+    bool oversize = false;
 };
 
 static std::vector<Stage3Batch>
@@ -101,7 +101,7 @@ plan_stage3_batches(const std::vector<Stage3Group>& groups_ordered,
             Stage3Batch solo;
             solo.group_idxs.push_back(gi);
             solo.cost = g.cost;
-            solo.tier1_oversize = true;
+            solo.oversize = true;
             batches.push_back(std::move(solo));
             continue;
         }
@@ -228,13 +228,13 @@ std::vector<OutputHit> run_stage3(
     auto batches = plan_stage3_batches(groups, config.posting_budget);
 
     {
-        size_t tier1 = 0;
-        for (const auto& b : batches) if (b.tier1_oversize) ++tier1;
+        size_t oversize_count = 0;
+        for (const auto& b : batches) if (b.oversize) ++oversize_count;
         logger.info("Stage 3 batch plan: %zu batch(es) over %zu group(s) "
-                    "(budget=%llu, tier1_oversize=%zu)",
+                    "(budget=%llu, oversize=%zu)",
                     batches.size(), groups.size(),
                     static_cast<unsigned long long>(config.posting_budget),
-                    tier1);
+                    oversize_count);
     }
 
     // 7. Per-hit scratch storage.  Sized to hits.size() so we can index by
@@ -272,8 +272,8 @@ std::vector<OutputHit> run_stage3(
                      bi + 1, batches.size(),
                      batch.group_idxs.size(), batch_hit_count,
                      static_cast<unsigned long long>(batch.cost),
-                     batch.tier1_oversize ? " [tier1 oversize]" : "");
-        if (batch.tier1_oversize) {
+                     batch.oversize ? " [oversize]" : "");
+        if (batch.oversize) {
             logger.warn("Stage 3 batch %zu/%zu: single group exceeds posting_budget "
                         "(%llu > %llu); processing solo (over-budget)",
                         bi + 1, batches.size(),
