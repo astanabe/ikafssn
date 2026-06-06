@@ -166,31 +166,18 @@ void apply_stage1_madvise(KixReader& kix, Stage1Tier4 /*tier*/,
     kix.apply_madvise_dict_only();
 }
 
-void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx, Stage2ATier tier,
+void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx, Stage2ATier /*tier*/,
                            const std::vector<ByteRange>& kix_ranges,
                            const std::vector<ByteRange>& kpx_ranges) {
-    switch (tier) {
-        case Stage2ATier::kTier4:
-            kix.apply_madvise_dict_only();
-            kpx.apply_madvise_dict_only();
-            kix.apply_madvise_posting_ranges(kix_ranges);
-            kpx.apply_madvise_posting_ranges(kpx_ranges);
-            break;
-        case Stage2ATier::kTier2:
-            kix.apply_madvise_posting_random();
-            kpx.apply_madvise_dict_only();
-            kpx.apply_madvise_posting_ranges(kpx_ranges);
-            break;
-        case Stage2ATier::kTier3:
-            kix.apply_madvise_dict_only();
-            kix.apply_madvise_posting_ranges(kix_ranges);
-            kpx.apply_madvise_posting_random();
-            break;
-        case Stage2ATier::kTier1:
-            kix.apply_madvise_posting_random();
-            kpx.apply_madvise_posting_random();
-            break;
-    }
+    // Same rationale as Stage 1 (see apply_stage1_madvise): kix/kpx posting
+    // access is random and the working set exceeds RAM at scale, so
+    // MADV_WILLNEED on the needed ranges only triggers readahead over-fetch.
+    // Keep both dictionaries pinned (WILLNEED + HUGEPAGE) and leave the posting
+    // bodies MADV_RANDOM so reads track real demand.  (mode 2/3 only.)
+    (void)kix_ranges;
+    (void)kpx_ranges;
+    kix.apply_madvise_dict_only();
+    kpx.apply_madvise_dict_only();
 }
 
 template <typename KmerInt>

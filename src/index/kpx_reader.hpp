@@ -57,23 +57,13 @@ public:
     // Stage 2 / Stage 3 (mode 1 never reads .kpx).
     size_t willneed_size_full() const;
 
-    // Hint that the posting body will be touched at random; pos_offsets
-    // dictionary head stays WILLNEED + HUGEPAGE.
-    void   apply_madvise_posting_random();
-
     // Dictionary WILLNEED + HUGEPAGE, posting body MADV_RANDOM (suppress
-    // default readahead).  A subsequent apply_madvise_posting_ranges()
-    // actively pre-faults the requested ranges regardless of the hint.
+    // default readahead).  Stage 2A reads the posting body at random, so
+    // demand faults track real need without readahead over-fetch.
     void   apply_madvise_dict_only();
 
     // Byte size of the dictionary region (header + Elias-Fano blob).
     size_t dict_size() const;
-
-    // Apply MADV_WILLNEED to a set of posting-body ranges. Each pair is
-    // (offset, length) in posting-file coordinates (the space returned by
-    // pos_offset_range). Mirror of KixReader::apply_madvise_posting_ranges.
-    void apply_madvise_posting_ranges(
-        const std::vector<std::pair<uint64_t, uint64_t>>& ranges);
 
 private:
     MmapFile mmap_;

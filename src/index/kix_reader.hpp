@@ -39,30 +39,15 @@ public:
     // query × volume jobs, then releases it for the next batch.
     size_t willneed_size_full() const;
 
-    // Hint that the posting body will be touched at random (page cache is
-    // preserved but readahead is suppressed).  The dictionary head is
-    // re-pinned WILLNEED + HUGEPAGE.  Used by the fallback batch path
-    // when a single volume's posting body is larger than the WILLNEED
-    // budget allows.
-    void   apply_madvise_posting_random();
-
     // Dictionary WILLNEED + HUGEPAGE, posting body MADV_RANDOM (suppress
-    // default readahead).  A subsequent apply_madvise_posting_ranges()
-    // actively pre-faults the requested ranges regardless of the hint.
+    // default readahead).  Stage 1 / Stage 2A access the posting body at
+    // random, so demand faults track real need without readahead over-fetch.
     void   apply_madvise_dict_only();
 
     // Byte size of the dictionary region (header + Elias-Fano blob).
     // The first dict_size() bytes of the mapping are the dictionary;
     // everything beyond is the posting body.
     size_t dict_size() const;
-
-    // Apply MADV_WILLNEED to a set of posting-body ranges. Each pair is
-    // (offset, length) in posting-file coordinates — the same coordinate
-    // space returned by posting_list_range. Used by the orchestrator's
-    // range-WILLNEED path so the kernel only prefetches the posting
-    // lists this batch will actually probe.
-    void apply_madvise_posting_ranges(
-        const std::vector<std::pair<uint64_t, uint64_t>>& ranges);
 
     // Get posting list byte offset for a k-mer
     uint64_t posting_list_offset(uint32_t kmer) const {

@@ -16,7 +16,6 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
-#include <cstdlib>
 
 #include <tbb/blocked_range.h>
 #include <tbb/combinable.h>
@@ -214,13 +213,7 @@ void stage1_one_strand_both(
             Nq++;
         }
     }
-    // C9 is on by default; IKAFSSN_STAGE1_CUTOFF=0 disables it (measurement
-    // escape hatch for isolating the cutoff's effect in a benchmark A/B).
-    static const bool kStage1Cutoff = [] {
-        const char* e = std::getenv("IKAFSSN_STAGE1_CUTOFF");
-        return !(e && e[0] == '0');
-    }();
-    s1cfg_acc.cutoff_threshold = kStage1Cutoff ? unified_threshold : 0;
+    s1cfg_acc.cutoff_threshold = unified_threshold;
 
     {
         size_t ic = 0, io = 0;
