@@ -127,7 +127,7 @@ std::vector<OutputHit> run_stage3(
 {
     if (hits.empty()) return {};
 
-    // 1. Open BLAST DB volumes
+    // Open BLAST DB volumes
     auto vol_paths = BlastDbReader::find_volume_paths(db_path);
     if (vol_paths.empty()) {
         logger.error("Stage 3: no BLAST DB volumes found at '%s'", db_path.c_str());
@@ -142,13 +142,13 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 2. Build query lookup: query_id -> index in queries[]
+    // Build query lookup: query_id -> index in queries[]
     std::unordered_map<std::string, size_t> query_map;
     for (size_t i = 0; i < queries.size(); i++) {
         query_map[queries[i].id] = i;
     }
 
-    // 3. Validate hit volumes
+    // Validate hit volumes
     std::vector<bool> hit_valid(hits.size(), true);
     for (size_t i = 0; i < hits.size(); i++) {
         if (hits[i].volume >= readers.size()) {
@@ -158,8 +158,8 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 4. Build profiles up front (per unique query_idx x strand).  Profiles
-    //    are small and shared across all batches.
+    // Build profiles up front (per unique query_idx x strand).  Profiles
+    // are small and shared across all batches.
     const parasail_matrix_t* matrix = parasail_matrix_lookup(config.score_matrix.c_str());
     if (!matrix) {
         logger.error("Stage 3: unknown score matrix '%s'", config.score_matrix.c_str());
@@ -189,10 +189,10 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 5. Build atomic groups keyed by (qseqid, sseqid, sstrand).
-    //    The overlap-resolution loop assumes each group is visible whole, so
-    //    groups are the unit of batching.  Groups are stored in a parallel
-    //    vector so plan_stage3_batches can index them.
+    // Build atomic groups keyed by (qseqid, sseqid, sstrand).
+    // The overlap-resolution loop assumes each group is visible whole, so
+    // groups are the unit of batching.  Groups are stored in a parallel
+    // vector so plan_stage3_batches can index them.
     std::unordered_map<std::string, size_t> group_index;
     std::vector<Stage3Group> groups;
     groups.reserve(64);
@@ -224,7 +224,7 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 6. Plan batches.
+    // Plan batches.
     auto batches = plan_stage3_batches(groups, config.posting_budget);
 
     {
@@ -237,9 +237,9 @@ std::vector<OutputHit> run_stage3(
                     n_solo);
     }
 
-    // 7. Per-hit scratch storage.  Sized to hits.size() so we can index by
-    //    the original hit index, but each batch only fills entries for its
-    //    own hits and clears them when the batch ends.
+    // Per-hit scratch storage.  Sized to hits.size() so we can index by
+    // the original hit index, but each batch only fills entries for its
+    // own hits and clears them when the batch ends.
     std::vector<std::string> subject_subseqs(hits.size());
     std::vector<uint32_t> ext_starts(hits.size(), 0);
 
@@ -248,12 +248,12 @@ std::vector<OutputHit> run_stage3(
 
     bool has_context = context_is_ratio ? (context_ratio > 0) : (context_abs > 0);
 
-    // 8. Per-batch loop.
+    // Per-batch loop.
     for (size_t bi = 0; bi < batches.size(); bi++) {
         const auto& batch = batches[bi];
 
-        // 8a. Collect this batch's hit indices grouped by volume for
-        //     sequential mmap access.
+        // Collect this batch's hit indices grouped by volume for
+        // sequential mmap access.
         std::vector<std::vector<size_t>> hits_by_reader(readers.size());
         size_t batch_hit_count = 0;
         for (size_t gi : batch.group_idxs) {
@@ -281,7 +281,7 @@ std::vector<OutputHit> run_stage3(
                         static_cast<unsigned long long>(config.posting_budget));
         }
 
-        // 8b. Fetch subseqs.  Flatten the per-volume OID-sorted hit lists
+        // Fetch subseqs.  Flatten the per-volume OID-sorted hit lists
         // into one ordered index sequence and walk it with a hit-parallel
         // parallel_for; iterations within a task stay in (volume, OID) order
         // for sequential mmap locality.  get_subsequence is lock-free, so
@@ -332,7 +332,7 @@ std::vector<OutputHit> run_stage3(
             readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
         }
 
-        // 8c. Collect valid hit indices for parallel alignment.
+        // Collect valid hit indices for parallel alignment.
         std::vector<size_t> valid_indices;
         valid_indices.reserve(batch_hit_count);
         for (size_t gi : batch.group_idxs) {
@@ -343,7 +343,7 @@ std::vector<OutputHit> run_stage3(
             }
         }
 
-        // 8d. Parallel alignment.
+        // Parallel alignment.
         tbb::parallel_for(size_t(0), valid_indices.size(), [&](size_t vi) {
             size_t idx = valid_indices[vi];
             auto qit = query_map.find(hits[idx].qseqid);
@@ -399,9 +399,9 @@ std::vector<OutputHit> run_stage3(
             }
         });
 
-        // 8e. Overlap resolution for multi-chain hits in this batch's groups
-        //     (context > 0 only).  Groups in different batches share no
-        //     state, so the loop is naturally batch-local.
+        // Overlap resolution for multi-chain hits in this batch's groups
+        // (context > 0 only).  Groups in different batches share no
+        // state, so the loop is naturally batch-local.
         if (has_context) {
             for (size_t gi : batch.group_idxs) {
                 auto& group = groups[gi];
@@ -541,8 +541,8 @@ std::vector<OutputHit> run_stage3(
             }
         }
 
-        // 8f. Filter survivors into `filtered` and release this batch's
-        //     batch-local heap.
+        // Filter survivors into `filtered` and release this batch's
+        // batch-local heap.
         for (size_t gi : batch.group_idxs) {
             for (size_t idx : groups[gi].indices) {
                 if (!hit_valid[idx] || subject_subseqs[idx].empty()) continue;
@@ -574,7 +574,7 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 9. Free profiles
+    // Free profiles
     for (auto& [key, pe] : profiles) {
         if (pe.profile) parasail_profile_free(pe.profile);
     }

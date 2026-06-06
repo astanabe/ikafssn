@@ -80,7 +80,7 @@ QueryKmerData<KmerInt> preprocess_query(
     QueryKmerData<KmerInt> result;
     result.qlen = static_cast<uint32_t>(query_seq.size());
 
-    // 0. Length check.
+    // Length check.
     // First, the explicit -min_query_length floor.  Queries shorter than
     // this are skipped before the span-based check below.
     if (config.min_query_length > 0 &&
@@ -123,14 +123,14 @@ QueryKmerData<KmerInt> preprocess_query(
         return result;
     }
 
-    // 0a. accept_qdegen=0 rejection (centralized here)
+    // accept_qdegen=0 rejection (centralized here)
     if (config.accept_qdegen == 0 && contains_degenerate_base(query_seq)) {
         result.skip_reason = kSkipDegenRejected;
         result.skip_detail = "query contains IUPAC degenerate bases";
         return result;
     }
 
-    // 0b. Truly invalid character detection (e.g. '*', '!')
+    // Truly invalid character detection (e.g. '*', '!')
     {
         size_t bad = find_invalid_char(query_seq);
         if (bad != std::string::npos) {
@@ -143,7 +143,7 @@ QueryKmerData<KmerInt> preprocess_query(
         }
     }
 
-    // 1. Extract forward k-mers
+    // Extract forward k-mers
     std::vector<std::pair<uint32_t, KmerInt>> fwd_kmers;
     if (t > 0 && !masks.empty()) {
         fwd_kmers = extract_kmers_spaced<KmerInt>(query_seq, k, masks,
@@ -154,7 +154,7 @@ QueryKmerData<KmerInt> preprocess_query(
                         static_cast<int>(config.max_degen_expand));
     }
 
-    // 2. Build reverse complement k-mers
+    // Build reverse complement k-mers
     std::vector<std::pair<uint32_t, KmerInt>> rc_kmers;
     if (t > 0 && !masks.empty()) {
         // Spaced seed: scan RC string with same templates, remap positions
@@ -180,8 +180,8 @@ QueryKmerData<KmerInt> preprocess_query(
         }
     }
 
-    // 3. SoA conversion (no search-time high-freq filtering; build-time
-    //    exclusion via .khx is the only frequency gate).
+    // SoA conversion (no search-time high-freq filtering; build-time
+    // exclusion via .khx is the only frequency gate).
     auto to_soa = [](const std::vector<std::pair<uint32_t, KmerInt>>& pairs,
                      std::vector<uint32_t>& positions,
                      std::vector<KmerInt>& kmer_values) {
@@ -195,7 +195,7 @@ QueryKmerData<KmerInt> preprocess_query(
     to_soa(fwd_kmers, result.fwd_positions, result.fwd_kmer_values);
     to_soa(rc_kmers, result.rc_positions, result.rc_kmer_values);
 
-    // 4. Resolve per-strand thresholds.
+    // Resolve per-strand thresholds.
     //
     //   Nqkmer    = max(0, seq_len - span + 1)   (pure window count)
     //   Nhighfreq = #{p : ANY emitted k-mer at p is .khx-excluded}     (case 1)
@@ -270,7 +270,7 @@ QueryKmerData<KmerInt> preprocess_query(
         result.resolved_threshold_rc  = (th_rc  >= 1) ? static_cast<uint32_t>(th_rc)  : 0;
     }
 
-    // 5. Resolve effective_min_score per strand
+    // Resolve effective_min_score per strand
     if (config.stage2.min_score > 0) {
         // Explicit min_score: use directly for both strands
         result.effective_min_score_fwd = config.stage2.min_score;

@@ -205,7 +205,7 @@ bool merge_sam_files(const std::vector<std::string>& batch_paths,
                      const std::string& output_path, bool as_bam) {
     if (batch_paths.empty()) return true;
 
-    // Step 1: Build merged header by reading all input files' headers.
+    // Build merged header by reading all input files' headers.
     // Collect @SQ lines (union by SN, ordered by first appearance).
     std::vector<std::string> sq_order;
     std::map<std::string, uint32_t> sq_lengths;
@@ -268,7 +268,7 @@ bool merge_sam_files(const std::vector<std::string>& batch_paths,
 
     sam_hdr_destroy(first_hdr);
 
-    // Step 2: Open output and write merged header
+    // Open output and write merged header
     const char* mode = as_bam ? "wb" : "w";
     const char* out_path = output_path.c_str();
     if (!as_bam && (output_path.empty() || output_path == "-")) {
@@ -284,7 +284,7 @@ bool merge_sam_files(const std::vector<std::string>& batch_paths,
         return false;
     }
 
-    // Step 3: Read each batch file and remap tids to merged header
+    // Read each batch file and remap tids to merged header
     bam1_t* b = bam_init1();
     for (const auto& path : batch_paths) {
         samFile* in = sam_open(path.c_str(), "r");

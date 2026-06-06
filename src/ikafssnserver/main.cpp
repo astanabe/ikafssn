@@ -50,7 +50,7 @@ static void print_usage(const char* prog) {
         "  -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject <int>  Default max chains per subject (default: 1, 0=unlimited)\n"
         "  -stage2_min_nhit_diag <int>  Default diagonal filter min hits (default: 1)\n"
-        "  -stage1_topn <int>       Default Stage 1 candidate limit (default: 0)\n"
+        "  -stage1_topn <int>       Default Stage 1 candidate limit, ties-inclusive (default: 0)\n"
         "  -stage1_min_score <num>  Default Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
         "  -nresult <int>           Default max results per query (default: 0)\n"
         "  -accept_qdegen <0|1>     Default accept queries with degenerate bases (default: 1)\n"

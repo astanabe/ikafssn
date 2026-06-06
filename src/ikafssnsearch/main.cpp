@@ -17,7 +17,7 @@
 #include "search/preprocess_runner.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/stage3_alignment.hpp"
-#include "search/tier_selection.hpp"
+#include "search/width_selection.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/blastdb_reader.hpp"
 #include "io/compressed_stream.hpp"
@@ -82,7 +82,7 @@ static void print_usage(const char* prog) {
         "  -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: 1, 0=unlimited)\n"
         "  -stage2_min_nhit_diag <int>  Diagonal filter min hits (default: 1)\n"
-        "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
+        "  -stage1_topn <int>       Stage 1 candidate limit, ties-inclusive, 0=unlimited (default: 0)\n"
         "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
         "  -nresult <int>           Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
@@ -824,7 +824,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Thread-local Stage1Buffer sizing inputs.  num_sequences was captured
-    // at validation time; tier is chosen from actual preprocessed k-mer
+    // at validation time; width is chosen from actual preprocessed k-mer
     // counts.  The orchestrator constructs the TLS buffer pool internally.
     uint32_t max_num_seqs = 0;
     for (const auto& vd : ctxs[0].volumes)
@@ -836,7 +836,7 @@ int main(int argc, char* argv[]) {
             ? accumulate_max_kmer_positions(max_kmer_positions, ctx.pp16)
             : accumulate_max_kmer_positions(max_kmer_positions, ctx.pp32);
     }
-    Stage1Tier tier = select_tier(max_kmer_positions, max_kmer_positions);
+    Stage1Width width = select_width(max_kmer_positions, max_kmer_positions);
 
     size_t num_volumes = ctxs[0].volumes.size();
 
@@ -853,7 +853,7 @@ int main(int argc, char* argv[]) {
         in.posting_budget = posting_budget;
         in.logger = &logger;
         in.max_num_seqs = max_num_seqs;
-        in.tier = tier;
+        in.width = width;
 
         in.volumes_cod.resize(num_volumes);
         if (is_both_mode) in.volumes_opt.resize(num_volumes);

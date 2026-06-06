@@ -16,11 +16,11 @@ struct Stage2Config {
 };
 
 // Run Stage 2 chaining on hits for a single candidate sequence.
-// 1. Apply diagonal filter
-// 2. Sort hits by q_pos (then s_pos)
-// 3. Run O(n^2) chaining DP
-// 4. Traceback best chain
-// 5. If max_nhit_per_subject > 1 (or 0=unlimited), remove used hits and repeat
+// Apply diagonal filter
+// Sort hits by q_pos (then s_pos)
+// Run O(n^2) chaining DP
+// Traceback best chain
+// If max_nhit_per_subject > 1 (or 0=unlimited), remove used hits and repeat
 //
 // Returns vector of ChainResult (empty if no chain passes min_score).
 std::vector<ChainResult> chain_hits(const std::vector<Hit>& hits,

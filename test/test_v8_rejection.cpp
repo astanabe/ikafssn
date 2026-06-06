@@ -19,13 +19,13 @@ using namespace ikafssn;
 
 namespace {
 
-// Synthesize a minimal .kix file with v8 magic + format_version 8 and
+// Synthesize a minimal .kix file with an obsolete magic + format_version and
 // verify KixReader::open rejects it.  We do not have to build a fully
-// valid v8 body — KixReader rejects on the magic / version check
+// valid body — KixReader rejects on the magic / version check
 // before reading anything else.
 std::string synth_v8_kix(const std::string& path) {
     KixHeader hdr{};
-    // v8 magic
+    // obsolete magic
     hdr.magic[0] = 'K'; hdr.magic[1] = 'I'; hdr.magic[2] = 'X'; hdr.magic[3] = '8';
     hdr.format_version = 8;
     hdr.k = 5;
@@ -115,8 +115,8 @@ void test_v11_is_current() {
     CHECK(KPX_MAGIC[3] == '1' && KPX_MAGIC[4] == '1');
 }
 
-// Synthesize a .kix file with the *wrong* magic ("KIX08" — the v10
-// 5-byte magic field but with v9-style version digit) while format
+// Synthesize a .kix file with the *wrong* magic ("KIX08" — the current
+// 5-byte magic field but with an invalid version digit) while format
 // version is 10.  The reader should reject on magic mismatch first.
 void test_wrong_magic_rejected() {
     std::string path = test_tmpdir("/tmp/test_v8_wrong_magic") + ".kix";

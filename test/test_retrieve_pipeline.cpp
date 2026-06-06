@@ -34,7 +34,7 @@ static void test_full_pipeline() {
     Stage1Buffer buf;
     std::fprintf(stderr, "-- test_full_pipeline\n");
 
-    // Step 1: Build index
+    // Build index
     BlastDbReader db;
     CHECK(db.open(g_testdb_path));
 
@@ -46,7 +46,7 @@ static void test_full_pipeline() {
     CHECK(build_index<uint16_t>(db, bconfig, prefix, 0, 1, "test", logger));
     db.close();
 
-    // Step 2: Open index and search
+    // Open index and search
     KixReader kix;
     KpxReader kpx;
     KsxReader ksx;
@@ -89,14 +89,14 @@ static void test_full_pipeline() {
     kpx.close();
     ksx.close();
 
-    // Step 3: Write results as tab, then read back
+    // Write results as tab, then read back
     std::ostringstream oss;
     write_results_tsv(oss, hits);
     std::istringstream iss(oss.str());
     auto parsed_hits = read_results_tsv(iss);
     CHECK_EQ(parsed_hits.size(), hits.size());
 
-    // Step 4: Retrieve subsequences from local BLAST DB
+    // Retrieve subsequences from local BLAST DB
     RetrieveOptions ropts;
     ropts.context = 0;
     std::ostringstream fasta_out;

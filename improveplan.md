@@ -421,6 +421,19 @@ ext_job 軸は「query × volume × strand」のまま (tiling は導入しな�
 - decode サイズ単体が `posting_budget` を超える異常 volume、または WILLNEED 自体が超える volume (従来 Tier1) は uncached (bind しないだけ)。both-mode は opt を残予算で `fill` し、cod+opt の合計を 1 予算内に収める。
 - volume バッチ計画 (C1) との関係: C1 の WILLNEED レンジ算出はそのまま。バッチ境界の予算式に decode heap を足した点のみが差分。
 
+#### C9 実装方針 (確定)
+
+C9 着手前に確定した方針。C9-a〜C9-c はこの前提で実装する。
+
+- **cutoff 閾値 `T` は `-stage1_min_score` 由来の解決済み閾値を流用する (新規引数なし)**。single は `resolved_threshold`、both は `unified_threshold`。専用の cutoff 閾値や「最終閾値とは別の閾値」を新設せず、既存の `Stage1Config::min_stage1_score` を `T` の供給経路にする。`stage1_filter_accumulate_impl` は `min_stage1_score` を読んでいない (フィルタは `stage1_filter_finish_impl` のみが適用) ため、both-mode で現在デッド値の `s1cfg_acc.min_stage1_score = 1` を `unified_threshold` に差し替えても既存挙動は不変で、cutoff にのみ効く。single は `stage1_filter` が既に `min_stage1_score = resolved_threshold` を設定済みのため変更不要。
+- **コスト並べ替えは per-volume** (volume ループ内・cache bind 後)。コスト源は `DecodedKmerCache::lookup().count` (= その volume の distinct sid 数 = scatter 回数)。
+- **uncached volume では C9 を無効化**する。cache が空でコストを安く取れないため、現状の cod/opt 位置マージ順のまま reorder も cutoff も適用しない (例外経路で頻度が低い)。
+- **`remaining`**: coverscore = 残り distinct 位置数、matchscore = 残り k-mer 数。both-mode は位置グループ (同一位置の cod+opt+degen 全 k-mer) 単位で 1 消費する。
+- **single / both 両経路に適用**する (本ベンチは both だが mode 1 single 経路でも効くため対称に入れる)。
+- **flush カーネル** (`flush_batch_simd` / `flush_avx512_t32` / scalar) に `remaining` と cutoff `T` を渡す。cutoff が無意味な領域 (`T <= 1` や誰も dead にならない序盤) は現状コードパスをそのまま通し、回帰リスクをゼロにする。
+- **cutoff の `T` は常に「candidate 化の下限閾値 (= `min_stage1_score`)」**。`stage1_topn > 0` でも topn は下限を下げないため安全。
+- **検証**: Phase 4.5 の both-mode 同値テストに加え、`T > 1` で cutoff が実発火するケース (短めクエリ × やや高め `-stage1_min_score`) と degenerate 展開を含む位置グループの数値同値テストを追加する。
+
 #### C9-a: 早期切り捨ての条件
 
 クエリの distinct 位置数を `Nq` (= 実質 `Nqkmer`)、解決済み閾値を `T`、ある時点での処理済み位置数を `m`、残り位置数を `remaining = Nq - m` とする。スコアは各位置で最大 +1 の単調増加なので、ある sid は
@@ -782,4 +795,17 @@ CPU 律速の現状を最も大きく改善するのは **C2 → C4 + C9 → C5*
   - 各 vol の dict 走査は 1 回のみ (cost 計算 == prefetch 計画)、検索時の `posting_list_range` 呼出と temporally local
   - vol open は 1 回 (planning + 実行で重複しない)
 - 残課題: なし。本番ベンチで効果を計測
+
+### Phase 6: C4 — per-volume Stage 1 decode キャッシュ
+- 日付: 2026-06-06
+- 主な変更:
+  - `src/search/decode_cache.{hpp,cpp}`: `DecodedKmerCache` を新規追加。volume 内の全 unique k-mer の `.kix` posting list を 1 度だけ decode して単一 arena (`offsets_` で uidx→先頭、`storage_` に decode 済み distinct sid) に保持し、その volume の全 query が read-only で共有する。`fill()` は 2-pass — Pass 1 (serial) で posting list header の distinct_count を prefix-sum して arena offset と decode 後バイト数を確定 (予算超過・破損 volume はここで false を返し uncached fallback)、Pass 2 (`tbb::parallel_for`) で disjoint な arena slot へ `decode_kix_into` で並列 decode。`lookup(kmer)` は `{ptr, count}` を返し、未ヒット (uncached / Tier1 / 未バインド) は現状 decode へ fallback
+  - `src/index/pfd_codec.{hpp,cpp}` / `src/index/pfd_codec_tier.cpp`: `.kix` decode 実装を `decode_kix_into` に一本化し、`open_stream_kix` はこれに委譲
+  - `src/index/kix_reader.{hpp,cpp}`: publish-once の decode-cache ハンドル (`set_decode_cache` / `decode_cache`) を追加。`stage1_filter_accumulate_impl` は `kix.decode_cache()->lookup(kmer)` を参照し、未バインド / miss 時のみ on-the-fly decode へ落ちる
+  - `src/search/search_orchestrator.cpp`: decode heap を WILLNEED page cache と同じソフト予算 (`posting_budget` ≈ `-memory_limit`) に合算課金 (add-then-check, 1 volume 分まで超過許容)。1 バッチ内に cached / uncached volume が混在してよく、`run_stage1_jobs` の cross-volume 並列度は予算に比例。バッチ実行後 `release()` で decode heap を即解放
+  - cleanup: 不透明な madvise "Tier N" enum を記述的な名前 (`Stage1Madvise` / `Stage2AMadvise`、stage3 の `tier1_oversize` → `solo_oversize`) に改名し、ログを `tier%u` → `madvise=<name>` に。dead code (`SeqIdDecoder::was_new_seq()/ptr()`、`apply_madvise_full`、`current_simd_flags()`、`JobStore::prepare_or_load_` / `list_jobs()`、未使用 BinaryWriter/Reader アクセサ) を削除。変更履歴ナレーション・低価値コメントを除去
+  - `CMakeLists.txt` の `IKAFSSN_VERSION` を `0.1.2026.06.06` へ bump
+- テスト: `ctest --test-dir build` 全件 pass。`test/test_multivolume.cpp` と `test/test_search_integration.cpp` に cached vs uncached の byte 同値検証を追加 (`test_run_search_both_decode_cache_equiv`: big budget で cod+opt 両キャッシュ engage / budget=1 で on-the-fly、ソート済キー集合の完全一致を確認)。matchscore / coverscore / degenerate 展開 / both-mode の各経路を網羅
+- 観察: 消費順序・scatter・dedup・finish は現状と完全同一のため出力は数値的に完全一致。decode 回数が「k-mer × query」→「k-mer × 1」(per-volume 完全 dedup) に減る。scatter (B3) は本フェーズでは削らない
+- 残課題 / 次フェーズへの引き継ぎ: C4 の上に C9 (位置グループ コスト昇順並べ替え + flush の cutoff マスク, scatter 削減) を後付けする。C3 (PFD ブロック単位 stream decode) / C7 (dict huge page) は任意のまま未着手
 

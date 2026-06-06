@@ -63,7 +63,7 @@ struct RunSearchInputs {
     uint64_t posting_budget = 0;
     Logger* logger = nullptr;
     uint32_t max_num_seqs = 0;
-    Stage1Tier tier = Stage1Tier::T32;
+    Stage1Width width = Stage1Width::T32;
 };
 
 template <typename KmerInt>

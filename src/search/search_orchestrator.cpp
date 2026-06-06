@@ -304,7 +304,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     tbb::task_arena arena(in.nthread);
     auto make_tls_buf = [&in]() {
         Stage1Buffer buf;
-        buf.tier = in.tier;
+        buf.width = in.width;
         buf.ensure_capacity(in.max_num_seqs);
         return buf;
     };

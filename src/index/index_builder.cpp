@@ -594,7 +594,7 @@ bool build_postings(BlastDbReader& db,
         // (x86-simd-sort) on AVX2+ x86_64 / TBB parallel_sort otherwise.
         parallel_sort_temp_entries(buffer);
 
-        // Step 1 (sequential): identify k-mer runs in the sorted buffer.
+        // Sequential: identify k-mer runs in the sorted buffer.
         // Cheap linear scan; the heavy work — dedup + encode_posting_kix /
         // encode_posting_kpx per run — is parallelised below.
         struct KmerRun {
@@ -637,7 +637,7 @@ bool build_postings(BlastDbReader& db,
             }
         }
 
-        // Step 2 (parallel): per-k-mer dedup + encode into per-run blobs.
+        // Parallel: per-k-mer dedup + encode into per-run blobs.
         // Each thread reuses an EncodeScratch instance across runs so the
         // dedup and delta-stream allocations don't churn in the hot path.
         // RunOut holds the per-run output buffers; the sequential fwrite
@@ -701,7 +701,7 @@ bool build_postings(BlastDbReader& db,
                 }
             });
 
-        // Step 3 (sequential): record dictionary offsets, accumulate header
+        // Sequential: record dictionary offsets, accumulate header
         // totals, and stream the per-run blobs to disk in k-mer order.
         // Runs are already sorted by k-mer because `runs` was built from a
         // (kmer, seq_id, pos)-sorted buffer.

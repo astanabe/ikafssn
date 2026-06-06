@@ -25,7 +25,7 @@ bool DecodedKmerCache::fill(const KixReader& kix,
 
     const uint8_t* posting_file = kix.posting_file();
 
-    // Pass 1 (serial, cheap): read each k-mer's distinct_count from its
+    // Serial, cheap: read each k-mer's distinct_count from its
     // posting list header and prefix-sum into offsets_.  The volume's WILLNEED
     // is already applied, so these header reads ride the prefetch.
     size_t total = 0;
@@ -37,7 +37,7 @@ bool DecodedKmerCache::fill(const KixReader& kix,
     }
     offsets_[n] = total;
 
-    // Reject an over-budget volume before decoding (no wasted Pass 2); the
+    // Reject an over-budget volume before decoding (no wasted parallel decode); the
     // caller runs it uncached.
     if (total > budget / sizeof(uint32_t)) {
         release();
@@ -46,7 +46,7 @@ bool DecodedKmerCache::fill(const KixReader& kix,
 
     storage_.resize(total);
 
-    // Pass 2 (parallel): decode each k-mer's posting list into its disjoint
+    // Parallel: decode each k-mer's posting list into its disjoint
     // arena slot.  Slots never overlap, so the writes are race-free.
     std::atomic<bool> corrupt{false};
     arena.execute([&] {

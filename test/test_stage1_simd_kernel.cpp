@@ -13,11 +13,11 @@ using namespace ikafssn;
 
 namespace {
 
-template <Stage1Tier Tier>
+template <Stage1Width Width>
 void scalar_golden(const SeqId* sid_batch, int count,
-                   typename Stage1TierTraits<Tier>::PosT q_pos,
-                   typename Stage1TierTraits<Tier>::ScoreT* scores,
-                   typename Stage1TierTraits<Tier>::PosT* last_pos,
+                   typename Stage1WidthTraits<Width>::PosT q_pos,
+                   typename Stage1WidthTraits<Width>::ScoreT* scores,
+                   typename Stage1WidthTraits<Width>::PosT* last_pos,
                    std::vector<uint32_t>& dirty) {
     for (int i = 0; i < count; i++) {
         SeqId sid = sid_batch[i];
@@ -29,28 +29,28 @@ void scalar_golden(const SeqId* sid_batch, int count,
     }
 }
 
-template <Stage1Tier Tier>
+template <Stage1Width Width>
 void verify_case(const std::vector<SeqId>& sids,
-                 typename Stage1TierTraits<Tier>::PosT q_pos,
-                 const std::vector<typename Stage1TierTraits<Tier>::ScoreT>& scores_init,
-                 const std::vector<typename Stage1TierTraits<Tier>::PosT>& last_pos_init,
+                 typename Stage1WidthTraits<Width>::PosT q_pos,
+                 const std::vector<typename Stage1WidthTraits<Width>::ScoreT>& scores_init,
+                 const std::vector<typename Stage1WidthTraits<Width>::PosT>& last_pos_init,
                  const char* label) {
-    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
-    using PosT   = typename Stage1TierTraits<Tier>::PosT;
+    using ScoreT = typename Stage1WidthTraits<Width>::ScoreT;
+    using PosT   = typename Stage1WidthTraits<Width>::PosT;
 
     auto scores_g   = scores_init;
     auto last_pos_g = last_pos_init;
     std::vector<uint32_t> dirty_g;
-    scalar_golden<Tier>(sids.data(), static_cast<int>(sids.size()), q_pos,
+    scalar_golden<Width>(sids.data(), static_cast<int>(sids.size()), q_pos,
                         scores_g.data(), last_pos_g.data(), dirty_g);
 
     auto scores_s   = scores_init;
     auto last_pos_s = last_pos_init;
     std::vector<uint32_t> dirty_s;
-    flush_batch_simd<Tier>(sids.data(), static_cast<int>(sids.size()), q_pos,
+    flush_batch_simd<Width>(sids.data(), static_cast<int>(sids.size()), q_pos,
                            static_cast<void*>(scores_s.data()),
                            static_cast<void*>(last_pos_s.data()),
-                           dirty_s);
+                           dirty_s, /*remaining=*/0, /*cutoff_T=*/0);
 
     bool ok = (scores_g == scores_s) && (last_pos_g == last_pos_s) && (dirty_g == dirty_s);
     if (!ok) {
@@ -83,7 +83,7 @@ void test_t32_basic() {
     auto fresh = [&](const std::vector<SeqId>& sids, uint32_t q_pos, const char* label) {
         std::vector<uint32_t> scores(NUM_SEQS, 0);
         std::vector<uint32_t> lp(NUM_SEQS, SENT);
-        verify_case<Stage1Tier::T32>(sids, q_pos, scores, lp, label);
+        verify_case<Stage1Width::T32>(sids, q_pos, scores, lp, label);
     };
 
     fresh({}, 42, "t32:empty");
@@ -129,7 +129,7 @@ void test_t32_basic() {
         std::vector<uint32_t> lp(NUM_SEQS, SENT);
         scores[5] = 7; lp[5] = 99;
         std::vector<SeqId> sids = {5, 10, 5};
-        verify_case<Stage1Tier::T32>(sids, 100, scores, lp, "t32:prepop_scoreNZ");
+        verify_case<Stage1Width::T32>(sids, 100, scores, lp, "t32:prepop_scoreNZ");
     }
 
     // last_pos == q_pos case (no update)
@@ -138,7 +138,7 @@ void test_t32_basic() {
         std::vector<uint32_t> lp(NUM_SEQS, SENT);
         scores[5] = 1; lp[5] = 100;
         std::vector<SeqId> sids = {5};
-        verify_case<Stage1Tier::T32>(sids, 100, scores, lp, "t32:lp_eq_qpos");
+        verify_case<Stage1Width::T32>(sids, 100, scores, lp, "t32:lp_eq_qpos");
     }
 
     // Mixed: lane 0 unique with score==0, lane 1 conflict with lane 0
@@ -147,7 +147,7 @@ void test_t32_basic() {
         std::vector<uint32_t> lp(NUM_SEQS, SENT);
         std::vector<SeqId> sids;
         for (int i = 0; i < 16; i++) sids.push_back(i % 4);  // 4 unique sids, each x4
-        verify_case<Stage1Tier::T32>(sids, 100, scores, lp, "t32:4unique_x4");
+        verify_case<Stage1Width::T32>(sids, 100, scores, lp, "t32:4unique_x4");
     }
 
     // Larger random with overlaps
@@ -158,7 +158,61 @@ void test_t32_basic() {
         for (int i = 0; i < 200; i++) sids.push_back(rng2() % 64);  // many duplicates
         std::vector<uint32_t> scores(NUM_SEQS, 0);
         std::vector<uint32_t> lp(NUM_SEQS, SENT);
-        verify_case<Stage1Tier::T32>(sids, 1234, scores, lp, "t32:200_dense_dup");
+        verify_case<Stage1Width::T32>(sids, 1234, scores, lp, "t32:200_dense_dup");
+    }
+}
+
+// Directly verify the cutoff NTTP: accumulating a sequence of position groups
+// with the cutoff engaged (remaining = G - g, cutoff_T = T) must never drop a
+// sequence that reaches the final threshold T, and must never inflate one that
+// does not.  Dead-sid pruning may leave below-threshold sequences with smaller
+// scores, which is irrelevant to the candidate set.
+void test_t32_cutoff_invariance() {
+    constexpr uint32_t NUM_SEQS = 2000;
+    constexpr uint32_t SENT = std::numeric_limits<uint32_t>::max();
+    std::mt19937 rng(123);
+
+    for (int trial = 0; trial < 40; trial++) {
+        int G = 5 + static_cast<int>(rng() % 20);  // number of position groups
+        std::vector<std::vector<SeqId>> groups(G);
+        for (int g = 0; g < G; g++) {
+            int cnt = 1 + static_cast<int>(rng() % 40);  // mixes scalar + AVX paths
+            for (int j = 0; j < cnt; j++) groups[g].push_back(rng() % NUM_SEQS);
+        }
+        uint32_t T = 1 + (rng() % static_cast<uint32_t>(G));  // threshold 1..G
+
+        auto run = [&](bool cutoff) {
+            std::vector<uint32_t> scores(NUM_SEQS, 0);
+            std::vector<uint32_t> lp(NUM_SEQS, SENT);
+            std::vector<uint32_t> dirty;
+            for (int g = 0; g < G; g++) {
+                uint32_t remaining = cutoff ? static_cast<uint32_t>(G - g) : 0;
+                uint32_t cutoff_T = cutoff ? T : 0;
+                flush_batch_simd<Stage1Width::T32>(
+                    groups[g].data(), static_cast<int>(groups[g].size()),
+                    static_cast<uint32_t>(g),
+                    static_cast<void*>(scores.data()),
+                    static_cast<void*>(lp.data()),
+                    dirty, remaining, cutoff_T);
+            }
+            return scores;
+        };
+
+        auto sc_no  = run(false);
+        auto sc_cut = run(true);
+
+        bool ok = true;
+        for (uint32_t s = 0; s < NUM_SEQS; s++) {
+            // Qualifying sids: score must be identical under the cutoff.
+            if (sc_no[s] >= T && sc_cut[s] != sc_no[s]) { ok = false; break; }
+            // Cutoff must never push a below-threshold sid to qualify.
+            if (sc_cut[s] >= T && sc_no[s] < T) { ok = false; break; }
+        }
+        if (!ok) {
+            std::fprintf(stderr, "FAIL cutoff_invariance trial=%d G=%d T=%u\n",
+                         trial, G, T);
+        }
+        CHECK(ok);
     }
 }
 
@@ -171,13 +225,13 @@ void test_t8_t16() {
         std::vector<uint8_t> scores(NUM_SEQS, 0);
         std::vector<uint8_t> lp(NUM_SEQS, std::numeric_limits<uint8_t>::max());
         std::vector<SeqId> sids = {3, 7, 3, 100, 50, 7, 7};
-        verify_case<Stage1Tier::T8>(sids, 50, scores, lp, "t8:basic");
+        verify_case<Stage1Width::T8>(sids, 50, scores, lp, "t8:basic");
     }
     {
         std::vector<uint16_t> scores(NUM_SEQS, 0);
         std::vector<uint16_t> lp(NUM_SEQS, std::numeric_limits<uint16_t>::max());
         std::vector<SeqId> sids = {3, 7, 3, 100, 50, 7, 7};
-        verify_case<Stage1Tier::T16>(sids, 50, scores, lp, "t16:basic");
+        verify_case<Stage1Width::T16>(sids, 50, scores, lp, "t16:basic");
     }
 }
 
@@ -188,6 +242,7 @@ int main() {
     check_required_tier_or_skip();
 
     test_t32_basic();
+    test_t32_cutoff_invariance();
     test_t8_t16();
 
     TEST_SUMMARY();

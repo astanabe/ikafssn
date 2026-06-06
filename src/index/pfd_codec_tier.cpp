@@ -389,7 +389,7 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
         return 0;
     }
 
-    // Pass 1: classify each distinct sid by occ_count.
+    // Classify each distinct sid by occ_count.
     std::vector<std::uint8_t> kinds(distinct_count);
     std::uint32_t partition_count = 0, short1_count = 0, short2_count = 0;
     std::uint32_t short2_position_count = 0;
@@ -419,7 +419,7 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
         set_kind_bits(out.data() + kind_map_off, k, kinds[k]);
     }
 
-    // Pass 2: emit partition groups in distinct_sid order.
+    // Emit partition groups in distinct_sid order.
     std::uint32_t pos_cursor = 0;
     for (std::uint32_t k = 0; k < distinct_count; k++) {
         const std::uint32_t cnt = occ_count[k];
@@ -432,7 +432,7 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
         pos_cursor += cnt;
     }
 
-    // Pass 3: short_occ1 — concatenated 1-position-per-cluster FOR stream.
+    // short_occ1 — concatenated 1-position-per-cluster FOR stream.
     if (short1_count > 0) {
         std::vector<std::uint32_t> short1_buf;
         short1_buf.reserve(short1_count);
@@ -446,7 +446,7 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
         encode_for_stream(short1_buf.data(), short1_count, out);
     }
 
-    // Pass 4: short_occ_ge2 — u8 occ_count[] + concatenated FOR stream.
+    // short_occ_ge2 — u8 occ_count[] + concatenated FOR stream.
     // occ_count[k] is in [2, freq_threshold_part] (<= 255) for short_occ_ge2
     // entries, so the static_cast<uint8_t> never loses information.
     if (short2_count > 0) {

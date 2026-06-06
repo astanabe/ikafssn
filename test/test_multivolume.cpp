@@ -512,7 +512,7 @@ static void test_multivolume_k9() {
 
 // Drive run_search<>() in mode 2 with two different posting_budget
 // values: one large enough that Stage 1 + Stage 2 share a single batch,
-// one tiny enough that each volume goes through a Stage 2 Tier1
+// one tiny enough that each volume goes through a Stage 2 minimum-budget
 // fallback (range planner emits per-volume single-vol batches). With
 // the range-WILLNEED planner the per-volume kpx ranges must match the
 // single-batch result.
@@ -578,7 +578,7 @@ static void test_mode2_batched_equals_single() {
         in.posting_budget    = budget;
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
-        in.tier              = Stage1Tier::T32;
+        in.width             = Stage1Width::T32;
         return run_search<uint16_t>(in);
     };
 
@@ -587,7 +587,7 @@ static void test_mode2_batched_equals_single() {
     big_budget = std::max<uint64_t>(big_budget * 2, 1u << 20);
     auto big = run_with_budget(big_budget);
 
-    auto small = run_with_budget(1);  // forces single-volume Tier1 batches
+    auto small = run_with_budget(1);  // forces single-volume minimum-budget batches
 
     auto key = [](const OrchestratorHit& h) {
         return std::tuple<size_t, uint16_t, uint16_t, uint32_t, int32_t,
@@ -671,7 +671,7 @@ static void test_mode1_batched_equals_single() {
         in.posting_budget    = budget;
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
-        in.tier              = Stage1Tier::T32;
+        in.width             = Stage1Width::T32;
         return run_search<uint16_t>(in);
     };
 
@@ -682,7 +682,7 @@ static void test_mode1_batched_equals_single() {
     auto big = run_with_budget(single_budget);
 
     // Small budget: each volume's kix_full_size on its own exceeds the
-    // budget, so plan_stage1_batches emits one (tier1) batch per volume.
+    // budget, so plan_stage1_batches emits one minimum-budget batch per volume.
     uint64_t small_budget = 1;  // any positive < per-volume size
     auto small = run_with_budget(small_budget);
 
@@ -707,8 +707,8 @@ static void test_mode1_batched_equals_single() {
     // / parallel write to exercise multiple TBB workers. This many-query,
     // shared-conserved-k-mer shape is exactly the decode cache's target:
     // every query re-probes the same k-mers in one volume. Run with a
-    // large budget (Tier4 => decode cache engaged), and again with budget 1
-    // (Tier1 => uncached on-the-fly decode), and require byte-identical
+    // large budget (decode cache engaged), and again with budget 1
+    // (minimum budget => uncached on-the-fly decode), and require byte-identical
     // output to confirm the per-volume decode cache changes only
     // performance, never the result. A repeat of the cached run also pins
     // the fold's determinism.
@@ -741,13 +741,13 @@ static void test_mode1_batched_equals_single() {
             in.posting_budget    = budget;
             in.logger            = &logger;
             in.max_num_seqs      = max_num_seqs;
-            in.tier              = Stage1Tier::T32;
+            in.width             = Stage1Width::T32;
             return run_search<uint16_t>(in);
         };
 
-        auto cached  = run(single_budget);  // Tier4: decode cache engaged
+        auto cached  = run(single_budget);  // large budget: decode cache engaged
         auto cached2 = run(single_budget);  // determinism repeat
-        auto uncached = run(1);             // Tier1: on-the-fly decode
+        auto uncached = run(1);             // minimum budget: on-the-fly decode
         CHECK_EQ(cached.size(), cached2.size());
         CHECK(sorted_keys(cached) == sorted_keys(cached2));
         CHECK_EQ(cached.size(), uncached.size());
@@ -830,7 +830,7 @@ static void test_mode1_cached_equals_uncached_variants() {
             in.posting_budget    = budget;
             in.logger            = &logger;
             in.max_num_seqs      = max_num_seqs;
-            in.tier              = Stage1Tier::T32;
+            in.width             = Stage1Width::T32;
             return run_search<uint16_t>(in);
         };
 
@@ -865,6 +865,56 @@ static void test_mode1_cached_equals_uncached_variants() {
         cfg.nresult                 = 0;
         cfg.mode                    = 1;
         compare("degenerate", degen_query, cfg);
+    }
+
+    // Cutoff-firing threshold (T = 5 > 1) with top-N off: the single-mode
+    // cost-ordered reorder + cutoff must still match the uncached path.
+    {
+        SearchConfig cfg;
+        cfg.stage1.stage1_topn      = 0;
+        cfg.stage1.min_stage1_score = 5;
+        cfg.nresult                 = 0;
+        cfg.mode                    = 1;
+        compare("coverscore_T5", g_query_fj, cfg);
+    }
+
+    // matchscore + cutoff: the cutoff's `remaining` is the distinct-position
+    // count, which upper-bounds the flush score for matchscore too (the kernel
+    // dedups by last_pos == q_pos regardless of score type).  Verify the
+    // pruning leaves the matchscore candidate set unchanged at T > 1.
+    {
+        SearchConfig cfg;
+        cfg.stage1.stage1_topn       = 0;
+        cfg.stage1.min_stage1_score  = 5;
+        cfg.stage1.stage1_score_type = 0;  // matchscore
+        cfg.nresult                  = 0;
+        cfg.mode                     = 1;
+        compare("matchscore_T5", g_query_fj, cfg);
+    }
+
+    // Cutoff firing AND top-N on (ties-inclusive) under the reorder.
+    {
+        SearchConfig cfg;
+        cfg.stage1.stage1_topn      = 3;
+        cfg.stage1.min_stage1_score = 5;
+        cfg.nresult                 = 0;
+        cfg.mode                    = 1;
+        compare("topn3_T5", g_query_fj, cfg);
+    }
+
+    // Cutoff firing on a degenerate query (multi-k-mer position groups).
+    {
+        std::string degen_query = g_query_fj;
+        CHECK(degen_query.size() > 60);
+        degen_query[50] = 'R';
+        SearchConfig cfg;
+        cfg.stage1.stage1_topn      = 0;
+        cfg.stage1.min_stage1_score = 3;
+        cfg.accept_qdegen           = 1;
+        cfg.max_degen_expand        = 16;
+        cfg.nresult                 = 0;
+        cfg.mode                    = 1;
+        compare("degenerate_T3", degen_query, cfg);
     }
 
     for (auto& ksx : ksxs) ksx.close();

@@ -707,7 +707,7 @@ static void test_search_stage1_both_template() {
     auto qdata_opt = preprocess_query<uint32_t>(g_query_seq, k, nullptr, config, t, masks_opt);
 
     Stage1Buffer buf;
-    buf.tier = Stage1Tier::T32;
+    buf.width = Stage1Width::T32;
     buf.ensure_capacity(kix_cod.num_sequences());
 
     JobState state;
@@ -741,7 +741,7 @@ static void test_search_stage1_both_template() {
     kix_opt.close();
 }
 
-// v10: -min_query_length integration.  Verify that
+// -min_query_length integration.  Verify that
 //   1. queries shorter than config.min_query_length are skipped with
 //      kSkipQueryTooShort and produce a clear skip_detail message;
 //   2. queries at or above the threshold preprocess normally.
@@ -814,25 +814,6 @@ static void test_run_search_both_decode_cache_equiv() {
     std::vector<VolumeMeta> volumes_cod{make_meta(prefix_cod)};
     std::vector<VolumeMeta> volumes_opt{make_meta(prefix_opt)};
 
-    SearchConfig config;
-    config.stage1.stage1_topn      = 100;
-    config.stage1.min_stage1_score = 1;
-    config.nresult                 = 0;
-    config.t                       = t;
-    config.mode                    = 1;
-    config.strand                  = 1;  // forward
-
-    const auto masks_cod = get_seed_masks(k, t, TemplateType::kCoding);
-    const auto masks_opt = get_seed_masks(k, t, TemplateType::kOptimal);
-    auto qdata_cod = preprocess_query<uint32_t>(g_query_seq, k, nullptr, config, t, masks_cod);
-    auto qdata_opt = preprocess_query<uint32_t>(g_query_seq, k, nullptr, config, t, masks_opt);
-
-    std::vector<QueryBundle<uint32_t>> bundles(1);
-    bundles[0].query_id        = &g_query_seq;
-    bundles[0].qdata_primary   = &qdata_cod;
-    bundles[0].qdata_secondary = &qdata_opt;
-    std::vector<uint8_t> skip(1, 0);
-
     Logger logger(Logger::kError);
     uint32_t max_num_seqs =
         std::max(volumes_cod[0].num_sequences, volumes_opt[0].num_sequences);
@@ -840,24 +821,8 @@ static void test_run_search_both_decode_cache_equiv() {
         (volumes_cod[0].kix_full_size + volumes_opt[0].kix_full_size) * 2;
     big_budget = std::max<uint64_t>(big_budget, 1u << 20);
 
-    auto run = [&](uint64_t budget) {
-        RunSearchInputs<uint32_t> in;
-        in.volumes_cod       = volumes_cod;
-        in.volumes_opt       = volumes_opt;
-        in.ksx_per_volume.assign(1, &ksx);
-        in.oid_filters.resize(1);
-        in.queries           = &bundles;
-        in.query_skip_reason = &skip;
-        in.config            = config;
-        in.both_mode         = true;
-        in.k                 = k;
-        in.nthread           = 4;
-        in.posting_budget    = budget;
-        in.logger            = &logger;
-        in.max_num_seqs      = max_num_seqs;
-        in.tier              = Stage1Tier::T32;
-        return run_search<uint32_t>(in);
-    };
+    const auto masks_cod = get_seed_masks(k, t, TemplateType::kCoding);
+    const auto masks_opt = get_seed_masks(k, t, TemplateType::kOptimal);
 
     auto key = [](const OrchestratorHit& h) {
         return std::tuple<size_t, uint16_t, uint16_t, uint32_t, uint32_t>(
@@ -865,18 +830,107 @@ static void test_run_search_both_decode_cache_equiv() {
             h.cr.stage1_score);
     };
     auto sorted_keys = [&](const std::vector<OrchestratorHit>& v) {
-        std::vector<decltype(key(v.front()))> ks;
+        std::vector<decltype(key(*v.begin()))> ks;
         ks.reserve(v.size());
         for (auto& h : v) ks.push_back(key(h));
         std::sort(ks.begin(), ks.end());
         return ks;
     };
 
-    auto cached   = run(big_budget);  // cod + opt decode caches engaged
-    auto uncached = run(1);           // on-the-fly decode
-    CHECK(!cached.empty());
-    CHECK_EQ(cached.size(), uncached.size());
-    CHECK(sorted_keys(cached) == sorted_keys(uncached));
+    // The cost-ordered both-mode Stage 1 (cached, big budget) must produce the
+    // same candidate set as the on-the-fly merge (uncached, budget 1) for every
+    // variant: top-N off/on, a cutoff-firing threshold (T > 1), and a
+    // degenerate query that stacks multiple k-mers on one position.
+    auto compare = [&](const char* label, const std::string& qseq,
+                       const SearchConfig& cfg, bool expect_nonempty) {
+        std::fprintf(stderr, "   variant: %s\n", label);
+        SearchConfig config = cfg;
+        config.t      = t;
+        config.strand = 1;  // forward
+
+        auto qdata_cod = preprocess_query<uint32_t>(qseq, k, nullptr, config, t, masks_cod);
+        auto qdata_opt = preprocess_query<uint32_t>(qseq, k, nullptr, config, t, masks_opt);
+
+        std::vector<QueryBundle<uint32_t>> bundles(1);
+        bundles[0].query_id        = &qseq;
+        bundles[0].qdata_primary   = &qdata_cod;
+        bundles[0].qdata_secondary = &qdata_opt;
+        std::vector<uint8_t> skip(1, 0);
+
+        auto run = [&](uint64_t budget) {
+            RunSearchInputs<uint32_t> in;
+            in.volumes_cod       = volumes_cod;
+            in.volumes_opt       = volumes_opt;
+            in.ksx_per_volume.assign(1, &ksx);
+            in.oid_filters.resize(1);
+            in.queries           = &bundles;
+            in.query_skip_reason = &skip;
+            in.config            = config;
+            in.both_mode         = true;
+            in.k                 = k;
+            in.nthread           = 4;
+            in.posting_budget    = budget;
+            in.logger            = &logger;
+            in.max_num_seqs      = max_num_seqs;
+            in.width             = Stage1Width::T32;
+            return run_search<uint32_t>(in);
+        };
+
+        auto cached   = run(big_budget);  // cod + opt decode caches engaged (C9)
+        auto uncached = run(1);           // on-the-fly decode, no reorder
+        if (expect_nonempty) CHECK(!cached.empty());
+        CHECK_EQ(cached.size(), uncached.size());
+        CHECK(sorted_keys(cached) == sorted_keys(uncached));
+    };
+
+    auto base_cfg = [&]() {
+        SearchConfig c;
+        c.nresult = 0;
+        c.mode    = 1;
+        c.stage1.min_stage1_score = 1;
+        c.stage1.stage1_topn      = 100;
+        return c;
+    };
+
+    // top-N on, threshold 1 (cutoff disabled).
+    compare("topn100_T1", g_query_seq, base_cfg(), true);
+
+    // top-N off (topn 0 finish path), threshold 1.
+    {
+        SearchConfig c = base_cfg();
+        c.stage1.stage1_topn = 0;
+        compare("topn0_T1", g_query_seq, c, true);
+    }
+
+    // Cutoff fires (T = 5 > 1), top-N off.
+    {
+        SearchConfig c = base_cfg();
+        c.stage1.stage1_topn      = 0;
+        c.stage1.min_stage1_score = 5;
+        compare("topn0_T5", g_query_seq, c, false);
+    }
+
+    // Cutoff fires (T = 5 > 1) AND top-N on (ties-inclusive).
+    {
+        SearchConfig c = base_cfg();
+        c.stage1.stage1_topn      = 3;
+        c.stage1.min_stage1_score = 5;
+        compare("topn3_T5", g_query_seq, c, false);
+    }
+
+    // Degenerate query: an IUPAC ambiguity stacks >=2 k-mers per affected
+    // position, exercising multi-k-mer position groups, with the cutoff on.
+    {
+        std::string degen = g_query_seq;
+        CHECK(degen.size() > 60);
+        degen[50] = 'R';
+        SearchConfig c = base_cfg();
+        c.stage1.stage1_topn      = 0;
+        c.stage1.min_stage1_score = 3;
+        c.accept_qdegen           = 1;
+        c.max_degen_expand        = 16;
+        compare("degenerate_T3", degen, c, false);
+    }
 
     ksx.close();
 }

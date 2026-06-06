@@ -1,6 +1,6 @@
 // bench_stage1 — measure Stage 1 batch SIMD update kernel throughput per tier.
 //
-// The Stage 1 hot loop calls flush_batch_simd<Tier> with sid batches; this
+// The Stage 1 hot loop calls flush_batch_simd<Width> with sid batches; this
 // benchmark calls the kernel directly with synthetic batches so per-tier
 // dispatch overhead, gather/scatter cost, and the conflict-detection scalar
 // fallback can be measured in isolation.
@@ -41,11 +41,11 @@ void BM_Stage1FlushBatchT32(benchmark::State& state) {
     dirty.reserve(static_cast<size_t>(batch_size));
 
     for (auto _ : state) {
-        flush_batch_simd<Stage1Tier::T32>(
+        flush_batch_simd<Stage1Width::T32>(
             sids.data(), batch_size, /*q_pos=*/42u,
             static_cast<void*>(scores.data()),
             static_cast<void*>(last_pos.data()),
-            dirty);
+            dirty, /*remaining=*/0u, /*cutoff_T=*/0u);
 
         // Reset state without skewing the timed region.
         state.PauseTiming();
@@ -85,7 +85,7 @@ void BM_Stage1ClearDirtyT32(benchmark::State& state) {
     const size_t num_dirty   = static_cast<size_t>(state.range(1));
 
     Stage1Buffer buf;
-    buf.tier = Stage1Tier::T32;
+    buf.width = Stage1Width::T32;
     buf.ensure_capacity(static_cast<uint32_t>(num_seqs));
 
     std::mt19937 rng(0xBADF00D);
@@ -95,8 +95,8 @@ void BM_Stage1ClearDirtyT32(benchmark::State& state) {
         sample.push_back(static_cast<uint32_t>(rng() % num_seqs));
     }
 
-    auto* scores   = score_ptr<Stage1Tier::T32>(buf);
-    auto* last_pos = last_pos_ptr<Stage1Tier::T32>(buf);
+    auto* scores   = score_ptr<Stage1Width::T32>(buf);
+    auto* last_pos = last_pos_ptr<Stage1Width::T32>(buf);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -107,7 +107,7 @@ void BM_Stage1ClearDirtyT32(benchmark::State& state) {
             buf.dirty.push_back(sid);
         }
         state.ResumeTiming();
-        buf.clear_dirty_typed<Stage1Tier::T32>();
+        buf.clear_dirty_typed<Stage1Width::T32>();
     }
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * num_dirty);
 }
