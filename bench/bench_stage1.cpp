@@ -1,7 +1,7 @@
-// bench_stage1 — measure Stage 1 batch SIMD update kernel throughput per tier.
+// bench_stage1 — measure Stage 1 batch SIMD update kernel throughput per width.
 //
-// The Stage 1 hot loop calls flush_batch_simd<Tier> with sid batches; this
-// benchmark calls the kernel directly with synthetic batches so per-tier
+// The Stage 1 hot loop calls flush_batch_simd<Width> with sid batches; this
+// benchmark calls the kernel directly with synthetic batches so per-width
 // dispatch overhead, gather/scatter cost, and the conflict-detection scalar
 // fallback can be measured in isolation.
 
@@ -23,12 +23,12 @@ using namespace ikafssn;
 namespace {
 
 void BM_Stage1FlushBatchT32(benchmark::State& state) {
-    SimdCap tier = static_cast<SimdCap>(state.range(0));
+    SimdCap width = static_cast<SimdCap>(state.range(0));
     const int    batch_size = static_cast<int>(state.range(1));
     const size_t num_seqs   = static_cast<size_t>(state.range(2));
 
-    bench::apply_force_tier(state, tier);
-    bench::label_tier(state, tier);
+    bench::apply_force_tier(state, width);
+    bench::label_tier(state, width);
 
     std::vector<uint32_t> scores(num_seqs, 0);
     std::vector<uint32_t> last_pos(num_seqs, std::numeric_limits<uint32_t>::max());
@@ -41,7 +41,7 @@ void BM_Stage1FlushBatchT32(benchmark::State& state) {
     dirty.reserve(static_cast<size_t>(batch_size));
 
     for (auto _ : state) {
-        flush_batch_simd<Stage1Tier::T32>(
+        flush_batch_simd<Stage1Width::T32>(
             sids.data(), batch_size, /*q_pos=*/42u,
             static_cast<void*>(scores.data()),
             static_cast<void*>(last_pos.data()),
@@ -85,7 +85,7 @@ void BM_Stage1ClearDirtyT32(benchmark::State& state) {
     const size_t num_dirty   = static_cast<size_t>(state.range(1));
 
     Stage1Buffer buf;
-    buf.tier = Stage1Tier::T32;
+    buf.width = Stage1Width::T32;
     buf.ensure_capacity(static_cast<uint32_t>(num_seqs));
 
     std::mt19937 rng(0xBADF00D);
@@ -95,8 +95,8 @@ void BM_Stage1ClearDirtyT32(benchmark::State& state) {
         sample.push_back(static_cast<uint32_t>(rng() % num_seqs));
     }
 
-    auto* scores   = score_ptr<Stage1Tier::T32>(buf);
-    auto* last_pos = last_pos_ptr<Stage1Tier::T32>(buf);
+    auto* scores   = score_ptr<Stage1Width::T32>(buf);
+    auto* last_pos = last_pos_ptr<Stage1Width::T32>(buf);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -107,7 +107,7 @@ void BM_Stage1ClearDirtyT32(benchmark::State& state) {
             buf.dirty.push_back(sid);
         }
         state.ResumeTiming();
-        buf.clear_dirty_typed<Stage1Tier::T32>();
+        buf.clear_dirty_typed<Stage1Width::T32>();
     }
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * num_dirty);
 }

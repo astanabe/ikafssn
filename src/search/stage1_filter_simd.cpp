@@ -11,16 +11,16 @@ namespace ikafssn {
 
 namespace {
 
-template <Stage1Tier Tier>
+template <Stage1Width Width>
 void flush_scalar_impl(const SeqId* sid_batch, int count,
-                       typename Stage1TierTraits<Tier>::PosT q_pos,
-                       typename Stage1TierTraits<Tier>::ScoreT* scores,
-                       typename Stage1TierTraits<Tier>::PosT* last_pos,
+                       typename Stage1WidthTraits<Width>::PosT q_pos,
+                       typename Stage1WidthTraits<Width>::ScoreT* scores,
+                       typename Stage1WidthTraits<Width>::PosT* last_pos,
                        std::vector<uint32_t>& dirty,
                        uint32_t cutoff_remaining, uint32_t cutoff_threshold) {
     for (int i = 0; i < count; i++) {
         SeqId sid = sid_batch[i];
-        // C9 cutoff: skip sequences that can no longer reach the threshold.
+        // Score cutoff: skip sequences that can no longer reach the threshold.
         if (cutoff_threshold &&
             static_cast<uint32_t>(scores[sid]) + cutoff_remaining < cutoff_threshold)
             continue;
@@ -33,7 +33,7 @@ void flush_scalar_impl(const SeqId* sid_batch, int count,
 }
 
 #if defined(__x86_64__)
-// Full 16-lane AVX-512 batch update for the T32 tier. Uses CD's vpconflictd to
+// Full 16-lane AVX-512 batch update for the T32 width. Uses CD's vpconflictd to
 // detect duplicates within the batch — duplicate lanes (those with at least one
 // lower-index lane sharing the same sid) fall back to scalar so that the
 // post-scatter state is observed, which preserves the scalar iteration order
@@ -71,7 +71,7 @@ void flush_avx512_t32(const SeqId* sid_batch, int count,
         const __m512i sc_old = _mm512_mask_i32gather_epi32(
             zero, unique_mask, sids, scores, 4);
 
-        // C9 cutoff: a unique lane is dead when sc_old + remaining < threshold;
+        // Score cutoff: a unique lane is dead when sc_old + remaining < threshold;
         // dead lanes are dropped from all updates.  cutoff_threshold == 0 leaves
         // alive == unique (sc_old + 0 is never < 0), i.e. the cutoff is off.
         __mmask16 alive = unique_mask;
@@ -151,19 +151,19 @@ void flush_avx512_t32(const SeqId* sid_batch, int count,
 
 } // namespace
 
-template <Stage1Tier Tier>
+template <Stage1Width Width>
 void flush_batch_simd(const SeqId* sid_batch, int count,
-                      typename Stage1TierTraits<Tier>::PosT q_pos,
+                      typename Stage1WidthTraits<Width>::PosT q_pos,
                       void* scores_void, void* last_pos_void,
                       std::vector<uint32_t>& dirty,
                       uint32_t cutoff_remaining, uint32_t cutoff_threshold) {
-    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
-    using PosT   = typename Stage1TierTraits<Tier>::PosT;
+    using ScoreT = typename Stage1WidthTraits<Width>::ScoreT;
+    using PosT   = typename Stage1WidthTraits<Width>::PosT;
     auto* scores   = reinterpret_cast<ScoreT*>(scores_void);
     auto* last_pos = reinterpret_cast<PosT*>(last_pos_void);
 
 #if defined(__x86_64__)
-    if constexpr (Tier == Stage1Tier::T32) {
+    if constexpr (Width == Stage1Width::T32) {
         // AVX-512 BW/VBMI/VBMI2 share one kernel — VBMI's vpermb and
         // VBMI2's compress/expand do not help when all values are uint32_t
         // and updates are gather+conflict+scatter shaped. AVX2 lacks
@@ -179,15 +179,15 @@ void flush_batch_simd(const SeqId* sid_batch, int count,
     }
 #endif
 
-    flush_scalar_impl<Tier>(sid_batch, count, q_pos, scores, last_pos, dirty,
+    flush_scalar_impl<Width>(sid_batch, count, q_pos, scores, last_pos, dirty,
                             cutoff_remaining, cutoff_threshold);
 }
 
-template void flush_batch_simd<Stage1Tier::T8> (
+template void flush_batch_simd<Stage1Width::T8> (
     const SeqId*, int, uint8_t,  void*, void*, std::vector<uint32_t>&, uint32_t, uint32_t);
-template void flush_batch_simd<Stage1Tier::T16>(
+template void flush_batch_simd<Stage1Width::T16>(
     const SeqId*, int, uint16_t, void*, void*, std::vector<uint32_t>&, uint32_t, uint32_t);
-template void flush_batch_simd<Stage1Tier::T32>(
+template void flush_batch_simd<Stage1Width::T32>(
     const SeqId*, int, uint32_t, void*, void*, std::vector<uint32_t>&, uint32_t, uint32_t);
 
 } // namespace ikafssn

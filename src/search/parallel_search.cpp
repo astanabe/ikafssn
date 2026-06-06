@@ -197,7 +197,7 @@ void stage1_one_strand_both(
     s1cfg_acc.min_stage1_score = 1;
     s1cfg_acc.stage1_topn = 0;
 
-    // C9: count distinct merged query positions (Nq) so the score cutoff can be
+    // Count distinct merged query positions (Nq) so the score cutoff can be
     // engaged.  A sequence's final score is at most the number of distinct
     // positions it matches, so once score + remaining < unified_threshold it can
     // never reach the threshold and its scatter is skipped.

@@ -12,25 +12,25 @@ namespace ikafssn {
 class KixReader;
 class OidFilter;
 
-// Tier selection for Stage1Buffer: controls entry size per sequence.
-enum class Stage1Tier : uint8_t { T8 = 0, T16 = 1, T32 = 2 };
+// Width selection for Stage1Buffer: controls entry size per sequence.
+enum class Stage1Width : uint8_t { T8 = 0, T16 = 1, T32 = 2 };
 
-// Determine the position type (PosT) and score type (ScoreT) for a tier.
-// They are the same width because last_pos and score share the tier bit width.
-template <Stage1Tier Tier> struct Stage1TierTraits;
-template <> struct Stage1TierTraits<Stage1Tier::T8>  { using PosT = uint8_t;  using ScoreT = uint8_t;  };
-template <> struct Stage1TierTraits<Stage1Tier::T16> { using PosT = uint16_t; using ScoreT = uint16_t; };
-template <> struct Stage1TierTraits<Stage1Tier::T32> { using PosT = uint32_t; using ScoreT = uint32_t; };
+// Determine the position type (PosT) and score type (ScoreT) for a width.
+// They are the same width because last_pos and score share the width bit width.
+template <Stage1Width Width> struct Stage1WidthTraits;
+template <> struct Stage1WidthTraits<Stage1Width::T8>  { using PosT = uint8_t;  using ScoreT = uint8_t;  };
+template <> struct Stage1WidthTraits<Stage1Width::T16> { using PosT = uint16_t; using ScoreT = uint16_t; };
+template <> struct Stage1WidthTraits<Stage1Width::T32> { using PosT = uint32_t; using ScoreT = uint32_t; };
 
 // SoA Stage 1 buffer: score and last_pos kept in separate cache-line aligned
 // heap buffers (64-byte alignment for AVX-512 gather/scatter friendly access).
-// The underlying byte storage is reinterpret_cast to the tier-specific element
+// The underlying byte storage is reinterpret_cast to the width-specific element
 // type via the score_ptr / last_pos_ptr helpers below.
 struct Stage1Buffer {
-    AlignedBuffer<uint8_t> score_data;     // tier-erased: bytes for score[]
-    AlignedBuffer<uint8_t> last_pos_data;  // tier-erased: bytes for last_pos[]
+    AlignedBuffer<uint8_t> score_data;     // width-erased: bytes for score[]
+    AlignedBuffer<uint8_t> last_pos_data;  // width-erased: bytes for last_pos[]
     std::vector<uint32_t>  dirty;          // sentinel-marked seq IDs touched in this query batch
-    Stage1Tier tier = Stage1Tier::T32;
+    Stage1Width width = Stage1Width::T32;
     uint32_t   capacity = 0;               // num_seqs capacity
 
     Stage1Buffer() = default;
@@ -42,33 +42,33 @@ struct Stage1Buffer {
     void ensure_capacity(uint32_t num_seqs);
     void reset_all();
 
-    template <Stage1Tier Tier>
+    template <Stage1Width Width>
     void clear_dirty_typed();
 };
 
 // SoA accessors: header-inline so the hot path is fully visible to the optimizer.
-template <Stage1Tier Tier>
-inline typename Stage1TierTraits<Tier>::ScoreT* score_ptr(Stage1Buffer& buf) {
-    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
+template <Stage1Width Width>
+inline typename Stage1WidthTraits<Width>::ScoreT* score_ptr(Stage1Buffer& buf) {
+    using ScoreT = typename Stage1WidthTraits<Width>::ScoreT;
     return reinterpret_cast<ScoreT*>(buf.score_data.data());
 }
 
-template <Stage1Tier Tier>
-inline typename Stage1TierTraits<Tier>::PosT* last_pos_ptr(Stage1Buffer& buf) {
-    using PosT = typename Stage1TierTraits<Tier>::PosT;
+template <Stage1Width Width>
+inline typename Stage1WidthTraits<Width>::PosT* last_pos_ptr(Stage1Buffer& buf) {
+    using PosT = typename Stage1WidthTraits<Width>::PosT;
     return reinterpret_cast<PosT*>(buf.last_pos_data.data());
 }
 
-extern template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T8>();
-extern template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T16>();
-extern template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T32>();
+extern template void Stage1Buffer::clear_dirty_typed<Stage1Width::T8>();
+extern template void Stage1Buffer::clear_dirty_typed<Stage1Width::T16>();
+extern template void Stage1Buffer::clear_dirty_typed<Stage1Width::T32>();
 
-// Determine the optimal tier based on max query k-mer position count and max position value.
-inline Stage1Tier select_tier(uint32_t max_kmer_positions, uint32_t max_position_value) {
+// Determine the optimal width based on max query k-mer position count and max position value.
+inline Stage1Width select_width(uint32_t max_kmer_positions, uint32_t max_position_value) {
     uint32_t limit = std::max(max_kmer_positions, max_position_value);
-    if (limit < 255) return Stage1Tier::T8;
-    if (limit < 65535) return Stage1Tier::T16;
-    return Stage1Tier::T32;
+    if (limit < 255) return Stage1Width::T8;
+    if (limit < 65535) return Stage1Width::T16;
+    return Stage1Width::T32;
 }
 
 struct Stage1Candidate {
@@ -80,7 +80,7 @@ struct Stage1Config {
     uint32_t stage1_topn = 0;
     uint32_t min_stage1_score = 1;
     uint8_t  stage1_score_type = 1;
-    // Score-cutoff early termination (C9): when cutoff_threshold > 0, a sequence
+    // Score-cutoff early termination: when cutoff_threshold > 0, a sequence
     // whose current score + cutoff_remaining (max additional positions it could
     // still match) is below cutoff_threshold can no longer reach the final
     // threshold, so its scatter / dirty update is skipped.  cutoff_remaining is

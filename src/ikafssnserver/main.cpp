@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
     init_simd_dispatch(&logger);
     config.log_level = logger.level();
 
-    // Search config (renamed options)
+    // Search config
     config.search_config.stage1.stage1_topn =
         static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
     {

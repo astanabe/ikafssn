@@ -578,7 +578,7 @@ static void test_mode2_batched_equals_single() {
         in.posting_budget    = budget;
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
-        in.tier              = Stage1Tier::T32;
+        in.width              = Stage1Width::T32;
         return run_search<uint16_t>(in);
     };
 
@@ -671,7 +671,7 @@ static void test_mode1_batched_equals_single() {
         in.posting_budget    = budget;
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
-        in.tier              = Stage1Tier::T32;
+        in.width              = Stage1Width::T32;
         return run_search<uint16_t>(in);
     };
 
@@ -736,7 +736,7 @@ static void test_mode1_batched_equals_single() {
             in.posting_budget    = single_budget;
             in.logger            = &logger;
             in.max_num_seqs      = max_num_seqs;
-            in.tier              = Stage1Tier::T32;
+            in.width              = Stage1Width::T32;
             return run_search<uint16_t>(in);
         };
 

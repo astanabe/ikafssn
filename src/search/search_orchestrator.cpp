@@ -27,18 +27,6 @@ namespace ikafssn {
 
 namespace {
 
-enum class Stage1Tier4 : uint8_t {
-    kTier4 = 4,  // multi-volume WILLNEED
-    kTier1 = 1,  // single-volume RANDOM
-};
-
-enum class Stage2ATier : uint8_t {
-    kTier4 = 4,  // multi-volume WILLNEED for both kix and kpx
-    kTier2 = 2,  // single-volume kpx WILLNEED + kix RANDOM
-    kTier3 = 3,  // single-volume kix WILLNEED + kpx RANDOM
-    kTier1 = 1,  // single-volume both RANDOM
-};
-
 // (offset, length) into a posting file.
 using ByteRange = std::pair<uint64_t, uint64_t>;
 
@@ -147,35 +135,16 @@ std::vector<ByteRange> compute_kpx_ranges(
     return ranges;
 }
 
-// Stage 1 madvise: dict is always pinned (WILLNEED + HUGEPAGE); the
-// posting body is either prefetched as a set of coalesced ranges (kTier4
-// — multi-volume batches that fit the budget) or marked RANDOM (kTier1 —
-// single-volume fallback where even one volume's needed bytes exceed the
-// budget). The ranges are the exact (offset, length) pairs the batch
-// will actually probe, so the kernel's readahead window is bounded by
-// real demand instead of the full posting file.
-void apply_stage1_madvise(KixReader& kix, Stage1Tier4 /*tier*/,
-                          const std::vector<ByteRange>& ranges) {
-    // Stage 1 access into the posting file is random and the working set far
-    // exceeds RAM at scale, so MADV_WILLNEED on the needed ranges only triggered
-    // the 4 MB readahead window per range and roughly doubled device reads
-    // (measured: 292 GB vs 156 GB, 23% slower wall) with no benefit. Keep the
-    // dictionary pinned (WILLNEED + HUGEPAGE) and leave the posting body
-    // MADV_RANDOM so reads are bounded by real demand.
-    (void)ranges;
+// Pin the dictionary (WILLNEED + HUGEPAGE) and leave the posting body
+// MADV_RANDOM. Posting access is random and the working set far exceeds RAM at
+// scale, so MADV_WILLNEED on the needed ranges only triggered the 4 MB readahead
+// window per range and roughly doubled device reads with no benefit.
+void apply_stage1_madvise(KixReader& kix) {
     kix.apply_madvise_dict_only();
 }
 
-void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx, Stage2ATier /*tier*/,
-                           const std::vector<ByteRange>& kix_ranges,
-                           const std::vector<ByteRange>& kpx_ranges) {
-    // Same rationale as Stage 1 (see apply_stage1_madvise): kix/kpx posting
-    // access is random and the working set exceeds RAM at scale, so
-    // MADV_WILLNEED on the needed ranges only triggers readahead over-fetch.
-    // Keep both dictionaries pinned (WILLNEED + HUGEPAGE) and leave the posting
-    // bodies MADV_RANDOM so reads track real demand.  (mode 2/3 only.)
-    (void)kix_ranges;
-    (void)kpx_ranges;
+// Stage 2A (mode 2/3): same rationale, applied to both kix and kpx.
+void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx) {
     kix.apply_madvise_dict_only();
     kpx.apply_madvise_dict_only();
 }
@@ -268,7 +237,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     tbb::task_arena arena(in.nthread);
     auto make_tls_buf = [&in]() {
         Stage1Buffer buf;
-        buf.tier = in.tier;
+        buf.width = in.width;
         buf.ensure_capacity(in.max_num_seqs);
         return buf;
     };
@@ -302,15 +271,15 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     std::vector<OrchestratorHit> mode1_results;
 
     // ----------------------------------------------------------------
-    // Stage 1: incremental open + WILLNEED + accumulate.  Each
-    // volume's dict is walked once for the cost and prefetch decision;
-    // the same KixReader stays open for the search that follows.
+    // Stage 1: incremental open + madvise + accumulate.  Each volume's dict is
+    // walked once to size the batch; the same KixReader stays open for the
+    // search that follows.
     // ----------------------------------------------------------------
     std::vector<uint16_t> s1_cur_vols;
     uint64_t              s1_cur_bytes = 0;
     size_t                s1_batch_seq = 0;
 
-    auto run_stage1_batch_and_close = [&](Stage1Tier4 tier) {
+    auto run_stage1_batch_and_close = [&]() {
         if (s1_cur_vols.empty()) return;
         auto idxs = indices_for_batch(ext_jobs, s1_cur_vols);
         run_stage1_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
@@ -379,9 +348,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         }
 
         if (logger) {
-            logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s), tier%u, needed_bytes=%llu",
+            logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s), needed_bytes=%llu",
                          s1_batch_seq, s1_cur_vols.size(), idxs.size(),
-                         static_cast<unsigned>(tier),
                          static_cast<unsigned long long>(s1_cur_bytes));
         }
         ++s1_batch_seq;
@@ -431,33 +399,32 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         }
 
         if (vi_bytes > in.posting_budget) {
-            // Single-volume Tier1 fallback: drain any volumes already
-            // accumulated for the current Tier4 batch, then run this
-            // volume on its own with MADV_RANDOM on the posting body.
-            run_stage1_batch_and_close(Stage1Tier4::kTier4);
+            // Over-budget volume: drain the current batch, then run this volume
+            // on its own to bound peak resident memory.
+            run_stage1_batch_and_close();
 
-            apply_stage1_madvise(kix_cod[vi], Stage1Tier4::kTier1, ranges_cod);
+            apply_stage1_madvise(kix_cod[vi]);
             if (in.both_mode) {
-                apply_stage1_madvise(kix_opt[vi], Stage1Tier4::kTier1, ranges_opt);
+                apply_stage1_madvise(kix_opt[vi]);
             }
             s1_cur_vols.push_back(static_cast<uint16_t>(vi));
             s1_cur_bytes = vi_bytes;
-            run_stage1_batch_and_close(Stage1Tier4::kTier1);
+            run_stage1_batch_and_close();
         } else {
-            apply_stage1_madvise(kix_cod[vi], Stage1Tier4::kTier4, ranges_cod);
+            apply_stage1_madvise(kix_cod[vi]);
             if (in.both_mode) {
-                apply_stage1_madvise(kix_opt[vi], Stage1Tier4::kTier4, ranges_opt);
+                apply_stage1_madvise(kix_opt[vi]);
             }
             s1_cur_vols.push_back(static_cast<uint16_t>(vi));
             s1_cur_bytes += vi_bytes;
             // Overshoot is bounded by one volume's needed bytes — small
             // relative to posting_budget for typical multi-volume DBs.
             if (s1_cur_bytes >= in.posting_budget) {
-                run_stage1_batch_and_close(Stage1Tier4::kTier4);
+                run_stage1_batch_and_close();
             }
         }
     }
-    run_stage1_batch_and_close(Stage1Tier4::kTier4);
+    run_stage1_batch_and_close();
 
     if (logger) {
         size_t total_candidates = 0;
@@ -487,7 +454,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     uint64_t              s2_cur_bytes = 0;
     size_t                s2_batch_seq = 0;
 
-    auto run_stage2_batch_and_close = [&](Stage2ATier tier) {
+    auto run_stage2_batch_and_close = [&]() {
         if (s2_cur_vols.empty()) return;
         auto idxs = indices_for_batch(ext_jobs, s2_cur_vols);
         run_stage2a_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
@@ -515,9 +482,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                     batch_hits += kv.second.size();
             }
             total_stage2a_hits += batch_hits;
-            logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), tier%u, needed_bytes=%llu, %zu hit(s)",
+            logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), needed_bytes=%llu, %zu hit(s)",
                          s2_batch_seq, s2_cur_vols.size(), idxs.size(),
-                         static_cast<unsigned>(tier),
                          static_cast<unsigned long long>(s2_cur_bytes),
                          batch_hits);
         }
@@ -595,43 +561,30 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         const uint64_t vi_bytes = kix_bytes + kpx_bytes;
 
         if (vi_bytes > in.posting_budget) {
-            // Single-volume fallback. Drain accumulated Tier4 vols
-            // first, then pick the tightest tier that fits.
-            run_stage2_batch_and_close(Stage2ATier::kTier4);
+            // Over-budget volume: drain the current batch, then run it solo to
+            // bound peak resident memory.
+            run_stage2_batch_and_close();
 
-            Stage2ATier solo_tier;
-            if (kpx_bytes <= in.posting_budget) {
-                solo_tier = Stage2ATier::kTier2;   // kpx WILLNEED, kix RANDOM
-            } else if (kix_bytes <= in.posting_budget) {
-                solo_tier = Stage2ATier::kTier3;   // kix WILLNEED, kpx RANDOM
-            } else {
-                solo_tier = Stage2ATier::kTier1;   // both RANDOM
-            }
-
-            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi], solo_tier,
-                                  kix_ranges_cod, kpx_ranges_cod);
+            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi]);
             if (in.both_mode) {
-                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi], solo_tier,
-                                      kix_ranges_opt, kpx_ranges_opt);
+                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi]);
             }
             s2_cur_vols.push_back(static_cast<uint16_t>(vi));
             s2_cur_bytes = vi_bytes;
-            run_stage2_batch_and_close(solo_tier);
+            run_stage2_batch_and_close();
         } else {
-            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi], Stage2ATier::kTier4,
-                                  kix_ranges_cod, kpx_ranges_cod);
+            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi]);
             if (in.both_mode) {
-                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi], Stage2ATier::kTier4,
-                                      kix_ranges_opt, kpx_ranges_opt);
+                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi]);
             }
             s2_cur_vols.push_back(static_cast<uint16_t>(vi));
             s2_cur_bytes += vi_bytes;
             if (s2_cur_bytes >= in.posting_budget) {
-                run_stage2_batch_and_close(Stage2ATier::kTier4);
+                run_stage2_batch_and_close();
             }
         }
     }
-    run_stage2_batch_and_close(Stage2ATier::kTier4);
+    run_stage2_batch_and_close();
 
     if (logger) {
         logger->info("Stage 2A complete: %zu hit(s) collected (aggregated)",

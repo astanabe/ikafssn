@@ -423,13 +423,13 @@ static void test_clear_dirty_bulk_reset() {
     std::fprintf(stderr, "-- test_clear_dirty_bulk_reset\n");
 
     Stage1Buffer buf;
-    buf.tier = Stage1Tier::T32;
+    buf.width = Stage1Width::T32;
     buf.ensure_capacity(64);  // small capacity so 9 dirty entries trip the threshold
 
-    using PosT   = Stage1TierTraits<Stage1Tier::T32>::PosT;
-    using ScoreT = Stage1TierTraits<Stage1Tier::T32>::ScoreT;
-    auto* scores   = score_ptr<Stage1Tier::T32>(buf);
-    auto* last_pos = last_pos_ptr<Stage1Tier::T32>(buf);
+    using PosT   = Stage1WidthTraits<Stage1Width::T32>::PosT;
+    using ScoreT = Stage1WidthTraits<Stage1Width::T32>::ScoreT;
+    auto* scores   = score_ptr<Stage1Width::T32>(buf);
+    auto* last_pos = last_pos_ptr<Stage1Width::T32>(buf);
 
     constexpr PosT sentinel = std::numeric_limits<PosT>::max();
 
@@ -441,7 +441,7 @@ static void test_clear_dirty_bulk_reset() {
         buf.dirty.push_back(sid);
     }
 
-    buf.clear_dirty_typed<Stage1Tier::T32>();
+    buf.clear_dirty_typed<Stage1Width::T32>();
     CHECK(buf.dirty.empty());
     for (uint32_t i = 0; i < buf.capacity; i++) {
         CHECK(scores[i] == ScoreT{0});

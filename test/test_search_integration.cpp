@@ -703,7 +703,7 @@ static void test_search_stage1_both_template() {
     auto qdata_opt = preprocess_query<uint32_t>(g_query_seq, k, nullptr, config, t, masks_opt);
 
     Stage1Buffer buf;
-    buf.tier = Stage1Tier::T32;
+    buf.width = Stage1Width::T32;
     buf.ensure_capacity(kix_cod.num_sequences());
 
     JobState state;

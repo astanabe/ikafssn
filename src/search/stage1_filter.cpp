@@ -16,18 +16,18 @@
 namespace ikafssn {
 
 namespace {
-template <Stage1Tier Tier>
-inline std::size_t tier_byte_size(uint32_t num_seqs) noexcept {
-    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
+template <Stage1Width Width>
+inline std::size_t width_byte_size(uint32_t num_seqs) noexcept {
+    using ScoreT = typename Stage1WidthTraits<Width>::ScoreT;
     return static_cast<std::size_t>(num_seqs) * sizeof(ScoreT);
 }
 
-template <Stage1Tier Tier>
+template <Stage1Width Width>
 inline void reset_all_typed(Stage1Buffer& buf) {
-    using PosT = typename Stage1TierTraits<Tier>::PosT;
-    auto* s = score_ptr<Tier>(buf);
-    auto* p = last_pos_ptr<Tier>(buf);
-    std::memset(s, 0, static_cast<std::size_t>(buf.capacity) * sizeof(typename Stage1TierTraits<Tier>::ScoreT));
+    using PosT = typename Stage1WidthTraits<Width>::PosT;
+    auto* s = score_ptr<Width>(buf);
+    auto* p = last_pos_ptr<Width>(buf);
+    std::memset(s, 0, static_cast<std::size_t>(buf.capacity) * sizeof(typename Stage1WidthTraits<Width>::ScoreT));
     constexpr PosT sentinel = std::numeric_limits<PosT>::max();
     for (uint32_t i = 0; i < buf.capacity; i++) p[i] = sentinel;
 }
@@ -37,10 +37,10 @@ void Stage1Buffer::ensure_capacity(uint32_t num_seqs) {
     if (capacity >= num_seqs) return;
     capacity = num_seqs;
     std::size_t bytes = 0;
-    switch (tier) {
-    case Stage1Tier::T8:  bytes = tier_byte_size<Stage1Tier::T8> (num_seqs); break;
-    case Stage1Tier::T16: bytes = tier_byte_size<Stage1Tier::T16>(num_seqs); break;
-    case Stage1Tier::T32: bytes = tier_byte_size<Stage1Tier::T32>(num_seqs); break;
+    switch (width) {
+    case Stage1Width::T8:  bytes = width_byte_size<Stage1Width::T8> (num_seqs); break;
+    case Stage1Width::T16: bytes = width_byte_size<Stage1Width::T16>(num_seqs); break;
+    case Stage1Width::T32: bytes = width_byte_size<Stage1Width::T32>(num_seqs); break;
     }
     score_data.resize(bytes);
     last_pos_data.resize(bytes);
@@ -48,25 +48,25 @@ void Stage1Buffer::ensure_capacity(uint32_t num_seqs) {
 }
 
 void Stage1Buffer::reset_all() {
-    switch (tier) {
-    case Stage1Tier::T8:  reset_all_typed<Stage1Tier::T8> (*this); break;
-    case Stage1Tier::T16: reset_all_typed<Stage1Tier::T16>(*this); break;
-    case Stage1Tier::T32: reset_all_typed<Stage1Tier::T32>(*this); break;
+    switch (width) {
+    case Stage1Width::T8:  reset_all_typed<Stage1Width::T8> (*this); break;
+    case Stage1Width::T16: reset_all_typed<Stage1Width::T16>(*this); break;
+    case Stage1Width::T32: reset_all_typed<Stage1Width::T32>(*this); break;
     }
 }
 
-template <Stage1Tier Tier>
+template <Stage1Width Width>
 void Stage1Buffer::clear_dirty_typed() {
-    using PosT = typename Stage1TierTraits<Tier>::PosT;
-    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
+    using PosT = typename Stage1WidthTraits<Width>::PosT;
+    using ScoreT = typename Stage1WidthTraits<Width>::ScoreT;
     // When the dirty fraction is high enough, a sequential memset/reset over
     // the whole buffer beats random per-index writes (avoids touching the
     // dirty index list twice and stays linear in cache lines).
     if (dirty.size() * 8 > capacity) {
-        reset_all_typed<Tier>(*this);
+        reset_all_typed<Width>(*this);
     } else {
-        auto* s = score_ptr<Tier>(*this);
-        auto* p = last_pos_ptr<Tier>(*this);
+        auto* s = score_ptr<Width>(*this);
+        auto* p = last_pos_ptr<Width>(*this);
         constexpr PosT sentinel = std::numeric_limits<PosT>::max();
         for (uint32_t idx : dirty) {
             s[idx] = ScoreT{0};
@@ -76,15 +76,15 @@ void Stage1Buffer::clear_dirty_typed() {
     dirty.clear();
 }
 
-template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T8>();
-template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T16>();
-template void Stage1Buffer::clear_dirty_typed<Stage1Tier::T32>();
+template void Stage1Buffer::clear_dirty_typed<Stage1Width::T8>();
+template void Stage1Buffer::clear_dirty_typed<Stage1Width::T16>();
+template void Stage1Buffer::clear_dirty_typed<Stage1Width::T32>();
 
 // Internal: accumulate per-(kix, q_pos) updates into buf without clearing dirty.
 // Used by both stage1_filter (single template) and stage1_filter_accumulate
 // (cross-template "both" mode). HasFilter is a compile-time switch that lets
 // the no-filter case drop the per-sid pass() branch entirely.
-template <typename KmerInt, Stage1Tier Tier, bool HasFilter>
+template <typename KmerInt, Stage1Width Width, bool HasFilter>
 static void stage1_filter_accumulate_impl(
     const uint32_t* positions, const KmerInt* kmers, size_t n,
     const KixReader& kix,
@@ -92,7 +92,7 @@ static void stage1_filter_accumulate_impl(
     const Stage1Config& config,
     Stage1Buffer& buf) {
 
-    using PosT = typename Stage1TierTraits<Tier>::PosT;
+    using PosT = typename Stage1WidthTraits<Width>::PosT;
 
     uint32_t num_seqs = kix.num_sequences();
     if (num_seqs == 0 || n == 0) return;
@@ -101,8 +101,8 @@ static void stage1_filter_accumulate_impl(
     const bool use_coverscore = (config.stage1_score_type == 1);
 
     buf.ensure_capacity(num_seqs);
-    auto* scores   = score_ptr<Tier>(buf);
-    auto* last_pos = last_pos_ptr<Tier>(buf);
+    auto* scores   = score_ptr<Width>(buf);
+    auto* last_pos = last_pos_ptr<Width>(buf);
 
     const uint32_t cutoff_rem = config.cutoff_remaining;
     const uint32_t cutoff_thr = config.cutoff_threshold;
@@ -141,7 +141,7 @@ static void stage1_filter_accumulate_impl(
                 }
                 sid_batch[batch_count++] = sid;
                 if (batch_count == kBatch) {
-                    flush_batch_simd<Tier>(sid_batch, kBatch, q_pos,
+                    flush_batch_simd<Width>(sid_batch, kBatch, q_pos,
                                            scores, last_pos, buf.dirty,
                                            cutoff_rem, cutoff_thr);
                     batch_count = 0;
@@ -149,7 +149,7 @@ static void stage1_filter_accumulate_impl(
             }
         }
         if (batch_count > 0) {
-            flush_batch_simd<Tier>(sid_batch, batch_count, q_pos,
+            flush_batch_simd<Width>(sid_batch, batch_count, q_pos,
                                    scores, last_pos, buf.dirty,
                                    cutoff_rem, cutoff_thr);
             batch_count = 0;
@@ -158,7 +158,7 @@ static void stage1_filter_accumulate_impl(
 }
 
 // Dispatch by filter mode to one of the HasFilter specializations.
-template <typename KmerInt, Stage1Tier Tier>
+template <typename KmerInt, Stage1Width Width>
 static inline void dispatch_accumulate_by_filter(
     const uint32_t* positions, const KmerInt* kmers, size_t n,
     const KixReader& kix,
@@ -166,21 +166,21 @@ static inline void dispatch_accumulate_by_filter(
     const Stage1Config& config,
     Stage1Buffer& buf) {
     if (filter.mode() == OidFilterMode::kNone) {
-        stage1_filter_accumulate_impl<KmerInt, Tier, /*HasFilter=*/false>(
+        stage1_filter_accumulate_impl<KmerInt, Width, /*HasFilter=*/false>(
             positions, kmers, n, kix, filter, config, buf);
     } else {
-        stage1_filter_accumulate_impl<KmerInt, Tier, /*HasFilter=*/true>(
+        stage1_filter_accumulate_impl<KmerInt, Width, /*HasFilter=*/true>(
             positions, kmers, n, kix, filter, config, buf);
     }
 }
 
 // Internal: harvest candidates from buf and clear dirty.
-template <Stage1Tier Tier>
+template <Stage1Width Width>
 static std::vector<Stage1Candidate> stage1_filter_finish_impl(
     Stage1Buffer& buf, const Stage1Config& config) {
-    using PosT = typename Stage1TierTraits<Tier>::PosT;
-    using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
-    auto* scores = score_ptr<Tier>(buf);
+    using PosT = typename Stage1WidthTraits<Width>::PosT;
+    using ScoreT = typename Stage1WidthTraits<Width>::ScoreT;
+    auto* scores = score_ptr<Width>(buf);
 
     std::vector<Stage1Candidate> candidates;
 
@@ -197,9 +197,9 @@ static std::vector<Stage1Candidate> stage1_filter_finish_impl(
                     candidates.push_back({sid, static_cast<uint32_t>(scores[sid])});
                 }
             }
-            reset_all_typed<Tier>(buf);
+            reset_all_typed<Width>(buf);
         } else {
-            auto* last_pos = last_pos_ptr<Tier>(buf);
+            auto* last_pos = last_pos_ptr<Width>(buf);
             constexpr PosT sentinel = std::numeric_limits<PosT>::max();
             for (uint32_t sid : buf.dirty) {
                 ScoreT s = scores[sid];
@@ -220,7 +220,7 @@ static std::vector<Stage1Candidate> stage1_filter_finish_impl(
         }
     }
 
-    buf.clear_dirty_typed<Tier>();
+    buf.clear_dirty_typed<Width>();
 
     auto cmp = [](const Stage1Candidate& a, const Stage1Candidate& b) {
         return a.score > b.score;
@@ -235,8 +235,8 @@ static std::vector<Stage1Candidate> stage1_filter_finish_impl(
     return candidates;
 }
 
-// Internal implementation with KmerInt + Tier template dispatch.
-template <typename KmerInt, Stage1Tier Tier>
+// Internal implementation with KmerInt + Width template dispatch.
+template <typename KmerInt, Stage1Width Width>
 static std::vector<Stage1Candidate> stage1_filter_impl(
     const uint32_t* positions, const KmerInt* kmers, size_t n,
     const KixReader& kix,
@@ -245,12 +245,12 @@ static std::vector<Stage1Candidate> stage1_filter_impl(
     Stage1Buffer& buf) {
 
     if (n == 0) return {};
-    dispatch_accumulate_by_filter<KmerInt, Tier>(
+    dispatch_accumulate_by_filter<KmerInt, Width>(
         positions, kmers, n, kix, filter, config, buf);
-    return stage1_filter_finish_impl<Tier>(buf, config);
+    return stage1_filter_finish_impl<Width>(buf, config);
 }
 
-// Public dispatch: selects tier from buffer.
+// Public dispatch: selects width from buffer.
 template <typename KmerInt>
 std::vector<Stage1Candidate> stage1_filter(
     const uint32_t* positions, const KmerInt* kmers, size_t n,
@@ -259,16 +259,16 @@ std::vector<Stage1Candidate> stage1_filter(
     const Stage1Config& config,
     Stage1Buffer& buf) {
 
-    switch (buf.tier) {
-    case Stage1Tier::T8:
-        return stage1_filter_impl<KmerInt, Stage1Tier::T8>(
+    switch (buf.width) {
+    case Stage1Width::T8:
+        return stage1_filter_impl<KmerInt, Stage1Width::T8>(
             positions, kmers, n, kix, filter, config, buf);
-    case Stage1Tier::T16:
-        return stage1_filter_impl<KmerInt, Stage1Tier::T16>(
+    case Stage1Width::T16:
+        return stage1_filter_impl<KmerInt, Stage1Width::T16>(
             positions, kmers, n, kix, filter, config, buf);
-    case Stage1Tier::T32:
+    case Stage1Width::T32:
     default:
-        return stage1_filter_impl<KmerInt, Stage1Tier::T32>(
+        return stage1_filter_impl<KmerInt, Stage1Width::T32>(
             positions, kmers, n, kix, filter, config, buf);
     }
 }
@@ -282,18 +282,18 @@ void stage1_filter_accumulate(
     const Stage1Config& config,
     Stage1Buffer& buf) {
 
-    switch (buf.tier) {
-    case Stage1Tier::T8:
-        dispatch_accumulate_by_filter<KmerInt, Stage1Tier::T8>(
+    switch (buf.width) {
+    case Stage1Width::T8:
+        dispatch_accumulate_by_filter<KmerInt, Stage1Width::T8>(
             positions, kmers, n, kix, filter, config, buf);
         break;
-    case Stage1Tier::T16:
-        dispatch_accumulate_by_filter<KmerInt, Stage1Tier::T16>(
+    case Stage1Width::T16:
+        dispatch_accumulate_by_filter<KmerInt, Stage1Width::T16>(
             positions, kmers, n, kix, filter, config, buf);
         break;
-    case Stage1Tier::T32:
+    case Stage1Width::T32:
     default:
-        dispatch_accumulate_by_filter<KmerInt, Stage1Tier::T32>(
+        dispatch_accumulate_by_filter<KmerInt, Stage1Width::T32>(
             positions, kmers, n, kix, filter, config, buf);
         break;
     }
@@ -302,14 +302,14 @@ void stage1_filter_accumulate(
 // Harvest candidates after one or more accumulate calls.
 std::vector<Stage1Candidate> stage1_filter_finish(
     Stage1Buffer& buf, const Stage1Config& config) {
-    switch (buf.tier) {
-    case Stage1Tier::T8:
-        return stage1_filter_finish_impl<Stage1Tier::T8>(buf, config);
-    case Stage1Tier::T16:
-        return stage1_filter_finish_impl<Stage1Tier::T16>(buf, config);
-    case Stage1Tier::T32:
+    switch (buf.width) {
+    case Stage1Width::T8:
+        return stage1_filter_finish_impl<Stage1Width::T8>(buf, config);
+    case Stage1Width::T16:
+        return stage1_filter_finish_impl<Stage1Width::T16>(buf, config);
+    case Stage1Width::T32:
     default:
-        return stage1_filter_finish_impl<Stage1Tier::T32>(buf, config);
+        return stage1_filter_finish_impl<Stage1Width::T32>(buf, config);
     }
 }
 
