@@ -37,6 +37,12 @@ claude*.txt
 # Local SIMD vectorization plan (working notes, not part of the repo)
 vectorize_plan.md
 
+# Local planning / design notes (working notes, not part of the repo)
+improveplan.md
+crosstemplate.md
+eliasfano.md
+faster_spaced_seed.md
+
 # Local development BLAST DBs (not part of the repo)
 # SSU_eukaryote_rRNA is intentionally tracked as the shared test fixture.
 db/tsa_nt.*
