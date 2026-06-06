@@ -143,6 +143,7 @@ Tests are in `test/` using CTest. Real SSU_eukaryote_rRNA BLAST DB at `db/SSU_eu
 ## Development Environment Rules
 
 - Do not execute commands that require `sudo` directly from Claude Code. Present such commands to the user for manual execution.
+- Forbidden commands (never run): `git remote -v`, `git remote get-url`, `git remote show`, `git config --get remote.*.url`, `git config -l`, `git config --list`, `cat .git/config`.
 
 ## Code Comments and Documentation
 
