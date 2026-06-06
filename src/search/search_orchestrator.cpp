@@ -154,14 +154,16 @@ std::vector<ByteRange> compute_kpx_ranges(
 // budget). The ranges are the exact (offset, length) pairs the batch
 // will actually probe, so the kernel's readahead window is bounded by
 // real demand instead of the full posting file.
-void apply_stage1_madvise(KixReader& kix, Stage1Tier4 tier,
+void apply_stage1_madvise(KixReader& kix, Stage1Tier4 /*tier*/,
                           const std::vector<ByteRange>& ranges) {
-    if (tier == Stage1Tier4::kTier4) {
-        kix.apply_madvise_dict_only();
-        kix.apply_madvise_posting_ranges(ranges);
-    } else {
-        kix.apply_madvise_posting_random();
-    }
+    // Stage 1 access into the posting file is random and the working set far
+    // exceeds RAM at scale, so MADV_WILLNEED on the needed ranges only triggered
+    // the 4 MB readahead window per range and roughly doubled device reads
+    // (measured: 292 GB vs 156 GB, 23% slower wall) with no benefit. Keep the
+    // dictionary pinned (WILLNEED + HUGEPAGE) and leave the posting body
+    // MADV_RANDOM so reads are bounded by real demand.
+    (void)ranges;
+    kix.apply_madvise_dict_only();
 }
 
 void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx, Stage2ATier tier,

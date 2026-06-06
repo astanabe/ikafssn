@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <cstdlib>
 
 #include <tbb/blocked_range.h>
 #include <tbb/combinable.h>
@@ -197,12 +198,40 @@ void stage1_one_strand_both(
     s1cfg_acc.min_stage1_score = 1;
     s1cfg_acc.stage1_topn = 0;
 
+    // C9: count distinct merged query positions (Nq) so the score cutoff can be
+    // engaged.  A sequence's final score is at most the number of distinct
+    // positions it matches, so once score + remaining < unified_threshold it can
+    // never reach the threshold and its scatter is skipped.
+    uint32_t Nq = 0;
     {
         size_t ic = 0, io = 0;
         while (ic < n_cod || io < n_opt) {
             uint32_t p_c = (ic < n_cod) ? pos_cod[ic] : UINT32_MAX;
             uint32_t p_o = (io < n_opt) ? pos_opt[io] : UINT32_MAX;
             uint32_t cur = (p_c < p_o) ? p_c : p_o;
+            while (ic < n_cod && pos_cod[ic] == cur) ic++;
+            while (io < n_opt && pos_opt[io] == cur) io++;
+            Nq++;
+        }
+    }
+    // C9 is on by default; IKAFSSN_STAGE1_CUTOFF=0 disables it (measurement
+    // escape hatch for isolating the cutoff's effect in a benchmark A/B).
+    static const bool kStage1Cutoff = [] {
+        const char* e = std::getenv("IKAFSSN_STAGE1_CUTOFF");
+        return !(e && e[0] == '0');
+    }();
+    s1cfg_acc.cutoff_threshold = kStage1Cutoff ? unified_threshold : 0;
+
+    {
+        size_t ic = 0, io = 0;
+        uint32_t g = 0;   // position groups consumed so far
+        while (ic < n_cod || io < n_opt) {
+            uint32_t p_c = (ic < n_cod) ? pos_cod[ic] : UINT32_MAX;
+            uint32_t p_o = (io < n_opt) ? pos_opt[io] : UINT32_MAX;
+            uint32_t cur = (p_c < p_o) ? p_c : p_o;
+
+            // Positions still to consume, including the current one.
+            s1cfg_acc.cutoff_remaining = Nq - g;
 
             if (p_c == cur) {
                 size_t end = ic;
@@ -220,6 +249,7 @@ void stage1_one_strand_both(
                                          s1cfg_acc, buf);
                 io = end;
             }
+            g++;
         }
     }
 

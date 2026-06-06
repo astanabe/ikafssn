@@ -104,6 +104,9 @@ static void stage1_filter_accumulate_impl(
     auto* scores   = score_ptr<Tier>(buf);
     auto* last_pos = last_pos_ptr<Tier>(buf);
 
+    const uint32_t cutoff_rem = config.cutoff_remaining;
+    const uint32_t cutoff_thr = config.cutoff_threshold;
+
     constexpr int kBatch = 16;
     SeqId sid_batch[kBatch];
     int batch_count = 0;
@@ -139,14 +142,16 @@ static void stage1_filter_accumulate_impl(
                 sid_batch[batch_count++] = sid;
                 if (batch_count == kBatch) {
                     flush_batch_simd<Tier>(sid_batch, kBatch, q_pos,
-                                           scores, last_pos, buf.dirty);
+                                           scores, last_pos, buf.dirty,
+                                           cutoff_rem, cutoff_thr);
                     batch_count = 0;
                 }
             }
         }
         if (batch_count > 0) {
             flush_batch_simd<Tier>(sid_batch, batch_count, q_pos,
-                                   scores, last_pos, buf.dirty);
+                                   scores, last_pos, buf.dirty,
+                                   cutoff_rem, cutoff_thr);
             batch_count = 0;
         }
     }

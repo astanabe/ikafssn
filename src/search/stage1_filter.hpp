@@ -80,6 +80,15 @@ struct Stage1Config {
     uint32_t stage1_topn = 0;
     uint32_t min_stage1_score = 1;
     uint8_t  stage1_score_type = 1;
+    // Score-cutoff early termination (C9): when cutoff_threshold > 0, a sequence
+    // whose current score + cutoff_remaining (max additional positions it could
+    // still match) is below cutoff_threshold can no longer reach the final
+    // threshold, so its scatter / dirty update is skipped.  cutoff_remaining is
+    // the number of distinct query positions not yet consumed (including the one
+    // being processed).  0 / 0 disables the cutoff (output is then identical to
+    // the plain accumulate).  Set per position group by the both-mode driver.
+    uint32_t cutoff_remaining = 0;
+    uint32_t cutoff_threshold = 0;
 };
 
 template <typename KmerInt>

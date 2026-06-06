@@ -16,9 +16,14 @@ void flush_scalar_impl(const SeqId* sid_batch, int count,
                        typename Stage1TierTraits<Tier>::PosT q_pos,
                        typename Stage1TierTraits<Tier>::ScoreT* scores,
                        typename Stage1TierTraits<Tier>::PosT* last_pos,
-                       std::vector<uint32_t>& dirty) {
+                       std::vector<uint32_t>& dirty,
+                       uint32_t cutoff_remaining, uint32_t cutoff_threshold) {
     for (int i = 0; i < count; i++) {
         SeqId sid = sid_batch[i];
+        // C9 cutoff: skip sequences that can no longer reach the threshold.
+        if (cutoff_threshold &&
+            static_cast<uint32_t>(scores[sid]) + cutoff_remaining < cutoff_threshold)
+            continue;
         if (scores[sid] == 0) dirty.push_back(sid);
         if (last_pos[sid] != q_pos) {
             scores[sid]++;
@@ -44,7 +49,8 @@ __attribute__((target("avx512cd,avx512bw,avx512f")))
 void flush_avx512_t32(const SeqId* sid_batch, int count,
                       uint32_t q_pos,
                       uint32_t* scores, uint32_t* last_pos,
-                      std::vector<uint32_t>& dirty) {
+                      std::vector<uint32_t>& dirty,
+                      uint32_t cutoff_remaining, uint32_t cutoff_threshold) {
     const __m512i qp   = _mm512_set1_epi32(static_cast<int32_t>(q_pos));
     const __m512i ones = _mm512_set1_epi32(1);
     const __m512i zero = _mm512_setzero_si512();
@@ -59,19 +65,31 @@ void flush_avx512_t32(const SeqId* sid_batch, int count,
         const __m512i conflict = _mm512_conflict_epi32(sids);
         const __mmask16 unique_mask = _mm512_cmpeq_epi32_mask(conflict, zero);
 
-        // Gather last_pos[sid] for unique lanes.
+        // Gather last_pos[sid] and scores[sid] for unique lanes.
         const __m512i lp = _mm512_mask_i32gather_epi32(
             zero, unique_mask, sids, last_pos, 4);
-        // update_mask = unique & (last_pos != q_pos)
-        const __mmask16 update_mask =
-            _mm512_mask_cmpneq_epi32_mask(unique_mask, lp, qp);
-
-        // Gather scores[sid] for unique lanes (needed for both ++ and == 0).
         const __m512i sc_old = _mm512_mask_i32gather_epi32(
             zero, unique_mask, sids, scores, 4);
-        // dirty push (unique lanes where scores_old == 0).
+
+        // C9 cutoff: a unique lane is dead when sc_old + remaining < threshold;
+        // dead lanes are dropped from all updates.  cutoff_threshold == 0 leaves
+        // alive == unique (sc_old + 0 is never < 0), i.e. the cutoff is off.
+        __mmask16 alive = unique_mask;
+        if (cutoff_threshold) {
+            const __m512i rem = _mm512_set1_epi32(static_cast<int32_t>(cutoff_remaining));
+            const __m512i thr = _mm512_set1_epi32(static_cast<int32_t>(cutoff_threshold));
+            const __m512i sc_plus = _mm512_add_epi32(sc_old, rem);
+            const __mmask16 dead =
+                _mm512_mask_cmplt_epi32_mask(unique_mask, sc_plus, thr);
+            alive = static_cast<__mmask16>(unique_mask & ~dead);
+        }
+
+        // update_mask = alive & (last_pos != q_pos)
+        const __mmask16 update_mask =
+            _mm512_mask_cmpneq_epi32_mask(alive, lp, qp);
+        // dirty push (alive lanes where scores_old == 0).
         const __mmask16 zero_mask =
-            _mm512_mask_cmpeq_epi32_mask(unique_mask, sc_old, zero);
+            _mm512_mask_cmpeq_epi32_mask(alive, sc_old, zero);
 
         // sc_new[update lanes] = sc_old + 1.
         const __m512i sc_new = _mm512_mask_add_epi32(sc_old, update_mask,
@@ -101,12 +119,15 @@ void flush_avx512_t32(const SeqId* sid_batch, int count,
             while (bm) {
                 int bit = __builtin_ctz(bm);
                 SeqId sid = sid_batch[i + bit];
+                bm &= bm - 1;
+                if (cutoff_threshold &&
+                    static_cast<uint32_t>(scores[sid]) + cutoff_remaining < cutoff_threshold)
+                    continue;
                 if (scores[sid] == 0) dirty.push_back(sid);
                 if (last_pos[sid] != q_pos) {
                     scores[sid]++;
                     last_pos[sid] = q_pos;
                 }
-                bm &= bm - 1;
             }
         }
 
@@ -116,6 +137,9 @@ void flush_avx512_t32(const SeqId* sid_batch, int count,
     // Tail (count - i < 16): scalar.
     for (; i < count; i++) {
         SeqId sid = sid_batch[i];
+        if (cutoff_threshold &&
+            static_cast<uint32_t>(scores[sid]) + cutoff_remaining < cutoff_threshold)
+            continue;
         if (scores[sid] == 0) dirty.push_back(sid);
         if (last_pos[sid] != q_pos) {
             scores[sid]++;
@@ -131,7 +155,8 @@ template <Stage1Tier Tier>
 void flush_batch_simd(const SeqId* sid_batch, int count,
                       typename Stage1TierTraits<Tier>::PosT q_pos,
                       void* scores_void, void* last_pos_void,
-                      std::vector<uint32_t>& dirty) {
+                      std::vector<uint32_t>& dirty,
+                      uint32_t cutoff_remaining, uint32_t cutoff_threshold) {
     using ScoreT = typename Stage1TierTraits<Tier>::ScoreT;
     using PosT   = typename Stage1TierTraits<Tier>::PosT;
     auto* scores   = reinterpret_cast<ScoreT*>(scores_void);
@@ -146,21 +171,23 @@ void flush_batch_simd(const SeqId* sid_batch, int count,
         if (count >= 16) {
             SimdCap cap = current_simd_cap();
             if (cap >= SimdCap::AVX512BW) {
-                flush_avx512_t32(sid_batch, count, q_pos, scores, last_pos, dirty);
+                flush_avx512_t32(sid_batch, count, q_pos, scores, last_pos, dirty,
+                                 cutoff_remaining, cutoff_threshold);
                 return;
             }
         }
     }
 #endif
 
-    flush_scalar_impl<Tier>(sid_batch, count, q_pos, scores, last_pos, dirty);
+    flush_scalar_impl<Tier>(sid_batch, count, q_pos, scores, last_pos, dirty,
+                            cutoff_remaining, cutoff_threshold);
 }
 
 template void flush_batch_simd<Stage1Tier::T8> (
-    const SeqId*, int, uint8_t,  void*, void*, std::vector<uint32_t>&);
+    const SeqId*, int, uint8_t,  void*, void*, std::vector<uint32_t>&, uint32_t, uint32_t);
 template void flush_batch_simd<Stage1Tier::T16>(
-    const SeqId*, int, uint16_t, void*, void*, std::vector<uint32_t>&);
+    const SeqId*, int, uint16_t, void*, void*, std::vector<uint32_t>&, uint32_t, uint32_t);
 template void flush_batch_simd<Stage1Tier::T32>(
-    const SeqId*, int, uint32_t, void*, void*, std::vector<uint32_t>&);
+    const SeqId*, int, uint32_t, void*, void*, std::vector<uint32_t>&, uint32_t, uint32_t);
 
 } // namespace ikafssn
