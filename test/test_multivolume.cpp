@@ -510,12 +510,12 @@ static void test_multivolume_k9() {
     }
 }
 
-// Drive run_search<>() in mode 2 with two different posting_budget
-// values: one large enough that Stage 1 + Stage 2 share a single batch,
-// one tiny enough that each volume goes through a Stage 2 Tier1
-// fallback (range planner emits per-volume single-vol batches). With
-// the range-WILLNEED planner the per-volume kpx ranges must match the
-// single-batch result.
+// Drive run_search<>() in mode 2 with two different nthread values over a
+// single-query, two-volume index.  With nthread large the query cannot
+// fill the thread pool, so both volumes bundle into one group; with
+// nthread == 1 the thread target is reached after one volume, so each
+// volume runs in its own group.  The two grouping shapes must produce an
+// identical sorted key set.
 static void test_mode2_batched_equals_single() {
     std::fprintf(stderr, "-- test_mode2_batched_equals_single\n");
     const int k = 7;
@@ -534,10 +534,6 @@ static void test_mode2_batched_equals_single() {
         CHECK(kix_probe.open(vf.kix_path));
         CHECK(kpx_probe.open(vf.kpx_path));
         volumes_cod[vi].files            = vf;
-        volumes_cod[vi].kix_posting_size = kix_probe.posting_file_size();
-        volumes_cod[vi].kpx_posting_size = kpx_probe.posting_file_size();
-        volumes_cod[vi].kix_full_size    = kix_probe.willneed_size_full();
-        volumes_cod[vi].kpx_full_size    = kpx_probe.willneed_size_full();
         volumes_cod[vi].volume_index     = static_cast<uint16_t>(vi);
         volumes_cod[vi].num_sequences    = kix_probe.num_sequences();
         kix_probe.close();
@@ -563,7 +559,7 @@ static void test_mode2_batched_equals_single() {
     uint32_t max_num_seqs = 0;
     for (auto& v : volumes_cod) max_num_seqs = std::max(max_num_seqs, v.num_sequences);
 
-    auto run_with_budget = [&](uint64_t budget) {
+    auto run_with_nthread = [&](int nthread) {
         RunSearchInputs<uint16_t> in;
         in.volumes_cod      = volumes_cod;
         in.ksx_per_volume.resize(2);
@@ -574,20 +570,21 @@ static void test_mode2_batched_equals_single() {
         in.config            = config;
         in.both_mode         = false;
         in.k                 = k;
-        in.nthread           = 2;
-        in.posting_budget    = budget;
+        in.nthread           = nthread;
+        in.posting_budget    = 1u << 20;  // unused by Stage 1/2A grouping
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
         in.width              = Stage1Width::T32;
         return run_search<uint16_t>(in);
     };
 
-    uint64_t big_budget = 0;
-    for (auto& v : volumes_cod) big_budget += v.kix_full_size + v.kpx_full_size;
-    big_budget = std::max<uint64_t>(big_budget * 2, 1u << 20);
-    auto big = run_with_budget(big_budget);
+    // nthread large: the lone query can't fill the pool, so both volumes
+    // bundle into one group.
+    auto big = run_with_nthread(8);
 
-    auto small = run_with_budget(1);  // forces single-volume Tier1 batches
+    // nthread == 1: the thread target is met after one volume, so each
+    // volume runs in its own group.
+    auto small = run_with_nthread(1);
 
     auto key = [](const OrchestratorHit& h) {
         return std::tuple<size_t, uint16_t, uint16_t, uint32_t, int32_t,
@@ -611,10 +608,11 @@ static void test_mode2_batched_equals_single() {
 }
 
 // Drive run_search<>() directly with a multi-volume index, in mode 1, with
-// two different posting_budget values: one large enough to fit both
-// volumes in a single Stage 1 batch, one small enough to force two
-// batches. The orchestrator's per-batch mode1_results fold must produce
-// identical output across both batch shapes.
+// two different nthread values over a single-query, two-volume index: a
+// large nthread bundles both volumes into one Stage 1 group, while
+// nthread == 1 reaches the thread target after one volume and runs each
+// volume in its own group.  The orchestrator's per-group mode1_results
+// fold must produce identical output across both grouping shapes.
 static void test_mode1_batched_equals_single() {
     std::fprintf(stderr, "-- test_mode1_batched_equals_single\n");
     const int k = 7;
@@ -623,8 +621,8 @@ static void test_mode1_batched_equals_single() {
     auto discovered = discover_volumes(g_test_dir + "/" + db_base, k);
     CHECK_EQ(discovered.size(), 2u);
 
-    // Per-volume readers (opened once for sizing + ksx, orchestrator
-    // reopens kix internally per batch).
+    // Per-volume readers (opened once for ksx + num_sequences; the
+    // orchestrator reopens kix internally per group).
     std::vector<KsxReader> ksxs(2);
     std::vector<VolumeMeta> volumes_cod(2);
     for (size_t vi = 0; vi < 2; vi++) {
@@ -633,8 +631,6 @@ static void test_mode1_batched_equals_single() {
         KixReader probe;
         CHECK(probe.open(vf.kix_path));
         volumes_cod[vi].files            = vf;
-        volumes_cod[vi].kix_posting_size = probe.posting_file_size();
-        volumes_cod[vi].kix_full_size    = probe.willneed_size_full();
         volumes_cod[vi].volume_index     = static_cast<uint16_t>(vi);
         volumes_cod[vi].num_sequences    = probe.num_sequences();
         probe.close();
@@ -656,7 +652,7 @@ static void test_mode1_batched_equals_single() {
     uint32_t max_num_seqs = 0;
     for (auto& v : volumes_cod) max_num_seqs = std::max(max_num_seqs, v.num_sequences);
 
-    auto run_with_budget = [&](uint64_t budget) {
+    auto run_with_nthread = [&](int nthread) {
         RunSearchInputs<uint16_t> in;
         in.volumes_cod      = volumes_cod;  // copy: orchestrator reads only
         in.ksx_per_volume.resize(2);
@@ -667,24 +663,21 @@ static void test_mode1_batched_equals_single() {
         in.config            = config;
         in.both_mode         = false;
         in.k                 = k;
-        in.nthread           = 2;
-        in.posting_budget    = budget;
+        in.nthread           = nthread;
+        in.posting_budget    = 1u << 20;  // unused by Stage 1/2A grouping
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
         in.width              = Stage1Width::T32;
         return run_search<uint16_t>(in);
     };
 
-    // Large budget: single batch over both volumes.
-    uint64_t single_budget = 0;
-    for (auto& v : volumes_cod) single_budget += v.kix_full_size;
-    single_budget = std::max<uint64_t>(single_budget * 2, 1u << 20);
-    auto big = run_with_budget(single_budget);
+    // nthread large: the lone query can't fill the pool, so both volumes
+    // bundle into one Stage 1 group.
+    auto big = run_with_nthread(8);
 
-    // Small budget: each volume's kix_full_size on its own exceeds the
-    // budget, so plan_stage1_batches emits one (tier1) batch per volume.
-    uint64_t small_budget = 1;  // any positive < per-volume size
-    auto small = run_with_budget(small_budget);
+    // nthread == 1: the thread target is met after one volume, so each
+    // volume runs in its own group.
+    auto small = run_with_nthread(1);
 
     auto key = [](const OrchestratorHit& h) {
         return std::tuple<size_t, uint16_t, uint16_t, uint32_t, uint32_t>(
@@ -733,7 +726,7 @@ static void test_mode1_batched_equals_single() {
             in.both_mode         = false;
             in.k                 = k;
             in.nthread           = 4;
-            in.posting_budget    = single_budget;
+            in.posting_budget    = 1u << 20;
             in.logger            = &logger;
             in.max_num_seqs      = max_num_seqs;
             in.width              = Stage1Width::T32;

@@ -13,8 +13,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <iterator>
-#include <unordered_set>
 #include <utility>
 
 #include <tbb/blocked_range.h>
@@ -27,118 +25,10 @@ namespace ikafssn {
 
 namespace {
 
-// (offset, length) into a posting file.
-using ByteRange = std::pair<uint64_t, uint64_t>;
-
-// Page-size gap threshold for ByteRange coalescing. Smaller gaps merge so
-// that one MADV_WILLNEED call covers contiguous-or-near-contiguous posting
-// lists, amortising the syscall over the prefetch window.
-constexpr uint64_t kCoalesceGap = 4096;
-
-void coalesce_ranges(std::vector<ByteRange>& ranges) {
-    if (ranges.empty()) return;
-    std::sort(ranges.begin(), ranges.end());
-    size_t w = 0;
-    for (size_t r = 0; r < ranges.size(); ++r) {
-        if (w == 0) {
-            ranges[w++] = ranges[r];
-            continue;
-        }
-        ByteRange& last = ranges[w - 1];
-        uint64_t last_end = last.first + last.second;
-        if (ranges[r].first <= last_end + kCoalesceGap) {
-            uint64_t new_end = std::max(last_end,
-                                        ranges[r].first + ranges[r].second);
-            last.second = new_end - last.first;
-        } else {
-            ranges[w++] = ranges[r];
-        }
-    }
-    ranges.resize(w);
-}
-
-uint64_t total_range_bytes(const std::vector<ByteRange>& ranges) {
-    uint64_t total = 0;
-    for (auto& r : ranges) total += r.second;
-    return total;
-}
-
-// Collect the set of unique k-mers each volume must probe in Stage 1 and
-// Stage 2A.  `which` selects fwd / rc / both based on config.strand.
-// `secondary` selects the optimal-side kmer stream (for both-mode) when
-// true. Returns a sorted vector of unique k-mer values.
-template <typename KmerInt>
-std::vector<KmerInt> collect_unique_kmers(
-    const std::vector<QueryBundle<KmerInt>>& queries,
-    const std::vector<uint8_t>* skip_reason,
-    int8_t strand,
-    bool secondary) {
-    // Mirror build_ext_jobs's strand handling: 2 = both, 1 = fwd only,
-    // everything else (including the -1 / 0 server-default) = rc only.
-    const bool want_fwd = (strand == 1 || strand == 2);
-    const bool want_rc  = !want_fwd || (strand == 2);
-    std::unordered_set<KmerInt> seen;
-    auto take_kmers = [&](const QueryKmerData<KmerInt>* qd) {
-        if (!qd) return;
-        if (want_fwd) {
-            for (auto k : qd->fwd_kmer_values) seen.insert(k);
-        }
-        if (want_rc) {
-            for (auto k : qd->rc_kmer_values) seen.insert(k);
-        }
-    };
-    for (size_t qi = 0; qi < queries.size(); ++qi) {
-        if (skip_reason && qi < skip_reason->size() && (*skip_reason)[qi] != 0)
-            continue;
-        const auto* qd = secondary ? queries[qi].qdata_secondary
-                                   : queries[qi].qdata_primary;
-        take_kmers(qd);
-    }
-    std::vector<KmerInt> out(seen.begin(), seen.end());
-    std::sort(out.begin(), out.end());
-    return out;
-}
-
-// Walk an already-open kix volume's dictionary for every unique k-mer and
-// build the coalesced (offset, length) posting-list ranges. Operates on
-// the caller's open KixReader so the dict pages stay hot for the
-// subsequent madvise + search on the same volume.
-template <typename KmerInt>
-std::vector<ByteRange> compute_kix_ranges(
-    const KixReader& kix,
-    const std::vector<KmerInt>& unique_kmers) {
-    std::vector<ByteRange> ranges;
-    ranges.reserve(unique_kmers.size());
-    for (KmerInt k : unique_kmers) {
-        uint64_t off, len;
-        kix.posting_list_range(static_cast<uint32_t>(k), off, len);
-        if (len == 0) continue;
-        ranges.emplace_back(off, len);
-    }
-    coalesce_ranges(ranges);
-    return ranges;
-}
-
-template <typename KmerInt>
-std::vector<ByteRange> compute_kpx_ranges(
-    const KpxReader& kpx,
-    const std::vector<KmerInt>& unique_kmers) {
-    std::vector<ByteRange> ranges;
-    ranges.reserve(unique_kmers.size());
-    for (KmerInt k : unique_kmers) {
-        uint64_t lo, hi;
-        kpx.pos_offset_range(static_cast<uint32_t>(k), lo, hi);
-        if (hi <= lo) continue;
-        ranges.emplace_back(lo, hi - lo);
-    }
-    coalesce_ranges(ranges);
-    return ranges;
-}
-
-// Pin the dictionary (WILLNEED + HUGEPAGE) and leave the posting body
+// Pin the dictionary (WILLNEED + HUGEPAGE) and leave the posting file
 // MADV_RANDOM. Posting access is random and the working set far exceeds RAM at
-// scale, so MADV_WILLNEED on the needed ranges only triggered the 4 MB readahead
-// window per range and roughly doubled device reads with no benefit.
+// scale, so prefetching posting lists only triggers the kernel readahead window
+// per access and roughly doubles device reads with no benefit.
 void apply_stage1_madvise(KixReader& kix) {
     kix.apply_madvise_dict_only();
 }
@@ -243,26 +133,15 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     };
     tbb::enumerable_thread_specific<Stage1Buffer> tls_bufs(make_tls_buf);
 
-    // ----------------------------------------------------------------
-    // Pre-compute the set of unique k-mers each batch must probe.  The
-    // Stage 1 / Stage 2 batch loops walk every volume's dictionary
-    // incrementally and decide on the fly whether the next volume fits
-    // in the current batch's posting_budget, so there is no separate
-    // up-front planning phase.
-    // ----------------------------------------------------------------
-    auto unique_cod = collect_unique_kmers<KmerInt>(
-        queries, in.query_skip_reason, in.config.strand, /*secondary=*/false);
-    std::vector<KmerInt> unique_opt;
-    if (in.both_mode) {
-        unique_opt = collect_unique_kmers<KmerInt>(
-            queries, in.query_skip_reason, in.config.strand, /*secondary=*/true);
-    }
-    if (logger) {
-        logger->info("Search planning: %zu unique kmers (cod=%zu, opt=%zu) over %zu volume(s); posting_budget=%llu",
-                     unique_cod.size() + unique_opt.size(),
-                     unique_cod.size(), unique_opt.size(), num_volumes,
-                     static_cast<unsigned long long>(in.posting_budget));
-    }
+    // Each volume contributes the same number of ext_jobs (every query is
+    // searched against every volume), so a running counter that bundles
+    // volumes until their ext_job total reaches nthread saturates the
+    // arena: many-query runs get one volume per group (fastest), few-query
+    // runs bundle volumes to fill the thread pool.
+    const size_t ext_jobs_per_volume =
+        num_volumes > 0 ? ext_jobs.size() / num_volumes : 0;
+    const size_t group_ext_job_target = static_cast<size_t>(
+        in.nthread > 0 ? in.nthread : 1);
 
     // Mode 1 fast path uses this batch-local accumulator: each Stage 1
     // batch flushes its mode1_results into it and releases the per-ji
@@ -271,12 +150,12 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     std::vector<OrchestratorHit> mode1_results;
 
     // ----------------------------------------------------------------
-    // Stage 1: incremental open + madvise + accumulate.  Each volume's dict is
-    // walked once to size the batch; the same KixReader stays open for the
-    // search that follows.
+    // Stage 1: incremental open + madvise + accumulate.  Volumes are
+    // bundled into a group until the group's ext_job count reaches the
+    // thread target, then the group is run, folded, and closed.
     // ----------------------------------------------------------------
     std::vector<uint16_t> s1_cur_vols;
-    uint64_t              s1_cur_bytes = 0;
+    size_t                s1_cur_ext_jobs = 0;
     size_t                s1_batch_seq = 0;
 
     auto run_stage1_batch_and_close = [&]() {
@@ -348,9 +227,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         }
 
         if (logger) {
-            logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s), needed_bytes=%llu",
-                         s1_batch_seq, s1_cur_vols.size(), idxs.size(),
-                         static_cast<unsigned long long>(s1_cur_bytes));
+            logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s)",
+                         s1_batch_seq, s1_cur_vols.size(), idxs.size());
         }
         ++s1_batch_seq;
 
@@ -363,23 +241,15 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
             }
         }
         s1_cur_vols.clear();
-        s1_cur_bytes = 0;
+        s1_cur_ext_jobs = 0;
     };
 
     for (size_t vi = 0; vi < num_volumes; ++vi) {
-        // Open the volume's kix (cod + opt when in both-mode) so the
-        // cost computation and the subsequent madvise / search all share
-        // the same open mapping — no double open per volume.
         if (!kix_cod[vi].open(in.volumes_cod[vi].files.kix_path)) {
             if (logger) logger->error("Cannot open %s",
                 in.volumes_cod[vi].files.kix_path.c_str());
             return {};
         }
-        std::vector<ByteRange> ranges_cod =
-            compute_kix_ranges<KmerInt>(kix_cod[vi], unique_cod);
-        uint64_t vi_bytes = kix_cod[vi].dict_size() + total_range_bytes(ranges_cod);
-
-        std::vector<ByteRange> ranges_opt;
         if (in.both_mode) {
             if (!kix_opt[vi].open(in.volumes_opt[vi].files.kix_path)) {
                 if (logger) logger->error("Cannot open %s",
@@ -387,8 +257,6 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 kix_cod[vi].close();
                 return {};
             }
-            ranges_opt = compute_kix_ranges<KmerInt>(kix_opt[vi], unique_opt);
-            vi_bytes += kix_opt[vi].dict_size() + total_range_bytes(ranges_opt);
         }
 
         bundles[vi].kix = &kix_cod[vi];
@@ -398,30 +266,14 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
             bundles[vi].kpx_opt = nullptr;
         }
 
-        if (vi_bytes > in.posting_budget) {
-            // Over-budget volume: drain the current batch, then run this volume
-            // on its own to bound peak resident memory.
+        apply_stage1_madvise(kix_cod[vi]);
+        if (in.both_mode) {
+            apply_stage1_madvise(kix_opt[vi]);
+        }
+        s1_cur_vols.push_back(static_cast<uint16_t>(vi));
+        s1_cur_ext_jobs += ext_jobs_per_volume;
+        if (s1_cur_ext_jobs >= group_ext_job_target) {
             run_stage1_batch_and_close();
-
-            apply_stage1_madvise(kix_cod[vi]);
-            if (in.both_mode) {
-                apply_stage1_madvise(kix_opt[vi]);
-            }
-            s1_cur_vols.push_back(static_cast<uint16_t>(vi));
-            s1_cur_bytes = vi_bytes;
-            run_stage1_batch_and_close();
-        } else {
-            apply_stage1_madvise(kix_cod[vi]);
-            if (in.both_mode) {
-                apply_stage1_madvise(kix_opt[vi]);
-            }
-            s1_cur_vols.push_back(static_cast<uint16_t>(vi));
-            s1_cur_bytes += vi_bytes;
-            // Overshoot is bounded by one volume's needed bytes — small
-            // relative to posting_budget for typical multi-volume DBs.
-            if (s1_cur_bytes >= in.posting_budget) {
-                run_stage1_batch_and_close();
-            }
         }
     }
     run_stage1_batch_and_close();
@@ -445,13 +297,13 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     //
     // Stage 2A and Stage 2B share this loop: Stage 2B runs immediately
     // after Stage 2A for the same batch and the per-ext_job transient
-    // state is freed before the next batch starts, so peak memory tracks
-    // posting_budget rather than the total volume × query fan-out.
+    // state is freed before the next batch starts, so peak memory stays
+    // bounded by one group rather than the total volume × query fan-out.
     // ----------------------------------------------------------------
     std::vector<OrchestratorHit> results;
     size_t total_stage2a_hits = 0;
     std::vector<uint16_t> s2_cur_vols;
-    uint64_t              s2_cur_bytes = 0;
+    size_t                s2_cur_ext_jobs = 0;
     size_t                s2_batch_seq = 0;
 
     auto run_stage2_batch_and_close = [&]() {
@@ -482,9 +334,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                     batch_hits += kv.second.size();
             }
             total_stage2a_hits += batch_hits;
-            logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), needed_bytes=%llu, %zu hit(s)",
+            logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), %zu hit(s)",
                          s2_batch_seq, s2_cur_vols.size(), idxs.size(),
-                         static_cast<unsigned long long>(s2_cur_bytes),
                          batch_hits);
         }
 
@@ -505,7 +356,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         }
 
         s2_cur_vols.clear();
-        s2_cur_bytes = 0;
+        s2_cur_ext_jobs = 0;
     };
 
     for (size_t vi = 0; vi < num_volumes; ++vi) {
@@ -520,15 +371,6 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
             kix_cod[vi].close();
             return {};
         }
-        std::vector<ByteRange> kix_ranges_cod =
-            compute_kix_ranges<KmerInt>(kix_cod[vi], unique_cod);
-        std::vector<ByteRange> kpx_ranges_cod =
-            compute_kpx_ranges<KmerInt>(kpx_cod[vi], unique_cod);
-        uint64_t kix_bytes = kix_cod[vi].dict_size() + total_range_bytes(kix_ranges_cod);
-        uint64_t kpx_bytes = kpx_cod[vi].dict_size() + total_range_bytes(kpx_ranges_cod);
-
-        std::vector<ByteRange> kix_ranges_opt;
-        std::vector<ByteRange> kpx_ranges_opt;
         if (in.both_mode) {
             if (!kix_opt[vi].open(in.volumes_opt[vi].files.kix_path)) {
                 if (logger) logger->error("Cannot open %s",
@@ -545,10 +387,6 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 kix_cod[vi].close();
                 return {};
             }
-            kix_ranges_opt = compute_kix_ranges<KmerInt>(kix_opt[vi], unique_opt);
-            kpx_ranges_opt = compute_kpx_ranges<KmerInt>(kpx_opt[vi], unique_opt);
-            kix_bytes += kix_opt[vi].dict_size() + total_range_bytes(kix_ranges_opt);
-            kpx_bytes += kpx_opt[vi].dict_size() + total_range_bytes(kpx_ranges_opt);
         }
 
         bundles[vi].kix = &kix_cod[vi];
@@ -558,30 +396,14 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
             bundles[vi].kpx_opt = &kpx_opt[vi];
         }
 
-        const uint64_t vi_bytes = kix_bytes + kpx_bytes;
-
-        if (vi_bytes > in.posting_budget) {
-            // Over-budget volume: drain the current batch, then run it solo to
-            // bound peak resident memory.
+        apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi]);
+        if (in.both_mode) {
+            apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi]);
+        }
+        s2_cur_vols.push_back(static_cast<uint16_t>(vi));
+        s2_cur_ext_jobs += ext_jobs_per_volume;
+        if (s2_cur_ext_jobs >= group_ext_job_target) {
             run_stage2_batch_and_close();
-
-            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi]);
-            if (in.both_mode) {
-                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi]);
-            }
-            s2_cur_vols.push_back(static_cast<uint16_t>(vi));
-            s2_cur_bytes = vi_bytes;
-            run_stage2_batch_and_close();
-        } else {
-            apply_stage2a_madvise(kix_cod[vi], kpx_cod[vi]);
-            if (in.both_mode) {
-                apply_stage2a_madvise(kix_opt[vi], kpx_opt[vi]);
-            }
-            s2_cur_vols.push_back(static_cast<uint16_t>(vi));
-            s2_cur_bytes += vi_bytes;
-            if (s2_cur_bytes >= in.posting_budget) {
-                run_stage2_batch_and_close();
-            }
         }
     }
     run_stage2_batch_and_close();

@@ -218,8 +218,9 @@ ikafssnsearch [options]
   -k <int>                使用する k-mer サイズ (複数の k 値が存在する場合は必須)
   -o <path>               出力ファイル (デフォルト: 標準出力)
   -nthread <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
-  -memory_limit <size>    madvise WILLNEED 予算 (デフォルト: 物理メモリの半分)
-                          接尾辞 K, M, G を認識
+  -memory_limit <size>    検索メモリ予算 (デフォルト: 物理メモリの半分)
+                          .khx/.ksx メタデータを常駐させ、残余で Stage 3 の
+                          posting heap を制限。接尾辞 K, M, G を認識
   -mode <1|2|3>           検索モード (デフォルト: 1)
                           1=Stage 1 のみ、2=Stage 1+2、3=Stage 1+2+3
   -db <path>              モード 3 用 BLAST DB パス (デフォルト: -ix と同じ)
@@ -476,10 +477,9 @@ ikafssnserver [options]
   -nthread <int>          ワーカースレッド数 (デフォルト: 利用可能な全コア)
   -max_queue_size <int>   同時処理クエリ配列数のグローバル上限 (デフォルト: 1024)
   -max_nseq_per_req <int> 1 リクエストあたりの受理配列数上限 (デフォルト: スレッド数)
-  -max_concurrent_search <int>  予算制約のあるステージ (Stage 1 / 2A / 3) で
-                          同時実行可能なリクエスト数の上限。-memory_limit の
-                          残余 posting_budget をリクエスト間で共有させる
-                          (デフォルト: 0 = 無制限)
+  -max_concurrent_search <int>  -memory_limit の残余 posting_budget を共有する
+                          同時検索数の上限。in-flight な posting ヒープ
+                          (Stage 3) を抑制 (デフォルト: 0 = 無制限)
   -pid <path>             PID ファイルパス
   -db <path>              モード 3 用 BLAST DB パス (繰り返し指定、-ix と対応;
                           デフォルト: 対応する -ix プレフィックスと同じ)
@@ -503,8 +503,9 @@ ikafssnserver [options]
   -nresult <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
   -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)
-  -memory_limit <size>    madvise WILLNEED 予算 (デフォルト: 物理メモリの半分)
-                          接尾辞 K, M, G を認識
+  -memory_limit <size>    検索メモリ予算 (デフォルト: 物理メモリの半分)
+                          .khx/.ksx メタデータを常駐させ、残余で Stage 3 の
+                          posting heap と同時検索プールを制限。接尾辞 K, M, G を認識
   -shutdown_timeout <int> グレースフルシャットダウンのタイムアウト秒数 (デフォルト: 30)
   -v, --verbose           詳細ログ出力
 ```
@@ -540,7 +541,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 - `-ix` プレフィックスに対応する異なる k-mer サイズのインデックスが存在する場合、全て読み込み、クライアントのリクエストで k を指定できます。
 - SIGTERM/SIGINT 受信時はグレースフルシャットダウンを行います。新規接続の受付を停止し、実行中のリクエストの完了を最大 `-shutdown_timeout` 秒待ちます。
 - **配列単位の同時実行制御:** サーバは接続単位ではなく、配列単位で同時実行数を制御します。リクエストが到着すると、有効なクエリ配列ごとにパーミットの取得を試みます。グローバル上限 (`-max_queue_size`) に達した場合、超過分の配列はリトライ用に「拒否」としてクライアントに返されます。`-max_nseq_per_req` は 1 リクエストが取得できるパーミット数の上限を設定し、大量配列を含む単一リクエストによるスロットの独占を防ぎます。
-- **リクエスト間の posting budget プール (`-max_concurrent_search`):** デフォルト値 `0` では従来通り、同時実行中の各リクエストが独立に残余 `posting_budget` (`-memory_limit` から `.khx` / `.ksx` の `WILLNEED` を差し引いた残り) の全量を使用できます。`N >= 1` を指定すると、リクエスト間でこの予算をリース/リリース方式で共有します。各リクエストは Stage 1 / 2A / 3 を通じて 1 個のリースを保持し、同時にリースを保持できるリクエスト数は最大 `N` 個に制限されます。これにより接続数によらず in-flight ヒープを `posting_budget` 以下に抑えられますが、`N` を超える追加リクエストはリースが解放されるまで予算制約のあるステージで待機します。1 リクエスト分にメモリ上限を合わせるのは不便だが、プロセス当たりの posting メモリには厳格な上限を設けたい運用に向きます。
+- **リクエスト間の posting budget プール (`-max_concurrent_search`):** デフォルト値 `0` では、同時実行中の各リクエストが独立に残余 `posting_budget` (`-memory_limit` から `.khx` / `.ksx` の `WILLNEED` を差し引いた残り) の全量を使用できます。`N >= 1` を指定すると、リクエスト間でこの予算をリース/リリース方式で共有します。各リクエストは検索全体を通じて 1 個のリースを保持し、同時に実行できる検索は最大 `N` 個に制限されます。これにより接続数によらず in-flight な posting ヒープ (Stage 3 のアライメントバッチャが消費) を `posting_budget` 以下に抑えられますが、`N` を超える追加検索はリースが解放されるまで待機します。1 リクエスト分にメモリ上限を合わせるのは不便だが、プロセス当たりの posting メモリには厳格な上限を設けたい運用に向きます。
 
 ### ikafssnhttpd
 

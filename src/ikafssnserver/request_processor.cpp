@@ -440,19 +440,11 @@ SearchResponse process_search_request(
                 ? group_cod->volumes[vi]
                 : group.volumes[vi];
             in.volumes_cod[vi].files            = vp.files;
-            in.volumes_cod[vi].kix_posting_size = vp.kix_posting_size;
-            in.volumes_cod[vi].kpx_posting_size = vp.kpx_posting_size;
-            in.volumes_cod[vi].kix_full_size    = vp.kix_full_size;
-            in.volumes_cod[vi].kpx_full_size    = vp.kpx_full_size;
             in.volumes_cod[vi].volume_index     = vp.volume_index;
             in.volumes_cod[vi].num_sequences    = vp.num_sequences;
             if (is_both_mode) {
                 const auto& vo = group_opt->volumes[vi];
                 in.volumes_opt[vi].files            = vo.files;
-                in.volumes_opt[vi].kix_posting_size = vo.kix_posting_size;
-                in.volumes_opt[vi].kpx_posting_size = vo.kpx_posting_size;
-                in.volumes_opt[vi].kix_full_size    = vo.kix_full_size;
-                in.volumes_opt[vi].kpx_full_size    = vo.kpx_full_size;
                 in.volumes_opt[vi].volume_index     = vo.volume_index;
                 in.volumes_opt[vi].num_sequences    = vo.num_sequences;
             }

@@ -28,12 +28,6 @@ public:
     bool advise(int advice);
     bool advise(size_t offset, size_t length, int advice);
 
-    // Standard pattern for indexes split into a hot dictionary head and a
-    // randomly-accessed posting file (e.g. .kix, .kpx).  When `willneed` is
-    // true the dictionary region is marked WILLNEED + HUGEPAGE and the
-    // posting file RANDOM; otherwise the entire mapping is marked RANDOM.
-    void advise_dict_posting(size_t dict_size, bool willneed);
-
     // Standard pattern for small files accessed as a single hot region
     // (e.g. .ksx, .khx): WILLNEED for the entire mapping, or RANDOM if
     // `willneed` is false.

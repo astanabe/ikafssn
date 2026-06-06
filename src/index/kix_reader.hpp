@@ -28,26 +28,13 @@ public:
     const uint8_t* posting_file() const { return posting_file_; }
     size_t posting_file_size() const { return posting_file_size_; }
 
-    // madvise budget API
+    // Byte size of the dictionary region (header + Elias-Fano blob).
     size_t willneed_size() const;
-    void apply_madvise(bool willneed);
-
-    // Byte size of the whole mapping (dictionary head + the entire posting
-    // file).  Used by ikafssnsearch to charge a per-volume batch against the
-    // madvise WILLNEED budget — including the posting list body — so the
-    // batched search loop pre-faults a whole volume before issuing
-    // query × volume jobs, then releases it for the next batch.
-    size_t willneed_size_full() const;
 
     // Dictionary WILLNEED + HUGEPAGE, posting body MADV_RANDOM (suppress
     // default readahead).  Stage 1 / Stage 2A access the posting body at
     // random, so demand faults track real need without readahead over-fetch.
     void   apply_madvise_dict_only();
-
-    // Byte size of the dictionary region (header + Elias-Fano blob).
-    // The first dict_size() bytes of the mapping are the dictionary;
-    // everything beyond is the posting body.
-    size_t dict_size() const;
 
     // Get posting list byte offset for a k-mer
     uint64_t posting_list_offset(uint32_t kmer) const {

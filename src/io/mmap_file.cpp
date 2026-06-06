@@ -89,20 +89,6 @@ bool MmapFile::advise(size_t offset, size_t length, int advice) {
     return ::madvise(data_ + aligned_offset, length + adjust, advice) == 0;
 }
 
-void MmapFile::advise_dict_posting(size_t dict_size, bool willneed) {
-    if (!data_) return;
-    if (willneed) {
-        advise(0, dict_size, MADV_WILLNEED);
-        if (size_ > dict_size)
-            advise(dict_size, size_ - dict_size, MADV_RANDOM);
-    } else {
-        advise(MADV_RANDOM);
-    }
-#ifdef MADV_HUGEPAGE
-    advise(0, dict_size, MADV_HUGEPAGE);
-#endif
-}
-
 void MmapFile::advise_all(bool willneed) {
     if (!data_) return;
     advise(willneed ? MADV_WILLNEED : MADV_RANDOM);

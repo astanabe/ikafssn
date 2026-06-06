@@ -29,10 +29,6 @@ struct DatabaseEntry;  // forward declaration
 struct ServerVolumeData {
     DiscoveredVolume files;
     KsxReader ksx;
-    size_t kix_posting_size = 0;
-    size_t kpx_posting_size = 0;
-    size_t kix_full_size = 0;
-    size_t kpx_full_size = 0;
     uint32_t num_sequences = 0;
     uint64_t total_distinct_postings = 0;
     std::string db_name;          // KixHeader::db captured at validation

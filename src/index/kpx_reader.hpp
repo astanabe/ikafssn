@@ -48,22 +48,13 @@ public:
         }
     }
 
-    // madvise budget API
+    // Byte size of the dictionary region (header + Elias-Fano blob).
     size_t willneed_size() const;
-    void apply_madvise(bool willneed);
-
-    // Byte size of the whole mapping (pos_offsets dictionary head + .kpx
-    // posting file).  Used to charge a volume against the madvise budget in
-    // Stage 2 / Stage 3 (mode 1 never reads .kpx).
-    size_t willneed_size_full() const;
 
     // Dictionary WILLNEED + HUGEPAGE, posting body MADV_RANDOM (suppress
     // default readahead).  Stage 2A reads the posting body at random, so
     // demand faults track real need without readahead over-fetch.
     void   apply_madvise_dict_only();
-
-    // Byte size of the dictionary region (header + Elias-Fano blob).
-    size_t dict_size() const;
 
 private:
     MmapFile mmap_;

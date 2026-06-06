@@ -2,21 +2,22 @@
 
 // Top-level search orchestrator shared by ikafssnsearch (one-shot) and
 // ikafssnserver (per-request).  Drives the three search stages with a
-// global volume-batched WILLNEED window:
+// volume-batched group loop:
 //
-//   Stage 1  — one batch loop over volumes (.kix only).
-//   Stage 2  — one batch loop over volumes (.kix + .kpx).  Only mode 2/3.
-//              Each iteration runs Stage 2A then Stage 2B for the batch
-//              and frees the batch's per-ext_job transient JobState
-//              (hits_per_seq etc.) before the next batch begins, so peak
-//              heap usage tracks `posting_budget` rather than the total
+//   Stage 1  — one group loop over volumes (.kix only).
+//   Stage 2  — one group loop over volumes (.kix + .kpx).  Only mode 2/3.
+//              Each iteration runs Stage 2A then Stage 2B for the group
+//              and frees the group's per-ext_job transient JobState
+//              (hits_per_seq etc.) before the next group begins, so peak
+//              heap usage stays bounded by one group rather than the total
 //              volume × query fan-out.
 //
-// .kix / .kpx readers are opened / closed per batch so the kernel-level
-// page cache footprint is bounded by the configured posting_budget.
-// Persistent madvise WILLNEED is reserved for .khx / .ksx by the caller;
-// `posting_budget` is the residual budget the orchestrator may spend on
-// kix / kpx posting bodies inside one batch.
+// Volumes are bundled into a group until the group's ext_job count reaches
+// the thread target (`nthread`): many-query runs get one volume per group,
+// few-query runs bundle volumes to saturate the arena.  .kix / .kpx readers
+// are opened / closed per group, so the kernel-level page cache footprint is
+// bounded by one group's worth of mappings.  Persistent madvise WILLNEED is
+// reserved for .khx / .ksx by the caller.
 
 #include <cstdint>
 #include <string>
@@ -37,10 +38,6 @@ class Logger;
 
 struct VolumeMeta {
     DiscoveredVolume files;
-    size_t kix_posting_size = 0;  // posting_file_size (mode-aware cost)
-    size_t kpx_posting_size = 0;  // 0 in mode 1
-    size_t kix_full_size = 0;     // willneed_size_full
-    size_t kpx_full_size = 0;     // 0 in mode 1
     uint16_t volume_index = 0;
     uint32_t num_sequences = 0;
 };

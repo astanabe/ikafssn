@@ -69,8 +69,9 @@ static void print_usage(const char* prog) {
         "  -k <int>                 K-mer size to use (required if multiple k values exist)\n"
         "  -o <path>                Output file (default: stdout)\n"
         "  -nthread <int>           Parallel search threads (default: all cores)\n"
-        "  -memory_limit <size>     madvise WILLNEED budget (default: half of RAM)\n"
-        "                           Accepts K, M, G suffixes\n"
+        "  -memory_limit <size>     Search memory budget (default: half of RAM)\n"
+        "                           Pins .khx/.ksx metadata; residual caps the\n"
+        "                           Stage 3 posting heap.  Accepts K, M, G suffixes\n"
         "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: 1)\n"
         "  -min_query_length <int>  Minimum query length; shorter queries are skipped with a warning.\n"
         "                           Must be >= the index's min_seq_length (default: 64)\n"
@@ -113,10 +114,6 @@ struct VolumeData {
     DiscoveredVolume files;
     KsxReader ksx;
     OidFilter filter;
-    size_t kix_posting_size = 0;
-    size_t kpx_posting_size = 0;
-    size_t kix_full_size = 0;
-    size_t kpx_full_size = 0;
     uint32_t num_sequences = 0;
     uint16_t volume_index = 0;
 };
@@ -545,7 +542,7 @@ int main(int argc, char* argv[]) {
             vdata[vi].files = vf;
             vdata[vi].volume_index = vf.volume_index;
 
-            // Validate kix and capture sizes.
+            // Validate kix and capture num_sequences.
             {
                 KixReader kix_probe;
                 if (!kix_probe.open(vf.kix_path)) {
@@ -553,8 +550,6 @@ int main(int argc, char* argv[]) {
                                  vf.kix_path.c_str());
                     return false;
                 }
-                vdata[vi].kix_posting_size = kix_probe.posting_file_size();
-                vdata[vi].kix_full_size    = kix_probe.willneed_size_full();
                 vdata[vi].num_sequences    = kix_probe.num_sequences();
                 // -min_query_length must be >= the index's min_seq_length.
                 const uint32_t idx_min = vf.min_seq_length;
@@ -587,8 +582,6 @@ int main(int argc, char* argv[]) {
                                  vf.kpx_path.c_str());
                     return false;
                 }
-                vdata[vi].kpx_posting_size = kpx_probe.posting_file_size();
-                vdata[vi].kpx_full_size    = kpx_probe.willneed_size_full();
                 kpx_probe.close();
             }
 
@@ -632,10 +625,10 @@ int main(int argc, char* argv[]) {
 
     // Persistent madvise covers only the small per-volume metadata that
     // every search re-walks (.khx + .ksx).  The .kix / .kpx mappings live
-    // for one batch at a time inside the search orchestrator, so they are
-    // not pinned here; whatever budget remains after .khx/.ksx becomes
-    // `posting_budget`, the per-batch budget the orchestrator may spend on
-    // kix/kpx posting bodies.
+    // for one group at a time inside the search orchestrator, so they are
+    // not pinned here.  Stage 1 / Stage 2A no longer spend a memory budget;
+    // whatever budget remains after .khx/.ksx becomes `posting_budget`,
+    // which bounds the Stage 3 posting heap batching.
     uint64_t posting_budget = 0;
     {
         uint64_t budget = memory_limit;
@@ -864,19 +857,11 @@ int main(int argc, char* argv[]) {
         for (size_t vi = 0; vi < num_volumes; ++vi) {
             const auto& v0 = ctxs[0].volumes[vi];
             in.volumes_cod[vi].files             = v0.files;
-            in.volumes_cod[vi].kix_posting_size  = v0.kix_posting_size;
-            in.volumes_cod[vi].kpx_posting_size  = v0.kpx_posting_size;
-            in.volumes_cod[vi].kix_full_size     = v0.kix_full_size;
-            in.volumes_cod[vi].kpx_full_size     = v0.kpx_full_size;
             in.volumes_cod[vi].volume_index      = v0.volume_index;
             in.volumes_cod[vi].num_sequences     = v0.num_sequences;
             if (is_both_mode) {
                 const auto& v1 = ctxs[1].volumes[vi];
                 in.volumes_opt[vi].files             = v1.files;
-                in.volumes_opt[vi].kix_posting_size  = v1.kix_posting_size;
-                in.volumes_opt[vi].kpx_posting_size  = v1.kpx_posting_size;
-                in.volumes_opt[vi].kix_full_size     = v1.kix_full_size;
-                in.volumes_opt[vi].kpx_full_size     = v1.kpx_full_size;
                 in.volumes_opt[vi].volume_index      = v1.volume_index;
                 in.volumes_opt[vi].num_sequences     = v1.num_sequences;
             }

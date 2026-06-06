@@ -79,15 +79,6 @@ size_t KixReader::willneed_size() const {
     return sizeof(KixHeader) + dict_.willneed_size();
 }
 
-void KixReader::apply_madvise(bool willneed) {
-    mmap_.advise_dict_posting(willneed_size(), willneed);
-}
-
-size_t KixReader::willneed_size_full() const {
-    if (!mmap_.is_open()) return 0;
-    return mmap_.size();
-}
-
 void KixReader::apply_madvise_dict_only() {
     if (!mmap_.is_open()) return;
     const size_t dict = willneed_size();
@@ -97,10 +88,6 @@ void KixReader::apply_madvise_dict_only() {
 #endif
     if (mmap_.size() > dict)
         mmap_.advise(dict, mmap_.size() - dict, MADV_RANDOM);
-}
-
-size_t KixReader::dict_size() const {
-    return willneed_size();
 }
 
 std::vector<uint32_t> KixReader::bulk_count_postings() const {

@@ -87,8 +87,6 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
                 logger.error("Cannot open %s", dv.kix_path.c_str());
                 return false;
             }
-            svd.kix_posting_size       = kix_probe.posting_file_size();
-            svd.kix_full_size          = kix_probe.willneed_size_full();
             svd.num_sequences          = kix_probe.num_sequences();
             svd.total_distinct_postings = kix_probe.total_distinct_postings();
             const auto& kix_hdr = kix_probe.header();
@@ -118,8 +116,6 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
                 logger.error("Cannot open %s", dv.kpx_path.c_str());
                 return false;
             }
-            svd.kpx_posting_size = kpx_probe.posting_file_size();
-            svd.kpx_full_size    = kpx_probe.willneed_size_full();
             kpx_probe.close();
         } else {
             all_have_kpx = false;
