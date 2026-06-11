@@ -369,24 +369,8 @@ static void test_packed_scanner_all_iupac_expansion() {
 static void test_packed_scanner_run_length() {
     std::fprintf(stderr, "-- test_packed_scanner_run_length\n");
 
-    // Sequence: ACGTNNNNNACGT (13 bases), N run at positions 4-8 (run=5)
-    const char* raw_seq = "ACGTAAAAACGT"; // placeholders
-    // Actually 13 bases but our placeholder is 12. Let me fix:
-    // "ACGT" + "AAAAA" + "ACGT" = 13 chars
-    const char* raw_seq2 = "ACGTAAAAACGT";
-    // Wait, that's 12 chars. Let me count: A-C-G-T-A-A-A-A-A-C-G-T = 12
-    // I need 13: "ACGTAAAAACGTA" but that doesn't match...
-    // Let me just use the correct length:
-    // positions: 0=A, 1=C, 2=G, 3=T, 4-8=NNNNN, 9=A, 10=C, 11=G, 12=T
-    const char* raw_data = "ACGTAAAAACGT"; // 12 chars for 13 bases? No...
-    // "ACGT" (4) + "AAAAA" (5) + "ACGT" (4) = 13 chars
-    const char* raw13 = "ACGTAAAAACGT";
-    // A(0)C(1)G(2)T(3)A(4)A(5)A(6)A(7)A(8)C(9)G(10)T(11) = 12 chars. Hmm.
-    // Let me use 12 bases instead: ACGTNNNNNACG, run at 4-8
-    // Or more simply: use "ACGTAAAACGT" = 11 bases, run at 4-7 (run=4)
-    // Actually let me simplify: 10 bases, run of 3 Ns
-
-    // ACNNNACGTA (10 bases), N run at positions 2-4 (run=3)
+    // ACNNNACGTA (10 bases), N run at positions 2-4 (run=3). The N bases are
+    // encoded as placeholder A in the 2-bit stream; the ambig table marks them.
     const char* seq10 = "ACAAAACGTA";
     uint32_t len = 10;
     int k = 5;
@@ -461,11 +445,8 @@ static void test_packed_scanner_partial_byte() {
 static void test_packed_scanner_long_ambig_run() {
     std::fprintf(stderr, "-- test_packed_scanner_long_ambig_run\n");
 
-    // "ACGT" + 16*N + "ACGT" = 24 bases
-    // In ncbi2na, N positions have placeholder bases.
+    // "ACGT" + 16*N + "ACGT" = 24 bases (N encoded as placeholder A).
     const char* raw_seq = "ACGTAAAAAAAAAAAAAAAACGT";
-    // A(0)C(1)G(2)T(3) A*16(4-19) A(20)C(21)G(22)T(23) = 24
-    // Wait, that's "ACGT" + 16*A + "ACGT" = 4+16+4 = 24. Correct.
     uint32_t len = 24;
     int k = 5;
 
@@ -485,23 +466,9 @@ static void test_packed_scanner_long_ambig_run() {
             ambig_calls++;
         });
 
-    // Window positions 0..19 (20 total k-mers)
-    // pos 0: [0,4] includes pos 4 -> 1 ambig
-    // pos 1-15: [1,5]..[15,19] includes 2+ ambig positions -> skip
-    // pos 16: [16,20] includes pos 16-19 (4 ambig) -> skip
-    //   Actually pos 16: window [16,20], ambig at 16,17,18,19 -> 4 -> skip
-    // pos 17: [17,21] ambig at 17,18,19 -> 3 -> skip
-    // pos 18: [18,22] ambig at 18,19 -> 2 -> skip
-    // pos 19: [19,23] ambig at 19 -> 1 ambig
-    // So: normal at none from the Ns area, ambig_calls at pos 0 and 19
-    // Clean k-mers: none that have 0 ambig in window
-    // Wait, we also need to check if there are k-mers entirely before pos 4:
-    // pos 0: [0,4] -> pos 4 is ambig -> 1 ambig (ambig_call)
-    // No k-mer starts before 0 for k=5. So no fully clean k-mers before the N run.
-    // After the N run: pos 19: [19,23] includes pos 19 (ambig) -> 1 ambig
-    // No clean k-mers after either.
-
-    // Let's verify: only 2 ambig callbacks, 0 normal
+    // Every k-mer window (k=5) over positions 0..19 includes at least one N:
+    // pos 0 and pos 19 touch exactly one ambig base (one ambig callback each),
+    // all others touch >=2 and are skipped. So: 0 clean k-mers, 2 ambig calls.
     CHECK_EQ(static_cast<int>(normal_kmers.size()), 0);
     CHECK_EQ(ambig_calls, 2);
 }
@@ -509,11 +476,8 @@ static void test_packed_scanner_long_ambig_run() {
 static void test_packed_scanner_multi_ambig_expand() {
     std::fprintf(stderr, "-- test_packed_scanner_multi_ambig_expand\n");
 
-    // Sequence with 2 R bases (A|G): 2×2=4 <= max_expansion=4, should expand
-    // "ACRAG" (5 bases), R at positions 2 and R at... wait, need 2 separate R positions
-    // Let's use: "RCRAG" - R at pos 0, R at pos 2 -> actually too small let me think...
-    // Use "RARGC" (5 bases), R at pos 0 and R at pos 2
-    // Placeholder: "AAGC" with A at 0 and A at 2 -> "AAAGC"
+    // 2 R bases (A|G) at positions 0 and 2: 2×2=4 <= max_expansion=4, so the
+    // k-mer should expand. R is encoded as placeholder A: "AAAGC".
     const char* raw_seq = "AAAGC";
     uint32_t len = 5;
     int k = 5;

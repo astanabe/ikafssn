@@ -198,12 +198,9 @@ static void test_chain_max_lookback_interleaved() {
     config.max_gap = 100;
 
     // B=1: each hit can only look back 1 position.
-    // Index 0: dp=1
-    // Index 1: looks at [0] only -> diag diff |57-7-(90-0)|=|50-90|=40 <=100, but s needs increase: 57<90? No 57<90 -> s_pos[1]=57 < s_pos[0]=90, skip. dp=1
-    // Index 2: looks at [1] only -> s_pos[2]=104>57 yes, gap check: gap_q=14-7=7, gap_s=104-57=47, diag_diff=40<=100. dp=2
-    // Index 3: looks at [2] only -> s_pos[3]=71 < s_pos[2]=104, skip. dp=1
-    // Index 4: looks at [3] only -> s_pos[4]=118>71 yes, gap_q=28-21=7, gap_s=118-71=47, diag_diff=40<=100. dp=2
-    // Best = 2
+    // 0: dp=1.  1: pred [0] s_pos 90 > 57, no increase -> dp=1.
+    // 2: pred [1] s_pos 57 < 104, gaps ok -> dp=2.  3: pred [2] 104 > 71 -> dp=1.
+    // 4: pred [3] 71 < 118, gaps ok -> dp=2.  Best = 2.
     config.chain_max_lookback = 1;
     auto result1 = chain_hits(hits, 0, 7, false, config);
     CHECK_EQ(result1.size(), 1u);

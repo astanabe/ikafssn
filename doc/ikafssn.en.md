@@ -267,15 +267,23 @@ Options:
   -strand <-1|1|2>       Strand to search (default: 2)
                           1=plus only, -1=minus only, 2=both
   -accept_qdegen <0|1>    Accept queries with degenerate bases (default: 1)
-  -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
-  -t <int>                Template length for spaced seeds (default: 0)
-                          0: contiguous k-mers (traditional mode)
+  -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable).
+                          This is a query parameter, not a filter: it also breaks ties when
+                          several otherwise-identical index variants differ only in their
+                          build-time max_degen_expand (the variant whose build value equals
+                          this query value is preferred, else the largest is chosen).
+  -t <int>                Template length for spaced seeds (default: 0 = contiguous)
+                          0: contiguous k-mers (traditional mode); this is the default, NOT a wildcard
                           13, 15, 18: spaced seed template length (requires -k 8 or 9)
                           16, 18, 21: spaced seed template length (requires -k 11 or 12)
-  -template_type <str>    Template type for spaced seeds (default: both)
+  -template_type <str>    Template type for spaced seeds (default: both; invalid with -t 0)
                           coding: use coding index only
                           optimal: use optimal index only
                           both: merge coding and optimal indexes at search time
+  -min_seq_length <int>   Select the index variant built with this min_seq_length (default: any)
+  -min_length_split <int> Select the index variant built with this min_length_split (default: any)
+  -overlap_length <int>   Select the index variant built with this overlap_length (default: any)
+  -max_freq_build <int>   Select the index variant built with this max_freq_build (default: any)
   -output_format <tsv|json|sam|bam>  Output format (default: tsv)
   -compression_level <int> Output compression level (gzip/bzip2/xz/zstd; default per codec: gzip=6, bzip2=9, xz=6, zstd=3)
                           Codec is selected by -o suffix (.gz/.bz2/.xz/.zst); SAM/BAM reject all four
@@ -303,7 +311,23 @@ The `-ix` option specifies the index prefix path (without extension), similar to
 
 then specify `-ix /data/index/nt`. The prefix `/data/index/nt` is split into the directory `/data/index/` and the base name `nt`. Volumes are discovered via the `.kvx` manifest file, which lists the volume basenames. For aggregated databases (e.g. `combined` aggregating `foo` and `bar`), the index files would be `foo.k11.…kix`, `bar.k11.…kix`, with `combined.k11.…kvx` as the manifest.
 
-If the index directory contains indexes for multiple k-mer sizes (e.g. both `nt.k9.…kvx` and `nt.k11.…kvx`), you must specify `-k` to select which one to use. If only a single k-mer size exists, `-k` can be omitted.
+**Index-variant selection.** An index variant is identified by the eight parameters encoded in its file name: `k`, `t`, `template_type`, `min_seq_length`, `min_length_split`, `overlap_length`, `max_freq_build`, and `max_degen_expand`. `ikafssnsearch` discovers every variant under the prefix and then narrows the set down with the options above: each unset option is a wildcard (matches any value), each given option is an exact filter. After filtering, the remaining variants must collapse to a single variant identified by the first seven parameters (`max_degen_expand` excepted) — otherwise the search aborts with an "index filter is ambiguous" error listing the options you can use to narrow it, or a "no index variant matches" error if nothing matched. So when only one variant exists, every option can be omitted; when several exist, supply just enough options to make the choice unique.
+
+`max_degen_expand` is the one parameter allowed to remain non-unique: if several variants survive that differ only in their build-time `max_degen_expand`, the tie is broken by `-max_degen_expand` as described above. The build-time `-max_degen_expand` (from `ikafssnindex`) and the query-time `-max_degen_expand` need not match.
+
+The template_type dimension resolves as follows:
+
+| Options | Result |
+|---|---|
+| `-t 0` (or `-t` omitted) | the contiguous variant (single) |
+| `-t>0 -template_type coding` | the coding variant (single) |
+| `-t>0 -template_type optimal` | the optimal variant (single) |
+| `-t>0 -template_type both` | the coding+optimal pair (both required; error if either is missing) |
+| `-t>0` (no `-template_type`) | the coding+optimal pair if **both** exist, otherwise whichever single side exists (coding-only → coding, optimal-only → optimal) |
+
+In the both-pair case, coding and optimal must agree on all identifying parameters except `template_type` — **including `max_degen_expand`** (no "chanpon"/mixing). The shared `max_degen_expand` is tie-broken among the values present on *both* sides (query value preferred, else the largest common value); if the two sides share no `max_degen_expand`, the search aborts rather than mixing them.
+
+Two asymmetries are worth remembering. First, `-t` defaults to `0` (the contiguous index), which is a concrete value, not a wildcard: omitting `-t` selects the contiguous variant, it does not match spaced-seed variants. (`ikafssninfo` and `ikafssnserver`, by contrast, treat an unset `-t` as a wildcard.) Second, `-t 0` combined with `-template_type` is an error, because the contiguous index has no template type.
 
 When `-accept_qdegen` is 0, queries containing IUPAC degenerate bases (R, Y, S, W, K, M, B, D, H, V, N) are skipped with a `degen_rejected` skip-marker (TSV `*SKIPPED:degen_rejected`, JSON `"status": "skipped"`, SAM unmapped record with `XR:Z:degen_rejected`) and a stderr warning, and the exit code is 2. See "Skip reasons" below for the complete reason list and per-format representation. Set `-accept_qdegen 1` to allow such queries. K-mers containing exactly one degenerate base are expanded to all possible variants (e.g., R→A,G produces 2 k-mers; N→A,C,G,T produces 4) and used for search. K-mers whose per-position expansion product exceeds `-max_degen_expand` are skipped; when this occurs, a warning is emitted to stderr once per query indicating the query name and that such k-mers are ignored. (Note: this is a per-window unemit, not a whole-query skip — the rest of the query is still searched, and the unemit position is reflected in `Nhighfreq` for fractional thresholds.) In server mode (`ikafssnserver`), this warning is propagated through the protocol to `ikafssnclient`, which displays the same message. This matches the indexer's handling of subject-side degenerate bases.
 
@@ -486,6 +510,19 @@ Listener (at least one required):
   -socket <path>          UNIX domain socket path
   -tcp <host>:<port>      TCP listen address
 
+Index-variant load filter (each unset field is a wildcard):
+  -k <int>                Load only this k-mer length (default: any)
+  -t <int>                Load only this template length: 0=contiguous, 13/15/16/18/21
+                          (default: any; -t 0 loads the contiguous index only)
+  -template_type <str>    coding, optimal, contiguous, both (default: any; invalid with -t 0)
+  -min_seq_length <int>   Load only variants with this min_seq_length (default: any)
+  -min_length_split <int> Load only variants with this min_length_split (default: any)
+  -overlap_length <int>   Load only variants with this overlap_length (default: any)
+  -max_freq_build <int>   Load only variants with this max_freq_build (default: any)
+  -max_degen_expand <int> Load only variants with this max_degen_expand (default: any).
+                          Load filter only; the query-side max_degen_expand is supplied by
+                          the client (server fallback when a request omits it: 16).
+
 Options:
   -nthread <int>          Worker threads (default: all cores)
   -max_queue_size <int>   Max concurrent query sequences globally (default: 1024)
@@ -514,7 +551,6 @@ Options:
   -stage3_score_matrix <name>  Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)
   -nresult <int>      Default max results per query (default: 0)
   -accept_qdegen <0|1>    Default accept queries with degenerate bases (default: 1)
-  -max_degen_expand <int> Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)
   -memory_limit <size>    Search memory budget (default: half of RAM)
                           Pins .khx/.ksx metadata; residual caps the
                           Stage 3 posting heap and concurrent-search pool.
@@ -522,6 +558,10 @@ Options:
   -shutdown_timeout <int> Graceful shutdown timeout in seconds (default: 30)
   -v, --verbose           Verbose logging
 ```
+
+The load filter restricts which index variants the server loads, using the same wildcard semantics as `ikafssninfo` local mode (every unset field is a wildcard; an unset `-t` is a full wildcard; `-t 0` combined with `-template_type` is an error). All eight identifying parameters — **including `-max_degen_expand`** — are load filters here. `-max_degen_expand` is *only* a load filter on the server: the query-side `max_degen_expand` (k-mer expansion + tie-break) is supplied by the client, and the server applies an internal fallback of 16 only when a request omits it. Leaving `-max_degen_expand` unset loads every build-time value (so the per-request tie-break can choose); setting it restricts the loadable set, and clients can then only select among the loaded variants.
+
+The server exposes each loaded variant as a distinct group over the wire (the info response carries all eight identifying parameters per group). A search request carries the client-resolved variant identity; the server matches `t` and `template_type` literally (0 = contiguous), the four indexing fields exactly, and — when several `max_degen_expand` variants remain — picks the one whose build value equals the request's `max_degen_expand` (else the largest). For a `template_type=both` request the server selects a coding+optimal pair that shares one `max_degen_expand` (no mixing). `-min_query_length` and the long-query cap are derived per request from the selected variant's `min_seq_length` and `overlap_length`.
 
 **Examples:**
 
@@ -551,7 +591,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 
 - One process can serve multiple BLAST DB indexes simultaneously. Specify `-ix` (and optionally `-db`) multiple times to load several databases. Each database is identified by its basename (the last path component of the `-ix` prefix) and clients must specify `-db <name>` when the server hosts more than one database.
 - If `-db` is specified, the count must match the number of `-ix` flags (paired in order). Databases without a `-db` override default to the `-ix` prefix as the BLAST DB path. A database with no `-db` path supports modes 1-2 only (max_mode=2); providing `-db` enables mode 3 (max_mode=3).
-- If the index prefix matches indexes for multiple k-mer sizes, all are loaded and clients can specify k per request.
+- If the index prefix matches multiple index variants (differing in any of the eight identifying parameters — k, t, template_type, min_seq_length, min_length_split, overlap_length, max_freq_build, max_degen_expand), all are loaded (subject to the load filter) and each client request selects one by carrying its resolved variant identity. The load filter can restrict which variants are loaded in the first place.
 - On SIGTERM/SIGINT, performs graceful shutdown: stops accepting new connections, waits for in-flight requests to complete (up to `-shutdown_timeout` seconds), then exits.
 - **Per-sequence concurrency control:** The server limits concurrency at the per-sequence level, not per-connection. When a request arrives, the server attempts to acquire permits for each valid query sequence. If the global limit (`-max_queue_size`) is reached, excess sequences are returned to the client as "rejected" for retry. The `-max_nseq_per_req` option caps how many permits a single request can acquire, preventing one large request from monopolizing all slots.
 - **Inter-request posting budget pool (`-max_concurrent_search`):** The default value `0` lets every concurrent request independently use the full residual `posting_budget` (the leftover of `-memory_limit` after `.khx` / `.ksx` `WILLNEED`). When set to `N >= 1`, requests share that budget through a lease/release pool: each request holds a single lease for its whole search, and at most `N` searches run at once. This bounds in-flight posting heap — consumed by the Stage 3 alignment batcher — to `posting_budget` regardless of how many connections are open, at the cost of serialising additional searches until a lease is released. Use this when sizing `-memory_limit` for a single request would be undesirable but operators still want a hard cap on per-process posting RAM.
@@ -579,7 +619,7 @@ Backend connection (at least one required; order = priority):
   -server_tcp <host>:<port>  TCP address of ikafssnserver
 
 Job store (async REST):
-  -db <path>                  SQLite job store path
+  -sqlite_db <path>           SQLite job store path
                               (default: /var/lib/ikafssnhttpd/jobs.db)
   -query_dir <path>           Per-job query file directory.  Each queued or
                               running job's request body is persisted here as
@@ -648,7 +688,7 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 ### ikafssnclient
 
-Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. Invalid parameters produce an error with available database listings before any query data is transmitted. The client uses the server's `max_nseq_per_req` and available slot count to automatically split queries into appropriately-sized batches, avoiding oversized requests that would be partially rejected. Within each batch, if the server still rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
+Client command. Connects to `ikafssnserver` via socket or `ikafssnhttpd` via HTTP. Output format is identical to `ikafssnsearch`. Before sending any queries, the client performs pre-flight validation by fetching server capabilities and checking that the requested database name, k-mer size, and mode are valid. It then resolves the index variant exactly the way `ikafssnsearch` does — applying the same `-k` / `-t` / `-template_type` / `-min_seq_length` / `-min_length_split` / `-overlap_length` / `-max_freq_build` filter and the same template_type resolution (single, both-required, or wildcard-with-coding/optimal-fallback; both-pairs share one `max_degen_expand`, no mixing) to the server's per-variant group list, then sending the resolved identity in the request. As with `ikafssnsearch`, the result must collapse to one variant (or one both-pair) using the seven parameters other than `max_degen_expand`; `max_degen_expand` itself is left to the server's tie-break. An ambiguous or empty selection is reported locally before any query data is transmitted. Invalid parameters produce an error with available database listings. The client uses the server's `max_nseq_per_req` and available slot count to automatically split queries into appropriately-sized batches, avoiding oversized requests that would be partially rejected. Within each batch, if the server still rejects some query sequences due to concurrency limits, the client automatically retries the rejected queries with exponential backoff (30s, 60s, 120s, 120s, ...) until all queries are processed.
 
 **Socket/TCP mode (synchronous) — checkpointing:** When connected via `-socket` or `-tcp`, the client saves intermediate results to a temporary directory during batch processing. If the process is interrupted (e.g., Ctrl+C, network failure), re-running the same command resumes from where it left off, skipping already-completed queries. The temporary directory is named `{output}.{input}.{ix_name}.{kk}.ikafssn.tmp/` and is automatically cleaned up after successful completion. A directory-based lock prevents concurrent runs with the same parameters. Resume validation checks the search parameters, input file SHA256, and integrity of each batch file.
 
@@ -708,19 +748,25 @@ Options:
   -negative_seqidlist <path>  Exclude listed accessions
   -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)
   -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)
-  -max_degen_expand <int>  Max degenerate expansion (default: server default, max: 256)
+  -max_degen_expand <int>  Max degenerate expansion (default: 16, max: 256, 0/1: disable).
+                           A query parameter identical to ikafssnsearch (NOT delegated to the
+                           server); it also breaks ties among max_degen_expand variants.
   -min_query_length <int>  Minimum query length, in bases (default: 64).
                            Pre-filters queries client-side so that the
                            server's identical check never has to.  Must
                            be >= the server-reported min_seq_length
                            (surfaced via the InfoResponse); a smaller
                            value is rejected at the pre-flight stage.
-  -t <int>                 Template length for spaced seeds (default: server default)
+  -t <int>                 Template length for spaced seeds (default: 0 = contiguous, NOT a wildcard)
                            0: contiguous k-mers; 13, 15, 18 (k=8-9); 16, 18, 21 (k=11-12)
-  -template_type <str>     Template type for spaced seeds (default: server default)
+  -template_type <str>     Template type for spaced seeds (default: both for -t>0; invalid with -t 0)
                            coding: use coding index only
                            optimal: use optimal index only
                            both: merge coding and optimal indexes at search time
+  -min_seq_length <int>    Select the index variant with this min_seq_length (default: any)
+  -min_length_split <int>  Select the index variant with this min_length_split (default: any)
+  -overlap_length <int>    Select the index variant with this overlap_length (default: any)
+  -max_freq_build <int>    Select the index variant with this max_freq_build (default: any)
   -output_format <tsv|json|sam|bam>  Output format (default: tsv)
   -compression_level <int> Output compression level (defaults: gzip=6, bzip2=9, xz=6, zstd=3)
                            Codec is selected by -o suffix (.gz/.bz2/.xz/.zst); SAM/BAM reject all four
@@ -797,8 +843,18 @@ Required (one of):
   -tcp <host>:<port>       TCP address of ikafssnserver [remote mode]
   -http <url>              ikafssnhttpd URL [remote mode]
 
-Local mode options:
+Local mode options (index-variant filter; each unset field is a wildcard):
   -db <path>               BLAST DB prefix (default: auto-detect from -ix)
+  -k <int>                 K-mer length (default: any)
+  -t <int>                 Template length: 0=contiguous, 13/15/16/18/21
+                           (default: any; -t 0 selects the contiguous index only)
+  -template_type <str>     coding, optimal, contiguous, both (default: any; invalid with -t 0)
+  -min_seq_length <int>    Filter by min_seq_length (default: any)
+  -min_length_split <int>  Filter by min_length_split (default: any)
+  -overlap_length <int>    Filter by overlap_length (default: any)
+  -max_freq_build <int>    Filter by max_freq_build (default: any)
+  -max_degen_expand <int>  Filter by max_degen_expand (default: any)
+  -stats <0|1>             Compute k-mer frequency distribution (default: 0; slow)
 
 Remote HTTP authentication:
   -user <user:password>   Credentials (curl-style)
@@ -812,7 +868,7 @@ Options:
 
 `-ix` and remote options (`-socket`, `-tcp`, `-http`) are mutually exclusive. Only one remote option may be specified at a time.
 
-**Local mode** reads index files directly and displays detailed statistics. When `-db` is not specified, `ikafssninfo` attempts to auto-detect the BLAST DB by checking whether the index prefix path corresponds to a valid BLAST DB.
+**Local mode** reads index files directly and displays detailed statistics. When `-db` is not specified, `ikafssninfo` attempts to auto-detect the BLAST DB by checking whether the index prefix path corresponds to a valid BLAST DB. Unlike `ikafssnsearch` / `ikafssnclient`, local mode does not resolve down to a single variant: it reports **every** index variant that passes the filter, each under its own `=== Index variant: … ===` heading, and statistics are never combined across variants. The filter options use wildcard semantics — an unset `-t` matches any template length (whereas in `ikafssnsearch` an unset `-t` means contiguous), `-max_degen_expand` is an ordinary filter here (not a tie-break), and `-t 0` combined with `-template_type` is an error.
 
 Local mode output includes:
 
@@ -820,8 +876,8 @@ Local mode output includes:
 - Number of volumes
 - Per-volume statistics: parent (BLAST OID) count, fragment (internal SeqId) count, fragment-length distribution (min / median / mean / max), total postings, file sizes, excluded k-mer count (if `.khx` present)
 - Overall statistics: total parents, total fragments, aggregated fragment-length distribution, total postings, total index size, compression ratio
-- Fragment-indexing parameters (`min_seq_length`, `min_length_split`, `overlap_length`) parsed from the index file name
-- With `-v`: k-mer frequency distribution (min, max, mean, percentiles)
+- The variant's eight identifying parameters (`k`, `t`, `template_type`, `min_seq_length`, `min_length_split`, `overlap_length`, `max_freq_build`, `max_degen_expand`) parsed from the index file name
+- With `-stats 1`: k-mer frequency distribution (min, max, mean, percentiles)
 - With `-db` (or auto-detected): BLAST DB title, sequence count, total bases, volume paths
 
 The "Parents" / "Fragments" split makes it visible whether the index uses fragment splitting (`min_length_split > 0` and `Fragments > Parents`) or the degenerate one-fragment-per-parent layout (`Fragments == Parents`).
@@ -831,8 +887,8 @@ The "Parents" / "Fragments" split makes it visible whether the index uses fragme
 Remote mode output includes:
 
 - Active/max sequence slots
-- Per-database information: name, default k, max mode, k-mer groups with volume counts, sequence counts, total bases, and posting statistics
-- With `-v`: per-volume details (sequence count, total bases, postings) within each k-mer group
+- Per-database information: name, default k, max mode, and one group per index variant. Each group lists its eight identifying parameters (`k`, `t`, `template_type`, `min_seq_length`, `min_length_split`, `overlap_length`, `max_freq_build`, `max_degen_expand`) along with volume counts, sequence counts, total bases, and posting statistics
+- With `-v`: per-volume details (sequence count, total bases, postings) within each variant group
 
 **Examples:**
 
@@ -844,7 +900,7 @@ ikafssninfo -ix ./index/mydb
 ikafssninfo -ix ./index/mydb -db mydb
 
 # Local: detailed frequency distribution
-ikafssninfo -ix ./index/mydb -v
+ikafssninfo -ix ./index/mydb -stats 1
 
 # Remote: query server via UNIX socket
 ikafssninfo -socket /var/run/ikafssn.sock

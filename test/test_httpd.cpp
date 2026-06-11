@@ -10,7 +10,7 @@
 #include "index/ksx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
 #include "ikafssnserver/server.hpp"
 #include "ikafssnserver/connection_handler.hpp"
 #include "ikafssnhttpd/backend_client.hpp"
@@ -162,6 +162,7 @@ static void test_backend_search() {
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
     req.db = db;
+    req.min_seq_length = 64;  // resolved variant identity (default builder min_seq_length)
     for (const auto& q : queries) {
         req.queries.push_back({q.id, q.sequence});
     }
@@ -390,6 +391,7 @@ static void test_backend_seqidlist_filter() {
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
     req.db = db;
+    req.min_seq_length = 64;  // resolved variant identity (default builder min_seq_length)
     req.seqidlist_mode = SeqidlistMode::kInclude;
     req.seqids = {target_acc};
     for (const auto& q : queries) {

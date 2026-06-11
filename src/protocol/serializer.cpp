@@ -7,7 +7,7 @@
 namespace ikafssn {
 
 // --- SearchRequest ---
-// Wire format (all fields in natural order, no backward-compat trailer):
+// Wire format (all fields in natural order):
 //   u8   k
 //   u16  stage2_min_score
 //   u16  stage2_max_gap
@@ -35,6 +35,10 @@ namespace ikafssn {
 //   u8   t
 //   u8   template_type
 //   u8   score_matrix
+//   u32  min_seq_length
+//   u32  min_length_split
+//   u32  overlap_length
+//   u64  max_freq_build
 //   str16 db
 //   u32  num_seqids
 //     [str16 seqid] × num_seqids
@@ -73,6 +77,10 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     w.u8(req.t);
     w.u8(req.template_type);
     w.u8(req.score_matrix);
+    w.u32(req.min_seq_length);
+    w.u32(req.min_length_split);
+    w.u32(req.overlap_length);
+    w.u64(req.max_freq_build);
     w.str16(req.db);
 
     w.u32(static_cast<uint32_t>(req.seqids.size()));
@@ -125,6 +133,10 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u8(req.t)) return false;
     if (!r.get_u8(req.template_type)) return false;
     if (!r.get_u8(req.score_matrix)) return false;
+    if (!r.get_u32(req.min_seq_length)) return false;
+    if (!r.get_u32(req.min_length_split)) return false;
+    if (!r.get_u32(req.overlap_length)) return false;
+    if (!r.get_u64(req.max_freq_build)) return false;
     if (!r.get_str16(req.db)) return false;
 
     uint32_t num_seqids;
@@ -359,10 +371,10 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 }
 
 // --- InfoResponse ---
-// Wire format.  Each per-database section carries the index's
-// overlap_length so the client can pre-filter long queries.  Client
-// and server must agree on msg_version (see src/protocol/frame.cpp);
-// callers must rebuild together when it changes.
+// Wire format.  Each group is one full index variant, carrying all 8
+// identifying parameters (the per-variant overlap_length lets the client
+// pre-filter long queries).  Client and server must agree on msg_version
+// (see src/protocol/frame.cpp); callers must rebuild together when it changes.
 //   u8   status
 //   u8   default_k
 //   i32  max_queue_size
@@ -373,13 +385,17 @@ bool deserialize(const std::vector<uint8_t>& /*data*/, InfoRequest& /*req*/) {
 //     str16 name
 //     u8    default_k
 //     u8    max_mode
-//     u32   overlap_length
 //     u16   num_groups
 //     for each group:
 //       u8  k
 //       u8  kmer_type
 //       u8  t
 //       u8  template_type
+//       u32 min_seq_length
+//       u32 min_length_split
+//       u32 overlap_length
+//       u64 max_freq_build
+//       u32 max_degen_expand
 //       u16 num_volumes
 //       for each volume:
 //         u16 volume_index
@@ -404,7 +420,6 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
         w.str16(db.name);
         w.u8(db.default_k);
         w.u8(db.max_mode);
-        w.u32(db.overlap_length);
         w.u16(static_cast<uint16_t>(db.groups.size()));
 
         for (const auto& g : db.groups) {
@@ -412,6 +427,11 @@ std::vector<uint8_t> serialize(const InfoResponse& resp) {
             w.u8(g.kmer_type);
             w.u8(g.t);
             w.u8(g.template_type);
+            w.u32(g.min_seq_length);
+            w.u32(g.min_length_split);
+            w.u32(g.overlap_length);
+            w.u64(g.max_freq_build);
+            w.u32(g.max_degen_expand);
             w.u16(static_cast<uint16_t>(g.volumes.size()));
 
             for (const auto& v : g.volumes) {
@@ -445,7 +465,6 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
         if (!r.get_str16(db.name)) return false;
         if (!r.get_u8(db.default_k)) return false;
         if (!r.get_u8(db.max_mode)) return false;
-        if (!r.get_u32(db.overlap_length)) return false;
 
         uint16_t num_groups;
         if (!r.get_u16(num_groups)) return false;
@@ -457,6 +476,11 @@ bool deserialize(const std::vector<uint8_t>& data, InfoResponse& resp) {
             if (!r.get_u8(g.kmer_type)) return false;
             if (!r.get_u8(g.t)) return false;
             if (!r.get_u8(g.template_type)) return false;
+            if (!r.get_u32(g.min_seq_length)) return false;
+            if (!r.get_u32(g.min_length_split)) return false;
+            if (!r.get_u32(g.overlap_length)) return false;
+            if (!r.get_u64(g.max_freq_build)) return false;
+            if (!r.get_u32(g.max_degen_expand)) return false;
 
             uint16_t num_vols;
             if (!r.get_u16(num_vols)) return false;

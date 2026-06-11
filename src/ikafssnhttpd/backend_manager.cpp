@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <thread>
+#include <tuple>
 
 namespace ikafssn {
 
@@ -337,8 +338,13 @@ InfoResponse BackendManager::merged_info() const {
                 for (const auto& g : db.groups) {
                     bool found = false;
                     for (const auto& eg : existing.groups) {
-                        if (eg.k == g.k && eg.t == g.t
-                            && eg.template_type == g.template_type) {
+                        if (eg.k == g.k && eg.t == g.t &&
+                            eg.template_type == g.template_type &&
+                            eg.min_seq_length == g.min_seq_length &&
+                            eg.min_length_split == g.min_length_split &&
+                            eg.overlap_length == g.overlap_length &&
+                            eg.max_freq_build == g.max_freq_build &&
+                            eg.max_degen_expand == g.max_degen_expand) {
                             found = true;
                             break;
                         }
@@ -370,19 +376,33 @@ Json::Value BackendManager::build_info_json() const {
         uint8_t kmer_type;
         uint8_t t = 0;
         uint8_t template_type = 0;
+        uint32_t min_seq_length = 0;
+        uint32_t min_length_split = 0;
+        uint32_t overlap_length = 0;
+        uint64_t max_freq_build = 1;
+        uint32_t max_degen_expand = 0;
         std::vector<VolumeInfo> volumes;
         std::map<uint8_t, ModeCapInfo> mode_capacity;
     };
 
-    // Composite key for group map: (k, t, template_type)
+    // Composite key for the group map: the full 8-parameter variant identity,
+    // so variants that share (k, t, template_type) but differ in indexing
+    // parameters stay distinct.
     struct GroupKey {
         uint8_t k;
         uint8_t t;
         uint8_t template_type;
+        uint32_t min_seq_length;
+        uint32_t min_length_split;
+        uint32_t overlap_length;
+        uint64_t max_freq_build;
+        uint32_t max_degen_expand;
         bool operator<(const GroupKey& o) const {
-            if (k != o.k) return k < o.k;
-            if (t != o.t) return t < o.t;
-            return template_type < o.template_type;
+            return std::tie(k, t, template_type, min_seq_length, min_length_split,
+                            overlap_length, max_freq_build, max_degen_expand) <
+                   std::tie(o.k, o.t, o.template_type, o.min_seq_length,
+                            o.min_length_split, o.overlap_length, o.max_freq_build,
+                            o.max_degen_expand);
         }
     };
 
@@ -412,13 +432,20 @@ Json::Value BackendManager::build_info_json() const {
             }
 
             for (const auto& g : db.groups) {
-                GroupKey gkey{g.k, g.t, g.template_type};
+                GroupKey gkey{g.k, g.t, g.template_type, g.min_seq_length,
+                              g.min_length_split, g.overlap_length,
+                              g.max_freq_build, g.max_degen_expand};
                 auto& mg = mdb.groups[gkey];
                 if (mg.k == 0) {
                     mg.k = g.k;
                     mg.kmer_type = g.kmer_type;
                     mg.t = g.t;
                     mg.template_type = g.template_type;
+                    mg.min_seq_length = g.min_seq_length;
+                    mg.min_length_split = g.min_length_split;
+                    mg.overlap_length = g.overlap_length;
+                    mg.max_freq_build = g.max_freq_build;
+                    mg.max_degen_expand = g.max_degen_expand;
                     mg.volumes = g.volumes;
                 }
 
@@ -454,6 +481,11 @@ Json::Value BackendManager::build_info_json() const {
                 gobj["t"] = mg.t;
                 gobj["template_type"] = mg.template_type;
             }
+            gobj["min_seq_length"] = mg.min_seq_length;
+            gobj["min_length_split"] = mg.min_length_split;
+            gobj["overlap_length"] = mg.overlap_length;
+            gobj["max_freq_build"] = static_cast<Json::UInt64>(mg.max_freq_build);
+            gobj["max_degen_expand"] = mg.max_degen_expand;
 
             uint64_t group_total_sequences = 0;
             uint64_t group_total_bases = 0;

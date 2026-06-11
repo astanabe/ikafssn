@@ -45,11 +45,17 @@ struct SearchRequest {
     uint32_t stage3_min_npositive = 0;             // 0 = no filter
     uint32_t context_abs = 0;                     // absolute context bases (when frac=0)
     uint16_t context_frac_x10000 = 0;             // ratio * 10000 (when > 0, ratio mode)
-    uint16_t max_degen_expand = 0;                 // 0 = server default
+    uint16_t max_degen_expand = 0;                 // 0 = server default; query value + index-selection tie-break
     uint16_t stage2_max_nhit_per_subject = 0;      // 0 = server default
     uint8_t  t = 0;               // template length (0/16/18/21)
     uint8_t  template_type = 0;   // 0=server default, 1=coding, 2=optimal, 3=both
     uint8_t  score_matrix = 0;   // 0=server default, 1=degmatch, 2=dnafull, 3=nuc44
+    // Index-variant identification (the 7 fields the client resolves to one
+    // variant; max_degen_expand above is the 8th, tie-broken server-side).
+    uint32_t min_seq_length = 0;
+    uint32_t min_length_split = 0;
+    uint32_t overlap_length = 0;
+    uint64_t max_freq_build = 1;  // absolute threshold (1 = disabled)
     std::string db;                                // target database name (empty = error)
     std::vector<std::string> seqids;
     std::vector<QueryEntry> queries;
@@ -169,12 +175,18 @@ struct VolumeInfo {
     std::string db;
 };
 
-// Per-k group info in the info response
+// Per-variant group info in the info response.  One KmerGroupInfo describes
+// exactly one full index variant (all 8 identifying parameters).
 struct KmerGroupInfo {
     uint8_t  k;
     uint8_t  kmer_type; // 0 = uint16, 1 = uint32
     uint8_t  t = 0;
     uint8_t  template_type = 0;
+    uint32_t min_seq_length = 0;
+    uint32_t min_length_split = 0;
+    uint32_t overlap_length = 0;   // per-variant; ikafssnclient pre-filters long queries with this
+    uint64_t max_freq_build = 1;
+    uint32_t max_degen_expand = 0;
     std::vector<VolumeInfo> volumes;
 };
 
@@ -184,10 +196,6 @@ struct DatabaseInfo {
     uint8_t default_k = 0;
     uint8_t max_mode = 2;   // 1=stage1 only, 2=stage1+2, 3=stage1+2+3
     std::vector<KmerGroupInfo> groups;
-    // The index's overlap_length, surfaced over the wire so
-    // ikafssnclient can pre-filter queries longer than the index can
-    // handle.
-    uint32_t overlap_length = 0;
 };
 
 // Info response message (server -> client)

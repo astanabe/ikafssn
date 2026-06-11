@@ -10,7 +10,7 @@
 namespace ikafssn {
 
 // Per-job persistent state at .ikafssnclient/<group_id>/<job_id>.json.
-struct JobMeta {
+struct ClientJobMeta {
     std::string job_id;
     std::string group_id;
     int32_t     n_seqs = 0;
@@ -61,11 +61,11 @@ bool write_group_meta(const std::string& root, const GroupMeta& meta,
 bool read_group_meta(const std::string& root, const std::string& group_id,
                      GroupMeta& out, std::string& error_msg);
 
-// Persist JobMeta to <root>/<group_id>/<job_id>.json (atomic tmp+rename).
-bool write_job_meta(const std::string& root, const JobMeta& meta,
+// Persist ClientJobMeta to <root>/<group_id>/<job_id>.json (atomic tmp+rename).
+bool write_job_meta(const std::string& root, const ClientJobMeta& meta,
                     std::string& error_msg);
 bool read_job_meta(const std::string& root, const std::string& group_id,
-                   const std::string& job_id, JobMeta& out,
+                   const std::string& job_id, ClientJobMeta& out,
                    std::string& error_msg);
 
 // List all group_ids under <root>, ordered by GroupMeta.submitted_at.

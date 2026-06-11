@@ -1,6 +1,6 @@
 #include "test_util.hpp"
 #include "search/query_preprocessor.hpp"
-#include "search/volume_searcher.hpp"
+#include "search/search_config.hpp"
 #include "protocol/messages.hpp"
 
 #include <cstdio>

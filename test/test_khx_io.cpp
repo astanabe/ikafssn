@@ -12,6 +12,18 @@ using namespace ikafssn;
 
 static const char* TEST_FILE = "/tmp/test_ikafssn.khx";
 
+// Convert a per-kmer count array + threshold into the exclusion bitset the
+// index filter computes, then write it via the production write_khx_bitset.
+static bool write_khx_counts(const std::string& path, int k,
+                             const std::vector<uint32_t>& counts,
+                             uint64_t freq_threshold, const Logger& logger) {
+    std::vector<bool> excluded(counts.size());
+    for (size_t i = 0; i < counts.size(); i++) {
+        excluded[i] = counts[i] > freq_threshold;
+    }
+    return write_khx_bitset(path, k, excluded, logger);
+}
+
 static void test_basic_roundtrip() {
     std::fprintf(stderr, "-- test_khx_basic_roundtrip\n");
 
@@ -28,7 +40,7 @@ static void test_basic_roundtrip() {
 
     uint64_t freq_threshold = 20;
 
-    CHECK(write_khx(TEST_FILE, k, counts, freq_threshold, logger));
+    CHECK(write_khx_counts(TEST_FILE, k, counts, freq_threshold, logger));
 
     // Read back
     KhxReader reader;
@@ -63,7 +75,7 @@ static void test_no_exclusions() {
     std::vector<uint32_t> counts(tbl, 10);
     uint64_t freq_threshold = 100; // no counts exceed this
 
-    CHECK(write_khx(TEST_FILE, k, counts, freq_threshold, logger));
+    CHECK(write_khx_counts(TEST_FILE, k, counts, freq_threshold, logger));
 
     KhxReader reader;
     CHECK(reader.open(TEST_FILE));
@@ -87,7 +99,7 @@ static void test_all_excluded() {
     std::vector<uint32_t> counts(tbl, 100);
     uint64_t freq_threshold = 0; // all counts exceed this
 
-    CHECK(write_khx(TEST_FILE, k, counts, freq_threshold, logger));
+    CHECK(write_khx_counts(TEST_FILE, k, counts, freq_threshold, logger));
 
     KhxReader reader;
     CHECK(reader.open(TEST_FILE));
@@ -115,7 +127,7 @@ static void test_larger_k() {
     }
     uint64_t freq_threshold = 10;
 
-    CHECK(write_khx(TEST_FILE, k, counts, freq_threshold, logger));
+    CHECK(write_khx_counts(TEST_FILE, k, counts, freq_threshold, logger));
 
     KhxReader reader;
     CHECK(reader.open(TEST_FILE));

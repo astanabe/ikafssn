@@ -85,7 +85,6 @@ void handle_connection(
             dbi.name = db.name;
             dbi.default_k = static_cast<uint8_t>(db.default_k);
             dbi.max_mode = db.max_mode;
-            dbi.overlap_length = db.overlap_length;
 
             for (const auto& group : db.kmer_groups) {
                 KmerGroupInfo gi;
@@ -93,6 +92,11 @@ void handle_connection(
                 gi.kmer_type = group.kmer_type;
                 gi.t = group.t;
                 gi.template_type = group.template_type;
+                gi.min_seq_length = group.min_seq_length;
+                gi.min_length_split = group.min_length_split;
+                gi.overlap_length = group.overlap_length;
+                gi.max_freq_build = group.max_freq_build;
+                gi.max_degen_expand = group.max_degen_expand;
 
                 for (const auto& vol : group.volumes) {
                     VolumeInfo vi;

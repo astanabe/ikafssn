@@ -84,7 +84,7 @@ void JobHousekeeper::orphan_sweep_() {
         } else {
             int removed = 0;
             for (const auto& jid : ids) {
-                JobMeta meta;
+                HttpdJobMeta meta;
                 std::string gerr;
                 if (store_.get_status(jid, meta, gerr)) continue;
                 if (!gerr.empty()) {
@@ -123,7 +123,7 @@ void JobHousekeeper::orphan_sweep_() {
         }
         int removed = 0;
         for (const auto& jid : ids) {
-            JobMeta meta;
+            HttpdJobMeta meta;
             std::string gerr;
             bool has_row = store_.get_status(jid, meta, gerr);
             if (!gerr.empty()) {

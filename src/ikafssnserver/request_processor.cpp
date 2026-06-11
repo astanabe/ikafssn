@@ -42,12 +42,26 @@ SearchResponse process_search_request(
     SearchResponse resp;
     resp.db = db.name;
 
-    // Determine k and t
+    // Determine k, t, template_type.  The client sends a fully-resolved variant
+    // identity, so t / template_type are matched literally (0 = contiguous,
+    // NOT "use default").  Only a fully-unspecified ("bare") request — k==0 &&
+    // t==0 && template_type==0 — falls back to the DB defaults so minimal raw
+    // clients need not resolve a variant.  k==0 always means default_k
+    // since a real index never has k==0.
+    const bool bare =
+        (req.k == 0 && req.t == 0 && req.template_type == 0);
     int k = (req.k != 0) ? req.k : db.default_k;
-    uint8_t t = (req.t != 0) ? req.t : db.default_t;
-    uint8_t tt = (req.template_type != 0) ? req.template_type : db.default_template_type;
+    uint8_t t = bare ? db.default_t : req.t;
+    uint8_t tt = bare ? db.default_template_type : req.template_type;
     resp.k = static_cast<uint8_t>(k);
     resp.t = t;
+
+    // The request carries the client-resolved 7-field variant identity; the
+    // 8th field (max_degen_expand) is a query value used to tie-break among
+    // otherwise-identical variants (query value preferred, else largest).
+    const uint32_t query_expand = (req.max_degen_expand != 0)
+        ? req.max_degen_expand
+        : db.resolved_search_config.max_degen_expand;
 
     // Determine group(s) based on template type
     const KmerGroup* group_ptr = nullptr;
@@ -56,7 +70,9 @@ SearchResponse process_search_request(
     bool is_both_mode = (tt == 3);
 
     if (is_both_mode) {
-        auto [cod, opt] = db.find_both_groups(k, t);
+        auto [cod, opt] = db.find_both_groups(k, t, req.min_seq_length,
+            req.min_length_split, req.overlap_length, req.max_freq_build,
+            query_expand);
         if (!cod || !opt) {
             resp.status = 1;
             return resp;
@@ -69,7 +85,9 @@ SearchResponse process_search_request(
         group_opt = opt;
         group_ptr = cod; // use coding group for metadata
     } else {
-        group_ptr = db.find_group(k, t, tt);
+        group_ptr = db.find_group(k, t, tt, req.min_seq_length,
+            req.min_length_split, req.overlap_length, req.max_freq_build,
+            query_expand);
         if (!group_ptr) {
             resp.status = 1;
             return resp;
@@ -79,6 +97,10 @@ SearchResponse process_search_request(
 
     // Build search config, using request values if non-zero, else DB defaults
     SearchConfig config = db.resolved_search_config;
+    // Re-derive the query-length bounds from the selected variant: the floor
+    // is its min_seq_length, the cap is its overlap_length (0 = no cap).
+    config.min_query_length = group.min_seq_length;
+    config.max_query_length = group.overlap_length;
     if (req.has_stage2_min_score)
         config.stage2.min_score = req.stage2_min_score;
     if (req.stage2_max_gap != 0)
@@ -425,7 +447,6 @@ SearchResponse process_search_request(
         in.k = k;
         in.nthread = static_cast<int>(arena.max_concurrency());
         in.config = config;
-        in.posting_budget = posting_budget;
         in.logger = nullptr;  // server avoids per-request stage logs
         in.max_num_seqs = max_num_seqs;
         in.width = width;

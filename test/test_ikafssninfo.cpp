@@ -133,13 +133,13 @@ static void test_basic_info() {
     CHECK(output.find("Compression:") != std::string::npos);
 }
 
-static void test_verbose_info() {
-    std::fprintf(stderr, "-- test_verbose_info\n");
+static void test_stats_info() {
+    std::fprintf(stderr, "-- test_stats_info\n");
 
-    std::string output = run_ikafssninfo("-ix " + g_index_prefix + " -v");
+    // -stats 1 enables the k-mer frequency distribution (full posting scan).
+    std::string output = run_ikafssninfo("-ix " + g_index_prefix + " -stats 1");
     CHECK(!output.empty());
 
-    // Verbose mode should show frequency distribution
     CHECK(output.find("K-mer frequency distribution:") != std::string::npos);
     CHECK(output.find("Non-empty k-mers:") != std::string::npos);
     CHECK(output.find("Min count:") != std::string::npos);
@@ -147,6 +147,11 @@ static void test_verbose_info() {
     CHECK(output.find("Mean count:") != std::string::npos);
     CHECK(output.find("Percentiles:") != std::string::npos);
     CHECK(output.find("Aggregated K-mer Frequency Distribution") != std::string::npos);
+
+    // Default (-stats 0) must omit the frequency distribution entirely.
+    std::string default_output = run_ikafssninfo("-ix " + g_index_prefix);
+    CHECK(default_output.find("K-mer frequency distribution:") == std::string::npos);
+    CHECK(default_output.find("Aggregated K-mer Frequency Distribution") == std::string::npos);
 }
 
 static void test_db_info() {
@@ -225,16 +230,26 @@ static void test_nonexistent_dir() {
     CHECK(run_ikafssninfo_exit("-ix /nonexistent/path") != 0);
 }
 
+static void test_t0_template_type_conflict() {
+    std::fprintf(stderr, "-- test_t0_template_type_conflict\n");
+
+    // -t 0 selects the contiguous index, which has no template type, so
+    // pairing it with -template_type must be rejected.
+    CHECK(run_ikafssninfo_exit(
+        "-ix " + g_index_prefix + " -t 0 -template_type coding", true) != 0);
+}
+
 int main() {
     setup();
 
     test_basic_info();
-    test_verbose_info();
+    test_stats_info();
     test_db_info();
     test_consistency_with_reader();
     test_help();
     test_missing_ix();
     test_nonexistent_dir();
+    test_t0_template_type_conflict();
 
     cleanup();
 

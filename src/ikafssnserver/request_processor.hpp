@@ -10,7 +10,7 @@
 #include "index/khx_reader.hpp"
 #include "io/volume_discovery.hpp"
 #include "search/oid_filter.hpp"
-#include "search/volume_searcher.hpp"
+#include "search/search_config.hpp"
 #include "search/stage3_alignment.hpp"
 #include "protocol/messages.hpp"
 
@@ -36,12 +36,19 @@ struct ServerVolumeData {
     uint64_t total_bases = 0;
 };
 
-// A group of volumes for a specific k-mer size
+// A group of volumes for one full index variant.  Every volume in the group
+// shares all 8 identifying parameters (k / t / template_type and the five
+// indexing parameters below); different variants live in different groups.
 struct KmerGroup {
     int k;
     uint8_t kmer_type; // 0 = uint16_t, 1 = uint32_t
     uint8_t t = 0;              // template length
     uint8_t template_type = 0;  // TemplateType enum value
+    uint32_t min_seq_length = 0;
+    uint32_t min_length_split = 0;
+    uint32_t overlap_length = 0;
+    uint64_t max_freq_build = 1;
+    uint32_t max_degen_expand = 0;
     std::vector<ServerVolumeData> volumes;
     KhxReader khx;  // shared .khx for this k-mer size
 };

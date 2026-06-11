@@ -57,6 +57,16 @@ bool parse_template_type_cli(const CliParser& cli, TemplateType default_value,
     return true;
 }
 
+bool validate_t_template_type_combo(const CliParser& cli, std::string& err) {
+    if (cli.has("-template_type") && cli.has("-t") &&
+        cli.get_int("-t", 0) == 0) {
+        err = "Error: -template_type cannot be combined with -t 0 "
+              "(the contiguous index has no template type)";
+        return false;
+    }
+    return true;
+}
+
 bool validate_primer_mode_options(const CliParser& cli, std::string& err) {
     if (!cli.has("-primer")) return true;
     if (cli.has("-stage1_min_score")) {

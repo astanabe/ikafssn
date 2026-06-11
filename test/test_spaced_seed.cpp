@@ -226,7 +226,6 @@ static void test_scan_spaced_known_kmer() {
     //   Bases at those positions:     A,C,T,A,G,T,C,G,A,C,T
     //   2-bit values (MSB first):     0,1,3,0,2,3,1,2,0,1,3
     //   k-mer (22-bit): 00 01 11 00 10 11 01 10 00 01 11
-    //                  = 0x01CB187 ... let me compute properly
     //
     // The k-mer integer (uint32_t) for k=11:
     //   bit_pos 0 (MSB of k-mer) -> first mask-selected base (pos 0) = A = 0b00
@@ -700,7 +699,7 @@ static void test_scan_spaced_ambig_vs_reference() {
 }
 
 static void test_kmer_type_for() {
-    // t=0 (contiguous): same as kmer_type_for_k
+    // t=0 (contiguous): width follows the k>=9 boundary
     CHECK_EQ(kmer_type_for(5, 0), (uint8_t)0);  // 10 bits -> uint16
     CHECK_EQ(kmer_type_for(8, 0), (uint8_t)0);  // 16 bits -> uint16
     CHECK_EQ(kmer_type_for(9, 0), (uint8_t)1);  // 18 bits -> uint32
@@ -714,10 +713,11 @@ static void test_kmer_type_for() {
     CHECK_EQ(kmer_type_for(11, 16), (uint8_t)1); // 22 bits -> uint32
     CHECK_EQ(kmer_type_for(12, 18), (uint8_t)1); // 24 bits -> uint32
 
-    // Consistency with kmer_type_for_k for all t values
+    // The type follows the k>=9 boundary for contiguous (t=0) and any t.
     for (int k = MIN_K; k <= MAX_K; k++) {
-        CHECK_EQ(kmer_type_for(k, 0), kmer_type_for_k(k));
-        CHECK_EQ(kmer_type_for(k, 13), kmer_type_for_k(k)); // t doesn't affect type
+        uint8_t expected = (k >= 9) ? 1 : 0;
+        CHECK_EQ(kmer_type_for(k, 0), expected);
+        CHECK_EQ(kmer_type_for(k, 13), expected); // t doesn't affect type
     }
 }
 

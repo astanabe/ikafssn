@@ -37,7 +37,7 @@ static void print_usage(const char* prog) {
         "  -server_tcp <host>:<port>  TCP address of ikafssnserver\n"
         "\n"
         "Job store (async REST):\n"
-        "  -db <path>                  SQLite job DB path\n"
+        "  -sqlite_db <path>           SQLite job DB path\n"
         "                              (default: /var/lib/ikafssnhttpd/jobs.db)\n"
         "  -query_dir <path>           Per-job query file directory\n"
         "                              (default: /var/lib/ikafssnhttpd/queries)\n"
@@ -117,7 +117,7 @@ int main(int argc, char* argv[]) {
 
     manager->start_heartbeat(heartbeat_interval, logger);
 
-    std::string db_path = cli.get_string("-db", "/var/lib/ikafssnhttpd/jobs.db");
+    std::string db_path = cli.get_string("-sqlite_db", "/var/lib/ikafssnhttpd/jobs.db");
     std::string query_dir = cli.get_string("-query_dir",
         "/var/lib/ikafssnhttpd/queries");
     int query_level = cli.get_int("-query_compression_level", 3);

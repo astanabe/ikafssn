@@ -25,7 +25,7 @@ bool        job_status_parse(const std::string& s, JobStatus& out);
 // In-memory snapshot of a SQLite row (without the heavy blobs).  Used by
 // JobWorker to drive route_search and by HttpController to answer
 // GET /api/v1/jobs/<id>.
-struct JobMeta {
+struct HttpdJobMeta {
     std::string job_id;
     JobStatus   status = JobStatus::kQueued;
     std::string error_message;
@@ -88,7 +88,7 @@ public:
     // status to 'running'.  Sets `out_meta`.  The query body is read
     // from the QueryStore by the caller using `out_meta.job_id`.
     // Returns false (with empty error_msg) when there is no queued job.
-    bool fetch_one_queued(JobMeta& out_meta,
+    bool fetch_one_queued(HttpdJobMeta& out_meta,
                           std::string& error_msg);
 
     // Mark a job as completed.  The result file is the caller's
@@ -110,7 +110,7 @@ public:
                            std::string& error_msg);
 
     // Read the meta row.  Returns false if job_id not found.
-    bool get_status(const std::string& job_id, JobMeta& out,
+    bool get_status(const std::string& job_id, HttpdJobMeta& out,
                     std::string& error_msg);
 
     // Delete done/failed rows whose `completed_at` is older than

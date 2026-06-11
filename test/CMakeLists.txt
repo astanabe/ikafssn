@@ -69,11 +69,23 @@ add_ikafssn_test(test_extract_for_mask_batch test_extract_for_mask_batch.cpp)
 target_link_libraries(test_extract_for_mask_batch PRIVATE ikafssn_util)
 target_compile_definitions(test_extract_for_mask_batch PRIVATE IKAFSSN_TESTING)
 add_ikafssn_simd_test(test_extract_for_mask_batch)
+# .kix / .kpx writers (test-only; production builds these files directly in
+# index_builder, so KixWriter / KpxWriter exist only to construct fixtures).
+add_library(ikafssn_test_index_writer STATIC kix_writer.cpp kpx_writer.cpp)
+target_link_libraries(ikafssn_test_index_writer PUBLIC ikafssn_index ikafssn_core)
+target_include_directories(ikafssn_test_index_writer PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+
 add_ikafssn_test(test_ksx_io test_ksx_io.cpp)
 add_ikafssn_test(test_kix_io test_kix_io.cpp)
+target_link_libraries(test_kix_io PRIVATE ikafssn_test_index_writer)
 add_ikafssn_test(test_kpx_io test_kpx_io.cpp)
+target_link_libraries(test_kpx_io PRIVATE ikafssn_test_index_writer)
 add_ikafssn_test(test_khx_io test_khx_io.cpp)
 target_link_libraries(test_khx_io PRIVATE ikafssn_util)
+
+# Shared index-variant selection helpers (pure logic, no BLAST DB dependency)
+add_ikafssn_test(test_variant_filter test_variant_filter.cpp)
 
 # fragment_splitter unit test (no BLAST DB dependency)
 add_ikafssn_test(test_fragment_splitter test_fragment_splitter.cpp)
@@ -119,7 +131,7 @@ target_link_libraries(test_v8_rejection PRIVATE ikafssn_util)
 # injection regression.  Exercises validate_volume() against both a
 # clean build and a corrupted kind map.
 add_ikafssn_test(test_index_filter_validate test_index_filter_validate.cpp)
-target_link_libraries(test_index_filter_validate PRIVATE ikafssn_util)
+target_link_libraries(test_index_filter_validate PRIVATE ikafssn_test_index_writer ikafssn_util)
 
 # ikafssnindex resume / per-volume validation regression.  Spawns the
 # ikafssnindex CLI binary against the SSU fixture.
@@ -136,9 +148,9 @@ target_compile_definitions(test_resume_validation PRIVATE
 )
 add_test(NAME test_resume_validation COMMAND test_resume_validation)
 
-# Per-tier popcount_kinds + horizontal_sum_u8 unit test.  Run across
-# every ISA tier via add_ikafssn_simd_test so AVX2 / AVX-512
-# auto-vectorisation paths get the same coverage as SSE4.2 / NEON.
+# Per-tier popcount_kinds unit test.  Run across every ISA tier via
+# add_ikafssn_simd_test so AVX2 / AVX-512 auto-vectorisation paths get
+# the same coverage as SSE4.2 / NEON.
 add_ikafssn_test(test_kind_map_popcount test_kind_map_popcount.cpp)
 target_link_libraries(test_kind_map_popcount PRIVATE ikafssn_util)
 target_compile_definitions(test_kind_map_popcount PRIVATE IKAFSSN_TESTING)
@@ -187,6 +199,14 @@ target_compile_definitions(test_packed_kmer_scanner PRIVATE
 add_test(NAME test_packed_kmer_scanner COMMAND test_packed_kmer_scanner)
 add_ikafssn_simd_test(test_packed_kmer_scanner)
 
+# Single-volume search convenience wrappers (test-only; production search
+# runs through search_orchestrator::run_search).
+add_library(ikafssn_test_search_helper STATIC volume_search_helper.cpp)
+target_link_libraries(ikafssn_test_search_helper PUBLIC
+    ikafssn_search ikafssn_index ikafssn_io ikafssn_core)
+target_include_directories(ikafssn_test_search_helper PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+
 # --- Search-pipeline tests ---
 
 # Diagonal filter test (no external dependencies)
@@ -224,6 +244,7 @@ add_test(NAME test_oid_filter COMMAND test_oid_filter)
 # Stage 1 filter test (requires NCBI Toolkit for index building)
 add_executable(test_stage1 test_stage1.cpp)
 target_link_libraries(test_stage1 PRIVATE
+    ikafssn_test_search_helper
     ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
 )
 target_include_directories(test_stage1 PRIVATE
@@ -253,6 +274,7 @@ add_ikafssn_simd_test(test_stage1_simd_kernel)
 # BLAST DB + the long-parent fixture from setup_ssu_testdata.sh).
 add_executable(test_split_index_integration test_split_index_integration.cpp)
 target_link_libraries(test_split_index_integration PRIVATE
+    ikafssn_test_search_helper
     ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
 )
 target_include_directories(test_split_index_integration PRIVATE
@@ -268,6 +290,7 @@ add_test(NAME test_split_index_integration COMMAND test_split_index_integration)
 # Search integration test (requires NCBI Toolkit + BLAST DB)
 add_executable(test_search_integration test_search_integration.cpp)
 target_link_libraries(test_search_integration PRIVATE
+    ikafssn_test_search_helper
     ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
 )
 target_include_directories(test_search_integration PRIVATE
@@ -284,6 +307,7 @@ add_test(NAME test_search_integration COMMAND test_search_integration)
 # Multi-volume and parallel search test (requires NCBI Toolkit + TBB)
 add_executable(test_multivolume test_multivolume.cpp)
 target_link_libraries(test_multivolume PRIVATE
+    ikafssn_test_search_helper
     ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
     TBB::tbb
 )
@@ -321,6 +345,7 @@ add_test(NAME test_budget_pool COMMAND test_budget_pool)
 # Server-client integration test (requires NCBI Toolkit + TBB)
 add_executable(test_server_client test_server_client.cpp)
 target_link_libraries(test_server_client PRIVATE
+    ikafssn_test_search_helper
     ikafssn_server_lib ikafssn_client_lib
     ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
     TBB::tbb
@@ -341,6 +366,7 @@ add_test(NAME test_server_client COMMAND test_server_client)
 if(BUILD_HTTPD)
     add_executable(test_httpd test_httpd.cpp)
     target_link_libraries(test_httpd PRIVATE
+        ikafssn_test_search_helper
         ikafssn_httpd_backend ikafssn_server_lib
         ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
         TBB::tbb
@@ -359,6 +385,7 @@ if(BUILD_HTTPD)
     if(ENABLE_CLIENT_HTTP)
         add_executable(test_httpd_client test_httpd_client.cpp)
         target_link_libraries(test_httpd_client PRIVATE
+            ikafssn_test_search_helper
             ikafssn_client_lib ikafssn_httpd_controller ikafssn_server_lib
             ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
             TBB::tbb
@@ -403,6 +430,7 @@ add_executable(test_retrieve_pipeline test_retrieve_pipeline.cpp
     "${CMAKE_SOURCE_DIR}/src/ikafssnretrieve/local_retriever.cpp"
 )
 target_link_libraries(test_retrieve_pipeline PRIVATE
+    ikafssn_test_search_helper
     ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
 )
 target_include_directories(test_retrieve_pipeline PRIVATE
@@ -473,6 +501,7 @@ add_test(NAME test_skip_output COMMAND test_skip_output)
 # Stage 3 integration test (requires NCBI Toolkit + Parasail + BLAST DB)
 add_executable(test_stage3_integration test_stage3_integration.cpp)
 target_link_libraries(test_stage3_integration PRIVATE
+    ikafssn_test_search_helper
     ikafssn_stage3 ikafssn_sam_writer ikafssn_search ikafssn_builder
     ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
     parasail hts TBB::tbb)

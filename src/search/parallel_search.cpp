@@ -296,26 +296,6 @@ stage2b_one_subject(SeqId sid, uint32_t stage1_score, const JobState& state) {
     return chains;
 }
 
-void sort_and_truncate(SearchResult& result, const SearchConfig& config) {
-    if (config.nresult > 0) {
-        auto cmp = (config.sort_score == 1)
-            ? [](const ChainResult& a, const ChainResult& b) {
-                  return a.stage1_score > b.stage1_score;
-              }
-            : [](const ChainResult& a, const ChainResult& b) {
-                  return a.chainscore > b.chainscore;
-              };
-
-        if (result.hits.size() > config.nresult) {
-            std::nth_element(result.hits.begin(),
-                             result.hits.begin() + config.nresult,
-                             result.hits.end(), cmp);
-            result.hits.resize(config.nresult);
-        }
-        std::sort(result.hits.begin(), result.hits.end(), cmp);
-    }
-}
-
 namespace {
 
 // Fan out one ext_job into the right Stage 1 entry point.  Used by

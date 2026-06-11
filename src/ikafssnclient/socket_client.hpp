@@ -11,9 +11,6 @@ namespace ikafssn {
 // Returns true on success.
 bool socket_search(int fd, const SearchRequest& req, SearchResponse& resp);
 
-// Send a health check over a socket and receive the response.
-bool socket_health_check(int fd, HealthResponse& resp);
-
 // Send an info request over a socket and receive the response.
 bool socket_info(int fd, InfoResponse& resp);
 

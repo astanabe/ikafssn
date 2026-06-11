@@ -1,5 +1,5 @@
 #include "search/query_preprocessor.hpp"
-#include "search/volume_searcher.hpp"
+#include "search/search_config.hpp"
 #include "index/khx_reader.hpp"
 #include "core/kmer_encoding.hpp"
 #include "core/kmer_revcomp_simd.hpp"
@@ -180,8 +180,8 @@ QueryKmerData<KmerInt> preprocess_query(
         }
     }
 
-    // 3. SoA conversion (no search-time high-freq filtering; build-time
-    //    exclusion via .khx is the only frequency gate now).
+    // 3. SoA conversion (build-time exclusion via .khx is the only
+    //    frequency gate; there is no search-time high-freq filtering).
     auto to_soa = [](const std::vector<std::pair<uint32_t, KmerInt>>& pairs,
                      std::vector<uint32_t>& positions,
                      std::vector<KmerInt>& kmer_values) {

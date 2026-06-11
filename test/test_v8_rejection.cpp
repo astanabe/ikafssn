@@ -115,15 +115,15 @@ void test_v11_is_current() {
     CHECK(KPX_MAGIC[3] == '1' && KPX_MAGIC[4] == '1');
 }
 
-// Synthesize a .kix file with the *wrong* magic ("KIX08" — the v10
-// 5-byte magic field but with v9-style version digit) while format
-// version is 10.  The reader should reject on magic mismatch first.
+// Synthesize a .kix file whose 5-byte magic ("KIX08") is not the current
+// KIX_MAGIC, while format_version is set to the current value.  The reader
+// should reject on the magic mismatch before reaching the version check.
 void test_wrong_magic_rejected() {
     std::string path = test_tmpdir("/tmp/test_v8_wrong_magic") + ".kix";
     KixHeader hdr{};
     hdr.magic[0] = 'K'; hdr.magic[1] = 'I'; hdr.magic[2] = 'X';
     hdr.magic[3] = '0'; hdr.magic[4] = '8';
-    hdr.format_version = KIX_FORMAT_VERSION;  // = 10
+    hdr.format_version = KIX_FORMAT_VERSION;
     hdr.k = 5;
     FILE* fp = std::fopen(path.c_str(), "wb");
     std::fwrite(&hdr, sizeof(hdr), 1, fp);

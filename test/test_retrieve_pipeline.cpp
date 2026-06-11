@@ -10,7 +10,7 @@
 #include "index/ksx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
 #include "core/config.hpp"
 #include "util/logger.hpp"
 
@@ -172,6 +172,35 @@ static void test_context_extension() {
     }
 }
 
+static void test_context_ratio() {
+    std::fprintf(stderr, "-- test_context_ratio\n");
+
+    // Ratio mode derives the per-hit context from the hit's query length:
+    // ctx = round(qlen * ratio).  qlen=100, ratio=0.1 -> ctx=10, so the range
+    // [100, 200] expands to [90, 210] (size 121) — identical to abs context=10,
+    // which confirms the context is computed from qlen rather than ignored.
+    OutputHit h{"query1", ACC_FJ, '+', 0, 100, 100, 200, 5, 0};
+    h.qlen = 100;
+    std::vector<OutputHit> hits{h};
+
+    RetrieveOptions opts;
+    opts.is_ratio = true;
+    opts.ratio = 0.1;
+    std::ostringstream out;
+    uint32_t n = retrieve_local(hits, g_testdb_path, opts, out);
+    CHECK_EQ(n, 1u);
+
+    std::string fasta = out.str();
+    std::istringstream iss(fasta);
+    std::string hdr, seq, sline;
+    std::getline(iss, hdr);
+    while (std::getline(iss, sline)) {
+        if (!sline.empty() && sline[0] != '>') seq += sline;
+    }
+    CHECK_EQ(seq.size(), 121u);
+    CHECK(hdr.find(":91-211") != std::string::npos);
+}
+
 static void test_context_clamp_start() {
     std::fprintf(stderr, "-- test_context_clamp_start\n");
 
@@ -272,6 +301,7 @@ int main() {
 
     test_full_pipeline();
     test_context_extension();
+    test_context_ratio();
     test_context_clamp_start();
     test_reverse_strand();
     test_missing_accession();

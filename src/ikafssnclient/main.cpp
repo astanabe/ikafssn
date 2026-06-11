@@ -16,6 +16,7 @@
 #include "util/common_init.hpp"
 #include "util/simd_dispatch.hpp"
 #include "io/compressed_stream.hpp"
+#include "io/volume_discovery.hpp"
 #include "io/fasta_reader.hpp"
 #include "io/primer_query.hpp"
 #include "io/seqidlist_reader.hpp"
@@ -73,6 +74,15 @@ static void print_usage(const char* prog) {
         "Filtering:\n"
         "  -min_query_length <int>  Minimum query length; shorter queries are skipped\n"
         "                           (default: 64; must be >= server's min_seq_length)\n"
+        "\n"
+        "Index-variant selection (resolved to one variant from server info):\n"
+        "  -k <int>                 K-mer length (default: any)\n"
+        "  -t <int>                 Template length: 0=contiguous (default), 13/15/16/18/21\n"
+        "  -template_type <string>  coding, optimal, both (default: both for -t>0; invalid with -t 0)\n"
+        "  -min_seq_length <int>    Select the variant with this min_seq_length (default: any)\n"
+        "  -min_length_split <int>  Select the variant with this min_length_split (default: any)\n"
+        "  -overlap_length <int>    Select the variant with this overlap_length (default: any)\n"
+        "  -max_freq_build <int>    Select the variant with this max_freq_build (default: any)\n"
         "\n"
 #ifdef IKAFSSN_ENABLE_HTTP
         "Async REST job management (requires -http):\n"
@@ -133,14 +143,14 @@ static int cmd_jobdetail(const std::string& id) {
                     gm.output_path.c_str(), gm.output_format.c_str());
         std::printf("%-40s  %-10s  %-8s\n", "JOB_ID", "STATUS", "ATTEMPTS");
         for (const auto& job_id : gm.job_ids) {
-            JobMeta jm;
+            ClientJobMeta jm;
             std::string e;
             if (!read_job_meta(root, gid, job_id, jm, e)) continue;
             std::printf("%-40s  %-10s  %-8d\n",
                         jm.job_id.c_str(), jm.status.c_str(), jm.attempts);
         }
     } else {
-        JobMeta jm;
+        ClientJobMeta jm;
         std::string err;
         if (!read_job_meta(root, gid, jid, jm, err)) {
             std::fprintf(stderr, "Error: %s\n", err.c_str());
@@ -172,7 +182,7 @@ static int finalize_group(const std::string& root,
     bool first_resp = true;
 
     for (const auto& job_id : gm.job_ids) {
-        JobMeta jm;
+        ClientJobMeta jm;
         std::string err;
         if (!read_job_meta(root, gm.group_id, job_id, jm, err)) {
             logger.error("finalize: missing job meta %s: %s",
@@ -497,6 +507,13 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
+    {
+        std::string err;
+        if (!validate_t_template_type_combo(cli, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+    }
     if (!cli.has("-ix")) {
         std::fprintf(stderr, "Error: -ix is required\n");
         return 1;
@@ -593,11 +610,16 @@ int main(int argc, char* argv[]) {
     base_req.strand = static_cast<int8_t>(cli.get_int("-strand", 0));
     base_req.db = ix_name;
     {
+        // Default 16, identical to ikafssnsearch (a query parameter, not a
+        // server-delegated value).  0 and 1 both mean "disable"; since 0 is the
+        // wire sentinel for "server default", an explicit 0 is sent as 1 so the
+        // client behaves exactly like ikafssnsearch -max_degen_expand 0.
         std::string err;
-        if (!parse_max_degen_expand(cli, 0, base_req.max_degen_expand, err)) {
+        if (!parse_max_degen_expand(cli, 16, base_req.max_degen_expand, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
+        if (base_req.max_degen_expand == 0) base_req.max_degen_expand = 1;
     }
     {
         std::string err;
@@ -685,6 +707,98 @@ int main(int argc, char* argv[]) {
                       )) {
         return 1;
     }
+
+    // Resolve the request to exactly one index variant from the server's
+    // per-variant group list (the 7 identifying fields except max_degen_expand),
+    // mirroring ikafssnsearch's local resolution.  The resolved fields become
+    // the request's complete variant identity; the server tie-breaks the
+    // remaining max_degen_expand variants itself.
+    uint32_t resolved_overlap_length = 0;
+    {
+        const DatabaseInfo* tdb = nullptr;
+        for (const auto& db : server_info.databases)
+            if (db.name == base_req.db) { tdb = &db; break; }
+        if (!tdb) {
+            std::fprintf(stderr, "Error: database '%s' not found on server\n",
+                         base_req.db.c_str());
+            return 1;
+        }
+
+        const bool tt_set = cli.has("-template_type");
+        VariantFilter vf;
+        vf.has_k = (base_req.k != 0); vf.k = base_req.k;
+        vf.t_is_wildcard = false; vf.t = base_req.t;  // unset -t defaults to 0
+        if (tt_set) {
+            vf.has_template_type = true;
+            vf.template_type = base_req.template_type;
+        }
+        if (cli.has("-min_seq_length")) {
+            vf.has_min_seq_length = true;
+            vf.min_seq_length = static_cast<uint32_t>(cli.get_int("-min_seq_length", 0));
+        }
+        if (cli.has("-min_length_split")) {
+            vf.has_min_length_split = true;
+            vf.min_length_split = static_cast<uint32_t>(cli.get_int("-min_length_split", 0));
+        }
+        if (cli.has("-overlap_length")) {
+            vf.has_overlap_length = true;
+            vf.overlap_length = static_cast<uint32_t>(cli.get_int("-overlap_length", 0));
+        }
+        if (cli.has("-max_freq_build")) {
+            vf.has_max_freq_build = true;
+            vf.max_freq_build = std::strtoull(
+                cli.get_string("-max_freq_build").c_str(), nullptr, 10);
+        }
+        // Same template_type resolution as ikafssnsearch.
+        TemplateResolveMode resolve_mode;
+        if (base_req.t == 0) {
+            resolve_mode = TemplateResolveMode::kSingle;
+        } else if (!tt_set) {
+            resolve_mode = TemplateResolveMode::kBothOrSingle;
+        } else if (base_req.template_type == 3) {
+            resolve_mode = TemplateResolveMode::kBothRequired;
+        } else {
+            resolve_mode = TemplateResolveMode::kSingle;
+        }
+
+        std::vector<VariantFields> cands;
+        for (const auto& g : tdb->groups) {
+            VariantFields f{g.k, g.t, g.template_type, g.min_seq_length,
+                            g.min_length_split, g.overlap_length,
+                            g.max_freq_build, g.max_degen_expand};
+            if (variant_matches(vf, f)) cands.push_back(f);
+        }
+        std::string err;
+        auto sel = resolve_variant_indices(cands, resolve_mode,
+                                           base_req.max_degen_expand, err);
+        if (sel.empty()) {
+            std::fprintf(stderr, "Error: %s (database %s)\n",
+                         err.c_str(), base_req.db.c_str());
+            return 1;
+        }
+        // Infer single-vs-pair from the resolved template_types.
+        bool has_cod = false, has_opt = false;
+        for (size_t i : sel) {
+            if (cands[i].template_type == 1) has_cod = true;
+            else if (cands[i].template_type == 2) has_opt = true;
+        }
+        const bool result_both = has_cod && has_opt;
+        // For a pair, sel[0] is a coding side; coding and optimal share the
+        // 6-field key and max_degen_expand, so the identity fields below are
+        // well-defined from either side.
+        const VariantFields& chosen = cands[sel[0]];
+        base_req.k = static_cast<uint8_t>(chosen.k);
+        base_req.t = chosen.t;
+        base_req.template_type = result_both ? 3 : chosen.template_type;
+        base_req.min_seq_length = chosen.min_seq_length;
+        base_req.min_length_split = chosen.min_length_split;
+        base_req.overlap_length = chosen.overlap_length;
+        base_req.max_freq_build = chosen.max_freq_build;
+        resolved_overlap_length = chosen.overlap_length;
+    }
+
+    // Validate the now-concrete request (k/t/template_type resolved) against
+    // the server's capability listing for a clear early error.
     {
         std::string err = validate_info(server_info, base_req.db,
                                         base_req.k, base_req.mode, true,
@@ -695,17 +809,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Pre-filter queries by -min_query_length and the server-reported
+    // Pre-filter queries by -min_query_length and the resolved variant's
     // overlap_length.  The server enforces the same checks but rejecting
     // here saves a round trip and surfaces a clear local error.
     {
-        uint32_t srv_overlap_length = 0;
-        for (const auto& db : server_info.databases) {
-            if (db.name == base_req.db) {
-                srv_overlap_length = db.overlap_length;
-                break;
-            }
-        }
+        uint32_t srv_overlap_length = resolved_overlap_length;
 
         std::vector<FastaRecord> kept;
         kept.reserve(queries.size());
@@ -881,7 +989,7 @@ int main(int argc, char* argv[]) {
             std::string job_id = make_uuidv4();
             gm.job_ids.push_back(job_id);
 
-            JobMeta jm;
+            ClientJobMeta jm;
             jm.job_id = job_id;
             jm.group_id = gm.group_id;
             jm.n_seqs = static_cast<int32_t>(end - off);
@@ -913,7 +1021,7 @@ int main(int argc, char* argv[]) {
             }
             std::string serr;
             auto rc = http_submit_job(http_url, job_id, req, serr, auth);
-            JobMeta jm;
+            ClientJobMeta jm;
             std::string e;
             read_job_meta(root, gm.group_id, job_id, jm, e);
             if (rc == AsyncHttpOutcome::kOk || rc == AsyncHttpOutcome::kConflict) {

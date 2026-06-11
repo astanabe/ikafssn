@@ -1,4 +1,5 @@
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
+
 #include "search/parallel_search.hpp"
 #include "search/oid_filter.hpp"
 #include "search/stage1_filter.hpp"
@@ -14,11 +15,29 @@
 
 namespace ikafssn {
 
+// Sort and truncate a SearchResult per the search config.
+static void sort_and_truncate(SearchResult& result, const SearchConfig& config) {
+    if (config.nresult > 0) {
+        auto cmp = (config.sort_score == 1)
+            ? [](const ChainResult& a, const ChainResult& b) {
+                  return a.stage1_score > b.stage1_score;
+              }
+            : [](const ChainResult& a, const ChainResult& b) {
+                  return a.chainscore > b.chainscore;
+              };
+
+        if (result.hits.size() > config.nresult) {
+            std::nth_element(result.hits.begin(),
+                             result.hits.begin() + config.nresult,
+                             result.hits.end(), cmp);
+            result.hits.resize(config.nresult);
+        }
+        std::sort(result.hits.begin(), result.hits.end(), cmp);
+    }
+}
+
 // Drain a JobState by running Stage 2B for every candidate in the order
-// produced by Stage 1.  Used by the volume-level wrappers below; the
-// parallel orchestrator drives Stage 2B as a per-batch parallel_for
-// over (ext_job, sid) pairs immediately after the same batch's
-// Stage 2A finishes.
+// produced by Stage 1.
 static std::vector<ChainResult>
 drain_stage2b_single_template(const JobState& state) {
     if (state.mode1_only) return state.mode1_results;

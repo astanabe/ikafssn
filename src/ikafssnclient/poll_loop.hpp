@@ -42,7 +42,7 @@ private:
     GroupMeta       group_;
 
     bool poll_once_();
-    bool refresh_one_(JobMeta& jm);
+    bool refresh_one_(ClientJobMeta& jm);
     int  next_delay_seconds_(int poll_count) const;
 };
 

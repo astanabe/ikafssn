@@ -127,56 +127,6 @@ void test_chunk_boundaries() {
     }
 }
 
-void test_horizontal_sum_u8() {
-    // Empty
-    CHECK_EQ(pfd::horizontal_sum_u8(nullptr, 0), 0u);
-
-    // Single
-    {
-        std::uint8_t v = 7;
-        CHECK_EQ(pfd::horizontal_sum_u8(&v, 1), 7u);
-    }
-
-    // All-255 stress (catches u8 → u32 widening bugs).
-    {
-        std::vector<std::uint8_t> arr(1024, 255);
-        const std::uint32_t expected = 1024u * 255u;
-        CHECK_EQ(pfd::horizontal_sum_u8(arr.data(), 1024), expected);
-    }
-
-    // Boundary lengths around natural SIMD widths.
-    for (std::uint32_t n : {std::uint32_t(15), std::uint32_t(16), std::uint32_t(17),
-                            std::uint32_t(31), std::uint32_t(32), std::uint32_t(33),
-                            std::uint32_t(63), std::uint32_t(64), std::uint32_t(65),
-                            std::uint32_t(127), std::uint32_t(128), std::uint32_t(129)}) {
-        std::vector<std::uint8_t> arr(n);
-        std::uint32_t expected = 0;
-        for (std::uint32_t i = 0; i < n; ++i) {
-            arr[i] = static_cast<std::uint8_t>((i * 37 + 13) & 0xFF);
-            expected += arr[i];
-        }
-        std::uint32_t got = pfd::horizontal_sum_u8(arr.data(), n);
-        if (got != expected) {
-            std::fprintf(stderr, "FAIL hsum n=%u got=%u expected=%u\n",
-                         n, got, expected);
-        }
-        CHECK_EQ(got, expected);
-    }
-
-    // Random
-    std::mt19937 rng(0xBEEF);
-    for (std::uint32_t n : {std::uint32_t(255), std::uint32_t(1023),
-                            std::uint32_t(4096)}) {
-        std::vector<std::uint8_t> arr(n);
-        std::uint32_t expected = 0;
-        for (std::uint32_t i = 0; i < n; ++i) {
-            arr[i] = static_cast<std::uint8_t>(rng() & 0xFF);
-            expected += arr[i];
-        }
-        CHECK_EQ(pfd::horizontal_sum_u8(arr.data(), n), expected);
-    }
-}
-
 } // anonymous namespace
 
 int main() {
@@ -186,7 +136,6 @@ int main() {
     test_alternating();
     test_random();
     test_chunk_boundaries();
-    test_horizontal_sum_u8();
     TEST_SUMMARY();
     return g_fail_count == 0 ? 0 : 1;
 }

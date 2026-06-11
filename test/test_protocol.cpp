@@ -41,7 +41,7 @@ static void test_frame_round_trip() {
     assert(hdr.magic == FRAME_MAGIC);
     assert(hdr.payload_size == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 9);
+    assert(hdr.msg_version == 13);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -132,6 +132,10 @@ static void test_search_request_serialize() {
     req.stage1_min_score = 2;
     req.nresult = 50;
     req.max_degen_expand = 16;
+    req.min_seq_length = 64;
+    req.min_length_split = 5000;
+    req.overlap_length = 250;
+    req.max_freq_build = 1000;
     req.seqidlist_mode = SeqidlistMode::kInclude;
     req.db = "testdb";
     req.seqids = {"NM_001234", "XM_005678"};
@@ -152,6 +156,10 @@ static void test_search_request_serialize() {
     assert(req2.nresult == 50);
     assert(req2.max_degen_expand == 16);
     assert(req2.stage2_max_nhit_per_subject == 0);
+    assert(req2.min_seq_length == 64);
+    assert(req2.min_length_split == 5000);
+    assert(req2.overlap_length == 250);
+    assert(req2.max_freq_build == 1000);
     assert(req2.db == "testdb");
     assert(req2.seqidlist_mode == SeqidlistMode::kInclude);
     assert(req2.seqids.size() == 2);
@@ -367,6 +375,11 @@ static void test_info_response_serialize() {
     KmerGroupInfo g1;
     g1.k = 7;
     g1.kmer_type = 0; // uint16
+    g1.min_seq_length = 64;
+    g1.min_length_split = 5000;
+    g1.overlap_length = 250;
+    g1.max_freq_build = 777;
+    g1.max_degen_expand = 8;
     VolumeInfo v1;
     v1.volume_index = 0;
     v1.num_sequences = 1000;
@@ -416,6 +429,11 @@ static void test_info_response_serialize() {
 
     assert(rdb.groups[0].k == 7);
     assert(rdb.groups[0].kmer_type == 0);
+    assert(rdb.groups[0].min_seq_length == 64);
+    assert(rdb.groups[0].min_length_split == 5000);
+    assert(rdb.groups[0].overlap_length == 250);
+    assert(rdb.groups[0].max_freq_build == 777);
+    assert(rdb.groups[0].max_degen_expand == 8);
     assert(rdb.groups[0].volumes.size() == 2);
     assert(rdb.groups[0].volumes[0].volume_index == 0);
     assert(rdb.groups[0].volumes[0].num_sequences == 1000);

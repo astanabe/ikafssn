@@ -12,7 +12,12 @@ namespace ikafssn {
 class BlastDbReader;
 
 struct RetrieveOptions {
-    uint32_t context = 0;  // bases to add before/after match region
+    // Context bases added before/after the match region.  In ratio mode the
+    // per-hit context is derived from each hit's query length; otherwise the
+    // fixed `context` value is used for every hit.
+    uint32_t context = 0;        // absolute context (ratio == false)
+    bool     is_ratio = false;
+    double   ratio = 0.0;        // per-hit ctx = round(hit.qlen * ratio)
 };
 
 // Retrieve matched subsequences from a local BLAST DB.

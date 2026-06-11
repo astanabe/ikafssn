@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "search/query_preprocessor.hpp"
-#include "search/volume_searcher.hpp"
+#include "search/search_config.hpp"
 
 namespace ikafssn {
 

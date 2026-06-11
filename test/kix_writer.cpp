@@ -1,4 +1,4 @@
-#include "index/kix_writer.hpp"
+#include "kix_writer.hpp"
 #include "index/kix_format.hpp"
 #include "index/dictionary_io.hpp"
 #include "index/pfd_codec.hpp"

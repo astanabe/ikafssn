@@ -16,12 +16,12 @@ struct TempEntry {
 };
 static_assert(sizeof(TempEntry) == 12, "TempEntry must be 12 bytes");
 
-// Sort `buf` by (kmer_value, seq_id, pos). Equivalent to the previous
-// `tbb::parallel_sort + 3-key comparator` but on x86_64 with AVX2+ uses
+// Sort `buf` by (kmer_value, seq_id, pos). On x86_64 with AVX2+ this uses
 // Intel x86-simd-sort's `keyvalue_qsort<uint64_t, uint32_t>` to sort the
 // (kmer_value << 32 | seq_id) keys against `pos` values, followed by a local
-// pos-only sort within each (kmer, seq_id) block. Output is bit-exact with
-// the TBB path because TempEntry tuples are unique per index build.
+// pos-only sort within each (kmer, seq_id) block; elsewhere it falls back to a
+// 3-key `tbb::parallel_sort`. Both paths agree because TempEntry tuples are
+// unique per index build.
 void parallel_sort_temp_entries(std::vector<TempEntry>& buf);
 
 // Returns true when `parallel_sort_temp_entries` may dispatch to the SIMD

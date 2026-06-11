@@ -1,5 +1,5 @@
 #include "test_util.hpp"
-#include "index/kpx_writer.hpp"
+#include "kpx_writer.hpp"
 #include "index/kpx_reader.hpp"
 #include "core/config.hpp"
 #include "search/posting_decoder.hpp"
@@ -264,9 +264,9 @@ static void test_partition_tail_sizes() {
 }
 
 // Regression: a single (k-mer, seq_id) cluster with > 255 occurrences.
-// Earlier versions used a u8 occ_count throughout the dedup → encoder
-// pipeline and silently saturated runs at 255, dropping the rest of
-// the positions and corrupting the encoder's pos_cursor walk.
+// occ_count must stay wide through the dedup → encoder pipeline: a u8
+// would saturate the run at 255, drop the rest of the positions, and
+// corrupt the encoder's pos_cursor walk.
 static void test_partition_above_255() {
     int k = 5;
     uint32_t ts = table_size(k);

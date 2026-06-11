@@ -34,7 +34,7 @@
 #include "search/query_preprocessor.hpp"
 #include "search/result_dedup.hpp"
 #include "search/parallel_search.hpp"
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
 #include "protocol/messages.hpp"
 #include "util/logger.hpp"
 
@@ -241,7 +241,7 @@ static void test_split_vs_nosplit_canonical_hit() {
     // Stage 2 records s_start = first k-mer's s_pos and
     // s_end = last k-mer's s_pos + span (k=7).  For our 100bp slice that
     // pins the canonical chain to [substr_offset, substr_offset + 100]
-    // in 0-based-half-open subject coordinates: [200, 300] for the
+    // in 0-based half-open parent-relative coordinates: [200, 300] for the
     // query taken from parent_seq.substr(200, 100), regardless of
     // whether the index is split or not (after the parent-relative
     // shift in run_and_collapse).

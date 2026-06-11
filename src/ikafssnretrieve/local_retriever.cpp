@@ -77,7 +77,7 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
     for (const auto& hit : hits) {
         // hit.sseqid is the parent OID accession (Stage 2 dedup
         // collapses every fragment of one parent into a single row),
-        // hit.sstart / hit.send are parent-OID-relative coordinates,
+        // hit.sstart / hit.send are parent-relative coordinates,
         // and BlastDbReader OIDs index parent sequences directly, so
         // hit.sseqid -> (reader, parent OID) resolves through the same
         // accession lookup with no fragment-table indirection.
@@ -90,56 +90,40 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
 
         size_t reader_idx = it->second.first;
         uint32_t oid = it->second.second;
-        uint32_t seq_len = readers[reader_idx].seq_length(oid);
-        if (seq_len == 0) {
+
+        // Per-hit context: ratio mode derives it from the hit's query length.
+        // Coordinates are 0-based parent-relative inclusive (the convention
+        // Stage 2/3 use for hit.sstart / hit.send).
+        uint32_t ctx = opts.is_ratio
+            ? static_cast<uint32_t>(hit.qlen * opts.ratio)
+            : opts.context;
+
+        // Pull only the requested range from the parent OID via partial decode;
+        // a full get_sequence() decode would defeat the fragment index's
+        // benefit on chromosome-scale parents.
+        ContextSubseq cs = extract_context_subseq(
+            readers[reader_idx], oid, hit.sstart, hit.send, ctx);
+        if (cs.seq_len == 0) {
             std::fprintf(stderr, "retrieve_local: zero-length parent OID %u for '%s'\n",
                          oid, hit.sseqid.c_str());
             continue;
         }
-
-        // Compute extraction range with context.  Coordinates are
-        // 0-based parent-relative inclusive throughout this file, matching
-        // the convention Stage 2/3 use for hit.sstart / hit.send.
-        uint32_t ext_start = hit.sstart;
-        uint32_t ext_end = hit.send;
-        if (opts.context > 0) {
-            ext_start = (ext_start >= opts.context) ? ext_start - opts.context : 0;
-            ext_end = std::min(ext_end + opts.context, seq_len - 1);
-        }
-        // Clamp to actual sequence length (defensive against bad input rows).
-        if (ext_end >= seq_len) {
-            ext_end = seq_len - 1;
-        }
-        if (ext_start > ext_end) {
-            std::fprintf(stderr, "retrieve_local: invalid range [%u, %u] for '%s'\n",
-                         ext_start, ext_end, hit.sseqid.c_str());
-            continue;
-        }
-
-        // pull only the requested window from the parent
-        // OID via partial decode instead of materialising the whole
-        // sequence.  On chromosome-scale parents the fragment index
-        // shrinks the search window to ~min_length_split, and a full
-        // get_sequence() decode would defeat that benefit.
-        std::string subseq = readers[reader_idx].get_subsequence(oid, ext_start, ext_end);
-        if (subseq.empty()) {
+        if (cs.seq.empty()) {
             std::fprintf(stderr, "retrieve_local: failed to get subsequence for OID %u "
-                         "[%u, %u]\n", oid, ext_start, ext_end);
+                         "[%u, %u]\n", oid, cs.ext_start, cs.ext_end);
             continue;
         }
+        std::string subseq = std::move(cs.seq);
+        uint32_t ext_start = cs.ext_start;
+        uint32_t ext_end = cs.ext_end;
 
         // Apply reverse complement for minus strand
         if (hit.sstrand == '-') {
             reverse_complement(subseq);
         }
 
-        // FASTA defline (kafsss style): the parent accession
-        // and the (1-based inclusive) extracted range are joined into one
-        // canonical sseqid token, mirroring kafssstore's
-        // `accession:start:end` fragment naming and BLAST's
-        // `accession:start-end` subseq notation.  Downstream tools that
-        // index FASTA by the leading defline token therefore see one
-        // unique sseqid per retrieved hit even when the same parent
+        // kafsss-style defline: parent_acc:start-end (1-based inclusive), so each
+        // retrieved hit gets a unique leading sseqid token even when one parent
         // accession appears in many rows.
         const std::string parent_acc = first_accession_token(hit.sseqid);
         const uint32_t one_based_start = ext_start + 1;

@@ -22,7 +22,7 @@
 
 namespace fs = std::filesystem;
 
-using ikafssn::JobMeta;
+using ikafssn::HttpdJobMeta;
 using ikafssn::JobStatus;
 using ikafssn::JobStore;
 
@@ -45,18 +45,18 @@ static void test_insert_fetch_done() {
     CHECK(!dup);
     CHECK(submitted_at > 0);
 
-    JobMeta meta;
+    HttpdJobMeta meta;
     CHECK(s.fetch_one_queued(meta, err));
     CHECK(meta.job_id == "job-A");
     CHECK(meta.status == JobStatus::kRunning);
 
     // No more queued jobs.
-    JobMeta meta2;
+    HttpdJobMeta meta2;
     CHECK(!s.fetch_one_queued(meta2, err));
 
     CHECK(s.mark_done("job-A", err));
 
-    JobMeta got;
+    HttpdJobMeta got;
     CHECK(s.get_status("job-A", got, err));
     CHECK(got.status == JobStatus::kDone);
     CHECK(got.completed_at > 0);
@@ -83,7 +83,7 @@ static void test_requeue_retry() {
     bool dup = false;
     CHECK(s.insert_job("retry", "db", 2, at, dup, err));
 
-    JobMeta meta;
+    HttpdJobMeta meta;
     CHECK(s.fetch_one_queued(meta, err));
     CHECK(meta.attempts == 0);
 
@@ -98,7 +98,7 @@ static void test_requeue_retry() {
     CHECK(meta.attempts == 2);
 
     CHECK(s.mark_failed("retry", "final", "backend_unreachable: x", err));
-    JobMeta got;
+    HttpdJobMeta got;
     CHECK(s.get_status("retry", got, err));
     CHECK(got.status == JobStatus::kFailed);
     CHECK(got.fail_reason == "backend_unreachable: x");
@@ -112,7 +112,7 @@ static void test_delete_expired() {
     int64_t at = 0;
     bool dup = false;
     CHECK(s.insert_job("old", "db", 1, at, dup, err));
-    JobMeta meta;
+    HttpdJobMeta meta;
     CHECK(s.fetch_one_queued(meta, err));
     CHECK(s.mark_done("old", err));
 
@@ -127,7 +127,7 @@ static void test_delete_expired() {
     CHECK(!deleted_ids.empty());
     CHECK(deleted_ids[0] == "old");
 
-    JobMeta got;
+    HttpdJobMeta got;
     CHECK(!s.get_status("old", got, err));
 }
 
@@ -139,7 +139,7 @@ static void test_requeue_orphans() {
         CHECK(s.open(path, err));
         int64_t at = 0; bool dup = false;
         CHECK(s.insert_job("orphan", "db", 1, at, dup, err));
-        JobMeta meta;
+        HttpdJobMeta meta;
         CHECK(s.fetch_one_queued(meta, err)); // status=running
         // Simulate crash: do not mark_done / mark_failed.
     }
@@ -150,7 +150,7 @@ static void test_requeue_orphans() {
         int64_t n = s.requeue_orphans(err);
         CHECK(n >= 1);
 
-        JobMeta meta;
+        HttpdJobMeta meta;
         CHECK(s.fetch_one_queued(meta, err));
         CHECK(meta.job_id == "orphan");
         CHECK(meta.status == JobStatus::kRunning);

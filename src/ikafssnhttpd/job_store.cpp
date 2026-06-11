@@ -224,7 +224,7 @@ bool JobStore::insert_job(const std::string& job_id,
     return true;
 }
 
-bool JobStore::fetch_one_queued(JobMeta& out_meta,
+bool JobStore::fetch_one_queued(HttpdJobMeta& out_meta,
                                 std::string& error_msg) {
     std::lock_guard<std::mutex> lock(mu_);
 
@@ -256,7 +256,7 @@ bool JobStore::fetch_one_queued(JobMeta& out_meta,
         return false;
     }
 
-    out_meta = JobMeta{};
+    out_meta = HttpdJobMeta{};
     out_meta.status = JobStatus::kRunning;
 
     const unsigned char* jid = sqlite3_column_text(stmt, 0);
@@ -363,7 +363,7 @@ bool JobStore::requeue_for_retry(const std::string& job_id,
     return true;
 }
 
-bool JobStore::get_status(const std::string& job_id, JobMeta& out,
+bool JobStore::get_status(const std::string& job_id, HttpdJobMeta& out,
                           std::string& error_msg) {
     std::lock_guard<std::mutex> lock(mu_);
 
@@ -391,7 +391,7 @@ bool JobStore::get_status(const std::string& job_id, JobMeta& out,
         return false;
     }
 
-    out = JobMeta{};
+    out = HttpdJobMeta{};
     out.job_id = job_id;
     const unsigned char* st = sqlite3_column_text(stmt, 0);
     if (st) {

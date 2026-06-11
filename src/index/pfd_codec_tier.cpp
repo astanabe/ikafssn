@@ -321,16 +321,6 @@ void popcount_kinds(const std::uint8_t* km,
     *p_short2    = short2_count;
 }
 
-// Sum a u8 array.  Compiler auto-vectorises to vpsadbw under AVX2 /
-// AVX512BW.  Tier-namespaced for the same VTable-dispatch reason as
-// popcount_kinds.
-std::uint32_t horizontal_sum_u8(const std::uint8_t* arr,
-                                std::uint32_t n) noexcept {
-    std::uint32_t sum = 0;
-    for (std::uint32_t i = 0; i < n; ++i) sum += arr[i];
-    return sum;
-}
-
 // ===== .kix encode (distinct seq_id delta stream → SIMDFastPFor + VByte tail) =====
 //
 // Only the leading `[u32 distinct_count]` is written; the body length
@@ -365,14 +355,14 @@ std::size_t encode_posting_kix(const std::uint32_t* delta_array,
 //
 // The body starts directly at the 2-bit kind map; counts are derived
 // at decode time from the kind map (popcount_kinds for partition /
-// short1 / short2) and from the u8 occ_count[] array
-// (horizontal_sum_u8 for short2_position_count).  See
-// src/index/pfd_codec.hpp for the wire format.
+// short1 / short2) and by summing the u8 occ_count[] array
+// (short2_position_count).  See src/index/pfd_codec.hpp for the wire
+// format.
 //
 // Empty posting lists (distinct_count == 0) emit zero bytes; the
-// caller's offset table is responsible for delimiting the per-k-mer
-// region (an empty .kpx posting list aliases the next non-empty
-// posting list's start).
+// caller's dictionary is responsible for delimiting each posting list
+// (an empty .kpx posting list aliases the next non-empty posting
+// list's start).
 
 std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
                                const std::uint32_t* occ_count,
@@ -546,8 +536,8 @@ bool open_stream_kpx_for_candidates(
     if (n_candidates == 0) return true;
     if (bytes == 0) return true;
     // Body starts directly at the 2-bit kind map; per-kind counts are
-    // derived via popcount_kinds, and short2_position_count via
-    // horizontal_sum_u8 over the u8 occ_count[] array.
+    // derived via popcount_kinds, and short2_position_count by summing
+    // the u8 occ_count[] array.
     const std::uint32_t distinct_count = static_cast<std::uint32_t>(kix_count);
     if (distinct_count == 0) return true;
 

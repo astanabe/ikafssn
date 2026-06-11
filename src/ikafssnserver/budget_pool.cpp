@@ -39,21 +39,16 @@ void BudgetPool::configure(uint64_t total, uint64_t floor_min) {
     available_     = total;
     floor_min_     = floor_min;
     shutdown_      = false;
-    active_leases_ = 0;
-    peak_leases_   = 0;
 }
 
 BudgetLease BudgetPool::acquire(uint64_t min, uint64_t max) {
     // Pass-through: no contention, no accounting against available_, and
-    // every lease sees the full total.  active_leases_/peak_leases_ are
-    // still tracked so tests can observe in-flight concurrency.
+    // every lease sees the full total.
     if (floor_min_ == 0) {
         std::lock_guard<std::mutex> lock(mu_);
         if (shutdown_) {
             return BudgetLease();
         }
-        ++active_leases_;
-        peak_leases_ = std::max(peak_leases_, active_leases_);
         return BudgetLease(this, total_);
     }
 
@@ -75,8 +70,6 @@ BudgetLease BudgetPool::acquire(uint64_t min, uint64_t max) {
     uint64_t take = std::min(available_, max);
     if (take < want_min) take = want_min;  // satisfied by predicate
     available_ -= take;
-    ++active_leases_;
-    peak_leases_ = std::max(peak_leases_, active_leases_);
     return BudgetLease(this, take);
 }
 
@@ -88,15 +81,9 @@ void BudgetPool::shutdown() {
     cv_.notify_all();
 }
 
-int BudgetPool::peak_leases() const {
-    std::lock_guard<std::mutex> lock(mu_);
-    return peak_leases_;
-}
-
 void BudgetPool::release_(uint64_t amount) {
     {
         std::lock_guard<std::mutex> lock(mu_);
-        if (active_leases_ > 0) --active_leases_;
         if (floor_min_ != 0) {
             available_ += amount;
             if (available_ > total_) available_ = total_;

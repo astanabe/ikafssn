@@ -53,3 +53,9 @@ faster_spaced_seed.md
 db/tsa_nt.*
 db/taxdb.*
 db/taxonomy4blast.sqlite3
+db/ix/
+
+# Local scratch / generated artifacts (not part of the repo)
+ikafssntest/
+Testing/
+.antigravitycli/

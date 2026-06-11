@@ -3,6 +3,7 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -11,7 +12,7 @@
 #include "ikafssnserver/budget_pool.hpp"
 #include "ikafssnserver/request_processor.hpp"
 #include "search/stage3_alignment.hpp"
-#include "search/volume_searcher.hpp"
+#include "search/search_config.hpp"
 #include "util/logger.hpp"
 
 namespace ikafssn {
@@ -31,21 +32,76 @@ struct DatabaseEntry {
     bool context_is_ratio = true;
     double context_ratio = 2.0;
     uint32_t context_abs = 0;
-    // overlap_length parsed from the index file names at load time.
-    // All k-mer groups within a database must agree; the server refuses
-    // to load otherwise.  Used downstream to cap query length.
-    uint32_t overlap_length   = 0;
 
-    const KmerGroup* find_group(int k, uint8_t t = 0, uint8_t template_type = 0) const {
-        for (const auto& g : kmer_groups) {
-            if (g.k == k && g.t == t && g.template_type == template_type) return &g;
-        }
-        return nullptr;
+    // Prefer the group whose max_degen_expand matches the query value; on a
+    // tie, prefer the larger max_degen_expand.
+    static const KmerGroup* tie_break_expand(const KmerGroup* a,
+                                             const KmerGroup* b,
+                                             uint32_t query_expand) {
+        if (!a) return b;
+        if (!b) return a;
+        bool aq = a->max_degen_expand == query_expand;
+        bool bq = b->max_degen_expand == query_expand;
+        if (aq != bq) return aq ? a : b;
+        return a->max_degen_expand >= b->max_degen_expand ? a : b;
     }
 
+    // Select the single group that matches the request's 7-field identity
+    // (k / t / template_type + the four indexing fields), tie-breaking the
+    // 8th (max_degen_expand) toward query_expand.  Returns nullptr if no
+    // group matches.
+    const KmerGroup* find_group(int k, uint8_t t, uint8_t template_type,
+                                uint32_t min_seq_length,
+                                uint32_t min_length_split,
+                                uint32_t overlap_length,
+                                uint64_t max_freq_build,
+                                uint32_t query_expand) const {
+        const KmerGroup* best = nullptr;
+        for (const auto& g : kmer_groups) {
+            if (g.k == k && g.t == t && g.template_type == template_type &&
+                g.min_seq_length == min_seq_length &&
+                g.min_length_split == min_length_split &&
+                g.overlap_length == overlap_length &&
+                g.max_freq_build == max_freq_build) {
+                best = tie_break_expand(best, &g, query_expand);
+            }
+        }
+        return best;
+    }
+
+    // Select a coding+optimal pair sharing the 6-field key and ONE common
+    // max_degen_expand (tie-broken toward query_expand, else the largest value
+    // present on both sides).  No max_degen_expand mixing between the sides.
+    // Returns {nullptr, nullptr} if no pair shares a max_degen_expand.
     std::pair<const KmerGroup*, const KmerGroup*>
-    find_both_groups(int k, uint8_t t) const {
-        return {find_group(k, t, 1), find_group(k, t, 2)};
+    find_both_groups(int k, uint8_t t,
+                     uint32_t min_seq_length, uint32_t min_length_split,
+                     uint32_t overlap_length, uint64_t max_freq_build,
+                     uint32_t query_expand) const {
+        auto matches6 = [&](const KmerGroup& g, uint8_t tt) {
+            return g.k == k && g.t == t && g.template_type == tt &&
+                   g.min_seq_length == min_seq_length &&
+                   g.min_length_split == min_length_split &&
+                   g.overlap_length == overlap_length &&
+                   g.max_freq_build == max_freq_build;
+        };
+        std::set<uint32_t> cod_e, opt_e;
+        for (const auto& g : kmer_groups) {
+            if (matches6(g, 1)) cod_e.insert(g.max_degen_expand);
+            if (matches6(g, 2)) opt_e.insert(g.max_degen_expand);
+        }
+        std::vector<uint32_t> common;
+        for (uint32_t e : cod_e)
+            if (opt_e.count(e)) common.push_back(e);
+        if (common.empty()) return {nullptr, nullptr};
+        uint32_t chosen = choose_max_degen_expand(common, query_expand);
+        const KmerGroup* cod = nullptr;
+        const KmerGroup* opt = nullptr;
+        for (const auto& g : kmer_groups) {
+            if (matches6(g, 1) && g.max_degen_expand == chosen) cod = &g;
+            if (matches6(g, 2) && g.max_degen_expand == chosen) opt = &g;
+        }
+        return {cod, opt};
     }
 };
 
@@ -66,6 +122,11 @@ struct ServerConfig {
     int shutdown_timeout = 30;      // seconds
     uint64_t memory_limit = 0;     // 0 = auto (half of RAM)
     SearchConfig search_config;
+    // Index-variant load filter (ikafssninfo-local semantics: an unset -t is a
+    // wildcard).  max_degen_expand is deliberately not filtered here so every
+    // build-time max_degen_expand variant stays loadable and the per-request
+    // tie-break can choose among them.
+    VariantFilter variant_filter;
     Logger::Level log_level = Logger::kInfo;
     // Stage 3 / BLAST DB config
     Stage3Config stage3_config;     // default stage3 config
@@ -125,16 +186,11 @@ public:
         return pool_.acquire(min, max);
     }
 
-    BudgetPool&       pool()       { return pool_; }
-    const BudgetPool& pool() const { return pool_; }
-
+private:
     // Apply persistent madvise WILLNEED for .khx + .ksx within `budget` and
-    // expose the residual as posting_budget_.  Normally invoked by run(),
-    // public so tests can prime the budget without standing up an accept
-    // loop.
+    // expose the residual as posting_budget_.  Invoked by run().
     void apply_madvise_budget(uint64_t budget, const Logger& logger);
 
-private:
     std::vector<DatabaseEntry> databases_;
     std::unordered_map<std::string, size_t> db_index_;
     std::atomic<bool> shutdown_requested_{false};

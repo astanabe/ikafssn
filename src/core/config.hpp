@@ -46,9 +46,4 @@ inline constexpr KmerInt kmer_mask(int k) {
     return static_cast<KmerInt>((uint64_t(1) << (2 * k)) - 1);
 }
 
-// Align value up to given alignment (must be power of 2)
-inline constexpr uint64_t align_up(uint64_t value, uint64_t alignment) {
-    return (value + alignment - 1) & ~(alignment - 1);
-}
-
 } // namespace ikafssn

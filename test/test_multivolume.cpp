@@ -12,7 +12,7 @@
 #include "search/query_preprocessor.hpp"
 #include "search/search_orchestrator.hpp"
 #include "search/stage1_filter.hpp"
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
 #include "util/logger.hpp"
@@ -571,7 +571,6 @@ static void test_mode2_batched_equals_single() {
         in.both_mode         = false;
         in.k                 = k;
         in.nthread           = nthread;
-        in.posting_budget    = 1u << 20;  // unused by Stage 1/2A grouping
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
         in.width              = Stage1Width::T32;
@@ -664,7 +663,6 @@ static void test_mode1_batched_equals_single() {
         in.both_mode         = false;
         in.k                 = k;
         in.nthread           = nthread;
-        in.posting_budget    = 1u << 20;  // unused by Stage 1/2A grouping
         in.logger            = &logger;
         in.max_num_seqs      = max_num_seqs;
         in.width              = Stage1Width::T32;
@@ -726,7 +724,6 @@ static void test_mode1_batched_equals_single() {
             in.both_mode         = false;
             in.k                 = k;
             in.nthread           = 4;
-            in.posting_budget    = 1u << 20;
             in.logger            = &logger;
             in.max_num_seqs      = max_num_seqs;
             in.width              = Stage1Width::T32;

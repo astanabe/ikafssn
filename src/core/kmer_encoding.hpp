@@ -140,10 +140,6 @@ inline const uint8_t* degenerate_ncbi4na_table() {
     return table;
 }
 
-inline uint8_t degenerate_ncbi4na(char c) {
-    return degenerate_ncbi4na_table()[static_cast<uint8_t>(c)];
-}
-
 // Info about one degenerate position in a k-mer window.
 struct AmbigInfo {
     uint8_t ncbi4na;    // IUPAC bitmask for this position
@@ -176,23 +172,6 @@ inline void expand_ambig_kmer_multi(KmerInt base_kmer, const AmbigInfo* infos,
             KmerInt variant = cleared | (KmerInt(b) << infos[0].bit_offset);
             expand_ambig_kmer_multi(variant, infos + 1, count - 1,
                                     std::forward<Action>(action));
-        }
-    }
-}
-
-// Expand a single ambiguous base in a k-mer and invoke action for each expansion.
-// base_kmer: k-mer with placeholder ncbi2na value (0=A) at the ambiguous position
-// ncbi4na: the ambiguity code bitmask (which bases it represents)
-// bit_offset: 2-bit position in the k-mer integer of the ambiguous base
-// action: called with each expanded KmerInt value
-template <typename KmerInt, typename Action>
-inline void expand_ambig_kmer(KmerInt base_kmer, uint8_t ncbi4na,
-                              int bit_offset, Action&& action) {
-    KmerInt clear_mask = ~(KmerInt(0x03) << bit_offset);
-    KmerInt cleared = base_kmer & clear_mask;
-    for (uint8_t b = 0; b < 4; b++) {
-        if (ncbi4na & (1u << b)) {
-            action(cleared | (KmerInt(b) << bit_offset));
         }
     }
 }

@@ -63,8 +63,7 @@
 namespace ikafssn::pfd {
 
 // FastPFor SIMD block size (the codec we wrap is simdfastpfor128 =
-// CompositeCodec<SIMDFastPFor<4>, VariableByte>; per-block element count is
-// 128, matching the plan).
+// CompositeCodec<SIMDFastPFor<4>, VariableByte>; per-block element count is 128).
 inline constexpr int kPfdBlockSize = 128;
 
 // Posting list header byte size for .kix.  The fixed-size .kix posting
@@ -80,7 +79,7 @@ inline constexpr size_t kPostingListHeaderBytes = 4;
 size_t encode_posting_kix(const uint32_t* delta_array, uint32_t count,
                           std::vector<uint8_t>& out);
 
-// Encode the absolute-position stream for a .kpx posting list (v8).
+// Encode the absolute-position stream for a .kpx posting list.
 //   distinct_sid          length = distinct_count, sorted ascending, no dups
 //   occ_count             length = distinct_count, occurrence per distinct_sid
 //                         (u32 — large genomic contigs may have > 255
@@ -178,9 +177,5 @@ void popcount_kinds(const uint8_t* km,
                     uint32_t* p_partition,
                     uint32_t* p_short1,
                     uint32_t* p_short2) noexcept;
-
-// Sum a u8 array.  Returns the total of arr[0..n).  The compiler's
-// per-tier auto-vectorisation lowers this to vpsadbw on AVX2 / AVX-512BW.
-uint32_t horizontal_sum_u8(const uint8_t* arr, uint32_t n) noexcept;
 
 } // namespace ikafssn::pfd

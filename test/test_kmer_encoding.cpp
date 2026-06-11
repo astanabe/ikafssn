@@ -9,6 +9,11 @@
 
 using namespace ikafssn;
 
+// Single-char lookup into the ncbi4na degenerate table (test convenience).
+static uint8_t degenerate_ncbi4na(char c) {
+    return degenerate_ncbi4na_table()[static_cast<uint8_t>(c)];
+}
+
 static void test_base_encoding() {
     CHECK_EQ(encode_base('A'), 0);
     CHECK_EQ(encode_base('C'), 1);
@@ -108,30 +113,10 @@ static void test_scanner_with_n() {
     scanner.scan(seq.c_str(), seq.size(), [&](uint32_t pos, uint16_t kmer) {
         results.push_back({pos, kmer});
     });
-    // After N at pos 2, need 4 more valid bases. Next valid bases: G(3),T(4),A(5),C(6),G(7),T(8)
-    // First valid k-mer after N starts at pos 3+4-4 = pos 3? Let's think carefully:
-    // pos 0: A (n_count was 4, now 3)
-    // pos 1: C (n_count 2)
-    // pos 2: N -> n_count = 4
-    // pos 3: G (n_count 3)
-    // pos 4: T (n_count 2)
-    // pos 5: A (n_count 1)
-    // pos 6: C (n_count 0) -> still decrementing
-    // pos 7: G (n_count was 0, but we decremented to -1? No, n_count > 0 check.
-    // Wait: at pos 6, n_count was 1, enc valid, kmer updated, n_count > 0 -> n_count-- (now 0), continue
-    // At pos 7: G, enc valid, kmer updated, n_count == 0, so callback at pos 7-5+1 = 3
-    // Wait, that's not right. Let me re-read the scanner:
-    // n_count starts at k-1 = 4
-    // pos 0: A, enc=0, kmer updated, n_count=4>0, n_count-- -> 3
-    // pos 1: C, enc=1, kmer updated, n_count=3>0, n_count-- -> 2
-    // pos 2: N, enc=0xFF, n_count=4, kmer=0
-    // pos 3: G, enc=2, kmer updated, n_count=4>0, n_count-- -> 3
-    // pos 4: T, enc=3, kmer updated, n_count=3>0, n_count-- -> 2
-    // pos 5: A, enc=0, kmer updated, n_count=2>0, n_count-- -> 1
-    // pos 6: C, enc=1, kmer updated, n_count=1>0, n_count-- -> 0
-    // pos 7: G, enc=2, kmer updated, n_count=0, callback(7-5+1=3, kmer)
-    // pos 8: T, enc=3, kmer updated, n_count=0, callback(8-5+1=4, kmer)
-    // So 2 k-mers at positions 3 and 4
+    // The N at pos 2 resets n_count to k-1=4; it counts down as clean bases
+    // arrive (pos 3..6) and reaches 0 at pos 6, so the first clean k-mer
+    // completes at pos 7 (callback pos 3) and the next at pos 8 (callback pos
+    // 4). So 2 k-mers at positions 3 and 4.
     CHECK_EQ(results.size(), 2u);
     CHECK_EQ(results[0].first, 3u);
     CHECK_EQ(results[1].first, 4u);
@@ -567,7 +552,7 @@ static void test_scan_ambig_degen_at_start() {
 }
 
 static void test_expand_ambig_kmer_shared() {
-    // Verify the shared expand_ambig_kmer produces correct results
+    // Verify expand_ambig_kmer_multi with a single degenerate position.
     // base_kmer: 5-mer with placeholder A (00) at bit_offset=4 (bits 5-4)
     // Encoding: bits 9-8=A(00), 7-6=C(01), 5-4=A(00, placeholder), 3-2=G(10), 1-0=T(11)
     // = 0b00_01_00_10_11 = 0x4B = 75
@@ -576,7 +561,8 @@ static void test_expand_ambig_kmer_shared() {
     int bit_offset = 4;
 
     std::vector<uint16_t> results;
-    expand_ambig_kmer<uint16_t>(base_kmer, ncbi4na, bit_offset,
+    AmbigInfo info{ncbi4na, bit_offset};
+    expand_ambig_kmer_multi<uint16_t>(base_kmer, &info, 1,
         [&](uint16_t exp) { results.push_back(exp); });
 
     CHECK_EQ(results.size(), 2u);

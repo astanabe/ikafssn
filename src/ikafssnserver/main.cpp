@@ -1,4 +1,5 @@
 #include "ikafssnserver/server.hpp"
+#include "core/spaced_seed.hpp"
 #include "core/version.hpp"
 #include "util/cli_parser.hpp"
 #include "util/cli_validators.hpp"
@@ -10,6 +11,7 @@
 
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <set>
 
 using namespace ikafssn;
@@ -33,6 +35,19 @@ static void print_usage(const char* prog) {
         "Listener (at least one required):\n"
         "  -socket <path>           UNIX domain socket path\n"
         "  -tcp <host>:<port>       TCP listen address\n"
+        "\n"
+        "Index-variant load filter (each unset field is a wildcard):\n"
+        "  -k <int>                 Load only this k-mer length (default: any)\n"
+        "  -t <int>                 Load only this template length: 0=contiguous, 13/15/16/18/21\n"
+        "                           (default: any; -t 0 loads the contiguous index only)\n"
+        "  -template_type <string>  coding, optimal, contiguous, both (default: any; invalid with -t 0)\n"
+        "  -min_seq_length <int>    Load only variants with this min_seq_length (default: any)\n"
+        "  -min_length_split <int>  Load only variants with this min_length_split (default: any)\n"
+        "  -overlap_length <int>    Load only variants with this overlap_length (default: any)\n"
+        "  -max_freq_build <int>    Load only variants with this max_freq_build (default: any)\n"
+        "  -max_degen_expand <int>  Load only variants with this max_degen_expand (default: any).\n"
+        "                           This is a load filter; the query-side max_degen_expand is\n"
+        "                           supplied by the client (server fallback when omitted: 16).\n"
         "\n"
         "Options:\n"
         "  -nthread <int>           Worker threads (default: all cores)\n"
@@ -59,7 +74,6 @@ static void print_usage(const char* prog) {
         "  -stage3_gapopen <int>    Default gap open penalty (default: 10)\n"
         "  -stage3_gapext <int>     Default gap extension penalty (default: 1)\n"
         "  -stage3_min_ppositive <num> Default min percent positive (default: 0)\n"
-        "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -stage3_min_npositive <int> Default min positive-scoring positions (default: 0)\n"
         "  -stage3_score_matrix <name> Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
         "  -memory_limit <size>     Search memory budget (default: half of RAM)\n"
@@ -93,6 +107,65 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // -t 0 with an explicit -template_type is contradictory.
+    {
+        std::string err;
+        if (!validate_t_template_type_combo(cli, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+    }
+
+    // Build the index-variant load filter (ikafssninfo-local semantics).
+    VariantFilter load_filter;
+    {
+        load_filter.has_k = cli.has("-k");
+        load_filter.k = cli.get_int("-k", 0);
+        load_filter.t_is_wildcard = !cli.has("-t");
+        if (cli.has("-t")) {
+            std::string err;
+            if (!parse_spaced_seed_t(cli, load_filter.t, err)) {
+                std::fprintf(stderr, "%s\n", err.c_str());
+                return 1;
+            }
+        }
+        if (cli.has("-template_type")) {
+            const std::string s = cli.get_string("-template_type");
+            if (s != "coding" && s != "optimal" && s != "contiguous" &&
+                s != "both" && s != "coding_and_optimal") {
+                std::fprintf(stderr, "Error: invalid -template_type '%s' "
+                             "(coding, optimal, contiguous, both)\n", s.c_str());
+                return 1;
+            }
+            load_filter.has_template_type = true;
+            load_filter.template_type =
+                static_cast<uint8_t>(template_type_from_string(s));
+        }
+        load_filter.has_min_seq_length = cli.has("-min_seq_length");
+        load_filter.min_seq_length =
+            static_cast<uint32_t>(cli.get_int("-min_seq_length", 0));
+        load_filter.has_min_length_split = cli.has("-min_length_split");
+        load_filter.min_length_split =
+            static_cast<uint32_t>(cli.get_int("-min_length_split", 0));
+        load_filter.has_overlap_length = cli.has("-overlap_length");
+        load_filter.overlap_length =
+            static_cast<uint32_t>(cli.get_int("-overlap_length", 0));
+        load_filter.has_max_freq_build = cli.has("-max_freq_build");
+        load_filter.max_freq_build = cli.has("-max_freq_build")
+            ? std::strtoull(cli.get_string("-max_freq_build").c_str(), nullptr, 10)
+            : 1;
+        load_filter.has_max_degen_expand = cli.has("-max_degen_expand");
+        if (cli.has("-max_degen_expand")) {
+            int v = cli.get_int("-max_degen_expand", 0);
+            if (v < 0 || v > 256) {
+                std::fprintf(stderr,
+                    "Error: -max_degen_expand must be between 0 and 256\n");
+                return 1;
+            }
+            load_filter.max_degen_expand = static_cast<uint32_t>(v);
+        }
+    }
+
     // Build db_entries from -ix and -db lists
     auto ix_list = cli.get_strings("-ix");
     auto db_list = cli.get_strings("-db");
@@ -119,6 +192,7 @@ int main(int argc, char* argv[]) {
     }
 
     ServerConfig config;
+    config.variant_filter = load_filter;
     for (size_t i = 0; i < ix_list.size(); i++) {
         ServerConfig::DbEntry entry;
         entry.ix_prefix = ix_list[i];
@@ -185,14 +259,11 @@ int main(int argc, char* argv[]) {
         static_cast<uint32_t>(cli.get_int("-nresult", 0));
     config.search_config.accept_qdegen =
         static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
-    {
-        std::string err;
-        if (!parse_max_degen_expand(cli, 16,
-                                    config.search_config.max_degen_expand, err)) {
-            std::fprintf(stderr, "%s\n", err.c_str());
-            return 1;
-        }
-    }
+    // Query-side max_degen_expand is a client-supplied parameter; the server
+    // only needs an internal fallback (16, matching the client default) for
+    // requests that omit it.  -max_degen_expand is an index load filter
+    // (handled above), not the query default.
+    config.search_config.max_degen_expand = 16;
 
     // Stage 3 config
     config.stage3_config.gapopen = cli.get_int("-stage3_gapopen", 10);

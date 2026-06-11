@@ -92,9 +92,6 @@ private:
     std::size_t prefix_pos_ = 0;
 };
 
-// Thin source streambuf that wraps a fixed std::vector<unsigned char>
-// payload — convenient for the "concat known prefix + later fd reads" case.
-
 // Read up to `want` bytes from `fd` into `out`.  Tolerates short reads
 // (e.g. piped stdin where a single read(2) returns less than `want`).
 static std::size_t read_prefix(int fd, unsigned char* out, std::size_t want) {

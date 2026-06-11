@@ -13,7 +13,7 @@
 #include "search/parallel_search.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/stage1_filter.hpp"
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
 #include "protocol/messages.hpp"
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"

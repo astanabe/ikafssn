@@ -1,8 +1,8 @@
 #pragma once
 
 // Shared helpers for emitting the .kix / .kpx dictionaries as
-// Elias-Fano blobs.  Used by KixWriter / KpxWriter, the
-// index_builder.cpp finalize step, and index_filter.cpp.
+// Elias-Fano blobs.  Used by the index_builder.cpp finalize step and
+// index_filter.cpp.
 
 #include <cstdint>
 #include <cstdio>

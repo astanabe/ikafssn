@@ -20,7 +20,7 @@
 #include "index/ksx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
 #include "ikafssnserver/server.hpp"
 #include "ikafssnhttpd/backend_client.hpp"
 #include "ikafssnhttpd/backend_manager.hpp"
@@ -132,6 +132,10 @@ static std::string build_job_body_json(const SearchRequest& req,
     body["job_id"] = job_id;
     body["k"] = req.k;
     body["mode"] = req.mode;
+    body["min_seq_length"] = req.min_seq_length;
+    body["min_length_split"] = req.min_length_split;
+    body["overlap_length"] = req.overlap_length;
+    body["max_freq_build"] = static_cast<Json::UInt64>(req.max_freq_build);
     body["db"] = req.db;
     if (req.seqidlist_mode == SeqidlistMode::kInclude) {
         body["seqidlist_mode"] = "include";
@@ -368,6 +372,7 @@ static void test_async_submit_poll_get() {
     SearchRequest req;
     req.k = static_cast<uint8_t>(k);
     req.db = db;
+    req.min_seq_length = 64;  // resolved variant identity (default builder min_seq_length)
     for (const auto& q : queries) {
         req.queries.push_back({q.id, q.sequence});
     }

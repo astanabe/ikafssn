@@ -2,7 +2,7 @@
 #include "ssu_test_fixture.hpp"
 
 #include "search/stage3_alignment.hpp"
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
 #include "search/query_preprocessor.hpp"
 #include "index/index_builder.hpp"
 #include "index/kix_reader.hpp"

@@ -281,17 +281,11 @@ std::vector<OutputHit> run_stage3(
                         static_cast<unsigned long long>(config.posting_budget));
         }
 
-        // 8b. Fetch subseqs.  Flatten the per-volume OID-sorted hit
-        // lists into one ordered index sequence and walk it with a
-        // single hit-parallel parallel_for in the default arena (=
-        // -nthread).  Within one TBB task the iterations are
-        // contiguous in (volume, OID) order, preserving sequential
-        // mmap access locality, while across tasks the full -nthread
-        // pool is engaged.  `get_subsequence` is lock-free
-        // (CSeqDBImpl::GetRawSeqAndAmbig does not take the
-        // CSeqDBAtlas lock and only does mmap pointer arithmetic +
-        // ncbi2na decode + ambig-table lookup), so concurrent calls
-        // on the same or different volumes are safe.
+        // 8b. Fetch subseqs in (volume, OID) order via a single hit-parallel
+        // parallel_for (default arena = -nthread), preserving sequential mmap
+        // locality within each task.  `get_subsequence` is lock-free (no
+        // CSeqDBAtlas lock; mmap arithmetic + ncbi2na/ambig decode only), so
+        // concurrent calls are safe.
         std::vector<size_t> ordered_hits;
         ordered_hits.reserve(batch_hit_count);
         for (size_t ri = 0; ri < readers.size(); ri++) {
@@ -308,7 +302,6 @@ std::vector<OutputHit> run_stage3(
                     size_t hit_idx = ordered_hits[i];
                     uint16_t vol = hits[hit_idx].volume;
                     uint32_t oid = hits[hit_idx].oid;
-                    uint32_t seq_len = readers[vol].seq_length(oid);
 
                     uint32_t query_len = 0;
                     auto qit = query_map.find(hits[hit_idx].qseqid);
@@ -320,14 +313,11 @@ std::vector<OutputHit> run_stage3(
                         ? static_cast<uint32_t>(query_len * context_ratio)
                         : context_abs;
 
-                    uint32_t ext_start = (hits[hit_idx].sstart >= ctx)
-                        ? hits[hit_idx].sstart - ctx : 0;
-                    uint32_t ext_end = std::min(hits[hit_idx].send + ctx, seq_len - 1);
-
-                    subject_subseqs[hit_idx] = readers[vol].get_subsequence(
-                        oid, ext_start, ext_end);
-                    ext_starts[hit_idx] = ext_start;
-                    hits[hit_idx].slen = seq_len;
+                    ContextSubseq cs = extract_context_subseq(
+                        readers[vol], oid, hits[hit_idx].sstart, hits[hit_idx].send, ctx);
+                    subject_subseqs[hit_idx] = std::move(cs.seq);
+                    ext_starts[hit_idx] = cs.ext_start;
+                    hits[hit_idx].slen = cs.seq_len;
                 }
             });
         // Subseqs are now in `subject_subseqs` (heap-owned strings); the

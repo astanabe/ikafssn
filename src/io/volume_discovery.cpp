@@ -286,18 +286,170 @@ scan_kvx_manifests(const std::string& parent_dir, const std::string& db) {
 
 } // namespace
 
+bool variant_matches(const VariantFilter& f, const VariantFields& v) {
+    if (f.has_k && v.k != f.k) return false;
+    if (!f.t_is_wildcard && v.t != f.t) return false;
+    if (f.has_template_type) {
+        if (f.template_type == 3) {
+            // "both" matches whichever spaced types exist (coding / optimal).
+            if (v.template_type != 1 && v.template_type != 2) return false;
+        } else if (v.template_type != f.template_type) {
+            return false;
+        }
+    } else if (!f.t_is_wildcard && f.t > 0) {
+        // A concrete non-zero -t with no -template_type selects the spaced
+        // types only (coding + optimal), never the contiguous index.
+        if (v.template_type == 0) return false;
+    }
+    if (f.has_min_seq_length   && v.min_seq_length   != f.min_seq_length)   return false;
+    if (f.has_min_length_split && v.min_length_split != f.min_length_split) return false;
+    if (f.has_overlap_length   && v.overlap_length   != f.overlap_length)   return false;
+    if (f.has_max_freq_build   && v.max_freq_build   != f.max_freq_build)   return false;
+    if (f.has_max_degen_expand && v.max_degen_expand != f.max_degen_expand) return false;
+    return true;
+}
+
+bool same_variant7(const VariantFields& a, const VariantFields& b) {
+    return a.k == b.k && a.t == b.t && a.template_type == b.template_type &&
+           a.min_seq_length == b.min_seq_length &&
+           a.min_length_split == b.min_length_split &&
+           a.overlap_length == b.overlap_length &&
+           a.max_freq_build == b.max_freq_build;
+}
+
+bool same_variant6(const VariantFields& a, const VariantFields& b) {
+    return a.k == b.k && a.t == b.t &&
+           a.min_seq_length == b.min_seq_length &&
+           a.min_length_split == b.min_length_split &&
+           a.overlap_length == b.overlap_length &&
+           a.max_freq_build == b.max_freq_build;
+}
+
+uint32_t choose_max_degen_expand(const std::vector<uint32_t>& present,
+                                 uint32_t query_value) {
+    uint32_t best = 0;
+    bool has_query = false;
+    for (uint32_t v : present) {
+        if (v == query_value) has_query = true;
+        if (v > best) best = v;
+    }
+    return has_query ? query_value : best;
+}
+
+namespace {
+
+constexpr const char* kAmbiguousVariantErr =
+    "index filter is ambiguous: multiple index variants match; narrow the "
+    "selection with -k / -t / -template_type / -min_seq_length / "
+    "-min_length_split / -overlap_length / -max_freq_build";
+
+// Select the indices of a single variant from a one-7-tuple candidate set.
+std::vector<size_t> select_one_side(const std::vector<VariantFields>& cands,
+                                    const std::vector<size_t>& idx,
+                                    uint32_t query_max_degen_expand,
+                                    std::string& err) {
+    for (size_t j = 1; j < idx.size(); ++j) {
+        if (!same_variant7(cands[idx[j]], cands[idx[0]])) {
+            err = kAmbiguousVariantErr;
+            return {};
+        }
+    }
+    std::vector<uint32_t> present;
+    present.reserve(idx.size());
+    for (size_t i : idx) present.push_back(cands[i].max_degen_expand);
+    uint32_t chosen = choose_max_degen_expand(present, query_max_degen_expand);
+    std::vector<size_t> out;
+    for (size_t i : idx)
+        if (cands[i].max_degen_expand == chosen) out.push_back(i);
+    return out;
+}
+
+// Resolve a coding+optimal pair with NO max_degen_expand mixing: both sides
+// must agree on the 6-field pairing key and share one max_degen_expand value.
+std::vector<size_t> resolve_both_pair(const std::vector<VariantFields>& cands,
+                                      const std::vector<size_t>& cod,
+                                      const std::vector<size_t>& opt,
+                                      uint32_t query_max_degen_expand,
+                                      std::string& err) {
+    // Every coding and optimal candidate must share the 6-field pairing key
+    // (everything but template_type and max_degen_expand).
+    const VariantFields& ref = cands[cod[0]];
+    for (size_t i : cod)
+        if (!same_variant6(cands[i], ref)) { err = kAmbiguousVariantErr; return {}; }
+    for (size_t i : opt)
+        if (!same_variant6(cands[i], ref)) { err = kAmbiguousVariantErr; return {}; }
+
+    // The shared max_degen_expand must exist on BOTH sides (no chanpon).
+    std::set<uint32_t> cod_e, opt_e;
+    for (size_t i : cod) cod_e.insert(cands[i].max_degen_expand);
+    for (size_t i : opt) opt_e.insert(cands[i].max_degen_expand);
+    std::vector<uint32_t> common;
+    for (uint32_t e : cod_e)
+        if (opt_e.count(e)) common.push_back(e);
+    if (common.empty()) {
+        err = "coding and optimal variants share no common max_degen_expand; "
+              "cannot form a both-mode pair without mixing max_degen_expand";
+        return {};
+    }
+    uint32_t chosen = choose_max_degen_expand(common, query_max_degen_expand);
+
+    std::vector<size_t> out;
+    for (size_t i : cod)
+        if (cands[i].max_degen_expand == chosen) out.push_back(i);
+    for (size_t i : opt)
+        if (cands[i].max_degen_expand == chosen) out.push_back(i);
+    return out;
+}
+
+} // namespace
+
+std::vector<size_t> resolve_variant_indices(
+    const std::vector<VariantFields>& cands, TemplateResolveMode mode,
+    uint32_t query_max_degen_expand, std::string& err) {
+    if (cands.empty()) {
+        err = "no index variant matches the given filter";
+        return {};
+    }
+
+    if (mode == TemplateResolveMode::kSingle) {
+        // The filter has already restricted the candidates to one template_type.
+        std::vector<size_t> all(cands.size());
+        for (size_t i = 0; i < cands.size(); ++i) all[i] = i;
+        return select_one_side(cands, all, query_max_degen_expand, err);
+    }
+
+    std::vector<size_t> cod, opt;
+    for (size_t i = 0; i < cands.size(); ++i) {
+        if (cands[i].template_type == 1) cod.push_back(i);
+        else if (cands[i].template_type == 2) opt.push_back(i);
+    }
+    const bool have_cod = !cod.empty();
+    const bool have_opt = !opt.empty();
+
+    if (have_cod && have_opt) {
+        return resolve_both_pair(cands, cod, opt, query_max_degen_expand, err);
+    }
+
+    if (mode == TemplateResolveMode::kBothRequired) {
+        err = "-template_type both requires both coding and optimal index variants";
+        return {};
+    }
+
+    // kBothOrSingle with only one side present: resolve that single side.
+    if (have_cod) return select_one_side(cands, cod, query_max_degen_expand, err);
+    if (have_opt) return select_one_side(cands, opt, query_max_degen_expand, err);
+    err = "no index variant matches the given filter";
+    return {};
+}
+
 std::vector<DiscoveredVolume> discover_volumes(
-    const std::string& ix_prefix, int filter_k,
-    uint8_t filter_t, uint8_t filter_template_type) {
+    const std::string& ix_prefix, int filter_k) {
     auto parts = parse_index_prefix(ix_prefix);
     std::vector<DiscoveredVolume> volumes;
 
     auto manifests = scan_kvx_manifests(parts.parent_dir, parts.db);
     for (const auto& m : manifests) {
         if (filter_k > 0 && m.k != filter_k) continue;
-        if (filter_t > 0 && m.t != filter_t) continue;
-        if (filter_template_type > 0 && m.template_type != filter_template_type)
-            continue;
         discover_from_kvx(parts.parent_dir, parts.db, m, volumes);
     }
 

@@ -15,19 +15,12 @@ struct EfetchOptions {
     uint32_t max_nretry = 3;       // max retry count
     uint32_t timeout_sec = 30;     // request timeout
     uint32_t range_threshold = 100000;  // seq_length threshold for individual fetch
-    uint32_t context = 0;          // bases to add before/after match region
-};
-
-// Information about a single fetch target, grouped from hits.
-struct FetchTarget {
-    std::string accession;
-    uint32_t s_start;
-    uint32_t s_end;
-    uint32_t seq_length_estimate;  // estimated from s_end
-    // Original hit info for FASTA header
-    std::string qseqid;
-    char strand;
-    uint32_t score;
+    // Context bases added before/after the match region.  In ratio mode the
+    // per-hit context is derived from each hit's query length; otherwise the
+    // fixed `context` value is used for every hit.
+    uint32_t context = 0;          // absolute context (ratio == false)
+    bool     is_ratio = false;
+    double   ratio = 0.0;          // per-hit ctx = round(hit.qlen * ratio)
 };
 
 // Build efetch URL for batch retrieval (full sequences).

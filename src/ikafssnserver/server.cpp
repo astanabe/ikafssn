@@ -42,9 +42,15 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
         return false;
     }
 
-    auto discovered = discover_volumes(ix_prefix);
+    auto all_discovered = discover_volumes(ix_prefix);
+    std::vector<DiscoveredVolume> discovered;
+    for (const auto& dv : all_discovered) {
+        if (variant_matches(config.variant_filter, variant_fields_of(dv)))
+            discovered.push_back(dv);
+    }
     if (discovered.empty()) {
-        logger.error("No index files found for prefix %s", ix_prefix.c_str());
+        logger.error("No index files found for prefix %s matching the load filter",
+                     ix_prefix.c_str());
         return false;
     }
 
@@ -56,26 +62,39 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
 
     bool all_have_kpx = true;
 
-    // Helper to find or create a KmerGroup by (k, t, template_type)
-    auto find_or_create_group = [&](int k, uint8_t t, uint8_t tt) -> KmerGroup& {
+    // Helper to find or create a KmerGroup keyed on the full 8-parameter
+    // variant identity, so volumes built with different indexing parameters
+    // never land in the same group.
+    auto find_or_create_group = [&](const DiscoveredVolume& dv) -> KmerGroup& {
         for (auto& g : entry.kmer_groups) {
-            if (g.k == k && g.t == t && g.template_type == tt) return g;
+            if (g.k == dv.k && g.t == dv.t && g.template_type == dv.template_type &&
+                g.min_seq_length == dv.min_seq_length &&
+                g.min_length_split == dv.min_length_split &&
+                g.overlap_length == dv.overlap_length &&
+                g.max_freq_build == dv.max_freq_build &&
+                g.max_degen_expand == dv.max_degen_expand)
+                return g;
         }
         entry.kmer_groups.push_back({});
         auto& g = entry.kmer_groups.back();
-        g.k = k;
-        g.kmer_type = kmer_type_for(k, t);
-        g.t = t;
-        g.template_type = tt;
+        g.k = dv.k;
+        g.kmer_type = kmer_type_for(dv.k, dv.t);
+        g.t = dv.t;
+        g.template_type = dv.template_type;
+        g.min_seq_length = dv.min_seq_length;
+        g.min_length_split = dv.min_length_split;
+        g.overlap_length = dv.overlap_length;
+        g.max_freq_build = dv.max_freq_build;
+        g.max_degen_expand = dv.max_degen_expand;
         return g;
     };
 
-    // Group by (k, t, template_type), validate kix/kpx headers, capture sizes.
+    // Group by full variant identity, validate kix/kpx headers, capture sizes.
     // .kix and .kpx are opened only briefly for header validation here;
     // the search path re-opens them per-request so concurrent requests do
     // not contend on shared madvise calls against the same mappings.
     for (const auto& dv : discovered) {
-        auto& group = find_or_create_group(dv.k, dv.t, dv.template_type);
+        auto& group = find_or_create_group(dv);
 
         ServerVolumeData svd;
         svd.files = dv;
@@ -95,20 +114,9 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
             kix_probe.close();
         }
 
-        // overlap_length comes from DiscoveredVolume (parsed from the
-        // file name).  Capture the first volume's value and verify each
-        // subsequent volume agrees; a mismatch means the user has mixed
-        // indexes built with different parameters under the same prefix.
-        if (entry.kmer_groups.size() == 1 && group.volumes.empty()) {
-            entry.overlap_length = dv.overlap_length;
-        } else if (entry.overlap_length != dv.overlap_length) {
-            logger.error("Index %s has overlap_length=%u but the DB '%s' was "
-                         "already loaded with overlap_length=%u",
-                         dv.kix_path.c_str(),
-                         dv.overlap_length, db_name.c_str(),
-                         entry.overlap_length);
-            return false;
-        }
+        // overlap_length is a per-variant property (it lives on each
+        // KmerGroup); different variants under the same prefix may legitimately
+        // differ, so no cross-variant consistency check is performed here.
 
         if (dv.has_kpx) {
             KpxReader kpx_probe;
@@ -165,24 +173,18 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
         entry.default_k = max_k_it->k;
         entry.default_t = max_k_it->t;
         // If both coding and optimal exist for this (k, t), default to "both" search
-        if (entry.find_group(max_k_it->k, max_k_it->t, 1) &&
-            entry.find_group(max_k_it->k, max_k_it->t, 2)) {
-            entry.default_template_type = 3; // kBoth
-        } else {
-            entry.default_template_type = max_k_it->template_type;
+        bool has_cod = false, has_opt = false;
+        for (const auto& g : entry.kmer_groups) {
+            if (g.k == max_k_it->k && g.t == max_k_it->t && g.template_type == 1) has_cod = true;
+            if (g.k == max_k_it->k && g.t == max_k_it->t && g.template_type == 2) has_opt = true;
         }
+        entry.default_template_type = (has_cod && has_opt) ? 3 : max_k_it->template_type;
     }
 
-    // Adopt the index's min_seq_length as the effective floor for
-    // -min_query_length and its overlap_length as the upper bound for
-    // -max_query_length.  overlap_length == 0 disables the upper-bound
-    // check (no fragment splitting).
+    // resolved_search_config holds the per-DB defaults.  min_query_length /
+    // max_query_length are re-derived per request from the selected variant's
+    // min_seq_length / overlap_length, since variants may differ.
     entry.resolved_search_config = config.search_config;
-    if (!entry.kmer_groups.empty() && !entry.kmer_groups.front().volumes.empty()) {
-        const auto& v0 = entry.kmer_groups.front().volumes.front().files;
-        entry.resolved_search_config.min_query_length = v0.min_seq_length;
-    }
-    entry.resolved_search_config.max_query_length = entry.overlap_length;
 
     // Copy stage3/context params from ServerConfig
     entry.stage3_config = config.stage3_config;
@@ -348,8 +350,8 @@ int Server::run(const ServerConfig& config_in) {
     }
 
     // Configure the inter-request posting-budget pool.  floor == 0 disables
-    // blocking entirely (pass-through mode = historical behaviour: every
-    // request sees the full posting_budget).  When -max_concurrent_search
+    // blocking entirely (pass-through mode: every request sees the full
+    // posting_budget).  When -max_concurrent_search
     // is >= 1, residual posting_budget is divided into N slices floored at
     // 1 MiB so at most N concurrent requests run the budget-bound stages.
     {

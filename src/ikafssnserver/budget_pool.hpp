@@ -36,8 +36,7 @@ private:
 //
 // floor_min == 0 enables pass-through mode (no contention, no decrement);
 // each acquire() returns lease(total) immediately and never blocks.  This is
-// the default and matches the historical "every request sees the full
-// posting_budget" behaviour.
+// the default: every request sees the full posting_budget.
 //
 // floor_min > 0 enables blocking mode.  acquire(min, max) blocks on a
 // condition variable until at least max(min, floor_min_) bytes are free,
@@ -54,9 +53,6 @@ public:
     uint64_t total()     const { return total_; }
     uint64_t floor_min() const { return floor_min_; }
 
-    // Test-only: peak number of concurrent leases observed since configure().
-    int peak_leases() const;
-
 private:
     friend class BudgetLease;
     void release_(uint64_t amount);
@@ -67,8 +63,6 @@ private:
     uint64_t available_     = 0;
     uint64_t floor_min_     = 0;
     bool     shutdown_      = false;
-    int      active_leases_ = 0;
-    int      peak_leases_   = 0;
 };
 
 } // namespace ikafssn

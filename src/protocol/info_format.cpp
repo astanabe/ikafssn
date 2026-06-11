@@ -165,6 +165,15 @@ std::string format_server_info(const InfoResponse& info, bool verbose) {
             }
             out += line;
 
+            char vline2[256];
+            std::snprintf(vline2, sizeof(vline2),
+                "        min_seq_length=%u min_length_split=%u overlap_length=%u "
+                "max_freq_build=%llu max_degen_expand=%u\n",
+                g.min_seq_length, g.min_length_split, g.overlap_length,
+                static_cast<unsigned long long>(g.max_freq_build),
+                g.max_degen_expand);
+            out += vline2;
+
             if (verbose) {
                 for (const auto& v : g.volumes) {
                     char vline[512];

@@ -11,8 +11,7 @@
 using namespace ikafssn;
 
 // Case 1: pass-through (floor_min == 0).  Two overlapping acquires both see
-// the full total; peak_leases tracks concurrent leases even though available_
-// is not decremented.
+// the full total even though available_ is not decremented.
 static void test_passthrough_overlap() {
     std::fprintf(stderr, "-- test_passthrough_overlap\n");
     BudgetPool pool;
@@ -24,7 +23,6 @@ static void test_passthrough_overlap() {
     CHECK(b.valid());
     CHECK_EQ(a.value(), uint64_t{1024});
     CHECK_EQ(b.value(), uint64_t{1024});
-    CHECK_EQ(static_cast<uint64_t>(pool.peak_leases()), uint64_t{2});
 }
 
 // Case 2: serialised (floor_min == total).  A second acquire blocks until
@@ -59,7 +57,6 @@ static void test_serialised_blocks() {
     a.release();
     b_thread.join();
     CHECK(b_acquired.load());
-    CHECK_EQ(static_cast<uint64_t>(pool.peak_leases()), uint64_t{1});
 }
 
 // Case 3: acquire(min, max) returns min(available, max), but never below

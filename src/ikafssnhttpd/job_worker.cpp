@@ -47,7 +47,7 @@ void JobWorker::stop() {
 
 void JobWorker::worker_loop_() {
     while (!stop_flag_.load()) {
-        JobMeta meta;
+        HttpdJobMeta meta;
         std::string err;
         bool got = store_.fetch_one_queued(meta, err);
         if (!got) {
@@ -66,7 +66,7 @@ void JobWorker::worker_loop_() {
     }
 }
 
-void JobWorker::process_one_(JobMeta& meta) {
+void JobWorker::process_one_(HttpdJobMeta& meta) {
     // Read the JSON body persisted by HttpController::submit_job.  The
     // file should always be present for a row in 'running' state; a
     // missing or unreadable file indicates an operator/race anomaly

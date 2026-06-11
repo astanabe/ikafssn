@@ -55,6 +55,10 @@ std::string build_request_json(const SearchRequest& req) {
     if (req.score_matrix != 0) root["stage3_score_matrix"] = req.score_matrix;
     if (req.t > 0) root["t"] = req.t;
     if (req.template_type > 0) root["template_type"] = req.template_type;
+    root["min_seq_length"] = req.min_seq_length;
+    root["min_length_split"] = req.min_length_split;
+    root["overlap_length"] = req.overlap_length;
+    root["max_freq_build"] = static_cast<Json::UInt64>(req.max_freq_build);
     if (!req.db.empty()) root["db"] = req.db;
 
     switch (req.seqidlist_mode) {
@@ -120,6 +124,11 @@ bool parse_info_json(const std::string& body, InfoResponse& resp,
                     g.kmer_type = (ktype == "uint32") ? 1 : 0;
                     if (gj.isMember("t"))             g.t = static_cast<uint8_t>(gj["t"].asUInt());
                     if (gj.isMember("template_type")) g.template_type = static_cast<uint8_t>(gj["template_type"].asUInt());
+                    g.min_seq_length = gj.get("min_seq_length", 0).asUInt();
+                    g.min_length_split = gj.get("min_length_split", 0).asUInt();
+                    g.overlap_length = gj.get("overlap_length", 0).asUInt();
+                    g.max_freq_build = gj.get("max_freq_build", 1).asUInt64();
+                    g.max_degen_expand = gj.get("max_degen_expand", 0).asUInt();
 
                     if (gj.isMember("volumes") && gj["volumes"].isArray()) {
                         for (const auto& vj : gj["volumes"]) {

@@ -66,7 +66,7 @@ private:
     std::condition_variable   cv_;
 
     void worker_loop_();
-    void process_one_(JobMeta& meta);
+    void process_one_(HttpdJobMeta& meta);
 };
 
 } // namespace ikafssn

@@ -22,7 +22,7 @@ struct OutputHit {
     char sstrand;         // '+' or '-'
     uint32_t qstart;
     uint32_t qend;
-    // Parent-OID-relative subject coordinates (1-based).  The
+    // Parent-relative coordinates (1-based).  The
     // orchestrator writes Stage 2 chains in fragment-relative space and
     // the (orchestrator -> output) boundary shifts them by the matching
     // KsxReader::fragment_start() so downstream tools (Stage 3, output

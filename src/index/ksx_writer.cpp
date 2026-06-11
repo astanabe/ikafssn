@@ -37,7 +37,7 @@ bool KsxWriter::write(const std::string& path) const {
     const uint32_t num_parents = this->num_parents();
     const uint32_t num_seq = this->num_sequences();
 
-    // Build parent accession offset table.  The .ksx wire format stores
+    // Build the parent accession offset array.  The .ksx wire format stores
     // offsets as u32, so the concatenated accession byte length must fit
     // in 32 bits.  Accumulate in u64 first and abort on overflow.
     std::vector<uint32_t> acc_offsets(num_parents + 1);

@@ -33,7 +33,7 @@
 #include "search/stage1_filter.hpp"
 #include "search/stage2_chaining.hpp"
 #include "search/query_preprocessor.hpp"
-#include "search/volume_searcher.hpp"
+#include "search/search_config.hpp"
 
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/task_arena.h>
@@ -172,11 +172,6 @@ extern template void stage2a_one_strand_both<uint32_t>(
 // chain meets min_score).
 std::vector<ChainResult>
 stage2b_one_subject(SeqId sid, uint32_t stage1_score, const JobState& state);
-
-// Sort and truncate a SearchResult per the search config.  Exposed so the
-// volume-level wrappers and the orchestrator's per-volume / per-query post
-// pass share one implementation.
-void sort_and_truncate(SearchResult& result, const SearchConfig& config);
 
 // Volume-side bundle — pointers are non-owning and caller-managed.
 // `kix_opt` / `kpx_opt` are nullptr in single-template mode and point to the

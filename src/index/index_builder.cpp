@@ -410,12 +410,12 @@ bool build_postings(BlastDbReader& db,
     KixHeader kix_hdr{};
     std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
 
-    // Reserve offsets table (always uint64 in builder; filter may compact to uint32)
+    // Reserve the dictionary (u64 offsets here; the filter rewrites it as Elias-Fano)
     const uint64_t kix_offsets_pos = sizeof(KixHeader);
     std::vector<uint64_t> kix_offsets(tbl_size + 1, 0);
     std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, kix_fp);
 
-    // posting file starts here (no counts table in format v3)
+    // posting file starts here
     const uint64_t kix_posting_start = kix_offsets_pos + sizeof(uint64_t) * (tbl_size + 1);
 
     // Write kpx header placeholder (skip if mode 1)
@@ -424,7 +424,7 @@ bool build_postings(BlastDbReader& db,
     if (!config.skip_kpx) {
         std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
 
-        // Reserve pos_offsets table
+        // Reserve the .kpx dictionary (pos_offsets)
         kpx_offsets.resize(tbl_size, 0);
         std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
     }
@@ -611,14 +611,10 @@ bool build_postings(BlastDbReader& db,
                 while (j < buffer.size() && buffer[j].kmer_value == cur_kmer) {
                     j++;
                 }
-                // The .kix / .kpx encoder APIs take position_count as u32,
-                // so a single (k-mer, partition) slice cannot exceed
-                // 2^32 - 1.  In practice this only matters for hypothetical
-                // mega-volumes (NCBI BLAST splits at ~4 GB of sequence
-                // data, where the dominant k-mer typically has < 100 M
-                // occurrences).  Detect the overflow and abort with a
-                // clear error rather than silently truncating and
-                // corrupting downstream buffers.
+                // The .kix / .kpx encoder APIs take position_count as u32, so
+                // abort if a single (k-mer, partition) slice exceeds 2^32 - 1
+                // rather than silently truncating and corrupting downstream
+                // buffers.
                 if ((j - i) > UINT32_MAX) {
                     logger.error("k-mer %u has %zu positions in this partition, "
                                  "exceeding uint32_t.  Reduce -memory_limit to "

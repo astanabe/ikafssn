@@ -260,15 +260,23 @@ ikafssnsearch [options]
   -strand <-1|1|2>       検索する鎖 (デフォルト: 2)
                           1=プラス鎖のみ、-1=マイナス鎖のみ、2=両鎖
   -accept_qdegen <0|1>    縮重塩基を含むクエリを許可 (デフォルト: 1)
-  -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)
-  -t <int>                スペースドシード用テンプレート長 (デフォルト: 0)
-                          0: 連続 k-mer (従来方式)
+  -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)。
+                          これはフィルタではなくクエリ用パラメータであり、構築時の
+                          max_degen_expand だけが異なる索引変種が複数残った場合の
+                          タイブレークにも使われる (構築値がこのクエリ値と一致する変種を
+                          優先し、なければ最大の構築値を持つ変種を選択)。
+  -t <int>                スペースドシード用テンプレート長 (デフォルト: 0 = 連続)
+                          0: 連続 k-mer (従来方式)。これは既定値でありワイルドカードではない
                           13, 15, 18: スペースドシードテンプレート長 (-k 8 または 9 が必要)
                           16, 18, 21: スペースドシードテンプレート長 (-k 11 または 12 が必要)
-  -template_type <str>    スペースドシードのテンプレート種別 (デフォルト: both)
+  -template_type <str>    スペースドシードのテンプレート種別 (デフォルト: both; -t 0 とは併用不可)
                           coding: coding インデックスのみ使用
                           optimal: optimal インデックスのみ使用
                           both: coding と optimal のインデックスを検索時にマージ
+  -min_seq_length <int>   この min_seq_length で構築された索引変種を選択 (デフォルト: 任意)
+  -min_length_split <int> この min_length_split で構築された索引変種を選択 (デフォルト: 任意)
+  -overlap_length <int>   この overlap_length で構築された索引変種を選択 (デフォルト: 任意)
+  -max_freq_build <int>   この max_freq_build で構築された索引変種を選択 (デフォルト: 任意)
   -output_format <tsv|json|sam|bam>  出力形式 (デフォルト: tsv)
   -compression_level <int> 出力圧縮レベル (gzip/bzip2/xz/zstd; 既定値: gzip=6, bzip2=9, xz=6, zstd=3)
                           コーデックは -o の拡張子 (.gz/.bz2/.xz/.zst) で選択。SAM/BAM では拒否
@@ -290,7 +298,23 @@ ikafssnsearch [options]
 
 `-ix /data/index/nt` と指定します。プレフィックス `/data/index/nt` はディレクトリ `/data/index/` とベース名 `nt` に分割され、`.kvx` マニフェストファイルからボリュームベースネームの一覧を読み取ってボリュームを検出します。集約データベース (例: `combined` が `foo` と `bar` を束ねたもの) の場合、インデックスファイルは `foo.k11.…kix`、`bar.k11.…kix`、マニフェストは `combined.k11.…kvx` となります。
 
-インデックスディレクトリに複数の k-mer サイズのインデックスが含まれる場合 (例: `nt.k9.…kvx` と `nt.k11.…kvx` の両方が存在する場合)、`-k` で使用するサイズを指定する必要があります。k-mer サイズが 1 種類のみの場合は `-k` を省略できます。
+**索引変種の選択。** 索引変種は、ファイル名に符号化された 8 つのパラメータ `k`、`t`、`template_type`、`min_seq_length`、`min_length_split`、`overlap_length`、`max_freq_build`、`max_degen_expand` で識別されます。`ikafssnsearch` はプレフィックス配下の全変種を列挙し、上記オプションで絞り込みます。各オプションは無指定ならワイルドカード (任意の値に一致)、指定すればその値での厳密フィルタとして働きます。フィルタ後、残った変種は最初の 7 パラメータ (`max_degen_expand` を除く) で一意に定まらなければならず、そうでなければ「index filter is ambiguous」エラー (絞り込みに使えるオプションを列挙) で、一件も一致しなければ「no index variant matches」エラーで検索を中止します。したがって変種が 1 つしかなければ全オプションを省略でき、複数あれば一意に定まるだけのオプションを与えれば十分です。
+
+`max_degen_expand` だけは一意でなくても許容されます。`max_degen_expand` のみが異なる変種が複数残った場合は、上記のとおり `-max_degen_expand` でタイブレークされます。構築時の `-max_degen_expand` (`ikafssnindex`) とクエリ時の `-max_degen_expand` は一致しなくても構いません。
+
+template_type の解決は次のとおりです:
+
+| オプション | 結果 |
+|---|---|
+| `-t 0`(または `-t` 省略) | 連続変種(単一) |
+| `-t>0 -template_type coding` | coding 変種(単一) |
+| `-t>0 -template_type optimal` | optimal 変種(単一) |
+| `-t>0 -template_type both` | coding+optimal ペア(both 必須。片方欠落でエラー) |
+| `-t>0`(`-template_type` 無指定) | 両方存在すれば coding+optimal ペア、片方のみ存在すればその単独(cod のみ→coding、opt のみ→optimal) |
+
+both ペアの場合、coding と optimal は `template_type` 以外の全識別パラメータ(**`max_degen_expand` を含む**)で一致しなければなりません(ちゃんぽん不可)。共有する `max_degen_expand` は**両側に存在する値**の中でタイブレーク(query 値優先・なければ共通の最大値)し、両側で共通する `max_degen_expand` が無ければ混在させずにエラーで中止します。
+
+注意すべき非対称が 2 点あります。第一に、`-t` の既定値は `0` (連続インデックス) であり、これはワイルドカードではなく具体値です。`-t` を省略すると連続変種が選択され、スペースドシード変種には一致しません (一方 `ikafssninfo` と `ikafssnserver` では無指定の `-t` をワイルドカードとして扱います)。第二に、`-t 0` と `-template_type` の併用は、連続インデックスにテンプレート種別が存在しないためエラーになります。
 
 `-accept_qdegen` が 0 の場合、IUPAC 縮重塩基 (R, Y, S, W, K, M, B, D, H, V, N) を含むクエリは `degen_rejected` のスキップマーカー (TSV: `*SKIPPED:degen_rejected`、JSON: `"status": "skipped"`、SAM: unmapped レコード + `XR:Z:degen_rejected`) と stderr 警告付きでスキップされ、終了コードは 2 になります。詳しい理由一覧と各フォーマットでの表現は下記「スキップ理由」を参照してください。`-accept_qdegen 1` を指定すると縮重塩基を含むクエリも受け付けます。1 文字の縮重塩基を含む k-mer は全可能バリアントに展開して検索に使用されます (例: R→A,G で 2 k-mer、N→A,C,G,T で 4 k-mer)。位置ごとの展開積が `-max_degen_expand` を超える窓は emit されません。この場合、クエリごとに 1 回、当該クエリ名と当該 k-mer がスキップされた旨の警告が標準エラーに出力されます (注: これは窓単位の unemit であり、クエリ全体のスキップではありません — 残りの窓は検索に使われ、emit されなかった位置はフラクショナル閾値の `Nhighfreq` に反映されます)。サーバモード (`ikafssnserver`) ではこの警告がプロトコル経由で `ikafssnclient` に伝播され、クライアント側でも同じメッセージが表示されます。この処理はインデックス構築時のサブジェクト配列に対する処理と同等です。
 
@@ -473,6 +497,19 @@ ikafssnserver [options]
   -socket <path>          UNIX ドメインソケットパス
   -tcp <host>:<port>      TCP リスニングアドレス
 
+索引変種のロードフィルタ (無指定の項目はワイルドカード):
+  -k <int>                この k-mer 長のみロード (デフォルト: 任意)
+  -t <int>                このテンプレート長のみロード: 0=連続, 13/15/16/18/21
+                          (デフォルト: 任意; -t 0 は連続インデックスのみロード)
+  -template_type <str>    coding, optimal, contiguous, both (デフォルト: 任意; -t 0 とは併用不可)
+  -min_seq_length <int>   この min_seq_length の変種のみロード (デフォルト: 任意)
+  -min_length_split <int> この min_length_split の変種のみロード (デフォルト: 任意)
+  -overlap_length <int>   この overlap_length の変種のみロード (デフォルト: 任意)
+  -max_freq_build <int>   この max_freq_build の変種のみロード (デフォルト: 任意)
+  -max_degen_expand <int> この max_degen_expand の変種のみロード (デフォルト: 任意)。
+                          ロードフィルタ専用。query 側の max_degen_expand はクライアントが
+                          指定する(リクエストが省略した場合のサーバ内部フォールバックは 16)。
+
 オプション:
   -nthread <int>          ワーカースレッド数 (デフォルト: 利用可能な全コア)
   -max_queue_size <int>   同時処理クエリ配列数のグローバル上限 (デフォルト: 1024)
@@ -502,13 +539,16 @@ ikafssnserver [options]
                           利用可能: degmatch、dnafull、nuc44
   -nresult <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
-  -max_degen_expand <int> 縮重塩基展開の最大数/k-mer (デフォルト: 16、最大: 256、0/1: 無効)
   -memory_limit <size>    検索メモリ予算 (デフォルト: 物理メモリの半分)
                           .khx/.ksx メタデータを常駐させ、残余で Stage 3 の
                           posting heap と同時検索プールを制限。接尾辞 K, M, G を認識
   -shutdown_timeout <int> グレースフルシャットダウンのタイムアウト秒数 (デフォルト: 30)
   -v, --verbose           詳細ログ出力
 ```
+
+ロードフィルタはサーバがロードする索引変種を制限し、`ikafssninfo` ローカルモードと同じワイルドカード意味論を用います(無指定の項目はワイルドカード、無指定の `-t` は完全ワイルドカード、`-t 0` と `-template_type` の併用はエラー)。**`-max_degen_expand` を含む 8 識別パラメータすべて**がここではロードフィルタです。`-max_degen_expand` はサーバでは**ロードフィルタ専用**で、query 側の `max_degen_expand`(k-mer 展開+タイブレーク)はクライアントが指定し、サーバはリクエストが省略した場合のみ内部フォールバック 16 を適用します。`-max_degen_expand` 無指定なら構築時の全 maxexpand 値をロードし(リクエスト時タイブレークが選択可能)、指定するとロード対象が絞られ、クライアントはロードされた変種からしか選択できなくなります。
+
+サーバはロードした各変種をワイヤ上で別々のグループとして公開します(info 応答は各グループに 8 つの識別パラメータすべてを載せます)。検索リクエストはクライアントが解決した変種識別を載せ、サーバは `t` と `template_type` をリテラル一致(0=連続)、4 つの索引フィールドを厳密一致させ、`max_degen_expand` 違いの変種が複数残った場合はリクエストの `max_degen_expand` に一致するもの(なければ最大)を選択します。`template_type=both` のリクエストでは、`max_degen_expand` を共有する coding+optimal ペアを選択します(混在不可)。`-min_query_length` と長尺クエリ上限は、選択された変種の `min_seq_length` と `overlap_length` からリクエストごとに導出されます。
 
 **使用例:**
 
@@ -538,7 +578,7 @@ ikafssnserver -ix ./nt_index -db nt -ix ./rs_index -db refseq_genomic \
 
 - 1 プロセスで複数の BLAST DB インデックスを同時にサーブできます。`-ix` (および必要に応じて `-db`) を複数回指定して複数データベースをロードします。各データベースは `-ix` プレフィックスのベースネーム (パスの最終コンポーネント) で識別され、サーバが複数 DB をホストする場合、クライアントは `-db <name>` でターゲット DB を指定する必要があります。
 - `-db` を指定する場合、その数は `-ix` の数と一致する必要があります (順番に対応)。`-db` を省略した DB は `-ix` プレフィックスを BLAST DB パスとして使用します。`-db` パスが未指定の DB はモード 1-2 のみ対応 (max_mode=2)、`-db` を指定するとモード 3 も利用可能 (max_mode=3) になります。
-- `-ix` プレフィックスに対応する異なる k-mer サイズのインデックスが存在する場合、全て読み込み、クライアントのリクエストで k を指定できます。
+- `-ix` プレフィックスに対応する索引変種が複数存在する場合 (8 つの識別パラメータ — k, t, template_type, min_seq_length, min_length_split, overlap_length, max_freq_build, max_degen_expand — のいずれかが異なる)、ロードフィルタに従って全てを読み込み、各クライアントリクエストが解決済みの変種識別を載せて 1 つを選択します。どの変種をロードするか自体はロードフィルタで制限できます。
 - SIGTERM/SIGINT 受信時はグレースフルシャットダウンを行います。新規接続の受付を停止し、実行中のリクエストの完了を最大 `-shutdown_timeout` 秒待ちます。
 - **配列単位の同時実行制御:** サーバは接続単位ではなく、配列単位で同時実行数を制御します。リクエストが到着すると、有効なクエリ配列ごとにパーミットの取得を試みます。グローバル上限 (`-max_queue_size`) に達した場合、超過分の配列はリトライ用に「拒否」としてクライアントに返されます。`-max_nseq_per_req` は 1 リクエストが取得できるパーミット数の上限を設定し、大量配列を含む単一リクエストによるスロットの独占を防ぎます。
 - **リクエスト間の posting budget プール (`-max_concurrent_search`):** デフォルト値 `0` では、同時実行中の各リクエストが独立に残余 `posting_budget` (`-memory_limit` から `.khx` / `.ksx` の `WILLNEED` を差し引いた残り) の全量を使用できます。`N >= 1` を指定すると、リクエスト間でこの予算をリース/リリース方式で共有します。各リクエストは検索全体を通じて 1 個のリースを保持し、同時に実行できる検索は最大 `N` 個に制限されます。これにより接続数によらず in-flight な posting ヒープ (Stage 3 のアライメントバッチャが消費) を `posting_budget` 以下に抑えられますが、`N` を超える追加検索はリースが解放されるまで待機します。1 リクエスト分にメモリ上限を合わせるのは不便だが、プロセス当たりの posting メモリには厳格な上限を設けたい運用に向きます。
@@ -566,7 +606,7 @@ ikafssnhttpd [options]
   -server_tcp <host>:<port>  ikafssnserver の TCP アドレス
 
 ジョブストア (非同期 REST):
-  -db <path>                  SQLite ジョブストアのパス
+  -sqlite_db <path>           SQLite ジョブストアのパス
                               (デフォルト: /var/lib/ikafssnhttpd/jobs.db)
   -query_dir <path>           ジョブクエリファイル保存ディレクトリ。queued/running
                               ジョブのリクエストボディを 1 ジョブ 1 ファイル
@@ -637,7 +677,7 @@ ikafssnhttpd -server_socket /var/run/primary.sock -server_tcp backup:9100 -liste
 
 ### ikafssnclient
 
-クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。クエリ送信前にサーバの能力情報を取得し、指定されたデータベース名・k-mer サイズ・モードの妥当性を事前検証 (プリフライトチェック) します。無効なパラメータが指定された場合は、クエリデータの送信前に利用可能なデータベース一覧を含むエラーメッセージが表示されます。クライアントはサーバの `max_nseq_per_req` と空きスロット数に基づいてクエリを適切なサイズのバッチに自動分割し、部分的に拒否されるような過大なリクエストを回避します。各バッチ内でサーバが同時実行制限によりクエリ配列を拒否した場合、拒否された配列を指数バックオフ (30 秒、60 秒、120 秒、120 秒、…) で自動リトライし、全配列の処理が完了するまで繰り返します。
+クライアントコマンドです。`ikafssnserver` に直接ソケット接続するか、`ikafssnhttpd` に HTTP 接続して検索結果を取得します。出力形式は `ikafssnsearch` と同一です。クエリ送信前にサーバの能力情報を取得し、指定されたデータベース名・k-mer サイズ・モードの妥当性を事前検証 (プリフライトチェック) します。続いて `ikafssnsearch` と全く同じ手順で索引変種を解決します — サーバの変種別グループ一覧に同じ `-k` / `-t` / `-template_type` / `-min_seq_length` / `-min_length_split` / `-overlap_length` / `-max_freq_build` フィルタと同じ template_type 解決(単一・both 必須・ワイルドカードで coding/optimal フォールバック。both ペアは `max_degen_expand` を共有し混在しない)を適用し、解決した識別をリクエストに載せて送信します。`ikafssnsearch` と同様、`max_degen_expand` 以外の 7 パラメータで単一の変種(または 1 つの both ペア)に収束しなければならず、`max_degen_expand` 自体はサーバのタイブレークに委ねます。曖昧または該当なしの場合は、クエリデータの送信前にローカルでエラーになります。無効なパラメータが指定された場合は、利用可能なデータベース一覧を含むエラーメッセージが表示されます。クライアントはサーバの `max_nseq_per_req` と空きスロット数に基づいてクエリを適切なサイズのバッチに自動分割し、部分的に拒否されるような過大なリクエストを回避します。各バッチ内でサーバが同時実行制限によりクエリ配列を拒否した場合、拒否された配列を指数バックオフ (30 秒、60 秒、120 秒、120 秒、…) で自動リトライし、全配列の処理が完了するまで繰り返します。
 
 **ソケット/TCP モード (同期) — チェックポインティング:** `-socket` または `-tcp` で接続した場合、クライアントはバッチ処理中の中間結果を一時ディレクトリに自動保存します。プロセスが中断された場合 (例: Ctrl+C、ネットワーク障害)、同じコマンドを再実行すると中断箇所から再開し、処理済みクエリをスキップします。一時ディレクトリの命名は `{出力}.{入力}.{ix名}.{kk}.ikafssn.tmp/` で、正常完了後に自動削除されます。ディレクトリベースのロックにより同一パラメータでの同時実行を防止します。再開時の検証では検索パラメータ、入力ファイルの SHA256、各バッチファイルの整合性をチェックします。
 
@@ -698,19 +738,25 @@ ikafssnclient [options]
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
   -accept_qdegen <0|1>     縮重塩基を含むクエリを許可 (デフォルト: 1)
-  -max_degen_expand <int>  縮重塩基展開の最大数 (デフォルト: サーバ側デフォルト、最大: 256)
+  -max_degen_expand <int>  縮重塩基展開の最大数 (デフォルト: 16、最大: 256、0/1: 無効)。
+                           ikafssnsearch と同一の query パラメータ(サーバに委譲しない)。
+                           max_degen_expand 変種が複数残った場合のタイブレークにも使われる。
   -min_query_length <int>  クエリ配列の最短長 (デフォルト: 64)。クライアント
                            側で短いクエリを事前にフィルタするため、サーバ側
                            の同じチェックが発火する前に弾かれます。値は
                            InfoResponse 経由でサーバから取得した
                            min_seq_length 以上である必要があり、それより
                            小さい場合は pre-flight 検証で拒否されます。
-  -t <int>                 スペースドシード用テンプレート長 (デフォルト: サーバ側デフォルト)
+  -t <int>                 スペースドシード用テンプレート長 (デフォルト: 0 = 連続、ワイルドカードではない)
                            0: 連続 k-mer; 13, 15, 18 (k=8-9); 16, 18, 21 (k=11-12)
-  -template_type <str>     スペースドシードのテンプレート種別 (デフォルト: サーバ側デフォルト)
+  -template_type <str>     スペースドシードのテンプレート種別 (デフォルト: -t>0 で both; -t 0 とは併用不可)
                            coding: coding インデックスのみ使用
                            optimal: optimal インデックスのみ使用
                            both: coding と optimal のインデックスを検索時にマージ
+  -min_seq_length <int>    この min_seq_length の索引変種を選択 (デフォルト: 任意)
+  -min_length_split <int>  この min_length_split の索引変種を選択 (デフォルト: 任意)
+  -overlap_length <int>    この overlap_length の索引変種を選択 (デフォルト: 任意)
+  -max_freq_build <int>    この max_freq_build の索引変種を選択 (デフォルト: 任意)
   -output_format <tsv|json|sam|bam>  出力形式 (デフォルト: tsv)
   -compression_level <int> 出力圧縮レベル (既定値: gzip=6, bzip2=9, xz=6, zstd=3)
                            コーデックは -o の拡張子 (.gz/.bz2/.xz/.zst) で選択。SAM/BAM では拒否
@@ -787,8 +833,18 @@ ikafssninfo [options]
   -tcp <host>:<port>       ikafssnserver の TCP アドレス [リモートモード]
   -http <url>              ikafssnhttpd の URL [リモートモード]
 
-ローカルモードオプション:
+ローカルモードオプション (索引変種フィルタ; 無指定の項目はワイルドカード):
   -db <path>               BLAST DB プレフィックス (デフォルト: -ix から自動検出)
+  -k <int>                 k-mer 長 (デフォルト: 任意)
+  -t <int>                 テンプレート長: 0=連続, 13/15/16/18/21
+                           (デフォルト: 任意; -t 0 は連続インデックスのみ選択)
+  -template_type <str>     coding, optimal, contiguous, both (デフォルト: 任意; -t 0 とは併用不可)
+  -min_seq_length <int>    min_seq_length でフィルタ (デフォルト: 任意)
+  -min_length_split <int>  min_length_split でフィルタ (デフォルト: 任意)
+  -overlap_length <int>    overlap_length でフィルタ (デフォルト: 任意)
+  -max_freq_build <int>    max_freq_build でフィルタ (デフォルト: 任意)
+  -max_degen_expand <int>  max_degen_expand でフィルタ (デフォルト: 任意)
+  -stats <0|1>             k-mer 出現頻度分布を計算 (デフォルト: 0; 低速)
 
 リモート HTTP 認証:
   -user <user:password>   認証情報 (curl 形式)
@@ -802,7 +858,7 @@ ikafssninfo [options]
 
 `-ix` とリモートオプション (`-socket`、`-tcp`、`-http`) は排他的です。リモートオプションは同時に 1 つのみ指定可能です。
 
-**ローカルモード:** インデックスファイルを直接読み取り、詳細な統計情報を表示します。`-db` 未指定の場合、インデックスプレフィックスパスが有効な BLAST DB に対応するかを確認し、自動検出を試みます。
+**ローカルモード:** インデックスファイルを直接読み取り、詳細な統計情報を表示します。`-db` 未指定の場合、インデックスプレフィックスパスが有効な BLAST DB に対応するかを確認し、自動検出を試みます。`ikafssnsearch` / `ikafssnclient` と異なり、ローカルモードは単一変種への解決を行いません。フィルタを通過した**すべて**の索引変種を、それぞれ `=== Index variant: … ===` の見出しの下に報告し、統計を変種間で合算することはありません。フィルタオプションはワイルドカード意味論を用います — 無指定の `-t` は任意のテンプレート長に一致し (`ikafssnsearch` では無指定の `-t` は連続を意味する)、`-max_degen_expand` はここでは通常のフィルタ (タイブレークではない) であり、`-t 0` と `-template_type` の併用はエラーになります。
 
 ローカルモードの出力情報:
 
@@ -810,8 +866,8 @@ ikafssninfo [options]
 - ボリューム数
 - 各ボリュームの親 (BLAST OID) 数、フラグメント (内部 SeqId) 数、フラグメント長分布 (min / median / mean / max)、総ポスティング数、ファイルサイズ、除外 k-mer 数 (`.khx` 存在時)
 - 全体統計: 総親数、総フラグメント数、集約フラグメント長分布、総ポスティング数、総インデックスサイズ、圧縮率
-- ファイル名から parse したフラグメント・インデックス用パラメータ (`min_seq_length` / `min_length_split` / `overlap_length`)
-- `-v` 指定時: k-mer 出現頻度分布 (min, max, mean, パーセンタイル)
+- ファイル名から parse した変種の 8 識別パラメータ (`k`, `t`, `template_type`, `min_seq_length`, `min_length_split`, `overlap_length`, `max_freq_build`, `max_degen_expand`)
+- `-stats 1` 指定時: k-mer 出現頻度分布 (min, max, mean, パーセンタイル)
 - `-db` 指定時 (または自動検出時): BLAST DB のタイトル、配列数、総塩基数、ボリューム構成
 
 「Parents」と「Fragments」の値が一致しない場合はインデックスがフラグメント分割を有効にしている (`min_length_split > 0`) ことを意味し、一致する場合は「親 1 つにつきフラグメント 1 つ」の退化レイアウトです。
@@ -821,8 +877,8 @@ ikafssninfo [options]
 リモートモードの出力情報:
 
 - キュー深度 / 最大キューサイズ (queue_depth / max_queue_size)
-- データベースごとの情報: 名前、デフォルト k、最大モード、k-mer グループ (ボリューム数・配列数・総塩基数・ポスティング数の統計)
-- `-v` 指定時: 各 k-mer グループ内のボリュームごとの詳細 (配列数、総塩基数、ポスティング数)
+- データベースごとの情報: 名前、デフォルト k、最大モード、および索引変種ごとに 1 グループ。各グループは 8 つの識別パラメータ (`k`, `t`, `template_type`, `min_seq_length`, `min_length_split`, `overlap_length`, `max_freq_build`, `max_degen_expand`) と、ボリューム数・配列数・総塩基数・ポスティング数の統計を表示
+- `-v` 指定時: 各変種グループ内のボリュームごとの詳細 (配列数、総塩基数、ポスティング数)
 
 **使用例:**
 
@@ -834,7 +890,7 @@ ikafssninfo -ix ./index/mydb
 ikafssninfo -ix ./index/mydb -db mydb
 
 # ローカル: 詳細な頻度分布を表示
-ikafssninfo -ix ./index/mydb -v
+ikafssninfo -ix ./index/mydb -stats 1
 
 # リモート: UNIX ソケット経由でサーバに問い合わせ
 ikafssninfo -socket /var/run/ikafssn.sock

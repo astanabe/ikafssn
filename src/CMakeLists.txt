@@ -19,9 +19,7 @@ target_include_directories(ikafssn_core INTERFACE
 add_library(ikafssn_index STATIC
     index/ksx_writer.cpp
     index/ksx_reader.cpp
-    index/kix_writer.cpp
     index/kix_reader.cpp
-    index/kpx_writer.cpp
     index/kpx_reader.cpp
     index/khx_writer.cpp
     index/khx_reader.cpp
@@ -115,7 +113,6 @@ add_library(ikafssn_search STATIC
     search/diagonal_filter.cpp
     search/stage2_chaining.cpp
     search/query_preprocessor.cpp
-    search/volume_searcher.cpp
     search/parallel_search.cpp
     search/search_orchestrator.cpp
     search/result_dedup.cpp

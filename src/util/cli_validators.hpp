@@ -32,6 +32,11 @@ bool parse_template_type_cli(const CliParser& cli, TemplateType default_value,
                              bool allow_contiguous,
                              TemplateType& out, std::string& err);
 
+// Reject the combination "-t 0 -template_type ...": the contiguous index has
+// no template type, so pairing it with an explicit -template_type is an error
+// in every tool.  Returns true (and leaves `err` untouched) otherwise.
+bool validate_t_template_type_combo(const CliParser& cli, std::string& err);
+
 // Cross-check primer-mode options shared by ikafssnsearch and ikafssnclient:
 // rejects combinations with -stage1_min_score / -stage2_min_score, and
 // requires -insert_length when -primer is given.

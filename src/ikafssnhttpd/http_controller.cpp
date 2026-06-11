@@ -104,12 +104,8 @@ void HttpController::submit_job(
     std::string content_type = req->getHeader("Content-Type");
     std::string media_type = extract_media_type(content_type);
 
-    // ikafssnclient always sends application/zstd.  application/json (and
-    // an empty Content-Type) is also accepted so external tools — curl
-    // and any one-off scripts — can submit a job without having to pipe
-    // the body through `zstd` first.  This is NOT a back-compat path for
-    // the previous ikafssnclient release; it is a documented entry point
-    // for ad-hoc HTTP clients.
+    // Accept application/zstd (ikafssnclient) and application/json or an
+    // empty Content-Type (ad-hoc curl clients submitting an uncompressed body).
     std::string body;
     bool client_sent_zstd = false;
     if (media_type == "application/zstd") {
@@ -207,7 +203,7 @@ void HttpController::get_job_status(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& job_id) {
 
-    JobMeta meta;
+    HttpdJobMeta meta;
     std::string err;
     if (!store_->get_status(job_id, meta, err)) {
         if (err.empty()) {
@@ -239,7 +235,7 @@ void HttpController::get_job_result(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& job_id) {
 
-    JobMeta meta;
+    HttpdJobMeta meta;
     std::string err;
     if (!store_->get_status(job_id, meta, err)) {
         if (err.empty()) {
@@ -256,11 +252,8 @@ void HttpController::get_job_result(
         return;
     }
     if (!results_->exists(job_id)) {
-        // Race with the housekeeper: the SQLite row still says 'done'
-        // but the file has already been swept (or never landed because
-        // mark_done committed before the file was fsynced — extremely
-        // unlikely given the worker order, but possible if an operator
-        // hand-deleted the file).
+        // Row still says 'done' but the result file is gone (housekeeper
+        // race or an operator hand-deleted it).
         callback(make_error_response(drogon::k404NotFound,
             "result file missing for job " + job_id
             + ": housekeeper raced"));

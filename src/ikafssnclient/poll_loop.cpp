@@ -65,7 +65,7 @@ bool PollLoop::poll_once_() {
 
     for (const auto& job_id : group_.job_ids) {
         n_total++;
-        JobMeta jm;
+        ClientJobMeta jm;
         std::string err;
         if (!read_job_meta(root_, group_id_, job_id, jm, err)) {
             logger_.error("PollLoop: read_job_meta(%s): %s",
@@ -100,7 +100,7 @@ bool PollLoop::poll_once_() {
     return n_terminal == n_total;
 }
 
-bool PollLoop::refresh_one_(JobMeta& jm) {
+bool PollLoop::refresh_one_(ClientJobMeta& jm) {
     AsyncJobStatus st;
     std::string err;
     auto outcome = http_get_job_status(group_.httpd_url, jm.job_id,

@@ -23,11 +23,6 @@ struct ChainResult {
     bool   is_reverse;
 };
 
-// Returns 0 for k <= 8 (uint16_t), 1 for k >= 9 (uint32_t).
-inline constexpr uint8_t kmer_type_for_k(int k) {
-    return k >= 9 ? 1 : 0;
-}
-
 // Bit-width-based KmerInt dispatch: bits = 2*k.
 // Returns 0 for uint16_t, 1 for uint32_t.
 inline constexpr uint8_t kmer_type_for(int k, uint8_t /*t*/) {

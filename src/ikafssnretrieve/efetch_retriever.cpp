@@ -277,11 +277,15 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
     std::unordered_map<std::string, AccessionInfo> acc_info;
     for (size_t i = 0; i < hits.size(); i++) {
         auto& info = acc_info[hits[i].sseqid];
+        // Per-hit context: ratio mode derives it from the hit's query length.
+        uint32_t ctx = opts.is_ratio
+            ? static_cast<uint32_t>(hits[i].qlen * opts.ratio)
+            : opts.context;
         uint32_t ext_start = hits[i].sstart;
         uint32_t ext_end = hits[i].send;
-        if (opts.context > 0) {
-            ext_start = (ext_start >= opts.context) ? ext_start - opts.context : 0;
-            ext_end += opts.context;  // may exceed actual seq length; efetch handles this
+        if (ctx > 0) {
+            ext_start = (ext_start >= ctx) ? ext_start - ctx : 0;
+            ext_end += ctx;  // may exceed actual seq length; efetch handles this
         }
         info.hit_refs.push_back({i, ext_start, ext_end});
         if (hits[i].send > info.max_s_end)

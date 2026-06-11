@@ -11,7 +11,7 @@
 #include "index/khx_reader.hpp"
 #include "search/oid_filter.hpp"
 #include "search/result_dedup.hpp"
-#include "search/volume_searcher.hpp"
+#include "search/search_config.hpp"
 #include "search/parallel_search.hpp"
 #include "search/search_orchestrator.hpp"
 #include "search/preprocess_runner.hpp"
@@ -37,7 +37,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -99,7 +98,11 @@ static void print_usage(const char* prog) {
         "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -t <int>                 Template length for spaced seeds (0=contiguous, 13/15/18 for k=8-9, 16/18/21 for k=11-12; default: 0)\n"
-        "  -template_type <string>  Template type: coding, optimal, both (default: both)\n"
+        "  -template_type <string>  Template type: coding, optimal, both (default: both; invalid with -t 0)\n"
+        "  -min_seq_length <int>    Select the index variant with this min_seq_length (default: any)\n"
+        "  -min_length_split <int>  Select the index variant with this min_length_split (default: any)\n"
+        "  -overlap_length <int>    Select the index variant with this overlap_length (default: any)\n"
+        "  -max_freq_build <int>    Select the index variant with this max_freq_build (default: any)\n"
         "  -output_format <tsv|json|sam|bam>  Output format (default: tsv)\n"
         "  -compression_level <int>    Output compression level (default per codec: gzip=6, bzip2=9, xz=6, zstd=3)\n"
         "  -v, --verbose            Verbose logging\n",
@@ -170,6 +173,15 @@ int main(int argc, char* argv[]) {
     {
         std::string err;
         if (!validate_primer_mode_options(cli, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+    }
+
+    // -t 0 with an explicit -template_type is contradictory.
+    {
+        std::string err;
+        if (!validate_t_template_type_combo(cli, err)) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 1;
         }
@@ -333,8 +345,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (spaced_t > 0) {
-        if (!validate_spaced_seed(filter_k > 0 ? filter_k : 0, spaced_t)) {
+    // When -k is given, validate the (k, t) pair up front; when -k is omitted
+    // the pair is re-validated against the resolved variant's k below.
+    if (spaced_t > 0 && filter_k > 0) {
+        if (!validate_spaced_seed(filter_k, spaced_t)) {
             std::fprintf(stderr, "Error: -t %d is not valid for -k %d\n", spaced_t, filter_k);
             return 1;
         }
@@ -387,79 +401,124 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Discover volumes. For "both" template_type we hold two contexts
-    // (coding + optimal); otherwise a single context.
-    const bool is_both_mode = (spaced_t > 0 && spaced_type == TemplateType::kBoth);
+    // Discover every variant under the prefix, then narrow to a single one
+    // with the shared variant filter.  The template_type dimension is resolved
+    // per the agreed semantics:
+    //   -t 0                       -> single contiguous
+    //   -t>0 -template_type cod/opt -> single coding / optimal
+    //   -t>0 -template_type both    -> coding+optimal pair (both required)
+    //   -t>0 (no -template_type)    -> pair if both exist, else the present side
+    TemplateResolveMode resolve_mode;
+    if (spaced_t == 0) {
+        resolve_mode = TemplateResolveMode::kSingle;            // contiguous
+    } else if (!cli.has("-template_type")) {
+        resolve_mode = TemplateResolveMode::kBothOrSingle;      // wildcard
+    } else if (spaced_type == TemplateType::kBoth) {
+        resolve_mode = TemplateResolveMode::kBothRequired;
+    } else {
+        resolve_mode = TemplateResolveMode::kSingle;            // coding / optimal
+    }
+
+    VariantFilter vf;
+    vf.has_k = (filter_k > 0); vf.k = filter_k;
+    vf.t_is_wildcard = false;  vf.t = spaced_t;   // unset -t defaults to 0
+    if (cli.has("-template_type")) {
+        vf.has_template_type = true;
+        vf.template_type = static_cast<uint8_t>(spaced_type);
+    }
+    if (cli.has("-min_seq_length")) {
+        vf.has_min_seq_length = true;
+        vf.min_seq_length = static_cast<uint32_t>(cli.get_int("-min_seq_length", 0));
+    }
+    if (cli.has("-min_length_split")) {
+        vf.has_min_length_split = true;
+        vf.min_length_split = static_cast<uint32_t>(cli.get_int("-min_length_split", 0));
+    }
+    if (cli.has("-overlap_length")) {
+        vf.has_overlap_length = true;
+        vf.overlap_length = static_cast<uint32_t>(cli.get_int("-overlap_length", 0));
+    }
+    if (cli.has("-max_freq_build")) {
+        vf.has_max_freq_build = true;
+        vf.max_freq_build = std::strtoull(
+            cli.get_string("-max_freq_build").c_str(), nullptr, 10);
+    }
+    // -max_degen_expand is a query parameter (config.max_degen_expand) and the
+    // variant-selection tie-break, never a filter.
+
+    // Pre-narrow by k at discovery (cheap, and avoids stat()ing other-k
+    // volumes); variant_matches() below applies the remaining filters.
+    auto all_vols = discover_volumes(ix_prefix, filter_k);
+    std::vector<DiscoveredVolume> matched;
+    std::vector<VariantFields> matched_fields;
+    for (const auto& v : all_vols) {
+        VariantFields f = variant_fields_of(v);
+        if (variant_matches(vf, f)) {
+            matched.push_back(v);
+            matched_fields.push_back(f);
+        }
+    }
+
     std::vector<TemplateContext> ctxs;
     ctxs.reserve(2);  // pin addresses; khx_ptr depends on stable storage
+    bool is_both_mode = false;
+    {
+        std::string err;
+        auto sel = resolve_variant_indices(matched_fields, resolve_mode,
+                                           config.max_degen_expand, err);
+        if (sel.empty()) {
+            std::fprintf(stderr, "Error: %s (prefix %s)\n",
+                         err.c_str(), ix_prefix.c_str());
+            return 1;
+        }
+        // Infer single-vs-pair from the resolved template_types.
+        bool has_cod = false, has_opt = false;
+        for (size_t i : sel) {
+            if (matched[i].template_type == 1) has_cod = true;
+            else if (matched[i].template_type == 2) has_opt = true;
+        }
+        is_both_mode = has_cod && has_opt;
 
-    if (is_both_mode) {
-        ctxs.emplace_back();
-        ctxs.back().type = TemplateType::kCoding;
-        ctxs.back().vol_files = discover_volumes(
-            ix_prefix, filter_k, spaced_t,
-            static_cast<uint8_t>(TemplateType::kCoding));
-        ctxs.emplace_back();
-        ctxs.back().type = TemplateType::kOptimal;
-        ctxs.back().vol_files = discover_volumes(
-            ix_prefix, filter_k, spaced_t,
-            static_cast<uint8_t>(TemplateType::kOptimal));
-        if (ctxs[0].vol_files.empty() || ctxs[1].vol_files.empty()) {
-            std::fprintf(stderr,
-                "Error: both-mode requires coding and optimal index files; "
-                "found %zu coding, %zu optimal for prefix %s\n",
-                ctxs[0].vol_files.size(), ctxs[1].vol_files.size(),
-                ix_prefix.c_str());
-            return 1;
+        if (is_both_mode) {
+            ctxs.emplace_back();
+            ctxs.back().type = TemplateType::kCoding;
+            ctxs.emplace_back();
+            ctxs.back().type = TemplateType::kOptimal;
+            for (size_t i : sel) {
+                if (matched[i].template_type == 1)
+                    ctxs[0].vol_files.push_back(matched[i]);
+                else
+                    ctxs[1].vol_files.push_back(matched[i]);
+            }
+            std::sort(ctxs[0].vol_files.begin(), ctxs[0].vol_files.end(),
+                      [](const DiscoveredVolume& a, const DiscoveredVolume& b) {
+                          return a.volume_index < b.volume_index;
+                      });
+            std::sort(ctxs[1].vol_files.begin(), ctxs[1].vol_files.end(),
+                      [](const DiscoveredVolume& a, const DiscoveredVolume& b) {
+                          return a.volume_index < b.volume_index;
+                      });
+            if (ctxs[0].vol_files.size() != ctxs[1].vol_files.size()) {
+                std::fprintf(stderr,
+                    "Error: coding and optimal volume counts differ (%zu vs %zu)\n",
+                    ctxs[0].vol_files.size(), ctxs[1].vol_files.size());
+                return 1;
+            }
+        } else {
+            // Single variant: every selected volume shares one template_type,
+            // so take it from the resolved variant (contiguous => kContiguous).
+            ctxs.emplace_back();
+            ctxs.back().type =
+                static_cast<TemplateType>(matched[sel[0]].template_type);
+            for (size_t i : sel) ctxs.back().vol_files.push_back(matched[i]);
         }
-        if (ctxs[0].vol_files.size() != ctxs[1].vol_files.size()) {
-            std::fprintf(stderr,
-                "Error: coding and optimal volume counts differ (%zu vs %zu)\n",
-                ctxs[0].vol_files.size(), ctxs[1].vol_files.size());
-            return 1;
-        }
-    } else {
-        ctxs.emplace_back();
-        ctxs.back().type = spaced_type;
-        ctxs.back().vol_files = discover_volumes(
-            ix_prefix, filter_k, spaced_t,
-            spaced_t > 0 ? static_cast<uint8_t>(spaced_type) : uint8_t(0));
     }
 
     // ctxs[0] is the canonical side (coding for both-mode, the only side otherwise).
     const auto& vol_files = ctxs[0].vol_files;
 
-    if (vol_files.empty()) {
-        if (filter_k > 0) {
-            std::fprintf(stderr, "Error: no index files found for prefix %s with k=%d\n",
-                         ix_prefix.c_str(), filter_k);
-        } else {
-            std::fprintf(stderr, "Error: no index files found for prefix %s\n", ix_prefix.c_str());
-        }
-        return 1;
-    }
-
-    // Determine k: if -k was specified, use it; otherwise require exactly one k value
-    int k;
-    if (filter_k > 0) {
-        k = filter_k;
-    } else {
-        std::set<int> k_values;
-        for (const auto& vf : vol_files) k_values.insert(vf.k);
-        if (k_values.size() == 1) {
-            k = *k_values.begin();
-        } else {
-            std::fprintf(stderr, "Error: multiple k-mer sizes found (");
-            bool first = true;
-            for (int kv : k_values) {
-                if (!first) std::fprintf(stderr, ", ");
-                std::fprintf(stderr, "%d", kv);
-                first = false;
-            }
-            std::fprintf(stderr, "); specify -k to select one\n");
-            return 1;
-        }
-    }
+    // The selected variant is unique in k, so read it straight off.
+    const int k = vol_files.front().k;
 
     if (spaced_t > 0 && !validate_spaced_seed(k, spaced_t)) {
         std::fprintf(stderr, "Error: -t %d is not valid for k=%d\n", spaced_t, k);
@@ -493,10 +552,9 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Primer pair parsing will be completed after k and seed_masks are determined.
-        // For now, store the raw records for later processing.
-        // We need k to be resolved first, so use a temporary flag.
-        queries.reserve(primer_records.size()); // temporary; will be replaced
+        // Park the raw primer records here; they are reparsed into real
+        // queries below once k and seed_masks are resolved.
+        queries.reserve(primer_records.size());
         for (auto& r : primer_records) {
             queries.push_back(std::move(r));
         }
@@ -844,7 +902,6 @@ int main(int argc, char* argv[]) {
         in.k = k;
         in.nthread = nthread;
         in.config = config;
-        in.posting_budget = posting_budget;
         in.logger = &logger;
         in.max_num_seqs = max_num_seqs;
         in.width = width;
@@ -973,7 +1030,7 @@ int main(int argc, char* argv[]) {
     // Convert OrchestratorHit -> OutputHit at the boundary.
     //
     // Stage 2 chains live in fragment-relative coordinates.
-    // Re-map them to parent-OID-relative coordinates for output: sseqid
+    // Re-map them to parent-relative coordinates for output: sseqid
     // becomes the parent accession, slen becomes the parent length, and
     // sstart/send shift by (fragment_start - 1).
     std::vector<OutputHit> all_hits;

@@ -414,7 +414,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         logger->info("Stage 2B complete: %zu chain(s)", results.size());
     }
 
-    // Stage 2 dedup over the parent-OID-relative key.  Fragment
+    // Stage 2 dedup over the parent-relative key.  Fragment
     // splitting can yield duplicate chains when a query hits the same
     // parent region through several adjacent fragments; collapse them
     // here, before the (orch_hit -> output_hit) boundary, so neither

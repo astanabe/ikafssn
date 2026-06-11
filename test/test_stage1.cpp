@@ -1,7 +1,7 @@
 #include "test_util.hpp"
 #include "ssu_test_fixture.hpp"
 #include "search/stage1_filter.hpp"
-#include "search/volume_searcher.hpp"
+#include "volume_search_helper.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/oid_filter.hpp"
 #include "index/index_builder.hpp"

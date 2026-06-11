@@ -1,5 +1,5 @@
 #include "test_util.hpp"
-#include "index/kix_writer.hpp"
+#include "kix_writer.hpp"
 #include "index/kix_reader.hpp"
 #include "core/config.hpp"
 #include "core/varint.hpp"

@@ -173,7 +173,7 @@ bool read_group_meta(const std::string& root, const std::string& group_id,
     return true;
 }
 
-bool write_job_meta(const std::string& root, const JobMeta& meta,
+bool write_job_meta(const std::string& root, const ClientJobMeta& meta,
                     std::string& error_msg) {
     Json::Value j;
     j["job_id"]         = meta.job_id;
@@ -199,12 +199,12 @@ bool write_job_meta(const std::string& root, const JobMeta& meta,
 }
 
 bool read_job_meta(const std::string& root, const std::string& group_id,
-                   const std::string& job_id, JobMeta& out,
+                   const std::string& job_id, ClientJobMeta& out,
                    std::string& error_msg) {
     Json::Value j;
     if (!parse_json_file(job_meta_path(root, group_id, job_id),
                          j, error_msg)) return false;
-    out = JobMeta{};
+    out = ClientJobMeta{};
     out.job_id     = j.get("job_id", "").asString();
     out.group_id   = j.get("group_id", "").asString();
     out.n_seqs     = j.get("n_seqs", 0).asInt();

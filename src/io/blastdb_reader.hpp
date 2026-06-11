@@ -86,14 +86,9 @@ public:
     void ret_raw_sequence(const RawSequence& raw) const;
 
     // Get all accessions for the given OID, joined by '\x01' (BLAST's
-    // native multi-defline separator).  When the BLAST DB was built with
-    // `makeblastdb -parse_seqids` and contains multi-defline records
-    // (e.g. identical sequences registered under several accessions),
-    // every accession is returned so downstream consumers can present
-    // them all.  The '\x01'-joined form is preserved on disk in `.ksx`
-    // and emitted as-is in search output (`sseqid` field); consumers
-    // should split on '\x01' themselves (see io/accession_utils.hpp's
-    // `split_accessions` helper for in-process callers).
+    // multi-defline separator).  The joined form is preserved in `.ksx`
+    // and emitted as-is in the `sseqid` output field; consumers split on
+    // '\x01' (see io/accession_utils.hpp's `split_accessions`).
     std::string get_accession(uint32_t oid) const;
 
     // Get DB title.
@@ -106,5 +101,20 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// Result of extract_context_subseq().
+struct ContextSubseq {
+    std::string seq;        // decoded bases (empty if the OID is empty,
+                            // the range is invalid, or decoding failed)
+    uint32_t ext_start = 0; // 0-based parent-relative start actually used
+    uint32_t ext_end = 0;   // 0-based parent-relative end actually used (inclusive)
+    uint32_t seq_len = 0;   // parent OID length in bases
+};
+
+// Extract the match region [sstart, send] (0-based parent-relative inclusive)
+// expanded by `ctx` bases on each side, clamped to the parent OID, and decode
+// it via partial ncbi2na unpack.  Shared by Stage 3 alignment and ikafssnretrieve.
+ContextSubseq extract_context_subseq(const BlastDbReader& reader, uint32_t oid,
+                                     uint32_t sstart, uint32_t send, uint32_t ctx);
 
 } // namespace ikafssn

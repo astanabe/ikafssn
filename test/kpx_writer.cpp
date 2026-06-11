@@ -1,4 +1,4 @@
-#include "index/kpx_writer.hpp"
+#include "kpx_writer.hpp"
 #include "index/kpx_format.hpp"
 #include "index/dictionary_io.hpp"
 #include "index/pfd_codec.hpp"

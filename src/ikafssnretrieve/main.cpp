@@ -138,46 +138,28 @@ int main(int argc, char* argv[]) {
         // Local retrieval
         std::string db_path = cli.get_string("-db");
 
+        RetrieveOptions opts;
+        opts.is_ratio = ctx_param.is_ratio;
+        opts.ratio    = ctx_param.ratio;
+        opts.context  = ctx_param.abs;
         if (ctx_param.is_ratio) {
-            // Per-hit context calculation using q_length
-            // Set per-hit context in RetrieveOptions for each hit
-            // We modify hits' context by setting a per-hit effective context,
-            // passing each hit individually with its computed context
             logger.info("Retrieving from local BLAST DB: %s (context ratio=%.4f)",
                         db_path.c_str(), ctx_param.ratio);
-            for (auto& hit : hits) {
-                uint32_t ctx = static_cast<uint32_t>(hit.qlen * ctx_param.ratio);
-                // Temporarily store per-hit context using a single-hit retrieval approach
-                RetrieveOptions opts;
-                opts.context = ctx;
-                std::vector<OutputHit> single_hit = {hit};
-                retrieved += retrieve_local(single_hit, db_path, opts, *out_ptr);
-            }
         } else {
-            RetrieveOptions opts;
-            opts.context = ctx_param.abs;
             logger.info("Retrieving from local BLAST DB: %s", db_path.c_str());
-            retrieved = retrieve_local(hits, db_path, opts, *out_ptr);
         }
+        retrieved = retrieve_local(hits, db_path, opts, *out_ptr);
     }
 #ifdef IKAFSSN_ENABLE_REMOTE
     else if (has_remote) {
         // Remote retrieval via NCBI efetch
         EfetchOptions opts;
+        opts.is_ratio = ctx_param.is_ratio;
+        opts.ratio    = ctx_param.ratio;
+        opts.context  = ctx_param.abs;
         if (ctx_param.is_ratio) {
-            // For remote, per-hit context: use max q_length * ratio as approximation
-            // or handle per-hit in efetch_retriever
-            // For simplicity, compute per-hit max context
-            uint32_t max_ctx = 0;
-            for (const auto& hit : hits) {
-                uint32_t ctx = static_cast<uint32_t>(hit.qlen * ctx_param.ratio);
-                if (ctx > max_ctx) max_ctx = ctx;
-            }
-            opts.context = max_ctx;
-            logger.info("Remote retrieval with context ratio=%.4f (max context=%u bases)",
-                        ctx_param.ratio, max_ctx);
-        } else {
-            opts.context = ctx_param.abs;
+            logger.info("Remote retrieval with context ratio=%.4f (per-hit)",
+                        ctx_param.ratio);
         }
         opts.batch_size = static_cast<uint32_t>(cli.get_int("-batch_size", 100));
         opts.max_nretry = static_cast<uint32_t>(cli.get_int("-max_nretry", 3));

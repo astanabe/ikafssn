@@ -27,7 +27,7 @@
 #include "io/volume_discovery.hpp"
 #include "search/oid_filter.hpp"
 #include "search/parallel_search.hpp"
-#include "search/volume_searcher.hpp"
+#include "search/search_config.hpp"
 
 namespace ikafssn {
 
@@ -57,7 +57,6 @@ struct RunSearchInputs {
     bool both_mode = false;
     int k = 0;
     int nthread = 1;
-    uint64_t posting_budget = 0;
     Logger* logger = nullptr;
     uint32_t max_num_seqs = 0;
     Stage1Width width = Stage1Width::T32;

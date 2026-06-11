@@ -36,26 +36,6 @@ bool socket_search(int fd, const SearchRequest& req, SearchResponse& resp) {
     return deserialize(resp_payload, resp);
 }
 
-bool socket_health_check(int fd, HealthResponse& resp) {
-    HealthRequest hreq;
-    auto payload = serialize(hreq);
-    if (!write_frame(fd, MsgType::kHealthRequest, payload)) {
-        return false;
-    }
-
-    FrameHeader hdr;
-    std::vector<uint8_t> resp_payload;
-    if (!read_frame(fd, hdr, resp_payload)) {
-        return false;
-    }
-
-    if (static_cast<MsgType>(hdr.msg_type) != MsgType::kHealthResponse) {
-        return false;
-    }
-
-    return deserialize(resp_payload, resp);
-}
-
 bool socket_info(int fd, InfoResponse& resp) {
     InfoRequest ireq;
     auto payload = serialize(ireq);

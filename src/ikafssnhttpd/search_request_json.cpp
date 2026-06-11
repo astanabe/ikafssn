@@ -96,6 +96,10 @@ bool parse_search_request_json(const std::string& body,
             sreq.template_type = static_cast<uint8_t>(val.asInt());
         }
     }
+    sreq.min_seq_length = j.get("min_seq_length", 0).asUInt();
+    sreq.min_length_split = j.get("min_length_split", 0).asUInt();
+    sreq.overlap_length = j.get("overlap_length", 0).asUInt();
+    sreq.max_freq_build = j.get("max_freq_build", 1).asUInt64();
     sreq.db = j.get("db", "").asString();
 
     std::string mode_str = j.get("seqidlist_mode", "none").asString();
