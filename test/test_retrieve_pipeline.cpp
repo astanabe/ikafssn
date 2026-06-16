@@ -56,7 +56,6 @@ static void test_full_pipeline() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;

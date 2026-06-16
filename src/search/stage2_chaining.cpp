@@ -30,18 +30,27 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
 
     // Already sorted by (q_pos, s_pos) from dedup step
 
-    // Determine max iterations
-    uint32_t max_chains = config.max_nhit_per_subject;
-    if (max_chains == 0) max_chains = UINT32_MAX; // unlimited
+    // Extraction limit and tie behaviour.  N == 0 means unlimited.  In a
+    // tie-inclusive mode the chainscore of the N-th chain (s_n) bounds how
+    // far past N we keep extracting: chainscore is non-increasing across
+    // iterations, so once a chain below s_n appears we stop.
+    const uint32_t n_limit = config.max_nhit_per_subject;
+    const bool unlimited = (n_limit == 0);
+    const bool tie_inclusive = (config.max_nhit_per_subject_mode == 3 ||
+                                config.max_nhit_per_subject_mode == 4);
+    uint32_t s_n = 0;
+    bool s_n_set = false;
 
     std::vector<ChainResult> results;
 
     // Working copy of hits for iterative removal
     std::vector<Hit> remaining = std::move(hits);
 
-    for (uint32_t iter = 0; iter < max_chains; iter++) {
+    while (!remaining.empty()) {
+        // Strict take-N stop: N chains already produced.
+        if (!unlimited && !tie_inclusive && results.size() >= n_limit) break;
+
         size_t n = remaining.size();
-        if (n == 0) break;
 
         // DP arrays
         std::vector<uint32_t> dp(n, 1);
@@ -78,6 +87,10 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
         uint32_t best_score = dp[best_idx];
         if (best_score < config.min_score) break;
 
+        // Tie-inclusive stop: past the N-th chain, only chains tying the
+        // N-th chainscore survive.
+        if (!unlimited && tie_inclusive && s_n_set && best_score < s_n) break;
+
         // Traceback to collect chain hit indices
         std::vector<size_t> chain_indices;
         size_t idx = best_idx;
@@ -101,8 +114,16 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
 
         results.push_back(cr);
 
-        // Early return for single chain (default path, no removal overhead)
-        if (max_chains == 1) break;
+        // Record the N-th chain's chainscore the moment N is reached
+        // (tie-inclusive mode only).
+        if (!unlimited && tie_inclusive && !s_n_set &&
+            results.size() == n_limit) {
+            s_n = best_score;
+            s_n_set = true;
+        }
+
+        // Early return for a strict single-chain take (no removal overhead).
+        if (!unlimited && !tie_inclusive && n_limit == 1) break;
 
         // Remove used hits for next iteration
         std::vector<bool> used(n, false);

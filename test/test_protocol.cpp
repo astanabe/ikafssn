@@ -41,7 +41,7 @@ static void test_frame_round_trip() {
     assert(hdr.magic == FRAME_MAGIC);
     assert(hdr.payload_size == 5);
     assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 13);
+    assert(hdr.msg_version == 14);
     assert(hdr.reserved == 0);
     assert(recv_payload == payload);
 
@@ -128,7 +128,10 @@ static void test_search_request_serialize() {
     req.stage2_min_score = 5;
     req.stage2_max_gap = 100;
     req.stage2_min_nhit_diag = 3;
-    req.stage1_topn = 500;
+    req.stage1_max_nhit_per_volume = 500;
+    req.stage1_max_nhit_in_total = 700;
+    req.stage1_max_nhit_per_subject = 3;
+    req.stage1_max_nhit_per_subject_mode = 4;
     req.stage1_min_score = 2;
     req.nresult = 50;
     req.max_degen_expand = 16;
@@ -151,11 +154,15 @@ static void test_search_request_serialize() {
     assert(req2.stage2_min_score == 5);
     assert(req2.stage2_max_gap == 100);
     assert(req2.stage2_min_nhit_diag == 3);
-    assert(req2.stage1_topn == 500);
+    assert(req2.stage1_max_nhit_per_volume == 500);
+    assert(req2.stage1_max_nhit_in_total == 700);
+    assert(req2.stage1_max_nhit_per_subject == 3);
+    assert(req2.stage1_max_nhit_per_subject_mode == 4);
     assert(req2.stage1_min_score == 2);
     assert(req2.nresult == 50);
     assert(req2.max_degen_expand == 16);
     assert(req2.stage2_max_nhit_per_subject == 0);
+    assert(req2.stage2_max_nhit_per_subject_mode == 0);
     assert(req2.min_seq_length == 64);
     assert(req2.min_length_split == 5000);
     assert(req2.overlap_length == 250);
@@ -751,6 +758,19 @@ static void test_search_request_max_nhit_per_subject() {
     SearchRequest req3;
     assert(deserialize(data, req3));
     assert(req3.stage2_max_nhit_per_subject == 0);
+
+    // The selection-mode field rides alongside and survives a round trip.
+    req.stage2_max_nhit_per_subject_mode = 4;
+    data = serialize(req);
+    SearchRequest req4;
+    assert(deserialize(data, req4));
+    assert(req4.stage2_max_nhit_per_subject_mode == 4);
+
+    req.stage2_max_nhit_per_subject_mode = 0;  // auto sentinel
+    data = serialize(req);
+    SearchRequest req5;
+    assert(deserialize(data, req5));
+    assert(req5.stage2_max_nhit_per_subject_mode == 0);
 
     std::printf(" OK\n");
 }

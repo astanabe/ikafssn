@@ -181,7 +181,7 @@ static void test_roundtrip_mode3_no_traceback() {
     hits.push_back(h);
 
     std::ostringstream oss;
-    write_results_tsv(oss, hits, /*mode=*/3, /*stage1_score_type=*/1, /*stage3_traceback=*/false);
+    write_results_tsv(oss, hits, /*mode=*/3, /*stage3_traceback=*/false);
 
     // Verify qstart/sstart are not in header
     std::string output = oss.str();
@@ -237,7 +237,7 @@ static void test_roundtrip_mode3_traceback() {
     hits.push_back(h);
 
     std::ostringstream oss;
-    write_results_tsv(oss, hits, /*mode=*/3, /*stage1_score_type=*/1, /*stage3_traceback=*/true);
+    write_results_tsv(oss, hits, /*mode=*/3, /*stage3_traceback=*/true);
 
     std::string output = oss.str();
     CHECK(output.find("qstart") != std::string::npos);
@@ -289,20 +289,6 @@ static void test_header_reordered_columns() {
     CHECK_EQ(results[1].volume, 0u);
 }
 
-static void test_header_matchscore() {
-    std::fprintf(stderr, "-- test_header_matchscore\n");
-
-    // Test with matchscore instead of coverscore
-    std::string path = g_test_dir + "/matchscore.tsv";
-    write_file(path,
-        "# qseqid\tsseqid\tsstrand\tqlen\tslen\tmatchscore\tvolume\n"
-        "qM1\tACC_MS\t+\t100\t2000\t42\t0\n"
-    );
-
-    auto results = read_results_tsv(path);
-    CHECK_EQ(results.size(), 1u);
-    CHECK_EQ(results[0].matchscore, 42u);
-}
 
 static void test_no_header_fallback() {
     std::fprintf(stderr, "-- test_no_header_fallback\n");
@@ -352,7 +338,6 @@ int main() {
     test_roundtrip_mode3_no_traceback();
     test_roundtrip_mode3_traceback();
     test_header_reordered_columns();
-    test_header_matchscore();
     test_no_header_fallback();
     test_windows_line_endings();
 

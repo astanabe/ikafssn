@@ -26,6 +26,7 @@ ikafssn and [BLAST](https://blast.ncbi.nlm.nih.gov/Blast.cgi) (blastn) both sear
 | **Search algorithm** | Seed-chain-align: k-mer inverted index → candidate filtering → collinear chaining → pairwise alignment | Seed-extend: word seeds → ungapped extension → gapped alignment (Smith-Waterman) |
 | **Database format** | NCBI BLAST DB (reads via C++ Toolkit) | NCBI BLAST DB (native) |
 | **Index structure** | Pre-built k-mer inverted index (direct-address table, 4^k entries) stored on disk | No pre-built database index; per-query lookup table built from query words, database scanned sequentially |
+| **Pipeline modes & index content** | Default Mode 1: Stage 1 candidate filtering only, over a presence-only index (`.kix`, sequence IDs without positions); long parents are split into overlapping fragments at index-build time to preserve locality without storing positions. Mode 2 (optional) adds collinear chaining and Mode 3 (optional) adds pairwise alignment, both over a position-bearing index (`.kpx`) | No pre-built database index and no staged search modes; each query runs the full seed → ungapped extension → gapped alignment pipeline |
 | **Seeding** | All k-mers indexed exhaustively (contiguous or spaced seeds); high-frequency filtering at index build time only (optional `-max_freq_build`) | Exact word matches (default word size 28 for megablast, 11 for blastn); discontiguous megablast templates |
 | **Scoring model** | K-mer match count (Stage 1), chain length (Stage 2), semi-global alignment score (Stage 3) | E-value based on local alignment score (bit score) with statistical significance model |
 | **Alignment** | Parasail semi-global, 1-piece affine gap (optional Stage 3) | BLAST gapped extension, affine gap penalties, with X-drop heuristic |
@@ -49,6 +50,7 @@ ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-cha
 | **Expected query quality** | High-accuracy sequences with few or no sequencing errors (e.g., Sanger, error-corrected consensus) | Designed to tolerate high error rates (ONT ~5–15%, PacBio CLR ~10–15%; also handles HiFi and Illumina) |
 | **K-mer size** | k = 5–15 (`uint16_t` for k ≤ 8, `uint32_t` for k ≥ 9; selected by `2*k` bit width) | k = 1–28 (default 15) |
 | **Seeding** | All k-mers indexed in a direct-address table (4^k entries) | Minimizers (subsampled k-mers) indexed in a hash table |
+| **Pipeline modes & index content** | Default Mode 1: Stage 1 candidate filtering only, over a presence-only index (`.kix`, sequence IDs without positions); long parents are split into overlapping fragments at index-build time to preserve locality without storing positions. Mode 2 (optional) adds collinear chaining and Mode 3 (optional) adds pairwise alignment, both over a position-bearing index (`.kpx`) | Single seed-chain-align pipeline with no presence-only mode; the minimizer index always stores positions (reference ID, position, strand) |
 | **Candidate filtering** | Explicit Stage 1: scan ID posting lists to score and filter candidates before chaining | No separate filtering stage; seeds go directly to chaining |
 | **Chaining DP score** | Chain length (anchor count) with a diagonal-deviation constraint (`max_gap`) | Estimated matching bases minus a gap penalty with logarithmic distance term |
 | **Hits per subject** | Configurable via `-stage2_max_nhit_per_subject` (default: 1 best chain; set >1 or 0 for unlimited) | Multiple chains per subject (primary, secondary, supplementary) |
@@ -57,6 +59,28 @@ ikafssn and [minimap2](https://github.com/lh3/minimap2) both follow the seed-cha
 | **Ambiguous bases** | IUPAC degenerate expansion (configurable limit) | Not supported (N-containing k-mers skipped) |
 | **Output format** | TSV, JSON, SAM, BAM | PAF, SAM |
 | **Index partitioning** | BLAST DB multi-volume with `.kvx` manifest | `-I` batch partitioning with `--split-prefix` |
+
+## Comparison with MMseqs2
+
+ikafssn and [MMseqs2](https://github.com/soedinglab/MMseqs2) (nucleotide-vs-nucleotide search, `--search-type 3`) both prune candidates with a k-mer prefilter before alignment, but differ in index design, default pipeline, and intended workload. MMseqs2 is primarily a protein search and clustering suite; nucleotide-vs-nucleotide search is a secondary mode that is most effective for highly similar sequences:
+
+| Aspect | ikafssn | MMseqs2 (`--search-type 3`) |
+|---|---|---|
+| **Primary use case** | K-mer-based similarity search across large nucleotide collections | Many-against-many protein search and clustering; nucleotide-vs-nucleotide as a secondary mode |
+| **Search algorithm** | Seed-chain-align: k-mer inverted index → candidate filtering → collinear chaining → pairwise alignment | Seed-prefilter-align: k-mer match → ungapped diagonal scoring → Smith-Waterman |
+| **Database input format** | NCBI BLAST DB (reads via C++ Toolkit) | Own MMseqs2 DB built by `createdb` from FASTA/FASTQ (BLAST DB not read directly) |
+| **Index structure** | Pre-built on-disk k-mer inverted index (direct-address table, 4^k entries), always accessed via mmap | Optional on-disk index built by `createindex` for repeated searches (loaded into memory or mmapped, `--db-load-mode`); without it, the k-mer index is built in memory at search time — but unlike blastn, a target-side k-mer index is always used |
+| **Pipeline modes & index content** | Default Mode 1: Stage 1 candidate filtering only, over a presence-only index (`.kix`, sequence IDs without positions); long parents are split into overlapping fragments at index-build time to preserve locality without storing positions. Mode 2 (optional) adds collinear chaining and Mode 3 (optional) adds pairwise alignment, both over a position-bearing index (`.kpx`) | Single prefilter → alignment pipeline with no presence-only mode; the k-mer index always stores positions (`seqId` + `position_j`), required for diagonal scoring |
+| **Seeding** | All k-mers indexed exhaustively (contiguous or spaced seeds); high-frequency filtering at index build time only (optional `-max_freq_build`) | k-mers (default k=15 for nucleotides), optional spaced seeds (`--spaced-kmer-mode`); per query position, similar k-mers are derived from a substitution matrix and looked up together, controlled by sensitivity `-s` |
+| **Candidate filtering** | Explicit Stage 1: scan ID posting lists to score and filter candidates; an optional per-diagonal hit-count filter and collinear chaining handle positional consistency in Stage 2 | Prefilter requiring two consecutive k-mer matches on the same diagonal, scored by an ungapped diagonal alignment threshold |
+| **Alignment** | Parasail semi-global, 1-piece affine gap (Mode 3, optional) | Vectorized (striped SIMD) Smith-Waterman local alignment |
+| **Scoring model** | K-mer match count (Stage 1), chain length (Stage 2), semi-global alignment score (Stage 3) | Prefilter diagonal score; alignment score, sequence identity, and E-value |
+| **Ambiguous bases** | IUPAC degenerate expansion in both index and query (configurable limit) | No IUPAC degenerate expansion |
+| **Client-server mode** | Built-in: `ikafssnserver` + `ikafssnclient` (UNIX/TCP socket), `ikafssnhttpd` (HTTP REST) | Not built-in (a separate desktop / local web-server app exists) |
+| **Parallelization** | Intel TBB (`parallel_for`, `parallel_sort`); multi-query and multi-volume parallelism | OpenMP multi-threading + MPI distribution; GPU acceleration (NVIDIA Ampere or newer) |
+| **Output format** | TSV, JSON, SAM, BAM | BLAST m8 tabular (via `convertalis`), and other MMseqs2 formats |
+| **Clustering** | Not provided (search only) | Core feature (`cluster` / `linclust`), mature mainly for proteins; limited for nucleotides |
+| **Expected query sequences** | Short to moderate-length sequences (PCR amplicons, marker genes) | Best for highly similar nucleotide sequences; less sensitive for divergent ones |
 
 ## Commands
 

@@ -92,7 +92,6 @@ static void test_build_options_text_deterministic() {
     req.k = 9;
     req.mode = 2;
     req.db = "testdb";
-    req.stage1_score = 1;
 
     DbStats stats;
     stats.db_name = "testdb";
@@ -158,7 +157,6 @@ static void test_checkpoint_roundtrip() {
     req.k = 9;
     req.mode = 2;
     req.db = "testdb";
-    req.stage1_score = 1;
 
     DbStats stats;
     stats.db_name = "testdb";
@@ -204,10 +202,10 @@ static void test_checkpoint_roundtrip() {
         h.volume = 0;
         batch0_hits.push_back(h);
     }
-    assert(ckpt.write_batch_results(0, batch0_hits, 2, 1, false));
+    assert(ckpt.write_batch_results(0, batch0_hits, 2, false));
 
     // Write response meta
-    assert(ckpt.write_response_meta(2, 1, false));
+    assert(ckpt.write_response_meta(2, false));
 
     // Release lock and simulate resume
     lock.release();
@@ -231,18 +229,17 @@ static void test_checkpoint_roundtrip() {
     std::vector<std::string> batch1_seqids = {"seq3"};
     assert(ckpt2.write_batch_seqids(1, batch1_seqids));
     std::vector<OutputHit> batch1_hits;
-    assert(ckpt2.write_batch_results(1, batch1_hits, 2, 1, false));
+    assert(ckpt2.write_batch_results(1, batch1_hits, 2, false));
 
     // Read response meta
-    uint8_t mode, s1score;
+    uint8_t mode;
     bool traceback;
-    assert(ckpt2.read_response_meta(mode, s1score, traceback));
+    assert(ckpt2.read_response_meta(mode, traceback));
     assert(mode == 2);
-    assert(s1score == 1);
     assert(!traceback);
 
     // Merge results
-    assert(ckpt2.merge_results(cfg.output_path, 2, 1, false));
+    assert(ckpt2.merge_results(cfg.output_path, 2, false));
 
     // Verify output file exists and has content
     {
@@ -312,7 +309,7 @@ static void test_tab_merge_header_dedup() {
         h.coverscore = 3; h.chainscore = 5; h.volume = 0;
         std::vector<OutputHit> hits = {h};
         ckpt.write_batch_seqids(0, {"q1"});
-        ckpt.write_batch_results(0, hits, 2, 1, false);
+        ckpt.write_batch_results(0, hits, 2, false);
     }
     {
         OutputHit h;
@@ -322,11 +319,11 @@ static void test_tab_merge_header_dedup() {
         h.coverscore = 2; h.chainscore = 4; h.volume = 0;
         std::vector<OutputHit> hits = {h};
         ckpt.write_batch_seqids(1, {"q2"});
-        ckpt.write_batch_results(1, hits, 2, 1, false);
+        ckpt.write_batch_results(1, hits, 2, false);
     }
 
     // Merge
-    assert(ckpt.merge_results(cfg.output_path, 2, 1, false));
+    assert(ckpt.merge_results(cfg.output_path, 2, false));
 
     // Read and verify: should have exactly one header line
     {
@@ -399,7 +396,7 @@ static void test_json_fragment_merge() {
         h.coverscore = 3; h.chainscore = 5; h.volume = 0;
         std::vector<OutputHit> hits = {h};
         ckpt.write_batch_seqids(0, {"q1"});
-        ckpt.write_batch_results(0, hits, 2, 1, false);
+        ckpt.write_batch_results(0, hits, 2, false);
     }
     {
         OutputHit h;
@@ -409,11 +406,11 @@ static void test_json_fragment_merge() {
         h.coverscore = 2; h.chainscore = 4; h.volume = 0;
         std::vector<OutputHit> hits = {h};
         ckpt.write_batch_seqids(1, {"q2"});
-        ckpt.write_batch_results(1, hits, 2, 1, false);
+        ckpt.write_batch_results(1, hits, 2, false);
     }
 
     // Merge
-    assert(ckpt.merge_results(cfg.output_path, 2, 1, false));
+    assert(ckpt.merge_results(cfg.output_path, 2, false));
 
     // Verify JSON structure
     {

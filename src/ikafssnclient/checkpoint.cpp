@@ -97,8 +97,10 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "k=" << static_cast<int>(req.k) << "\n";
     oss << "resolved_k=" << static_cast<int>(resolved_k) << "\n";
     oss << "mode=" << static_cast<int>(req.mode) << "\n";
-    oss << "stage1_score=" << static_cast<int>(req.stage1_score) << "\n";
-    oss << "stage1_topn=" << req.stage1_topn << "\n";
+    oss << "stage1_max_nhit_per_volume=" << req.stage1_max_nhit_per_volume << "\n";
+    oss << "stage1_max_nhit_in_total=" << req.stage1_max_nhit_in_total << "\n";
+    oss << "stage1_max_nhit_per_subject=" << req.stage1_max_nhit_per_subject << "\n";
+    oss << "stage1_max_nhit_per_subject_mode=" << static_cast<int>(req.stage1_max_nhit_per_subject_mode) << "\n";
     oss << "stage1_min_score=" << req.stage1_min_score << "\n";
     oss << "stage1_min_score_frac_x10000=" << req.stage1_min_score_frac_x10000 << "\n";
     oss << "stage2_min_score=" << req.stage2_min_score << "\n";
@@ -106,6 +108,7 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "stage2_max_gap=" << req.stage2_max_gap << "\n";
     oss << "stage2_max_lookback=" << req.stage2_max_lookback << "\n";
     oss << "stage2_max_nhit_per_subject=" << req.stage2_max_nhit_per_subject << "\n";
+    oss << "stage2_max_nhit_per_subject_mode=" << static_cast<int>(req.stage2_max_nhit_per_subject_mode) << "\n";
     oss << "stage2_min_nhit_diag=" << static_cast<int>(req.stage2_min_nhit_diag) << "\n";
     oss << "nresult=" << req.nresult << "\n";
     oss << "accept_qdegen=" << static_cast<int>(req.accept_qdegen) << "\n";
@@ -453,13 +456,13 @@ bool Checkpoint::write_batch_seqids(int batch_num,
 
 bool Checkpoint::write_batch_results(int batch_num,
                                       const std::vector<OutputHit>& hits,
-                                      uint8_t mode, uint8_t stage1_score,
+                                      uint8_t mode,
                                       bool stage3_traceback) {
     std::string path = batch_result_path(batch_num);
 
     if (cfg_.output_format == OutputFormat::kSam || cfg_.output_format == OutputFormat::kBam) {
         // Write SAM text (always text for intermediate)
-        write_results_sam(path, hits, stage1_score);
+        write_results_sam(path, hits);
         // Compute and write SHA256
         std::string sha = sha256_file(path);
         write_file_string(path + ".sha256", sha + "\n");
@@ -468,26 +471,22 @@ bool Checkpoint::write_batch_results(int batch_num,
 
     std::ostringstream oss;
     if (cfg_.output_format == OutputFormat::kJson) {
-        write_results_json_fragment(oss, hits, mode, stage1_score,
-                                     stage3_traceback);
+        write_results_json_fragment(oss, hits, mode, stage3_traceback);
     } else {
         // Tab format: write with header for each batch
-        write_results_tsv(oss, hits, mode, stage1_score, stage3_traceback);
+        write_results_tsv(oss, hits, mode, stage3_traceback);
     }
     return write_with_sha(path, oss.str());
 }
 
-bool Checkpoint::write_response_meta(uint8_t mode, uint8_t stage1_score,
-                                      bool stage3_traceback) {
+bool Checkpoint::write_response_meta(uint8_t mode, bool stage3_traceback) {
     std::ostringstream oss;
     oss << "mode=" << static_cast<int>(mode) << "\n";
-    oss << "stage1_score=" << static_cast<int>(stage1_score) << "\n";
     oss << "stage3_traceback=" << (stage3_traceback ? 1 : 0) << "\n";
     return write_with_sha(meta_path(), oss.str());
 }
 
-bool Checkpoint::read_response_meta(uint8_t& mode, uint8_t& stage1_score,
-                                     bool& stage3_traceback) {
+bool Checkpoint::read_response_meta(uint8_t& mode, bool& stage3_traceback) {
     if (!validate_sha(meta_path())) return false;
 
     std::string content = read_file_string(meta_path());
@@ -500,14 +499,13 @@ bool Checkpoint::read_response_meta(uint8_t& mode, uint8_t& stage1_score,
         std::string key = line.substr(0, eq);
         std::string val = line.substr(eq + 1);
         if (key == "mode") mode = static_cast<uint8_t>(std::stoi(val));
-        else if (key == "stage1_score") stage1_score = static_cast<uint8_t>(std::stoi(val));
         else if (key == "stage3_traceback") stage3_traceback = (std::stoi(val) != 0);
     }
     return true;
 }
 
 bool Checkpoint::merge_results(const std::string& output_path,
-                                uint8_t mode, uint8_t stage1_score,
+                                uint8_t mode,
                                 bool stage3_traceback) {
     // Collect batch result paths
     std::vector<std::string> batch_paths;
@@ -543,8 +541,7 @@ bool Checkpoint::merge_results(const std::string& output_path,
     if (batch_paths.empty()) {
         logger_.info("No batch results to merge");
         std::vector<OutputHit> empty;
-        write_results(os, empty, cfg_.output_format, mode, stage1_score,
-                      stage3_traceback);
+        write_results(os, empty, cfg_.output_format, mode, stage3_traceback);
         return true;
     }
 

@@ -77,9 +77,17 @@ struct Stage1Candidate {
 };
 
 struct Stage1Config {
-    uint32_t stage1_topn = 0;
     uint32_t min_stage1_score = 1;
-    uint8_t  stage1_score_type = 1;
+
+    // Stage 1 candidate-count limits.  All count coverscore and keep ties at the
+    // boundary rank (top-K plus every candidate tying the K-th score).  0 means
+    // unlimited.  These are applied as post-selection filters in the order
+    // N -> M -> L.
+    uint32_t max_nhit_per_volume = 0;        // M: per (query, volume, strand)
+    uint32_t max_nhit_in_total = 0;          // L: per query (all volumes / strands)
+    uint32_t max_nhit_per_subject = 0;       // N: per (query, parent, volume, strand)
+    uint8_t  max_nhit_per_subject_mode = 3;  // X: 1..4 (tie / strand semantics)
+
     // Score-cutoff early termination: when cutoff_threshold > 0, a sequence
     // whose current score + cutoff_remaining (max additional positions it could
     // still match) is below cutoff_threshold can no longer reach the final
@@ -89,6 +97,12 @@ struct Stage1Config {
     // the plain accumulate).  Set per position group by the both-mode driver.
     uint32_t cutoff_remaining = 0;
     uint32_t cutoff_threshold = 0;
+
+    // Transient, per-ext_job: maps internal SeqId -> parent index (from the
+    // volume's .ksx).  Set by the Stage 1 dispatcher so the per-parent N limit
+    // can group candidates by parent.  Not serialized; nullptr disables
+    // per-parent grouping.
+    const uint32_t* parent_index = nullptr;
 };
 
 template <typename KmerInt>
@@ -115,8 +129,9 @@ extern template std::vector<Stage1Candidate> stage1_filter<uint32_t>(
 // templates hitting the same query position contribute exactly +1 to the
 // score.
 //
-// Use config.stage1_score_type only; min_stage1_score and stage1_topn are
-// applied later by stage1_filter_finish().
+// min_stage1_score is applied later by stage1_filter_finish(); the
+// candidate-count limits (M/N/L) are applied downstream by the driver and
+// orchestrator post-selection.
 template <typename KmerInt>
 void stage1_filter_accumulate(
     const uint32_t* positions, const KmerInt* kmers, size_t n,
@@ -136,8 +151,23 @@ extern template void stage1_filter_accumulate<uint32_t>(
 
 // Collect candidates from buf populated by one or more
 // stage1_filter_accumulate calls, then clear dirty so the buf is reusable.
-// `min_stage1_score` and `stage1_topn` from config are applied here.
+// Only `min_stage1_score` from config is applied here.
 std::vector<Stage1Candidate> stage1_filter_finish(
     Stage1Buffer& buf, const Stage1Config& config);
+
+// --- Stage 1 candidate-count limits (coverscore == Stage1Candidate::score) ---
+//
+// Keep the top-k candidates by score.  When tie_inclusive, every candidate tying
+// the k-th score is also kept (so more than k may survive); otherwise exactly k
+// are kept (ties broken by arrival order).  k == 0 is a no-op.  Surviving
+// candidates retain their input order.
+void stage1_limit_topk(std::vector<Stage1Candidate>& candidates, uint32_t k,
+                       bool tie_inclusive);
+
+// Per-parent top-n: parent = parent_index[candidate.id].  Within each parent the
+// top-n by score are kept (tie_inclusive as above).  n == 0 or a null
+// parent_index is a no-op.  Surviving candidates retain their input order.
+void stage1_limit_per_parent(std::vector<Stage1Candidate>& candidates, uint32_t n,
+                             bool tie_inclusive, const uint32_t* parent_index);
 
 } // namespace ikafssn

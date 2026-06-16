@@ -45,6 +45,9 @@ bool parse_search_request_json(const std::string& body,
     sreq.stage2_max_gap = static_cast<uint16_t>(j.get("stage2_max_gap", 0).asUInt());
     sreq.stage2_max_lookback = static_cast<uint16_t>(j.get("stage2_max_lookback", 0).asUInt());
     sreq.stage2_max_nhit_per_subject = static_cast<uint16_t>(j.get("stage2_max_nhit_per_subject", 0).asUInt());
+    sreq.stage2_max_nhit_per_subject_mode = static_cast<uint8_t>(j.get("stage2_max_nhit_per_subject_mode", 0).asUInt());
+    sreq.stage1_max_nhit_per_subject = static_cast<uint16_t>(j.get("stage1_max_nhit_per_subject", 0).asUInt());
+    sreq.stage1_max_nhit_per_subject_mode = static_cast<uint8_t>(j.get("stage1_max_nhit_per_subject_mode", 0).asUInt());
     if (j.isMember("stage1_min_score_frac") && j["stage1_min_score_frac"].isDouble()) {
         double frac = j["stage1_min_score_frac"].asDouble();
         if (frac > 0 && frac < 1.0) {
@@ -52,13 +55,50 @@ bool parse_search_request_json(const std::string& body,
         }
     }
     sreq.stage2_min_nhit_diag = static_cast<uint8_t>(j.get("stage2_min_nhit_diag", 0).asUInt());
-    sreq.stage1_topn = static_cast<uint16_t>(j.get("stage1_topn", 0).asUInt());
+    sreq.stage1_max_nhit_per_volume = static_cast<uint16_t>(j.get("stage1_max_nhit_per_volume", 0).asUInt());
+    sreq.stage1_max_nhit_in_total = static_cast<uint16_t>(j.get("stage1_max_nhit_in_total", 0).asUInt());
     sreq.stage1_min_score = static_cast<uint16_t>(j.get("stage1_min_score", 0).asUInt());
     sreq.nresult = static_cast<uint16_t>(j.get("nresult", 0).asUInt());
     sreq.mode = static_cast<uint8_t>(j.get("mode", 0).asUInt());
-    sreq.stage1_score = static_cast<uint8_t>(j.get("stage1_score", 0).asUInt());
     sreq.accept_qdegen = static_cast<uint8_t>(j.get("accept_qdegen", 1).asUInt());
     sreq.strand = static_cast<int8_t>(j.get("strand", 0).asInt());
+
+    // Mode x stage consistency (mirrors ikafssnsearch / ikafssnclient):
+    // Stage 2 fields need mode >= 2, Stage 3 fields need mode 3.  mode == 0
+    // means "server default" and is left to the server's configuration.
+    {
+        static const char* const kStage2Fields[] = {
+            "stage2_min_score", "has_stage2_min_score", "stage2_max_gap",
+            "stage2_max_lookback", "stage2_min_nhit_diag",
+            "stage2_max_nhit_per_subject", "stage2_max_nhit_per_subject_mode",
+        };
+        static const char* const kStage3Fields[] = {
+            "stage3_traceback", "stage3_gapopen", "stage3_gapext",
+            "stage3_min_ppositive_x100", "stage3_min_npositive",
+            "stage3_score_matrix", "context_abs", "context_frac_x10000",
+        };
+        if (sreq.mode == 1) {
+            for (const char* f : kStage2Fields) {
+                if (j.isMember(f)) {
+                    error_msg = std::string("'") + f + "' requires mode 2 or higher";
+                    return false;
+                }
+            }
+            for (const char* f : kStage3Fields) {
+                if (j.isMember(f)) {
+                    error_msg = std::string("'") + f + "' requires mode 3";
+                    return false;
+                }
+            }
+        } else if (sreq.mode == 2) {
+            for (const char* f : kStage3Fields) {
+                if (j.isMember(f)) {
+                    error_msg = std::string("'") + f + "' requires mode 3";
+                    return false;
+                }
+            }
+        }
+    }
 
     sreq.stage3_traceback = static_cast<uint8_t>(j.get("stage3_traceback", 0).asUInt());
     sreq.stage3_gapopen = j.isMember("stage3_gapopen")

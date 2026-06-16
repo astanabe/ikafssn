@@ -68,7 +68,6 @@ static void test_build_and_search() {
     // Search with query from FJ876973.1
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -119,7 +118,6 @@ static void test_revcomp_search() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -184,7 +182,6 @@ static void test_seqidlist_filter() {
     filter.build(include_list, ksx, OidFilterMode::kInclude);
 
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -230,7 +227,6 @@ static void test_negative_seqidlist() {
     filter.build(exclude_list, ksx, OidFilterMode::kExclude);
 
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -255,8 +251,8 @@ static void test_result_output_tab() {
     std::fprintf(stderr, "-- test_result_output_tab\n");
 
     std::vector<OutputHit> hits = {
-        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 10, 0, 42, 0},
-        {"query1", "XM_005678", '-', 15, 430, 8050, 8465, 8, 0, 38, 2},
+        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 10, 42, 0},
+        {"query1", "XM_005678", '-', 15, 430, 8050, 8465, 8, 38, 2},
     };
 
     std::ostringstream oss;
@@ -277,11 +273,11 @@ static void test_result_output_tab_mode1() {
     std::fprintf(stderr, "-- test_result_output_tab_mode1\n");
 
     std::vector<OutputHit> hits = {
-        {"query1", "NM_001234", '+', 0, 0, 0, 0, 10, 0, 0, 0},
+        {"query1", "NM_001234", '+', 0, 0, 0, 0, 10, 0, 0},
     };
 
     std::ostringstream oss;
-    write_results_tsv(oss, hits, 1, 1);
+    write_results_tsv(oss, hits, 1);
     std::string output = oss.str();
 
     // Mode 1: no qstart/qend/sstart/send/chainscore columns
@@ -294,7 +290,7 @@ static void test_result_output_json() {
     std::fprintf(stderr, "-- test_result_output_json\n");
 
     std::vector<OutputHit> hits = {
-        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 10, 0, 42, 0},
+        {"query1", "NM_001234", '+', 10, 450, 1020, 1460, 10, 42, 0},
     };
 
     std::ostringstream oss;
@@ -353,7 +349,6 @@ static void test_search_k9() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -400,7 +395,6 @@ static void test_search_mode1() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -458,7 +452,6 @@ static void test_search_nresult_zero() {
 
     // nresult=50 (limited)
     SearchConfig config_limited;
-    config_limited.stage1.stage1_topn = 100;
     config_limited.stage1.min_stage1_score = 1;
     config_limited.stage2.max_gap = 100;
     config_limited.stage2.min_nhit_diag = 1;
@@ -471,7 +464,6 @@ static void test_search_nresult_zero() {
 
     // nresult=0 (unlimited)
     SearchConfig config_unlimited;
-    config_unlimited.stage1.stage1_topn = 100;
     config_unlimited.stage1.min_stage1_score = 1;
     config_unlimited.stage2.max_gap = 100;
     config_unlimited.stage2.min_nhit_diag = 1;
@@ -538,7 +530,6 @@ static void test_search_both_template() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -636,7 +627,6 @@ static void test_search_mode1_both_template() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.nresult = 50;
     config.t = t;
@@ -693,7 +683,6 @@ static void test_search_stage1_both_template() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 0;        // unlimited so candidates is complete
     config.stage1.min_stage1_score = 1;
     config.t = t;
 

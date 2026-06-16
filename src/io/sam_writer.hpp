@@ -11,14 +11,12 @@ namespace ikafssn {
 // Write results in SAM format.
 // output_path: file path, or "-" for stdout.
 void write_results_sam(const std::string& output_path,
-                       const std::vector<OutputHit>& hits,
-                       uint8_t stage1_score_type);
+                       const std::vector<OutputHit>& hits);
 
 // Write results in BAM format.
 // output_path: file path (must not be empty or "-").
 void write_results_bam(const std::string& output_path,
-                       const std::vector<OutputHit>& hits,
-                       uint8_t stage1_score_type);
+                       const std::vector<OutputHit>& hits);
 
 // Write results in the appropriate format (tsv/json/sam/bam), dispatching
 // to the correct writer. Returns true on success.
@@ -31,7 +29,6 @@ bool write_all_results(const std::string& output_path,
                        const std::vector<OutputHit>& hits,
                        OutputFormat fmt,
                        uint8_t mode,
-                       uint8_t stage1_score_type,
                        bool stage3_traceback,
                        int compression_level = -1);
 

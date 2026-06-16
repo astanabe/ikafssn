@@ -186,7 +186,6 @@ std::vector<ParentHit> run_and_collapse(const std::string& prefix,
 
 SearchConfig make_base_config() {
     SearchConfig c;
-    c.stage1.stage1_topn = 100;
     c.stage1.min_stage1_score = 1;
     c.stage2.max_gap = 100;
     c.stage2.min_nhit_diag = 1;

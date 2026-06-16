@@ -75,14 +75,24 @@ static void print_usage(const char* prog) {
         "  -min_query_length <int>  Minimum query length; shorter queries are skipped with a warning.\n"
         "                           Must be >= the index's min_seq_length (default: 64)\n"
         "  -db <path>               BLAST DB path for mode 3 (default: same as -ix)\n"
-        "  -stage1_score <1|2>      1=coverscore, 2=matchscore (default: 1)\n"
         "  -stage2_min_score <int>  Minimum chain score (default: 0 = adaptive)\n"
         "                           0 = use resolved Stage 1 threshold\n"
         "  -stage2_max_gap <int>    Chaining diagonal gap tolerance (default: 100)\n"
         "  -stage2_max_lookback <int>  Chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject <int>  Max chains per subject (default: 1, 0=unlimited)\n"
+        "  -stage2_max_nhit_per_subject_mode <1|2|3|4>  Per-subject selection mode (default: 3)\n"
+        "                           1/2=top-N (no ties), 3/4=top-N + score ties;\n"
+        "                           1/3=strands merged per parent, 2/4=strands separate\n"
         "  -stage2_min_nhit_diag <int>  Diagonal filter min hits (default: 1)\n"
-        "  -stage1_topn <int>       Stage 1 candidate limit, 0=unlimited (default: 0)\n"
+        "  -stage1_max_nhit_per_subject <int>  Stage 1: max candidates per parent (default: 1, 0=unlimited)\n"
+        "  -stage1_max_nhit_per_subject_mode <1|2|3|4>  Per-subject selection mode (default: 3)\n"
+        "                           1/2=top-N (no ties), 3/4=top-N + score ties;\n"
+        "                           1/3=strands merged per parent, 2/4=strands separate\n"
+        "  -stage1_max_nhit_per_volume <int>  Stage 1: max candidates per (query,volume,strand)\n"
+        "                           (default: 0=unlimited)\n"
+        "  -stage1_max_nhit_in_total <int>  Stage 1: max candidates per query over all volumes;\n"
+        "                           setting this also sets -stage1_max_nhit_per_volume to the same\n"
+        "                           value unless that is given explicitly (must be >= it) (default: 0=unlimited)\n"
         "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
         "  -nresult <int>           Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
@@ -211,11 +221,45 @@ int main(int argc, char* argv[]) {
 
     // Search config
     SearchConfig config;
-    config.stage1.stage1_topn = static_cast<uint32_t>(cli.get_int("-stage1_topn", 0));
-    config.stage1.stage1_score_type = static_cast<uint8_t>(cli.get_int("-stage1_score", 1));
+    config.stage1.max_nhit_per_subject =
+        static_cast<uint32_t>(cli.get_int("-stage1_max_nhit_per_subject", 1));
+    if (cli.has("-stage1_max_nhit_per_subject_mode")) {
+        int m = cli.get_int("-stage1_max_nhit_per_subject_mode", 3);
+        if (m < 1 || m > 4) {
+            std::fprintf(stderr,
+                "Error: -stage1_max_nhit_per_subject_mode must be 1, 2, 3, or 4\n");
+            return 1;
+        }
+        config.stage1.max_nhit_per_subject_mode = static_cast<uint8_t>(m);
+    }
+    // M / L per-volume / in-total candidate caps.  Setting only L copies it to M;
+    // setting only M leaves L unlimited.  When both are > 0, require L >= M.
+    {
+        const bool has_m = cli.has("-stage1_max_nhit_per_volume");
+        const bool has_l = cli.has("-stage1_max_nhit_in_total");
+        uint32_t mv = static_cast<uint32_t>(cli.get_int("-stage1_max_nhit_per_volume", 0));
+        uint32_t lv = static_cast<uint32_t>(cli.get_int("-stage1_max_nhit_in_total", 0));
+        if (has_l && !has_m) mv = lv;
+        if (mv != 0 && lv != 0 && lv < mv) {
+            std::fprintf(stderr,
+                "Error: -stage1_max_nhit_in_total must be >= -stage1_max_nhit_per_volume\n");
+            return 1;
+        }
+        config.stage1.max_nhit_per_volume = mv;
+        config.stage1.max_nhit_in_total = lv;
+    }
     config.stage2.max_gap = static_cast<uint32_t>(cli.get_int("-stage2_max_gap", 100));
     config.stage2.chain_max_lookback = static_cast<uint32_t>(cli.get_int("-stage2_max_lookback", 64));
     config.stage2.max_nhit_per_subject = static_cast<uint32_t>(cli.get_int("-stage2_max_nhit_per_subject", 1));
+    if (cli.has("-stage2_max_nhit_per_subject_mode")) {
+        int m = cli.get_int("-stage2_max_nhit_per_subject_mode", 3);
+        if (m < 1 || m > 4) {
+            std::fprintf(stderr,
+                "Error: -stage2_max_nhit_per_subject_mode must be 1, 2, 3, or 4\n");
+            return 1;
+        }
+        config.stage2.max_nhit_per_subject_mode = static_cast<uint8_t>(m);
+    }
     config.stage2.min_nhit_diag = static_cast<uint32_t>(cli.get_int("-stage2_min_nhit_diag", 1));
     config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-stage2_min_score", 0));
     config.nresult = static_cast<uint32_t>(cli.get_int("-nresult", 0));
@@ -234,6 +278,44 @@ int main(int argc, char* argv[]) {
         default:
             std::fprintf(stderr, "Error: -mode must be 1, 2, or 3\n");
             return 1;
+    }
+
+    // Mode x stage consistency: an option that only takes effect in a later
+    // stage is an error when an earlier mode is selected.  Stage 2 options
+    // need mode >= 2; Stage 3 options need mode 3.
+    {
+        static const char* const kStage2Opts[] = {
+            "-stage2_min_score", "-stage2_max_gap", "-stage2_max_lookback",
+            "-stage2_min_nhit_diag", "-stage2_max_nhit_per_subject",
+            "-stage2_max_nhit_per_subject_mode",
+        };
+        static const char* const kStage3Opts[] = {
+            "-stage3_traceback", "-stage3_gapopen", "-stage3_gapext",
+            "-stage3_min_ppositive", "-stage3_min_npositive",
+            "-stage3_score_matrix", "-context_extend", "-db",
+        };
+        if (config.mode == 1) {
+            for (const char* opt : kStage2Opts) {
+                if (cli.has(opt)) {
+                    std::fprintf(stderr,
+                        "Error: %s requires -mode 2 or higher\n", opt);
+                    return 1;
+                }
+            }
+            for (const char* opt : kStage3Opts) {
+                if (cli.has(opt)) {
+                    std::fprintf(stderr, "Error: %s requires -mode 3\n", opt);
+                    return 1;
+                }
+            }
+        } else if (config.mode == 2) {
+            for (const char* opt : kStage3Opts) {
+                if (cli.has(opt)) {
+                    std::fprintf(stderr, "Error: %s requires -mode 3\n", opt);
+                    return 1;
+                }
+            }
+        }
     }
 
     // BLAST DB path for mode 3 (default: same as index prefix)
@@ -271,34 +353,6 @@ int main(int argc, char* argv[]) {
             // Leave stage1.min_stage1_score at default (will be overridden per-query)
         } else {
             config.stage1.min_stage1_score = static_cast<uint32_t>(min_s1);
-        }
-    }
-
-    // Mode 1 consistency checks
-    if (config.mode == 1) {
-        // Consistency check: fractional + explicit -stage2_min_score in mode 1
-        // (min_score=0 is allowed since it means adaptive)
-        if (config.min_stage1_score_frac > 0 && cli.has("-stage2_min_score") &&
-            config.stage2.min_score > 0) {
-            std::fprintf(stderr, "Error: -stage2_min_score and fractional -stage1_min_score cannot both be specified in -mode 1\n");
-            return 1;
-        }
-
-        // Consistency check: -stage2_min_score and -stage1_min_score in mode 1
-        bool has_min_score = cli.has("-stage2_min_score");
-        bool has_min_stage1_score = cli.has("-stage1_min_score");
-        if (config.min_stage1_score_frac == 0) {
-            if (has_min_score && has_min_stage1_score &&
-                config.stage2.min_score != config.stage1.min_stage1_score) {
-                std::fprintf(stderr, "Error: -stage2_min_score and -stage1_min_score must be the same in -mode 1\n");
-                return 1;
-            }
-            if (has_min_score && !has_min_stage1_score) {
-                config.stage1.min_stage1_score = config.stage2.min_score;
-            }
-            if (!has_min_score && has_min_stage1_score) {
-                config.stage2.min_score = config.stage1.min_stage1_score;
-            }
         }
     }
 
@@ -1012,7 +1066,6 @@ int main(int argc, char* argv[]) {
         in.queries     = &queries;
         in.skip_reason = &query_skip_reason;
         in.skip_detail = &query_skip_detail;
-        in.stage1_score_type = config.stage1.stage1_score_type;
         in.nthread     = nthread;
         in.ksx_per_volume.resize(num_volumes);
         for (size_t vi = 0; vi < num_volumes; ++vi)
@@ -1050,10 +1103,7 @@ int main(int argc, char* argv[]) {
         oh.sstart = cr.s_start + shift;
         oh.send   = cr.s_end   + shift;
         oh.chainscore = cr.chainscore;
-        if (config.stage1.stage1_score_type == 2)
-            oh.matchscore = cr.stage1_score;
-        else
-            oh.coverscore = cr.stage1_score;
+        oh.coverscore = cr.stage1_score;
         oh.volume = oh_in.volume_index;
         // Stage 3 fetches the subject sequence via BlastDbReader keyed by
         // BLAST DB volume-local OID, so the parent's BLAST OID is what
@@ -1108,7 +1158,7 @@ int main(int argc, char* argv[]) {
             tbb::parallel_sort(all_hits.begin(), all_hits.end(),
                       [](const OutputHit& a, const OutputHit& b) {
                           if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
-                          return (a.coverscore + a.matchscore) > (b.coverscore + b.matchscore);
+                          return a.coverscore > b.coverscore;
                       });
         } else if (config.sort_score == 3) {
             tbb::parallel_sort(all_hits.begin(), all_hits.end(),
@@ -1144,7 +1194,7 @@ int main(int argc, char* argv[]) {
 
     // Write output
     if (!write_all_results(output_path, all_hits, outfmt,
-                           config.mode, config.stage1.stage1_score_type,
+                           config.mode,
                            stage3_config.traceback, compression_level)) {
         return 1;
     }

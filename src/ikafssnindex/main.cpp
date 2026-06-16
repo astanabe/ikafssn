@@ -325,6 +325,14 @@ int main(int argc, char* argv[]) {
         nthread_highfreq_filter = std::min(8, threads);
     }
 
+    // The high-frequency filter only runs when -max_freq_build is active.
+    if (max_freq_build == 1.0 && cli.has("-nthread_highfreq_filter")) {
+        std::fprintf(stderr,
+            "Error: -nthread_highfreq_filter requires -max_freq_build "
+            "(the high-frequency filter is disabled by default)\n");
+        return 1;
+    }
+
     int force_rebuild = cli.get_int("-force_rebuild", 0);
     if (force_rebuild != 0 && force_rebuild != 1) {
         std::fprintf(stderr, "Error: -force_rebuild must be 0 or 1\n");
@@ -337,6 +345,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // .kpx-only knob: mode 1 builds no .kpx, so a freq_threshold_part is moot.
+    if (index_mode == 1 && cli.has("-freq_threshold_part")) {
+        std::fprintf(stderr,
+            "Error: -freq_threshold_part requires -mode 2 or 3 "
+            "(mode 1 builds no .kpx)\n");
+        return 1;
+    }
     int freq_threshold_part = cli.get_int("-freq_threshold_part", 8);
     if (freq_threshold_part < 0) {
         std::fprintf(stderr, "Error: -freq_threshold_part must be >= 0\n");
@@ -355,6 +370,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     uint8_t spaced_t = static_cast<uint8_t>(cli_t);
+
+    // -template_type only applies to spaced seeds; pairing it with the
+    // contiguous index (-t 0 or -t omitted) is contradictory.
+    if (cli.has("-template_type") && spaced_t == 0) {
+        std::fprintf(stderr,
+            "Error: -template_type requires -t > 0 "
+            "(the contiguous index has no template type)\n");
+        return 1;
+    }
 
     TemplateType spaced_type = TemplateType::kContiguous;
     if (cli.has("-template_type")) {

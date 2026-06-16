@@ -7,9 +7,9 @@
 
 namespace ikafssn {
 
-static const char* stage1_score_name(uint8_t stage1_score_type) {
-    return (stage1_score_type == 2) ? "matchscore" : "coverscore";
-}
+// Stage 1 score is always coverscore (the number of distinct query k-mers
+// matching the sequence).
+static constexpr const char* kStage1ScoreName = "coverscore";
 
 // Build the sentinel sseqid for a skipped or failed query.  Server-produced
 // skip reasons render as "*SKIPPED:<reason>", while the client-only
@@ -25,9 +25,8 @@ static std::string skipped_sseqid(uint8_t reason, const std::string& detail) {
 void write_results_tsv(std::ostream& out,
                        const std::vector<OutputHit>& hits,
                        uint8_t mode,
-                       uint8_t stage1_score_type,
                        bool stage3_traceback) {
-    const char* s1name = stage1_score_name(stage1_score_type);
+    const char* s1name = kStage1ScoreName;
 
     if (mode == 1) {
         out << "# qseqid\tsseqid\tsstrand\tqlen\tslen\t" << s1name << "\tvolume\n";
@@ -47,7 +46,7 @@ void write_results_tsv(std::ostream& out,
                 << h.sstrand << '\t'
                 << h.qlen << '\t'
                 << h.slen << '\t'
-                << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
+                << h.coverscore << '\t'
                 << h.volume << '\n';
         }
     } else if (mode == 3 && stage3_traceback) {
@@ -75,7 +74,7 @@ void write_results_tsv(std::ostream& out,
                 << h.sstart << '\t'
                 << h.send << '\t'
                 << h.slen << '\t'
-                << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
+                << h.coverscore << '\t'
                 << h.chainscore << '\t'
                 << h.alnscore << '\t'
                 << h.ppositive << '\t'
@@ -107,7 +106,7 @@ void write_results_tsv(std::ostream& out,
                 << h.qlen << '\t'
                 << h.send << '\t'
                 << h.slen << '\t'
-                << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
+                << h.coverscore << '\t'
                 << h.chainscore << '\t'
                 << h.alnscore << '\t'
                 << h.volume << '\n';
@@ -135,7 +134,7 @@ void write_results_tsv(std::ostream& out,
                 << h.sstart << '\t'
                 << h.send << '\t'
                 << h.slen << '\t'
-                << ((stage1_score_type == 2) ? h.matchscore : h.coverscore) << '\t'
+                << h.coverscore << '\t'
                 << h.chainscore << '\t'
                 << h.volume << '\n';
         }
@@ -163,10 +162,9 @@ static void json_escape(std::ostream& out, const std::string& s) {
 static void write_results_json_inner(std::ostream& out,
                                       const std::vector<OutputHit>& hits,
                                       uint8_t mode,
-                                      uint8_t stage1_score_type,
                                       bool stage3_traceback,
                                       bool is_fragment) {
-    const char* s1name = stage1_score_name(stage1_score_type);
+    const char* s1name = kStage1ScoreName;
 
     // Group hits by qseqid (preserve order of first appearance)
     std::vector<std::string> query_order;
@@ -234,7 +232,7 @@ static void write_results_json_inner(std::ostream& out,
                 out << "          \"send\": " << h->send << ",\n";
             }
             out << "          \"slen\": " << h->slen << ",\n";
-            out << "          \"" << s1name << "\": " << ((stage1_score_type == 2) ? h->matchscore : h->coverscore) << ",\n";
+            out << "          \"" << s1name << "\": " << h->coverscore << ",\n";
             if (mode != 1) {
                 out << "          \"chainscore\": " << h->chainscore << ",\n";
             }
@@ -263,35 +261,30 @@ static void write_results_json_inner(std::ostream& out,
 void write_results_json(std::ostream& out,
                         const std::vector<OutputHit>& hits,
                         uint8_t mode,
-                        uint8_t stage1_score_type,
                         bool stage3_traceback) {
     out << "{\n  \"results\": [\n";
-    write_results_json_inner(out, hits, mode, stage1_score_type,
-                              stage3_traceback, false);
+    write_results_json_inner(out, hits, mode, stage3_traceback, false);
     out << "  ]\n}\n";
 }
 
 void write_results_json_fragment(std::ostream& out,
                                   const std::vector<OutputHit>& hits,
                                   uint8_t mode,
-                                  uint8_t stage1_score_type,
                                   bool stage3_traceback) {
-    write_results_json_inner(out, hits, mode, stage1_score_type,
-                              stage3_traceback, true);
+    write_results_json_inner(out, hits, mode, stage3_traceback, true);
 }
 
 void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,
                    OutputFormat fmt,
                    uint8_t mode,
-                   uint8_t stage1_score_type,
                    bool stage3_traceback) {
     switch (fmt) {
         case OutputFormat::kTsv:
-            write_results_tsv(out, hits, mode, stage1_score_type, stage3_traceback);
+            write_results_tsv(out, hits, mode, stage3_traceback);
             break;
         case OutputFormat::kJson:
-            write_results_json(out, hits, mode, stage1_score_type, stage3_traceback);
+            write_results_json(out, hits, mode, stage3_traceback);
             break;
         case OutputFormat::kSam:
         case OutputFormat::kBam:

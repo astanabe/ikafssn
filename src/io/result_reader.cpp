@@ -146,7 +146,6 @@ static bool parse_line_with_map(
         hit.slen = field_u32(fields, cmap, "slen");
 
         hit.coverscore = field_u32(fields, cmap, "coverscore");
-        hit.matchscore = field_u32(fields, cmap, "matchscore");
         hit.chainscore = field_u32(fields, cmap, "chainscore");
         hit.alnscore = field_i32(fields, cmap, "alnscore");
         hit.ppositive = field_dbl(fields, cmap, "ppositive");

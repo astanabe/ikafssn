@@ -57,7 +57,6 @@ static std::string ungap_sequence(const std::string& aligned_seq) {
 
 static void write_sam_bam_impl(const std::string& output_path,
                                 const std::vector<OutputHit>& hits,
-                                uint8_t stage1_score_type,
                                 bool is_bam) {
     const char* mode = is_bam ? "wb" : "w";
     const char* path = output_path.c_str();
@@ -178,12 +177,6 @@ static void write_sam_bam_impl(const std::string& output_path,
             bam_aux_append(b, "cv", 'i', sizeof(int32_t),
                            reinterpret_cast<const uint8_t*>(&cv));
         }
-        // ms:i:matchscore
-        {
-            int32_t ms = static_cast<int32_t>(h.matchscore);
-            bam_aux_append(b, "ms", 'i', sizeof(int32_t),
-                           reinterpret_cast<const uint8_t*>(&ms));
-        }
 
         if (sam_write1(fp, hdr, b) < 0) break;
     }
@@ -194,15 +187,13 @@ static void write_sam_bam_impl(const std::string& output_path,
 }
 
 void write_results_sam(const std::string& output_path,
-                       const std::vector<OutputHit>& hits,
-                       uint8_t stage1_score_type) {
-    write_sam_bam_impl(output_path, hits, stage1_score_type, false);
+                       const std::vector<OutputHit>& hits) {
+    write_sam_bam_impl(output_path, hits, false);
 }
 
 void write_results_bam(const std::string& output_path,
-                       const std::vector<OutputHit>& hits,
-                       uint8_t stage1_score_type) {
-    write_sam_bam_impl(output_path, hits, stage1_score_type, true);
+                       const std::vector<OutputHit>& hits) {
+    write_sam_bam_impl(output_path, hits, true);
 }
 
 bool merge_sam_files(const std::vector<std::string>& batch_paths,
@@ -332,14 +323,12 @@ bool write_all_results(const std::string& output_path,
                        const std::vector<OutputHit>& hits,
                        OutputFormat fmt,
                        uint8_t mode,
-                       uint8_t stage1_score_type,
                        bool stage3_traceback,
                        int compression_level) {
     if (fmt == OutputFormat::kSam) {
-        write_results_sam(output_path.empty() ? "-" : output_path,
-                          hits, stage1_score_type);
+        write_results_sam(output_path.empty() ? "-" : output_path, hits);
     } else if (fmt == OutputFormat::kBam) {
-        write_results_bam(output_path, hits, stage1_score_type);
+        write_results_bam(output_path, hits);
     } else {
         std::string err;
         auto out = open_output_compressed(output_path, compression_level, err);
@@ -347,8 +336,7 @@ bool write_all_results(const std::string& output_path,
             std::fprintf(stderr, "%s\n", err.c_str());
             return false;
         }
-        write_results(*out.stream, hits, fmt, mode, stage1_score_type,
-                      stage3_traceback);
+        write_results(*out.stream, hits, fmt, mode, stage3_traceback);
     }
     return true;
 }

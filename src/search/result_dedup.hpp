@@ -22,6 +22,7 @@
 //       duplicates.  Skip-marker rows (skip_reason != 0) are not
 //       deduplicated and are preserved in their original order.
 
+#include <cstdint>
 #include <vector>
 
 namespace ikafssn {
@@ -33,6 +34,19 @@ struct OutputHit;
 void dedup_stage2_orchestrator_hits(
     std::vector<OrchestratorHit>& hits,
     const std::vector<const KsxReader*>& ksx_per_volume);
+
+// Parent-level top-N chain selector, applied after the overlap dedup and
+// before run_search() returns (modes 2 and 3).  Keeps at most `n` chains per
+// (query, parent[, strand]) group, scored by chainscore.  `mode` is 1..4:
+//   1/2 keep the top `n` (ties broken by arrival order, no secondary key);
+//   3/4 keep the top `n` plus every chain tying the n-th chainscore;
+//   1/3 merge strands into one group; 2/4 keep strands separate.
+// n == 0 disables the selector.  Surviving hits keep their input order so the
+// output row order stays deterministic.
+void select_parent_topn(std::vector<OrchestratorHit>& hits,
+                        uint32_t n,
+                        uint8_t mode,
+                        const std::vector<const KsxReader*>& ksx_per_volume);
 
 void dedup_stage3_output_hits(std::vector<OutputHit>& hits);
 

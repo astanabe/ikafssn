@@ -42,4 +42,14 @@ bool validate_t_template_type_combo(const CliParser& cli, std::string& err);
 // requires -insert_length when -primer is given.
 bool validate_primer_mode_options(const CliParser& cli, std::string& err);
 
+// Validate the HTTP authentication options shared by ikafssnclient and
+// ikafssninfo: -user / -http_user / -http_password / -netrc_file.
+//   * When the transport is not HTTP (socket / TCP), any of them is an error.
+//   * On HTTP, the three methods (-user, -http_user[+-http_password],
+//     -netrc_file) are mutually exclusive, and -http_password requires
+//     -http_user.
+// Returns true (leaving `err` untouched) when the options are consistent.
+bool validate_http_auth_options(const CliParser& cli, bool is_http_transport,
+                                std::string& err);
+
 } // namespace ikafssn

@@ -201,6 +201,100 @@ static void test_stage3_preserves_skip_rows() {
     CHECK_EQ(skip_count, 2u);
 }
 
+// Parent-level top-N selector.  Builds five chains on one parent (p0,
+// SeqIds 0/1/2) across both strands plus one chain on a second parent (p1,
+// SeqId 3), then checks each mode 1..4 at N = 1 and N = 3.
+//
+//   p0 forward: cs 10 (sid0), cs 10 (sid1), cs 5 (sid2)
+//   p0 reverse: cs 8  (sid0), cs 8  (sid1)
+//   p1 forward: cs 7  (sid3)
+static std::vector<OrchestratorHit> make_parent_topn_hits() {
+    return {
+        make_hit(0, 0, 0, /*sid*/ 0, /*rev*/ false, 100, 200, /*cs*/ 10),
+        make_hit(0, 0, 0, /*sid*/ 1, /*rev*/ false, 300, 400, /*cs*/ 10),
+        make_hit(0, 0, 0, /*sid*/ 2, /*rev*/ false, 500, 600, /*cs*/ 5),
+        make_hit(0, 0, 0, /*sid*/ 0, /*rev*/ true,  100, 200, /*cs*/ 8),
+        make_hit(0, 0, 0, /*sid*/ 1, /*rev*/ true,  300, 400, /*cs*/ 8),
+        make_hit(0, 0, 0, /*sid*/ 3, /*rev*/ false, 100, 200, /*cs*/ 7),
+    };
+}
+
+static size_t count_for_parent(const std::vector<OrchestratorHit>& hits,
+                               const KsxReader& ksx, uint32_t parent_idx) {
+    size_t n = 0;
+    for (const auto& h : hits)
+        if (ksx.parent_index(h.cr.seq_id) == parent_idx) ++n;
+    return n;
+}
+
+static void test_select_parent_topn() {
+    std::fprintf(stderr, "-- test_select_parent_topn\n");
+
+    std::string ksx_path = write_test_ksx();
+    KsxReader ksx;
+    CHECK(ksx.open(ksx_path));
+    std::vector<const KsxReader*> ksx_per_volume = { &ksx };
+    const uint32_t p0 = ksx.parent_index(0);  // SeqIds 0/1/2
+    const uint32_t p1 = ksx.parent_index(3);  // SeqId 3
+
+    // n == 0 disables the selector entirely.
+    {
+        auto hits = make_parent_topn_hits();
+        select_parent_topn(hits, 0, 3, ksx_per_volume);
+        CHECK_EQ(hits.size(), 6u);
+    }
+
+    // N = 1.
+    // mode 1: top-1, strands merged -> 1 chain on p0 (a cs-10), p1 keeps its 1.
+    {
+        auto hits = make_parent_topn_hits();
+        select_parent_topn(hits, 1, 1, ksx_per_volume);
+        CHECK_EQ(count_for_parent(hits, ksx, p0), 1u);
+        CHECK_EQ(count_for_parent(hits, ksx, p1), 1u);
+    }
+    // mode 2: top-1, strands separate -> 1 forward + 1 reverse on p0.
+    {
+        auto hits = make_parent_topn_hits();
+        select_parent_topn(hits, 1, 2, ksx_per_volume);
+        CHECK_EQ(count_for_parent(hits, ksx, p0), 2u);
+        CHECK_EQ(count_for_parent(hits, ksx, p1), 1u);
+    }
+    // mode 3: top-1 + ties, strands merged -> both cs-10 forward chains.
+    {
+        auto hits = make_parent_topn_hits();
+        select_parent_topn(hits, 1, 3, ksx_per_volume);
+        CHECK_EQ(count_for_parent(hits, ksx, p0), 2u);
+        for (const auto& h : hits)
+            if (ksx.parent_index(h.cr.seq_id) == p0)
+                CHECK_EQ(h.cr.chainscore, 10u);
+        CHECK_EQ(count_for_parent(hits, ksx, p1), 1u);
+    }
+    // mode 4: top-1 + ties, strands separate -> two cs-10 fwd + two cs-8 rev.
+    {
+        auto hits = make_parent_topn_hits();
+        select_parent_topn(hits, 1, 4, ksx_per_volume);
+        CHECK_EQ(count_for_parent(hits, ksx, p0), 4u);
+        CHECK_EQ(count_for_parent(hits, ksx, p1), 1u);
+    }
+
+    // N = 3 (shared between the per-fragment and parent stages).
+    // mode 1: top-3 merged -> 10,10,8 = 3 chains.
+    {
+        auto hits = make_parent_topn_hits();
+        select_parent_topn(hits, 3, 1, ksx_per_volume);
+        CHECK_EQ(count_for_parent(hits, ksx, p0), 3u);
+    }
+    // mode 3: top-3 + ties merged -> 3rd score is 8, keep 10,10,8,8 = 4.
+    {
+        auto hits = make_parent_topn_hits();
+        select_parent_topn(hits, 3, 3, ksx_per_volume);
+        CHECK_EQ(count_for_parent(hits, ksx, p0), 4u);
+    }
+
+    ksx.close();
+    std::remove(ksx_path.c_str());
+}
+
 // 4. Stage 2 dedup with no input / single input is a no-op and must not
 // touch the supplied ksx_per_volume vector.
 static void test_stage2_trivial_inputs() {
@@ -220,6 +314,7 @@ static void test_stage2_trivial_inputs() {
 
 int main() {
     test_stage2_collapses_adjacent_fragment_dups();
+    test_select_parent_topn();
     test_stage3_collapses_post_align_dups();
     test_stage3_preserves_skip_rows();
     test_stage2_trivial_inputs();

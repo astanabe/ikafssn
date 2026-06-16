@@ -72,6 +72,7 @@ static void test_chain_gap_exceeded() {
     config.min_score = 1;
     config.max_gap = 100;
 
+    config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
     auto result = chain_hits(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     // Best chain is just one hit (score=1)
@@ -119,6 +120,7 @@ static void test_non_collinear_hits() {
     config.min_score = 1;
     config.max_gap = 100;
 
+    config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
     auto result = chain_hits(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     // Each hit is independent, best chain score = 1
@@ -138,6 +140,7 @@ static void test_same_qpos_not_chained() {
     config.min_score = 1;
     config.max_gap = 100;
 
+    config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
     auto result = chain_hits(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     // Only one distinct q_pos, so the longest chain must be 1
@@ -158,6 +161,7 @@ static void test_same_qpos_mixed_with_distinct() {
     config.min_score = 1;
     config.max_gap = 100;
 
+    config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
     auto result = chain_hits(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     // Best chain: pick one hit from q_pos=0 and one from q_pos=20 → score 2
@@ -201,6 +205,7 @@ static void test_chain_max_lookback_interleaved() {
     // 0: dp=1.  1: pred [0] s_pos 90 > 57, no increase -> dp=1.
     // 2: pred [1] s_pos 57 < 104, gaps ok -> dp=2.  3: pred [2] 104 > 71 -> dp=1.
     // 4: pred [3] 71 < 118, gaps ok -> dp=2.  Best = 2.
+    config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
     config.chain_max_lookback = 1;
     auto result1 = chain_hits(hits, 0, 7, false, config);
     CHECK_EQ(result1.size(), 1u);
@@ -352,6 +357,45 @@ static void test_multi_chain_score_order() {
     CHECK_EQ(result[2].chainscore, 2u);
 }
 
+static void test_tie_inclusive_take_n() {
+    std::fprintf(stderr, "-- test_tie_inclusive_take_n\n");
+
+    // Three independent regions: A and B tie at score 3, C is score 2.
+    std::vector<Hit> hits = {
+        {0, 100}, {7, 107}, {14, 114},    // region A: score 3
+        {0, 500}, {7, 507}, {14, 514},    // region B: score 3
+        {0, 900}, {7, 907},               // region C: score 2
+    };
+    Stage2Config config;
+    config.min_nhit_diag = 1;
+    config.min_score = 1;
+    config.max_gap = 50;
+    config.max_nhit_per_subject = 1;
+
+    // Strict take-1 (mode 1): only the single best chain survives.
+    config.max_nhit_per_subject_mode = 1;
+    auto strict = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(strict.size(), 1u);
+    CHECK_EQ(strict[0].chainscore, 3u);
+
+    // Tie-inclusive take-1 (mode 3): the top score (3) plus its tie -> 2.
+    config.max_nhit_per_subject_mode = 3;
+    auto tie = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(tie.size(), 2u);
+    CHECK_EQ(tie[0].chainscore, 3u);
+    CHECK_EQ(tie[1].chainscore, 3u);
+
+    // Tie-inclusive N=2: 2nd score is 3, so the score-2 region C is dropped.
+    config.max_nhit_per_subject = 2;
+    auto tie2 = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(tie2.size(), 2u);
+
+    // Unlimited (N=0) returns everything regardless of mode.
+    config.max_nhit_per_subject = 0;
+    auto all = chain_hits(hits, 0, 7, false, config);
+    CHECK_EQ(all.size(), 3u);
+}
+
 int main() {
     test_single_hit();
     test_perfect_chain();
@@ -371,6 +415,7 @@ int main() {
     test_multi_chain_unlimited();
     test_multi_chain_default_one();
     test_multi_chain_score_order();
+    test_tie_inclusive_take_n();
 
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;

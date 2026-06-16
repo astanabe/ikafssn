@@ -26,13 +26,13 @@ struct SearchRequest {
     uint16_t stage2_min_score = 0;   // 0 = server default (see has_stage2_min_score)
     uint16_t stage2_max_gap = 0;     // 0 = server default
     uint8_t  stage2_min_nhit_diag = 0; // 0 = server default
-    uint16_t stage1_topn = 0;        // 0 = server default
+    uint16_t stage1_max_nhit_per_volume = 0; // M: 0 = server default
+    uint16_t stage1_max_nhit_in_total = 0;   // L: 0 = server default
     uint16_t stage1_min_score = 0;   // 0 = server default
     uint16_t nresult = 0;            // 0 = server default
     uint16_t stage1_min_score_frac_x10000 = 0; // P * 10000, 0 = use integer field
     SeqidlistMode seqidlist_mode = SeqidlistMode::kNone;
     uint8_t  mode = 0;              // 0 = server default, 1 = stage1 only, 2 = stage1+stage2
-    uint8_t  stage1_score = 0;      // 0 = server default, 1 = coverscore, 2 = matchscore
     uint8_t  accept_qdegen = 1;     // 0 = reject degenerate queries, 1 = accept
     int8_t   strand = 0;            // 0 = server default, 1 = plus, -1 = minus, 2 = both
     uint8_t  has_stage2_min_score = 0; // 1 = stage2_min_score was explicitly set by client
@@ -47,6 +47,9 @@ struct SearchRequest {
     uint16_t context_frac_x10000 = 0;             // ratio * 10000 (when > 0, ratio mode)
     uint16_t max_degen_expand = 0;                 // 0 = server default; query value + index-selection tie-break
     uint16_t stage2_max_nhit_per_subject = 0;      // 0 = server default
+    uint8_t  stage2_max_nhit_per_subject_mode = 0; // 0 = server default (auto -> 3); 1..4
+    uint16_t stage1_max_nhit_per_subject = 0;      // N: 0 = server default
+    uint8_t  stage1_max_nhit_per_subject_mode = 0; // X: 0 = server default (auto -> 3); 1..4
     uint8_t  t = 0;               // template length (0/16/18/21)
     uint8_t  template_type = 0;   // 0=server default, 1=coding, 2=optimal, 3=both
     uint8_t  score_matrix = 0;   // 0=server default, 1=degmatch, 2=dnafull, 3=nuc44
@@ -72,7 +75,6 @@ struct ResponseHit {
     uint32_t send;
     uint32_t slen = 0;        // subject full sequence length
     uint16_t coverscore = 0;
-    uint16_t matchscore = 0;
     uint16_t chainscore = 0;
     uint16_t volume;
     uint32_t oid = 0;       // internal: BLAST DB OID (not serialized)
@@ -141,7 +143,6 @@ struct SearchResponse {
                           // 5 = posting-budget pool shutdown during acquire
     uint8_t  k = 0;
     uint8_t  mode = 2;              // 1 = stage1 only, 2 = stage1+stage2, 3 = stage1+stage2+stage3
-    uint8_t  stage1_score = 1;      // 1 = coverscore, 2 = matchscore
     uint8_t  stage3_traceback = 0;  // echo back: 1 = traceback fields populated
     uint8_t  t = 0;
     std::string db;                 // echo back database name

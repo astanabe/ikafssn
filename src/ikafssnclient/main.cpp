@@ -71,9 +71,26 @@ static void print_usage(const char* prog) {
         "  -query <path>            Query FASTA file (- for stdin)\n"
         "  -ix <name>               Target database name on server\n"
         "\n"
+        "Primer mode (alternative to -query):\n"
+        "  -primer <path>           Primer pair FASTA (even number of sequences; mutually exclusive with -query)\n"
+        "  -insert_length <int>     Expected insert length (required with -primer)\n"
+        "  -stage1_primer_score <num>  Stage 1 threshold for primer (0<v<=1: fraction, v>=2: absolute; default: 0.5)\n"
+        "  -stage2_primer_score_add <int>  Stage 2 threshold addon: max(Lf,Lr) + N (default: 1)\n"
+        "\n"
+        "Output:\n"
+        "  -o <path>                Output file (default: stdout)\n"
+        "  -output_format <tsv|json|sam|bam>  Output format (default: tsv)\n"
+        "  -compression_level <int>    Output compression level (default per codec: gzip=6, bzip2=9, xz=6, zstd=3)\n"
+        "  -nresult <int>           Max results per query, 0=unlimited (default: server default)\n"
+        "\n"
         "Filtering:\n"
         "  -min_query_length <int>  Minimum query length; shorter queries are skipped\n"
         "                           (default: 64; must be >= server's min_seq_length)\n"
+        "  -seqidlist <path>        Include only listed accessions\n"
+        "  -negative_seqidlist <path>  Exclude listed accessions\n"
+        "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: server default)\n"
+        "  -accept_qdegen <0|1>     Accept queries with degenerate bases (default: 1)\n"
+        "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "\n"
         "Index-variant selection (resolved to one variant from server info):\n"
         "  -k <int>                 K-mer length (default: any)\n"
@@ -84,14 +101,45 @@ static void print_usage(const char* prog) {
         "  -overlap_length <int>    Select the variant with this overlap_length (default: any)\n"
         "  -max_freq_build <int>    Select the variant with this max_freq_build (default: any)\n"
         "\n"
+        "Search options (0 / unset means use the server's default):\n"
+        "  -mode <1|2|3>            1=Stage1, 2=Stage1+2, 3=Stage1+2+3 (default: server default)\n"
+        "  -stage1_max_nhit_per_subject <int>  Stage 1 max candidates per parent (default: server default)\n"
+        "  -stage1_max_nhit_per_subject_mode <1|2|3|4>  Per-subject selection mode (default: server default)\n"
+        "  -stage1_max_nhit_per_volume <int>  Stage 1 max candidates per (query,volume,strand) (default: server default)\n"
+        "  -stage1_max_nhit_in_total <int>  Stage 1 max candidates per query over all volumes (default: server default)\n"
+        "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: server default)\n"
+        "  -stage2_min_score <int>  Minimum chain score (requires -mode 2 or higher)\n"
+        "  -stage2_max_gap <int>    Chaining diagonal gap tolerance (requires -mode 2 or higher)\n"
+        "  -stage2_max_lookback <int>  Chaining DP lookback window (requires -mode 2 or higher)\n"
+        "  -stage2_max_nhit_per_subject <int>  Max chains per subject (requires -mode 2 or higher)\n"
+        "  -stage2_max_nhit_per_subject_mode <1|2|3|4>  Per-subject selection mode (default: 3; requires -mode 2 or higher)\n"
+        "                           1/2=top-N (no ties), 3/4=top-N + score ties;\n"
+        "                           1/3=strands merged per parent, 2/4=strands separate\n"
+        "  -stage2_min_nhit_diag <int>  Diagonal filter min hits (requires -mode 2 or higher)\n"
+        "  -context_extend <value>  Context extension for mode 3 (int=bases, decimal=query length multiplier; requires -mode 3)\n"
+        "  -stage3_traceback <0|1>  Enable traceback in mode 3 (requires -mode 3)\n"
+        "  -stage3_gapopen <int>    Gap open penalty for mode 3 (requires -mode 3)\n"
+        "  -stage3_gapext <int>     Gap extension penalty for mode 3 (requires -mode 3)\n"
+        "  -stage3_min_ppositive <num> Min percent positive filter for mode 3 (requires -mode 3)\n"
+        "  -stage3_min_npositive <int> Min positive-scoring positions filter for mode 3 (requires -mode 3)\n"
+        "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (requires -mode 3)\n"
+        "\n"
 #ifdef IKAFSSN_ENABLE_HTTP
+        "HTTP authentication (requires -http):\n"
+        "  -user <user:password>    HTTP basic auth credentials\n"
+        "  -http_user <user>        HTTP basic auth user (combine with -http_password)\n"
+        "  -http_password <pass>    HTTP basic auth password (requires -http_user)\n"
+        "  -netrc_file <path>       netrc file for HTTP credentials\n"
+        "\n"
         "Async REST job management (requires -http):\n"
         "  -submit_only             Submit, print group_id, and exit\n"
         "  -jobs                    List all locally-tracked job groups\n"
         "  -job_detail <id>         Show jobs in a group, or detail of a single job\n"
         "  -resume <id>             Resume polling for an existing group or job\n"
+        "\n"
 #endif
-        "(See `ikafssnclient -h` for the full list of search options.)\n",
+        "Other:\n"
+        "  -v, --verbose            Verbose logging\n",
         prog);
 }
 
@@ -177,7 +225,6 @@ static int finalize_group(const std::string& root,
                           Logger& logger) {
     std::vector<OutputHit> all_hits;
     uint8_t resp_mode = 0;
-    uint8_t resp_stage1 = 0;
     bool resp_traceback = false;
     bool first_resp = true;
 
@@ -205,7 +252,6 @@ static int finalize_group(const std::string& root,
             }
             if (first_resp) {
                 resp_mode = resp.mode;
-                resp_stage1 = resp.stage1_score;
                 resp_traceback = (resp.stage3_traceback != 0);
                 first_resp = false;
             }
@@ -229,7 +275,6 @@ static int finalize_group(const std::string& root,
                     oh.sstart = hit.sstart; oh.send = hit.send;
                     oh.chainscore = hit.chainscore;
                     oh.coverscore = hit.coverscore;
-                    oh.matchscore = hit.matchscore;
                     oh.volume = hit.volume;
                     oh.qlen = hit.qlen; oh.slen = hit.slen;
                     oh.alnscore = hit.alnscore;
@@ -265,7 +310,7 @@ static int finalize_group(const std::string& root,
     else if (gm.output_format == "bam") fmt = OutputFormat::kBam;
 
     if (!write_all_results(gm.output_path, all_hits, fmt,
-                            resp_mode, resp_stage1, resp_traceback,
+                            resp_mode, resp_traceback,
                             gm.compression_level)) {
         logger.error("finalize: write_all_results failed");
         return 1;
@@ -419,7 +464,6 @@ static void collect_results(const SearchResponse& resp,
             oh.send = hit.send;
             oh.chainscore = hit.chainscore;
             oh.coverscore = hit.coverscore;
-            oh.matchscore = hit.matchscore;
             oh.volume = hit.volume;
             oh.qlen = hit.qlen;
             oh.slen = hit.slen;
@@ -453,9 +497,12 @@ int main(int argc, char* argv[]) {
 #ifdef IKAFSSN_ENABLE_HTTP
     Logger early_logger = make_logger(cli);
     HttpAuthConfig auth;
-    if (cli.has("-user") && cli.has("-http_user")) {
-        std::fprintf(stderr, "Error: -user and -http_user are mutually exclusive\n");
-        return 1;
+    {
+        std::string err;
+        if (!validate_http_auth_options(cli, has_http, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
     }
     if (cli.has("-user")) auth.userpwd = cli.get_string("-user");
     else if (cli.has("-http_user")) {
@@ -466,12 +513,24 @@ int main(int argc, char* argv[]) {
     if (cli.has("-netrc_file")) auth.netrc_file = cli.get_string("-netrc_file");
 
     if (cli.has("-jobs")) {
+        if (!has_http) {
+            std::fprintf(stderr, "Error: -jobs requires -http\n");
+            return 1;
+        }
         return cmd_jobs();
     }
     if (cli.has("-job_detail")) {
+        if (!has_http) {
+            std::fprintf(stderr, "Error: -job_detail requires -http\n");
+            return 1;
+        }
         return cmd_jobdetail(cli.get_string("-job_detail"));
     }
     if (cli.has("-resume")) {
+        if (!has_http) {
+            std::fprintf(stderr, "Error: -resume requires -http\n");
+            return 1;
+        }
         return cmd_resume(cli.get_string("-resume"), early_logger, auth);
     }
     if (cli.has("-submit_only") && !has_http) {
@@ -593,8 +652,41 @@ int main(int argc, char* argv[]) {
     base_req.stage2_max_gap = static_cast<uint16_t>(cli.get_int("-stage2_max_gap", 0));
     base_req.stage2_max_lookback = static_cast<uint16_t>(cli.get_int("-stage2_max_lookback", 0));
     base_req.stage2_max_nhit_per_subject = static_cast<uint16_t>(cli.get_int("-stage2_max_nhit_per_subject", 0));
+    if (cli.has("-stage2_max_nhit_per_subject_mode")) {
+        int m = cli.get_int("-stage2_max_nhit_per_subject_mode", 0);
+        if (m < 1 || m > 4) {
+            std::fprintf(stderr,
+                "Error: -stage2_max_nhit_per_subject_mode must be 1, 2, 3, or 4\n");
+            return 1;
+        }
+        base_req.stage2_max_nhit_per_subject_mode = static_cast<uint8_t>(m);
+    }
     base_req.stage2_min_nhit_diag = static_cast<uint8_t>(cli.get_int("-stage2_min_nhit_diag", 0));
-    base_req.stage1_topn = static_cast<uint16_t>(cli.get_int("-stage1_topn", 0));
+    base_req.stage1_max_nhit_per_subject =
+        static_cast<uint16_t>(cli.get_int("-stage1_max_nhit_per_subject", 0));
+    if (cli.has("-stage1_max_nhit_per_subject_mode")) {
+        int m = cli.get_int("-stage1_max_nhit_per_subject_mode", 3);
+        if (m < 1 || m > 4) {
+            std::fprintf(stderr,
+                "Error: -stage1_max_nhit_per_subject_mode must be 1, 2, 3, or 4\n");
+            return 1;
+        }
+        base_req.stage1_max_nhit_per_subject_mode = static_cast<uint8_t>(m);
+    }
+    {
+        const bool has_m = cli.has("-stage1_max_nhit_per_volume");
+        const bool has_l = cli.has("-stage1_max_nhit_in_total");
+        uint32_t mv = static_cast<uint32_t>(cli.get_int("-stage1_max_nhit_per_volume", 0));
+        uint32_t lv = static_cast<uint32_t>(cli.get_int("-stage1_max_nhit_in_total", 0));
+        if (has_l && !has_m) mv = lv;
+        if (mv != 0 && lv != 0 && lv < mv) {
+            std::fprintf(stderr,
+                "Error: -stage1_max_nhit_in_total must be >= -stage1_max_nhit_per_volume\n");
+            return 1;
+        }
+        base_req.stage1_max_nhit_per_volume = static_cast<uint16_t>(mv);
+        base_req.stage1_max_nhit_in_total = static_cast<uint16_t>(lv);
+    }
     {
         double min_s1 = cli.get_double("-stage1_min_score", 0.0);
         if (min_s1 > 0 && min_s1 < 1.0) {
@@ -605,7 +697,43 @@ int main(int argc, char* argv[]) {
     }
     base_req.nresult = static_cast<uint16_t>(cli.get_int("-nresult", 0));
     base_req.mode = static_cast<uint8_t>(cli.get_int("-mode", 0));
-    base_req.stage1_score = static_cast<uint8_t>(cli.get_int("-stage1_score", 0));
+    // Mode x stage consistency (mirrors ikafssnsearch): Stage 2 options need
+    // mode >= 2, Stage 3 options need mode 3.  mode == 0 means "server
+    // default" and is left to the server's configuration.
+    {
+        static const char* const kStage2Opts[] = {
+            "-stage2_min_score", "-stage2_max_gap", "-stage2_max_lookback",
+            "-stage2_min_nhit_diag", "-stage2_max_nhit_per_subject",
+            "-stage2_max_nhit_per_subject_mode",
+        };
+        static const char* const kStage3Opts[] = {
+            "-stage3_traceback", "-stage3_gapopen", "-stage3_gapext",
+            "-stage3_min_ppositive", "-stage3_min_npositive",
+            "-stage3_score_matrix", "-context_extend",
+        };
+        if (base_req.mode == 1) {
+            for (const char* opt : kStage2Opts) {
+                if (cli.has(opt)) {
+                    std::fprintf(stderr,
+                        "Error: %s requires -mode 2 or higher\n", opt);
+                    return 1;
+                }
+            }
+            for (const char* opt : kStage3Opts) {
+                if (cli.has(opt)) {
+                    std::fprintf(stderr, "Error: %s requires -mode 3\n", opt);
+                    return 1;
+                }
+            }
+        } else if (base_req.mode == 2) {
+            for (const char* opt : kStage3Opts) {
+                if (cli.has(opt)) {
+                    std::fprintf(stderr, "Error: %s requires -mode 3\n", opt);
+                    return 1;
+                }
+            }
+        }
+    }
     base_req.accept_qdegen = static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
     base_req.strand = static_cast<int8_t>(cli.get_int("-strand", 0));
     base_req.db = ix_name;
@@ -1125,10 +1253,9 @@ int main(int argc, char* argv[]) {
 
     bool has_skipped = false;
     uint8_t resp_mode = 0;
-    uint8_t resp_stage1_score = 0;
     bool resp_stage3_traceback = false;
     bool first_response = true;
-    if (!remaining.empty() || !ckpt.read_response_meta(resp_mode, resp_stage1_score,
+    if (!remaining.empty() || !ckpt.read_response_meta(resp_mode,
                                                         resp_stage3_traceback)) {
         // wait for first response
     } else {
@@ -1166,17 +1293,15 @@ int main(int argc, char* argv[]) {
             }
             if (first_response) {
                 resp_mode = resp.mode;
-                resp_stage1_score = resp.stage1_score;
                 resp_stage3_traceback = (resp.stage3_traceback != 0);
                 first_response = false;
-                ckpt.write_response_meta(resp_mode, resp_stage1_score, resp_stage3_traceback);
+                ckpt.write_response_meta(resp_mode, resp_stage3_traceback);
             }
             std::vector<OutputHit> batch_hits;
             collect_results(resp, batch_hits, has_skipped);
             if (resp.rejected_qseqids.empty()) {
                 ckpt.write_batch_results(batch_num, batch_hits,
-                                          resp_mode, resp_stage1_score,
-                                          resp_stage3_traceback);
+                                          resp_mode, resp_stage3_traceback);
                 batch_num++;
                 break;
             }
@@ -1190,8 +1315,7 @@ int main(int argc, char* argv[]) {
             }
             ckpt.write_batch_seqids(batch_num, accepted_seqids);
             ckpt.write_batch_results(batch_num, batch_hits,
-                                      resp_mode, resp_stage1_score,
-                                      resp_stage3_traceback);
+                                      resp_mode, resp_stage3_traceback);
             batch_num++;
             int delay = retry_delays[std::min(attempt, num_retry_delays - 1)];
             std::this_thread::sleep_for(std::chrono::seconds(delay));
@@ -1209,13 +1333,12 @@ int main(int argc, char* argv[]) {
         }
     }
     if (remaining.empty() && first_response) {
-        if (!ckpt.read_response_meta(resp_mode, resp_stage1_score,
-                                      resp_stage3_traceback)) {
+        if (!ckpt.read_response_meta(resp_mode, resp_stage3_traceback)) {
             lock.release();
             return 1;
         }
     }
-    if (!ckpt.merge_results(output_path, resp_mode, resp_stage1_score,
+    if (!ckpt.merge_results(output_path, resp_mode,
                              resp_stage3_traceback)) {
         lock.release();
         return 1;

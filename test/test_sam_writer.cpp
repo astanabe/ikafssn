@@ -70,7 +70,7 @@ static void test_sam_basic() {
     auto hits = make_test_hits();
     std::string sam_path = g_test_dir + "/test_output.sam";
 
-    write_results_sam(sam_path, hits, 1);
+    write_results_sam(sam_path, hits);
 
     // Read back and verify
     std::ifstream in(sam_path);
@@ -99,7 +99,7 @@ static void test_sam_reverse_flag() {
     auto hits = make_test_hits();
     std::string sam_path = g_test_dir + "/test_reverse.sam";
 
-    write_results_sam(sam_path, hits, 1);
+    write_results_sam(sam_path, hits);
 
     // Parse with htslib to check flags
     samFile* fp = sam_open(sam_path.c_str(), "r");
@@ -133,7 +133,7 @@ static void test_bam_roundtrip() {
     auto hits = make_test_hits();
     std::string bam_path = g_test_dir + "/test_roundtrip.bam";
 
-    write_results_bam(bam_path, hits, 1);
+    write_results_bam(bam_path, hits);
 
     // Read back with htslib
     samFile* fp = sam_open(bam_path.c_str(), "r");
@@ -167,7 +167,7 @@ static void test_cigar_encoding() {
     auto hits = make_test_hits();
     std::string sam_path = g_test_dir + "/test_cigar.sam";
 
-    write_results_sam(sam_path, hits, 1);
+    write_results_sam(sam_path, hits);
 
     // Parse with htslib to check CIGAR
     samFile* fp = sam_open(sam_path.c_str(), "r");

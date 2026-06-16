@@ -63,7 +63,6 @@ static void test_stage1_basic() {
 
     OidFilter filter; // no filter
     Stage1Config config;
-    config.stage1_topn = 100;
     config.min_stage1_score = 1;
 
     Stage1Buffer buf;
@@ -96,7 +95,6 @@ static void test_stage1_min_score() {
 
     OidFilter filter;
     Stage1Config config;
-    config.stage1_topn = 100;
     config.min_stage1_score = 999999; // Very high threshold
 
     Stage1Buffer buf;
@@ -127,7 +125,6 @@ static void test_stage1_with_oid_filter() {
     filter.build({ACC_GQ, ACC_DQ}, ksx, OidFilterMode::kInclude);
 
     Stage1Config config;
-    config.stage1_topn = 100;
     config.min_stage1_score = 1;
 
     Stage1Buffer buf;
@@ -142,94 +139,47 @@ static void test_stage1_with_oid_filter() {
     ksx.close();
 }
 
-static void test_stage1_coverscore_vs_matchscore() {
-    std::fprintf(stderr, "-- test_stage1_coverscore_vs_matchscore\n");
-
-    KixReader kix;
-    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
-
-    std::vector<uint32_t> positions;
-    std::vector<uint16_t> kmer_values;
-    KmerScanner<uint16_t> scanner(7);
-    scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
-        positions.push_back(pos);
-        kmer_values.push_back(kmer);
-    });
-
-    OidFilter filter;
-
-    // Coverscore mode (default, type=1)
-    Stage1Config config_cover;
-    config_cover.stage1_topn = 100;
-    config_cover.min_stage1_score = 1;
-    config_cover.stage1_score_type = 1;
-    Stage1Buffer buf_cover;
-    auto cover_candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_cover, buf_cover);
-
-    // Matchscore mode (type=2)
-    Stage1Config config_match;
-    config_match.stage1_topn = 100;
-    config_match.min_stage1_score = 1;
-    config_match.stage1_score_type = 2;
-    Stage1Buffer buf_match;
-    auto match_candidates = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_match, buf_match);
-
-    // Both should find FJ876973.1
-    bool cover_found = false, match_found = false;
-    uint32_t cover_score = 0, match_score = 0;
-    for (const auto& c : cover_candidates) {
-        if (c.id == g_fj_oid) { cover_found = true; cover_score = c.score; }
-    }
-    for (const auto& c : match_candidates) {
-        if (c.id == g_fj_oid) { match_found = true; match_score = c.score; }
-    }
-    CHECK(cover_found);
-    CHECK(match_found);
-
-    // Matchscore >= coverscore always (matchscore counts all postings,
-    // coverscore counts only distinct query k-mers)
-    CHECK(match_score >= cover_score);
-
-    kix.close();
+// Stage 1 candidate-count selectors (synthetic; no index needed).
+static void test_stage1_limit_topk() {
+    std::fprintf(stderr, "-- test_stage1_limit_topk\n");
+    // scores (desc): 5,5,4,3,3,2
+    auto make = []() {
+        return std::vector<Stage1Candidate>{
+            {10, 5}, {11, 5}, {12, 4}, {13, 3}, {14, 3}, {15, 2}};
+    };
+    // tie-inclusive k=3: 3rd score is 4 -> keep score>=4 => {5,5,4}
+    { auto c = make(); stage1_limit_topk(c, 3, true); CHECK(c.size() == 3); }
+    // tie-inclusive k=4: 4th score is 3 -> keep score>=3 => {5,5,4,3,3}
+    { auto c = make(); stage1_limit_topk(c, 4, true); CHECK(c.size() == 5); }
+    // exact k=4: keep exactly 4
+    { auto c = make(); stage1_limit_topk(c, 4, false); CHECK(c.size() == 4); }
+    // k=0 and k>=size are no-ops
+    { auto c = make(); stage1_limit_topk(c, 0, true);  CHECK(c.size() == 6); }
+    { auto c = make(); stage1_limit_topk(c, 10, true); CHECK(c.size() == 6); }
 }
 
-static void test_stage1_topn_zero() {
-    std::fprintf(stderr, "-- test_stage1_topn_zero\n");
-
-    KixReader kix;
-    CHECK(kix.open(g_index_dir + "/test.00.07mer.kix"));
-
-    std::vector<uint32_t> positions;
-    std::vector<uint16_t> kmer_values;
-    KmerScanner<uint16_t> scanner(7);
-    scanner.scan(g_query_seq.data(), g_query_seq.size(), [&](uint32_t pos, uint16_t kmer) {
-        positions.push_back(pos);
-        kmer_values.push_back(kmer);
-    });
-
-    OidFilter filter;
-
-    // topn=0 (unlimited)
-    Stage1Config config_unlimited;
-    config_unlimited.stage1_topn = 0;
-    config_unlimited.min_stage1_score = 1;
-    Stage1Buffer buf_unlimited;
-    auto unlimited = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_unlimited, buf_unlimited);
-
-    // topn=2 (limited)
-    Stage1Config config_limited;
-    config_limited.stage1_topn = 2;
-    config_limited.min_stage1_score = 1;
-    Stage1Buffer buf_limited;
-    auto limited = stage1_filter(positions.data(), kmer_values.data(), positions.size(), kix, filter, config_limited, buf_limited);
-
-    // Unlimited should return >= limited count
-    CHECK(unlimited.size() >= limited.size());
-
-    // Limited should return at most 2
-    CHECK(limited.size() <= 2);
-
-    kix.close();
+static void test_stage1_limit_per_parent() {
+    std::fprintf(stderr, "-- test_stage1_limit_per_parent\n");
+    // sid -> parent: {0,0,0,1,1,1}
+    std::vector<uint32_t> parent = {0, 0, 0, 1, 1, 1};
+    auto make = []() {
+        return std::vector<Stage1Candidate>{
+            {0, 5}, {1, 4}, {2, 4}, {3, 9}, {4, 1}, {5, 1}};
+    };
+    // n=1 tie-inclusive: parent0 top1=5, parent1 top1=9 -> 2 kept
+    { auto c = make(); stage1_limit_per_parent(c, 1, true, parent.data());
+      CHECK(c.size() == 2); }
+    // n=2 tie-inclusive: parent0 {5,4,4} (2nd=4, ties) -> 3; parent1 {9,1,1} -> 3
+    { auto c = make(); stage1_limit_per_parent(c, 2, true, parent.data());
+      CHECK(c.size() == 6); }
+    // n=2 exact: parent0 keeps {5,4}, parent1 keeps {9,1} -> 4
+    { auto c = make(); stage1_limit_per_parent(c, 2, false, parent.data());
+      CHECK(c.size() == 4); }
+    // n=0 and null parent_index are no-ops
+    { auto c = make(); stage1_limit_per_parent(c, 0, true, parent.data());
+      CHECK(c.size() == 6); }
+    { auto c = make(); stage1_limit_per_parent(c, 1, true, nullptr);
+      CHECK(c.size() == 6); }
 }
 
 static std::string g_maxfreq_index_dir;
@@ -270,7 +220,6 @@ static void test_stage1_fractional_threshold() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.min_stage1_score_frac = 0.5; // 50% of query k-mers
 
@@ -289,7 +238,6 @@ static void test_stage1_fractional_threshold() {
 
     // Verify that with a lower fraction, we get more results
     SearchConfig config_low;
-    config_low.stage1.stage1_topn = 100;
     config_low.stage1.min_stage1_score = 1;
     config_low.min_stage1_score_frac = 0.05; // 5% of query k-mers
 
@@ -336,7 +284,6 @@ static void test_stage1_fractional_with_highfreq() {
     // Use P=0.3 so threshold stays positive after Nhighfreq subtraction:
     // ceil(Nqkmer * 0.3) - Nhighfreq > 0
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.min_stage1_score_frac = 0.3; // 30% of query k-mers
 
@@ -393,7 +340,6 @@ static void test_stage1_filter_none_vs_pass_all() {
     pass_all.build(all_accs, ksx, OidFilterMode::kInclude);
 
     Stage1Config config;
-    config.stage1_topn = 0;
     config.min_stage1_score = 1;
 
     Stage1Buffer buf_none, buf_all;
@@ -477,7 +423,6 @@ static void test_seq_id_decoder_reset_across_runs() {
 
     OidFilter filter;
     Stage1Config config;
-    config.stage1_topn = 0;
     config.min_stage1_score = 1;
 
     auto canonical = [&](const std::vector<uint32_t>& p,
@@ -518,9 +463,9 @@ static void test_seq_id_decoder_reset_across_runs() {
     kix.close();
 }
 
-// Reproduce the finish-fusion path by calling stage1_filter twice with
-// stage1_topn == 0. The second call must produce the same candidates as the
-// first, proving that finish leaves no leftover score / last_pos / dirty state.
+// Reproduce the finish path by calling stage1_filter twice.  The second call
+// must produce the same candidates as the first, proving that finish leaves no
+// leftover score / last_pos / dirty state.
 static void test_stage1_finish_no_side_effects() {
     std::fprintf(stderr, "-- test_stage1_finish_no_side_effects\n");
 
@@ -537,7 +482,6 @@ static void test_stage1_finish_no_side_effects() {
 
     OidFilter filter;
     Stage1Config config;
-    config.stage1_topn = 0;          // finish-fusion path
     config.min_stage1_score = 1;
 
     Stage1Buffer buf;
@@ -567,7 +511,6 @@ static void test_adaptive_min_score() {
     // Test adaptive min_score: min_score=0 with fractional threshold
     // effective_min_score should equal resolved Stage 1 threshold
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.min_score = 0; // adaptive
     config.min_stage1_score_frac = 0.3; // 30% of query k-mers
@@ -583,7 +526,6 @@ static void test_adaptive_min_score() {
 
     // Test explicit min_score overrides adaptive
     SearchConfig config_explicit;
-    config_explicit.stage1.stage1_topn = 100;
     config_explicit.stage1.min_stage1_score = 1;
     config_explicit.stage2.min_score = 5; // explicit
     config_explicit.min_stage1_score_frac = 0.3;
@@ -625,8 +567,8 @@ int main() {
     test_stage1_basic();
     test_stage1_min_score();
     test_stage1_with_oid_filter();
-    test_stage1_coverscore_vs_matchscore();
-    test_stage1_topn_zero();
+    test_stage1_limit_topk();
+    test_stage1_limit_per_parent();
     test_stage1_fractional_threshold();
     test_stage1_fractional_with_highfreq();
     test_clear_dirty_bulk_reset();

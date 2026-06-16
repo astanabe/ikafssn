@@ -9,9 +9,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <type_traits>
+#include <utility>
 
 namespace ikafssn {
 
@@ -98,7 +100,6 @@ static void stage1_filter_accumulate_impl(
     if (num_seqs == 0 || n == 0) return;
 
     const uint8_t* posting_file = kix.posting_file();
-    const bool use_coverscore = (config.stage1_score_type == 1);
 
     buf.ensure_capacity(num_seqs);
     auto* scores   = score_ptr<Width>(buf);
@@ -135,7 +136,10 @@ static void stage1_filter_accumulate_impl(
             if (n_dec == 0) break;
             for (int i = 0; i < n_dec; i++) {
                 SeqId sid = raw_sids[i];
-                if (use_coverscore && !was_new[i]) continue;
+                // .kix postings are distinct per k-mer, so coverscore counts a
+                // sid at most once per k-mer here; the per-query-position dedup
+                // (last_pos != q_pos) happens in the scatter.
+                if (!was_new[i]) continue;
                 if constexpr (HasFilter) {
                     if (!filter.pass(sid)) continue;
                 }
@@ -184,54 +188,32 @@ static std::vector<Stage1Candidate> stage1_filter_finish_impl(
 
     std::vector<Stage1Candidate> candidates;
 
-    if (config.stage1_topn == 0) {
-        // Fused path: in the unlimited-topn case we know the dirty list
-        // will be consumed and reset right away, so walk it once and do
-        // the per-index reset in the same iteration (instead of running
-        // a separate clear_dirty_typed pass over the same indices).
-        // The bulk-reset fallback in clear_dirty_typed is still desirable
-        // when dirty is dense, so honour the same threshold here.
-        if (buf.dirty.size() * 8 > buf.capacity) {
-            for (uint32_t sid : buf.dirty) {
-                if (scores[sid] >= config.min_stage1_score) {
-                    candidates.push_back({sid, static_cast<uint32_t>(scores[sid])});
-                }
-            }
-            reset_all_typed<Width>(buf);
-        } else {
-            auto* last_pos = last_pos_ptr<Width>(buf);
-            constexpr PosT sentinel = std::numeric_limits<PosT>::max();
-            for (uint32_t sid : buf.dirty) {
-                ScoreT s = scores[sid];
-                if (s >= config.min_stage1_score) {
-                    candidates.push_back({sid, static_cast<uint32_t>(s)});
-                }
-                scores[sid] = ScoreT{0};
-                last_pos[sid] = sentinel;
+    // The candidate-count limits (M/N/L) are applied downstream, so finish
+    // returns every candidate at or above min_stage1_score.  We know the dirty
+    // list is consumed and reset right away, so walk it once and do the
+    // per-index reset in the same iteration.  The bulk-reset fallback in
+    // clear_dirty_typed is still desirable when dirty is dense, so honour the
+    // same threshold here.
+    if (buf.dirty.size() * 8 > buf.capacity) {
+        for (uint32_t sid : buf.dirty) {
+            if (scores[sid] >= config.min_stage1_score) {
+                candidates.push_back({sid, static_cast<uint32_t>(scores[sid])});
             }
         }
-        buf.dirty.clear();
-        return candidates;
-    }
-
-    for (uint32_t sid : buf.dirty) {
-        if (scores[sid] >= config.min_stage1_score) {
-            candidates.push_back({sid, static_cast<uint32_t>(scores[sid])});
+        reset_all_typed<Width>(buf);
+    } else {
+        auto* last_pos = last_pos_ptr<Width>(buf);
+        constexpr PosT sentinel = std::numeric_limits<PosT>::max();
+        for (uint32_t sid : buf.dirty) {
+            ScoreT s = scores[sid];
+            if (s >= config.min_stage1_score) {
+                candidates.push_back({sid, static_cast<uint32_t>(s)});
+            }
+            scores[sid] = ScoreT{0};
+            last_pos[sid] = sentinel;
         }
     }
-
-    buf.clear_dirty_typed<Width>();
-
-    auto cmp = [](const Stage1Candidate& a, const Stage1Candidate& b) {
-        return a.score > b.score;
-    };
-    if (candidates.size() > config.stage1_topn) {
-        std::nth_element(candidates.begin(),
-                         candidates.begin() + config.stage1_topn,
-                         candidates.end(), cmp);
-        candidates.resize(config.stage1_topn);
-    }
-    std::sort(candidates.begin(), candidates.end(), cmp);
+    buf.dirty.clear();
     return candidates;
 }
 
@@ -311,6 +293,96 @@ std::vector<Stage1Candidate> stage1_filter_finish(
     default:
         return stage1_filter_finish_impl<Stage1Width::T32>(buf, config);
     }
+}
+
+// --- Stage 1 candidate-count limits ---------------------------------------
+
+namespace {
+// k-th highest score among `scores` (scores is consumed/reordered).  Returns 0
+// when there are fewer than k values.
+uint32_t kth_highest(std::vector<uint32_t>& scores, uint32_t k) {
+    if (k == 0 || scores.size() < k) return 0;
+    std::nth_element(scores.begin(), scores.begin() + (k - 1), scores.end(),
+                     std::greater<uint32_t>());
+    return scores[k - 1];
+}
+}  // namespace
+
+void stage1_limit_topk(std::vector<Stage1Candidate>& candidates, uint32_t k,
+                       bool tie_inclusive) {
+    if (k == 0 || candidates.size() <= k) return;
+    std::vector<uint32_t> scores;
+    scores.reserve(candidates.size());
+    for (const auto& c : candidates) scores.push_back(c.score);
+    const uint32_t kth = kth_highest(scores, k);
+
+    std::vector<Stage1Candidate> out;
+    out.reserve(k);
+    if (tie_inclusive) {
+        for (const auto& c : candidates)
+            if (c.score >= kth) out.push_back(c);
+    } else {
+        uint32_t gt = 0;
+        for (const auto& c : candidates) if (c.score > kth) ++gt;
+        uint32_t need_eq = (k > gt) ? (k - gt) : 0;
+        for (const auto& c : candidates) {
+            if (c.score > kth) {
+                out.push_back(c);
+            } else if (c.score == kth && need_eq > 0) {
+                out.push_back(c);
+                --need_eq;
+            }
+        }
+    }
+    candidates = std::move(out);
+}
+
+void stage1_limit_per_parent(std::vector<Stage1Candidate>& candidates, uint32_t n,
+                             bool tie_inclusive, const uint32_t* parent_index) {
+    if (n == 0 || parent_index == nullptr || candidates.empty()) return;
+
+    const size_t cnt = candidates.size();
+    // Order indices by (parent, score desc) so each parent's run is contiguous
+    // and already sorted by score.
+    std::vector<uint32_t> order(cnt);
+    for (size_t i = 0; i < cnt; ++i) order[i] = static_cast<uint32_t>(i);
+    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+        uint32_t pa = parent_index[candidates[a].id];
+        uint32_t pb = parent_index[candidates[b].id];
+        if (pa != pb) return pa < pb;
+        return candidates[a].score > candidates[b].score;
+    });
+
+    std::vector<char> keep(cnt, 0);
+    size_t i = 0;
+    while (i < cnt) {
+        uint32_t parent = parent_index[candidates[order[i]].id];
+        size_t j = i;
+        while (j < cnt && parent_index[candidates[order[j]].id] == parent) ++j;
+        // run [i, j) is sorted by score desc.
+        const size_t run = j - i;
+        const size_t nn = static_cast<size_t>(n);
+        if (run <= nn) {
+            for (size_t t = i; t < j; ++t) keep[order[t]] = 1;
+        } else {
+            const uint32_t nth = candidates[order[i + nn - 1]].score;
+            if (tie_inclusive) {
+                for (size_t t = i; t < j; ++t) {
+                    if (candidates[order[t]].score >= nth) keep[order[t]] = 1;
+                    else break;  // sorted desc
+                }
+            } else {
+                for (size_t t = i; t < i + nn; ++t) keep[order[t]] = 1;
+            }
+        }
+        i = j;
+    }
+
+    std::vector<Stage1Candidate> out;
+    out.reserve(cnt);
+    for (size_t t = 0; t < cnt; ++t)
+        if (keep[t]) out.push_back(candidates[t]);
+    candidates = std::move(out);
 }
 
 // Explicit template instantiations

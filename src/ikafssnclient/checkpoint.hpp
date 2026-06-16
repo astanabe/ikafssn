@@ -86,18 +86,16 @@ public:
     // Write batch results (after receiving)
     bool write_batch_results(int batch_num,
                              const std::vector<OutputHit>& hits,
-                             uint8_t mode, uint8_t stage1_score,
+                             uint8_t mode,
                              bool stage3_traceback);
 
-    // Save/load response metadata (mode, stage1_score, stage3_traceback)
-    bool write_response_meta(uint8_t mode, uint8_t stage1_score,
-                             bool stage3_traceback);
-    bool read_response_meta(uint8_t& mode, uint8_t& stage1_score,
-                            bool& stage3_traceback);
+    // Save/load response metadata (mode, stage3_traceback)
+    bool write_response_meta(uint8_t mode, bool stage3_traceback);
+    bool read_response_meta(uint8_t& mode, bool& stage3_traceback);
 
     // Merge all batch results to final output
     bool merge_results(const std::string& output_path,
-                       uint8_t mode, uint8_t stage1_score,
+                       uint8_t mode,
                        bool stage3_traceback);
 
     void cleanup();  // remove temp directory

@@ -27,9 +27,8 @@ namespace ikafssn {
 
 namespace {
 
-inline const char* mode1_stage1_score_name(uint8_t stage1_score_type) {
-    return (stage1_score_type == 2) ? "matchscore" : "coverscore";
-}
+// Stage 1 score is always coverscore.
+constexpr const char* kMode1Stage1ScoreName = "coverscore";
 
 inline void append_uint(std::string& buf, uint64_t v) {
     char tmp[24];
@@ -87,7 +86,7 @@ void compute_chunk_ranges(size_t n, size_t nchunks,
 
 void write_results_tsv_mode1_parallel(std::ostream& out,
                                        const Mode1ParallelInputs& in) {
-    const char* s1name = mode1_stage1_score_name(in.stage1_score_type);
+    const char* s1name = kMode1Stage1ScoreName;
 
     out << "# qseqid\tsseqid\tsstrand\tqlen\tslen\t" << s1name << "\tvolume\n";
 
@@ -172,7 +171,7 @@ void write_results_tsv_mode1_parallel(std::ostream& out,
 
 void write_results_json_mode1_parallel(std::ostream& out,
                                         const Mode1ParallelInputs& in) {
-    const char* s1name = mode1_stage1_score_name(in.stage1_score_type);
+    const char* s1name = kMode1Stage1ScoreName;
 
     const auto& hits    = *in.hits;
     const auto& queries = *in.queries;

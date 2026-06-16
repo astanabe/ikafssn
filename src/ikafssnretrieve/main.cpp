@@ -77,6 +77,22 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // These options configure the NCBI efetch transport and apply only to
+    // -remote retrieval; pairing them with local -db is contradictory.
+    if (has_db) {
+        static const char* const kRemoteOnlyOpts[] = {
+            "-api_key", "-batch_size", "-max_nretry", "-timeout",
+            "-range_threshold",
+        };
+        for (const char* opt : kRemoteOnlyOpts) {
+            if (cli.has(opt)) {
+                std::fprintf(stderr,
+                    "Error: %s is only valid with -remote\n", opt);
+                return 1;
+            }
+        }
+    }
+
 #ifndef IKAFSSN_ENABLE_REMOTE
     if (has_remote) {
         std::fprintf(stderr, "Error: -remote is not available (built without ENABLE_REMOTE_RETRIEVE)\n");

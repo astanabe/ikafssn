@@ -12,13 +12,13 @@ namespace ikafssn {
 //   u16  stage2_min_score
 //   u16  stage2_max_gap
 //   u8   stage2_min_nhit_diag
-//   u16  stage1_topn
+//   u16  stage1_max_nhit_per_volume
+//   u16  stage1_max_nhit_in_total
 //   u16  stage1_min_score
 //   u16  nresult
 //   u16  stage1_min_score_frac_x10000
 //   u8   seqidlist_mode
 //   u8   mode
-//   u8   stage1_score
 //   u8   accept_qdegen
 //   i8   strand
 //   u8   has_stage2_min_score
@@ -32,6 +32,9 @@ namespace ikafssn {
 //   u16  context_frac_x10000
 //   u16  max_degen_expand
 //   u16  stage2_max_nhit_per_subject
+//   u8   stage2_max_nhit_per_subject_mode
+//   u16  stage1_max_nhit_per_subject
+//   u8   stage1_max_nhit_per_subject_mode
 //   u8   t
 //   u8   template_type
 //   u8   score_matrix
@@ -54,13 +57,13 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     w.u16(req.stage2_min_score);
     w.u16(req.stage2_max_gap);
     w.u8(req.stage2_min_nhit_diag);
-    w.u16(req.stage1_topn);
+    w.u16(req.stage1_max_nhit_per_volume);
+    w.u16(req.stage1_max_nhit_in_total);
     w.u16(req.stage1_min_score);
     w.u16(req.nresult);
     w.u16(req.stage1_min_score_frac_x10000);
     w.u8(static_cast<uint8_t>(req.seqidlist_mode));
     w.u8(req.mode);
-    w.u8(req.stage1_score);
     w.u8(req.accept_qdegen);
     w.i8(req.strand);
     w.u8(req.has_stage2_min_score);
@@ -74,6 +77,9 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     w.u16(req.context_frac_x10000);
     w.u16(req.max_degen_expand);
     w.u16(req.stage2_max_nhit_per_subject);
+    w.u8(req.stage2_max_nhit_per_subject_mode);
+    w.u16(req.stage1_max_nhit_per_subject);
+    w.u8(req.stage1_max_nhit_per_subject_mode);
     w.u8(req.t);
     w.u8(req.template_type);
     w.u8(req.score_matrix);
@@ -105,7 +111,8 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u16(req.stage2_min_score)) return false;
     if (!r.get_u16(req.stage2_max_gap)) return false;
     if (!r.get_u8(req.stage2_min_nhit_diag)) return false;
-    if (!r.get_u16(req.stage1_topn)) return false;
+    if (!r.get_u16(req.stage1_max_nhit_per_volume)) return false;
+    if (!r.get_u16(req.stage1_max_nhit_in_total)) return false;
     if (!r.get_u16(req.stage1_min_score)) return false;
     if (!r.get_u16(req.nresult)) return false;
     if (!r.get_u16(req.stage1_min_score_frac_x10000)) return false;
@@ -116,7 +123,6 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     req.seqidlist_mode = static_cast<SeqidlistMode>(seqidlist_mode);
 
     if (!r.get_u8(req.mode)) return false;
-    if (!r.get_u8(req.stage1_score)) return false;
     if (!r.get_u8(req.accept_qdegen)) return false;
     if (!r.get_i8(req.strand)) return false;
     if (!r.get_u8(req.has_stage2_min_score)) return false;
@@ -130,6 +136,9 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u16(req.context_frac_x10000)) return false;
     if (!r.get_u16(req.max_degen_expand)) return false;
     if (!r.get_u16(req.stage2_max_nhit_per_subject)) return false;
+    if (!r.get_u8(req.stage2_max_nhit_per_subject_mode)) return false;
+    if (!r.get_u16(req.stage1_max_nhit_per_subject)) return false;
+    if (!r.get_u8(req.stage1_max_nhit_per_subject_mode)) return false;
     if (!r.get_u8(req.t)) return false;
     if (!r.get_u8(req.template_type)) return false;
     if (!r.get_u8(req.score_matrix)) return false;
@@ -168,7 +177,6 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //   u8   status
 //   u8   k
 //   u8   mode
-//   u8   stage1_score
 //   u8   stage3_traceback
 //   u8   t
 //   str16 db
@@ -190,7 +198,6 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
 //       u32    send
 //       u32    slen
 //       u16    coverscore
-//       u16    matchscore
 //       u16    chainscore
 //       u16    volume
 //       i32    alnscore
@@ -211,7 +218,6 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
     w.u8(resp.status);
     w.u8(resp.k);
     w.u8(resp.mode);
-    w.u8(resp.stage1_score);
     w.u8(resp.stage3_traceback);
     w.u8(resp.t);
     w.str16(resp.db);
@@ -234,7 +240,6 @@ std::vector<uint8_t> serialize(const SearchResponse& resp) {
             w.u32(hit.send);
             w.u32(hit.slen);
             w.u16(hit.coverscore);
-            w.u16(hit.matchscore);
             w.u16(hit.chainscore);
             w.u16(hit.volume);
             w.i32(hit.alnscore);
@@ -262,7 +267,6 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
     if (!r.get_u8(resp.status)) return false;
     if (!r.get_u8(resp.k)) return false;
     if (!r.get_u8(resp.mode)) return false;
-    if (!r.get_u8(resp.stage1_score)) return false;
     if (!r.get_u8(resp.stage3_traceback)) return false;
     if (!r.get_u8(resp.t)) return false;
     if (!r.get_str16(resp.db)) return false;
@@ -294,7 +298,6 @@ bool deserialize(const std::vector<uint8_t>& data, SearchResponse& resp) {
             if (!r.get_u32(hit.send)) return false;
             if (!r.get_u32(hit.slen)) return false;
             if (!r.get_u16(hit.coverscore)) return false;
-            if (!r.get_u16(hit.matchscore)) return false;
             if (!r.get_u16(hit.chainscore)) return false;
             if (!r.get_u16(hit.volume)) return false;
             if (!r.get_i32(hit.alnscore)) return false;

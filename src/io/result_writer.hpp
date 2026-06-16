@@ -31,7 +31,6 @@ struct OutputHit {
     uint32_t sstart;
     uint32_t send;
     uint32_t coverscore = 0;
-    uint32_t matchscore = 0;
     uint32_t chainscore = 0;
     uint16_t volume;
     uint32_t oid = 0;        // internal: BLAST DB OID (not written to output)
@@ -75,14 +74,12 @@ bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
 void write_results_tsv(std::ostream& out,
                        const std::vector<OutputHit>& hits,
                        uint8_t mode = 2,
-                       uint8_t stage1_score_type = 1,
                        bool stage3_traceback = false);
 
 // Write results in JSON format.
 void write_results_json(std::ostream& out,
                         const std::vector<OutputHit>& hits,
                         uint8_t mode = 2,
-                        uint8_t stage1_score_type = 1,
                         bool stage3_traceback = false);
 
 // Write per-query JSON objects without the outer {"results": [...]} wrapper.
@@ -90,7 +87,6 @@ void write_results_json(std::ostream& out,
 void write_results_json_fragment(std::ostream& out,
                                   const std::vector<OutputHit>& hits,
                                   uint8_t mode = 2,
-                                  uint8_t stage1_score_type = 1,
                                   bool stage3_traceback = false);
 
 // Write results in the specified format (tsv or json).
@@ -98,7 +94,6 @@ void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,
                    OutputFormat fmt,
                    uint8_t mode = 2,
-                   uint8_t stage1_score_type = 1,
                    bool stage3_traceback = false);
 
 // -------------------------------------------------------------------------
@@ -123,7 +118,6 @@ struct Mode1ParallelInputs {
     std::vector<const KsxReader*>       ksx_per_volume;
     const std::vector<uint8_t>*         skip_reason = nullptr;
     const std::vector<std::string>*     skip_detail = nullptr;
-    uint8_t  stage1_score_type = 1;
     int      nthread = 1;
 };
 

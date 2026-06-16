@@ -84,4 +84,33 @@ bool validate_primer_mode_options(const CliParser& cli, std::string& err) {
     return true;
 }
 
+bool validate_http_auth_options(const CliParser& cli, bool is_http_transport,
+                                std::string& err) {
+    const bool has_user      = cli.has("-user");
+    const bool has_http_user = cli.has("-http_user");
+    const bool has_http_pw   = cli.has("-http_password");
+    const bool has_netrc     = cli.has("-netrc_file");
+
+    if (!is_http_transport) {
+        if (has_user || has_http_user || has_http_pw || has_netrc) {
+            err = "Error: HTTP authentication options (-user, -http_user, "
+                  "-http_password, -netrc_file) require -http";
+            return false;
+        }
+        return true;
+    }
+
+    if (has_http_pw && !has_http_user) {
+        err = "Error: -http_password requires -http_user";
+        return false;
+    }
+    const int methods = (has_user ? 1 : 0) + (has_http_user ? 1 : 0) +
+                        (has_netrc ? 1 : 0);
+    if (methods > 1) {
+        err = "Error: -user, -http_user, and -netrc_file are mutually exclusive";
+        return false;
+    }
+    return true;
+}
+
 } // namespace ikafssn

@@ -231,9 +231,17 @@ ikafssnsearch [options]
                           値を指定するとインデックスが登録していない短い
                           配列までクエリ対象に含めてしまうため、整合性
                           チェックで起動が拒否されます。
-  -stage1_score <1|2>     Stage 1 スコア種別 (デフォルト: 1)
-                          1=coverscore、2=matchscore
-  -stage1_topn <int>      Stage 1 候補数上限、0=無制限 (デフォルト: 0)
+  -stage1_max_nhit_per_subject <int>  parent ごとの Stage 1 候補数上限
+                          (デフォルト: 1、0=無制限)。
+                          (query, parent, volume, strand) 単位で適用
+  -stage1_max_nhit_per_subject_mode <1|2|3|4>  per-subject 選別モード
+                          (デフォルト: 3); 1/2=上位N (タイ非包含)、3/4=上位N + タイ包含
+  -stage1_max_nhit_per_volume <int>  (query, volume, strand) ごとの Stage 1
+                          候補数上限 (デフォルト: 0=無制限)
+  -stage1_max_nhit_in_total <int>  全 volume・strand を通したクエリごとの
+                          Stage 1 候補数上限 (デフォルト: 0=無制限)。これを
+                          設定すると、-stage1_max_nhit_per_volume を明示しない
+                          限り同じ値が設定されます (それ以上である必要があります)。
   -stage1_min_score <num> Stage 1 最小スコア閾値 (デフォルト: 0.5)
                           整数 (>= 1): 絶対閾値
                           小数 (0 < P < 1): クエリ k-mer に対する割合
@@ -244,6 +252,9 @@ ikafssnsearch [options]
   -stage2_max_gap <int>   チェイニング対角線ずれ許容幅 (デフォルト: 100)
   -stage2_max_lookback <int>  チェイニング DP 探索窓サイズ (デフォルト: 64、0=無制限)
   -stage2_max_nhit_per_subject <int>  サブジェクトあたりの最大チェイン数 (デフォルト: 1、0=無制限)
+  -stage2_max_nhit_per_subject_mode <1|2|3|4>  サブジェクト単位の選択モード (デフォルト: 3)
+                           1/2=上位N位 (タイ非包含)、3/4=上位N位+スコアタイ包含;
+                           1/3=parent ごとに strand 統合、2/4=strand 分離
   -stage2_min_nhit_diag <int>  対角線フィルタ最小ヒット数 (デフォルト: 1)
   -context_extend <value>        モード 3 のコンテクスト拡張 (デフォルト: 2.0)
                           整数: 拡張する塩基数; 小数: クエリ長に対する倍率
@@ -320,6 +331,10 @@ both ペアの場合、coding と optimal は `template_type` 以外の全識別
 
 `-seqidlist` と `-negative_seqidlist` は排他的 (同時指定不可) です。ファイル形式はテキスト (1 行 1 アクセッション) と `blastdb_aliastool -seqid_file_in` で生成されるバイナリ形式の両方を受け付け、先頭のマジックバイトで自動判別します。
 
+後段ステージでのみ有効なオプションを、それより前の `-mode` とともに指定した場合は、黙って無視せずエラー (非ゼロ終了) になります。Stage 2 オプション (`-stage2_min_score`、`-stage2_max_gap`、`-stage2_max_lookback`、`-stage2_min_nhit_diag`、`-stage2_max_nhit_per_subject`、`-stage2_max_nhit_per_subject_mode`) は `-mode 2` 以上を、Stage 3 オプション (`-stage3_traceback`、`-stage3_gapopen`、`-stage3_gapext`、`-stage3_min_ppositive`、`-stage3_min_npositive`、`-stage3_score_matrix`、`-context_extend`、`-db`) は `-mode 3` を必要とします。同じ規則は `ikafssnclient` (CLI) と `ikafssnhttpd` (JSON リクエストボディ) でも適用されます。
+
+`ikafssnindex` も矛盾するオプションの組み合わせをエラーにします: `-template_type` は `-t > 0` が必要、`-freq_threshold_part` は `-mode 2` または `3` が必要、`-nthread_highfreq_filter` は `-max_freq_build` の有効化が必要です。`ikafssnretrieve` はローカル `-db` 実行時に efetch 専用オプション (`-api_key`、`-batch_size`、`-max_nretry`、`-timeout`、`-range_threshold`) を拒否します。`ikafssnclient` と `ikafssninfo` では、HTTP 認証オプション (`-user`、`-http_user`、`-http_password`、`-netrc_file`) は `-http` が必要で、3 つの方式は相互排他であり、`-http_password` は `-http_user` を必要とします。
+
 **使用例:**
 
 ```bash
@@ -329,9 +344,9 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -nthread 8
 # k-mer サイズを指定 (インデックスに複数の k 値が含まれる場合は必須)
 ikafssnsearch -ix ./index/mydb -k 11 -query query.fasta
 
-# 感度を上げた検索
+# 感度を上げた検索 (クエリごとの候補数を増やす)
 ikafssnsearch -ix ./index/mydb -query query.fasta \
-    -stage2_min_score 2 -stage1_topn 2000
+    -stage2_min_score 2 -stage1_max_nhit_per_subject 0 -stage1_max_nhit_in_total 2000
 
 # seqidlist で検索対象を限定
 ikafssnsearch -ix ./index/mydb -query query.fasta -seqidlist targets.txt
@@ -520,13 +535,19 @@ ikafssnserver [options]
   -pid <path>             PID ファイルパス
   -db <path>              モード 3 用 BLAST DB パス (繰り返し指定、-ix と対応;
                           デフォルト: 対応する -ix プレフィックスと同じ)
-  -stage1_topn <int>      デフォルト Stage 1 候補数上限 (デフォルト: 0)
+  -stage1_max_nhit_per_subject <int>  parent ごとの Stage 1 候補数上限のデフォルト (デフォルト: 1、0=無制限)
+  -stage1_max_nhit_per_subject_mode <1|2|3|4>  per-subject 選別モードのデフォルト (デフォルト: 3)
+  -stage1_max_nhit_per_volume <int>  (query,volume,strand) ごとの Stage 1 候補数上限のデフォルト (デフォルト: 0)
+  -stage1_max_nhit_in_total <int>  全 volume を通したクエリごとの Stage 1 候補数上限のデフォルト (デフォルト: 0)
   -stage1_min_score <num> デフォルト Stage 1 最小スコア閾値 (デフォルト: 0.5)
                           整数 (>= 1) または小数 (0 < P < 1)
   -stage2_min_score <int> デフォルト最小チェインスコア (デフォルト: 0 = 適応的)
   -stage2_max_gap <int>   デフォルトチェイニング対角線ずれ許容幅 (デフォルト: 100)
   -stage2_max_lookback <int>  デフォルトチェイニング DP 探索窓サイズ (デフォルト: 64、0=無制限)
   -stage2_max_nhit_per_subject <int>  デフォルトサブジェクトあたりの最大チェイン数 (デフォルト: 1、0=無制限)
+  -stage2_max_nhit_per_subject_mode <1|2|3|4>  デフォルトのサブジェクト単位選択モード (デフォルト: 3)
+                           1/2=上位N位 (タイ非包含)、3/4=上位N位+スコアタイ包含;
+                           1/3=parent ごとに strand 統合、2/4=strand 分離
   -stage2_min_nhit_diag <int> デフォルト対角線フィルタ最小ヒット数 (デフォルト: 1)
   -context_extend <value>        デフォルトコンテクスト拡張 (デフォルト: 2.0)
                           整数: 拡張する塩基数; 小数: クエリ長に対する倍率
@@ -714,8 +735,10 @@ ikafssnclient [options]
   -o <path>                出力ファイル (デフォルト: 標準出力)
   -k <int>                 使用する k-mer サイズ (デフォルト: サーバ側デフォルト)
   -mode <1|2|3>            検索モード (デフォルト: サーバ側デフォルト)
-  -stage1_score <1|2>      Stage 1 スコア種別 (デフォルト: サーバ側デフォルト)
-  -stage1_topn <int>       Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
+  -stage1_max_nhit_per_subject <int>  parent ごとの Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
+  -stage1_max_nhit_per_subject_mode <1|2|3|4>  per-subject 選別モード (デフォルト: サーバ側デフォルト)
+  -stage1_max_nhit_per_volume <int>  (query,volume,strand) ごとの Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
+  -stage1_max_nhit_in_total <int>  全 volume を通したクエリごとの Stage 1 候補数上限 (デフォルト: サーバ側デフォルト)
   -stage1_min_score <num>  Stage 1 最小スコア閾値 (デフォルト: サーバ側デフォルト)
                            整数 (>= 1) または小数 (0 < P < 1)
   -stage2_min_score <int>  最小チェインスコア (デフォルト: サーバ側デフォルト)
@@ -723,6 +746,9 @@ ikafssnclient [options]
   -stage2_max_gap <int>    チェイニング対角線ずれ許容幅 (デフォルト: サーバ側デフォルト)
   -stage2_max_lookback <int>  チェイニング DP 探索窓サイズ (デフォルト: サーバ側デフォルト)
   -stage2_max_nhit_per_subject <int>  サブジェクトあたりの最大チェイン数 (デフォルト: サーバ側デフォルト)
+  -stage2_max_nhit_per_subject_mode <1|2|3|4>  サブジェクト単位の選択モード (デフォルト: 3)
+                           1/2=上位N位 (タイ非包含)、3/4=上位N位+スコアタイ包含;
+                           1/3=parent ごとに strand 統合、2/4=strand 分離
   -stage2_min_nhit_diag <int> 対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
   -context_extend <value>         コンテクスト拡張 (デフォルト: 2.0)
                            整数: 拡張する塩基数; 小数: クエリ長に対する倍率
@@ -912,11 +938,11 @@ ikafssninfo -http http://search.example.com:8080 -user admin:secret
 
 ikafssn は 3 段階の検索パイプラインを使用します。
 
-デフォルトパラメータはスループットを優先しています。`stage1_topn=0` と `nresult=0` によりソートを省略し、`stage1_min_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。ランク付けされた出力が必要な場合は `-stage1_topn` や `-nresult` に正の値を設定してください。ソートが有効になりますが、結果件数が多い場合は速度が低下する可能性があります。
+デフォルトパラメータはスループットを優先しています。`nresult=0` により最終ソートを省略し、`stage1_min_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。Stage 1 はデフォルトで parent ごとに最大 1 候補のみ残します (`stage1_max_nhit_per_subject=1`)。per-volume (`stage1_max_nhit_per_volume`) と in-total (`stage1_max_nhit_in_total`) の上限はデフォルトで無制限です。ランク付けされた出力が必要な場合は `-nresult` に正の値を設定してください。ソートが有効になりますが、結果件数が多い場合は速度が低下する可能性があります。
 
-1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとにスコアを集計します。スコア種別は 2 種類あります: **coverscore** (配列にマッチしたクエリ k-mer の種類数) と **matchscore** (クエリ k-mer と参照配列位置の総マッチ数)。`stage1_min_score` 以上のスコアを持つ配列を候補として選出します。`stage1_topn > 0` の場合はスコア順にソートして切り詰めます。`stage1_topn = 0` (デフォルト) の場合は全候補をソートせずに返します。
+1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとに **coverscore** (配列にマッチしたクエリ k-mer の種類数) を集計します。`stage1_min_score` 以上のスコアを持つ配列を候補として選出します。続いて候補集合を N → M → L の順 (いずれも coverscore 基準・タイ包含) で絞り込みます: `stage1_max_nhit_per_subject` (N) は各 (query, volume, strand) 内で parent ごとに上位 N 件を残し、`stage1_max_nhit_per_volume` (M) は (query, volume, strand) ごとに上位 M 件を残し、`stage1_max_nhit_in_total` (L) は全 volume・strand を通したクエリごとに上位 L 件を残します。
 
-2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。`-stage2_max_nhit_per_subject` が 1 より大きい値 (または 0 で無制限) の場合、貪欲な最良チェイン除去により同一サブジェクトから重複のない複数のチェインを抽出します: 最良チェインを見つけてそのヒットを除去し、残りのヒットで DP を再実行する処理を、制限に達するか `min_score` を満たすチェインがなくなるまで繰り返します。
+2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。`-stage2_max_nhit_per_subject` が 1 より大きい値 (または 0 で無制限) の場合、貪欲な最良チェイン除去により同一サブジェクトから重複のない複数のチェインを抽出します: 最良チェインを見つけてそのヒットを除去し、残りのヒットで DP を再実行する処理を、制限に達するか `min_score` を満たすチェインがなくなるまで繰り返します。`-stage2_max_nhit_per_subject` (N) は 2 段階で適用されます — 抽出時に (query, fragment, strand) 単位で 1 回、overlap 同一領域の重複除外後に (query, parent[, strand]) 単位でもう 1 回 — いずれも chainscore を基準とします。`-stage2_max_nhit_per_subject_mode` (デフォルト: 3) は両段階を制御します: モード 1/2 はタイを扱わず上位 N 件を保持、モード 3/4 は上位 N 件に加え N 位の chainscore に並ぶチェインをすべて保持します; モード 1/3 は 2 本の strand を parent ごとに 1 つのグループへ統合し、モード 2/4 は strand を分離します。センチネル値 0 はモード 3 に解決され、明示値は 1〜4 のみ有効です。本オプションは `-mode 2` 以上が必要です。
 
 3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context_extend` による拡張オプション付き)、Parasail ライブラリを使って半大域ペアワイズアライメントを実行します (`-stage3_score_matrix` で指定されたスコア行列を使用、デフォルト: DEGMATCH)。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、正スコア率、正スコア塩基数、負スコア数、ギャップ付きアライメント配列も計算されます。`-stage3_min_ppositive` と `-stage3_min_npositive` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト部分配列は `-nthread` 全数によるヒット並列でフェッチされ、各 TBB タスク内では (volume, OID) 順に走査して mmap の連続アクセス局所性を保持します。
 
@@ -1026,13 +1052,12 @@ ikafssn は 3 種類のスコアを計算します。
 
 | スコア | 説明 | 計算ステージ |
 |---|---|---|
-| **coverscore** | 参照配列にマッチしたクエリ k-mer の種類数。各クエリ k-mer は参照配列あたり最大 1 回カウントされます (複数位置にマッチしても重複計上されません)。 | Stage 1 |
-| **matchscore** | (クエリ k-mer, 参照配列位置) の総マッチ数。1 つのクエリ k-mer が参照配列の複数位置にマッチした場合、その分だけ加算されます。 | Stage 1 |
+| **coverscore** | 参照配列にマッチしたクエリ k-mer の種類数。各クエリ k-mer は参照配列あたり最大 1 回カウントされます (複数位置にマッチしても重複計上されません)。これが Stage 1 スコアです。 | Stage 1 |
 | **chainscore** | チェイニング DP が求めた最良コリニアチェインの長さ (k-mer ヒット数)。`.kpx` の位置データを使用します。 | Stage 2 |
 | **alnscore** | Parasail による半大域ペアワイズアライメントスコア (`-stage3_score_matrix` で指定、デフォルト: degmatch)。BLAST DB からのサブジェクト配列取得が必要です。 | Stage 3 |
 
-- `-stage1_score` で Stage 1 が使用するスコア種別を選択します (1=coverscore, 2=matchscore)。候補のランキングと出力される Stage 1 スコアに影響します。
-- ソート基準はモードにより自動決定: mode 1 は Stage 1 スコア、mode 2 は chainscore、mode 3 は alnscore。
+- Stage 1 スコアは常に coverscore です。
+- ソート基準はモードにより自動決定: mode 1 は coverscore、mode 2 は chainscore、mode 3 は alnscore。
 - `-mode 1` では Stage 1 スコアのみが利用可能で、chainscore と alnscore は計算されません。
 
 ### Stage 3 スコア行列
@@ -1093,7 +1118,7 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
 
 **Mode 2** (デフォルト):
 
-タブ区切りのカラムです。`-stage1_score 2` のとき `coverscore` が `matchscore` に置き換わります。
+タブ区切りのカラムです (Stage 1 スコアのカラムは常に `coverscore`)。
 
 ```
 # qseqid  sseqid  sstrand  qstart  qend  qlen  sstart  send  slen  coverscore  chainscore  volume
@@ -1243,7 +1268,7 @@ SAM レコードの構成:
 - **CIGAR**: 拡張 CIGAR (=/X/I/D 演算子)
 - **SEQ**: ギャップなしクエリ配列
 - **QUAL**: * (利用不可)
-- **タグ**: `AS:i` (alnscore), `NM:i` (nnegative), `cs:i` (chainscore), `cv:i` (coverscore), `ms:i` (matchscore)
+- **タグ**: `AS:i` (alnscore), `NM:i` (nnegative), `cs:i` (chainscore), `cv:i` (coverscore)
 
 ## デプロイ構成
 

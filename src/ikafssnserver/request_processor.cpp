@@ -109,10 +109,30 @@ SearchResponse process_search_request(
         config.stage2.chain_max_lookback = req.stage2_max_lookback;
     if (req.stage2_max_nhit_per_subject != 0)
         config.stage2.max_nhit_per_subject = req.stage2_max_nhit_per_subject;
+    {
+        // Resolve the per-subject selection mode: request value, else the
+        // server default, else the auto sentinel (0 -> 3).
+        uint8_t m = req.stage2_max_nhit_per_subject_mode;
+        if (m == 0) m = config.stage2.max_nhit_per_subject_mode;  // server default
+        if (m == 0) m = 3;
+        config.stage2.max_nhit_per_subject_mode = m;
+    }
     if (req.stage2_min_nhit_diag != 0)
         config.stage2.min_nhit_diag = req.stage2_min_nhit_diag;
-    if (req.stage1_topn != 0)
-        config.stage1.stage1_topn = req.stage1_topn;
+    if (req.stage1_max_nhit_per_volume != 0)
+        config.stage1.max_nhit_per_volume = req.stage1_max_nhit_per_volume;
+    if (req.stage1_max_nhit_in_total != 0)
+        config.stage1.max_nhit_in_total = req.stage1_max_nhit_in_total;
+    if (req.stage1_max_nhit_per_subject != 0)
+        config.stage1.max_nhit_per_subject = req.stage1_max_nhit_per_subject;
+    {
+        // Resolve the Stage 1 per-subject selection mode: request value, else
+        // the server default, else the auto sentinel (0 -> 3).
+        uint8_t m = req.stage1_max_nhit_per_subject_mode;
+        if (m == 0) m = config.stage1.max_nhit_per_subject_mode;  // server default
+        if (m == 0) m = 3;
+        config.stage1.max_nhit_per_subject_mode = m;
+    }
     if (req.stage1_min_score_frac_x10000 != 0) {
         config.min_stage1_score_frac =
             static_cast<double>(req.stage1_min_score_frac_x10000) / 10000.0;
@@ -123,8 +143,6 @@ SearchResponse process_search_request(
         config.nresult = req.nresult;
     if (req.mode != 0)
         config.mode = req.mode;
-    if (req.stage1_score != 0)
-        config.stage1.stage1_score_type = req.stage1_score;
     if (req.strand != 0)
         config.strand = req.strand;
     if (req.max_degen_expand != 0)
@@ -212,7 +230,6 @@ SearchResponse process_search_request(
     // Set response metadata
     resp.status = 0;
     resp.mode = config.mode;
-    resp.stage1_score = config.stage1.stage1_score_type;
 
     // Build seqidlist filter mode
     OidFilterMode filter_mode = OidFilterMode::kNone;
@@ -534,10 +551,7 @@ SearchResponse process_search_request(
         rh.sstart = cr.s_start + shift;
         rh.send   = cr.s_end   + shift;
         rh.chainscore = static_cast<uint16_t>(cr.chainscore);
-        if (config.stage1.stage1_score_type == 2)
-            rh.matchscore = static_cast<uint16_t>(cr.stage1_score);
-        else
-            rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
+        rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
         rh.volume = vol.volume_index;
         // Stage 3 keys BlastDbReader by parent BLAST DB OID, so propagate
         // the parent's BLAST OID rather than the internal fragment seq_id.
@@ -578,7 +592,6 @@ SearchResponse process_search_request(
                 oh.send = hit.send;
                 oh.chainscore = hit.chainscore;
                 oh.coverscore = hit.coverscore;
-                oh.matchscore = hit.matchscore;
                 oh.volume = hit.volume;
                 oh.oid = hit.oid;
                 oh.qlen = hit.qlen;
@@ -613,7 +626,6 @@ SearchResponse process_search_request(
             rh.send = oh.send;
             rh.chainscore = static_cast<uint16_t>(oh.chainscore);
             rh.coverscore = static_cast<uint16_t>(oh.coverscore);
-            rh.matchscore = static_cast<uint16_t>(oh.matchscore);
             rh.volume = oh.volume;
             rh.qlen = oh.qlen;
             rh.slen = oh.slen;
@@ -638,7 +650,7 @@ SearchResponse process_search_request(
         std::function<bool(const ResponseHit&, const ResponseHit&)> cmp;
         if (config.sort_score == 1) {
             cmp = [](const ResponseHit& a, const ResponseHit& b) {
-                return (a.coverscore + a.matchscore) > (b.coverscore + b.matchscore);
+                return a.coverscore > b.coverscore;
             };
         } else if (config.sort_score == 3) {
             cmp = [](const ResponseHit& a, const ResponseHit& b) {

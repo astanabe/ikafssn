@@ -29,16 +29,19 @@ std::string build_request_json(const SearchRequest& req) {
     root["stage2_max_gap"] = req.stage2_max_gap;
     root["stage2_max_lookback"] = req.stage2_max_lookback;
     root["stage2_max_nhit_per_subject"] = req.stage2_max_nhit_per_subject;
+    root["stage2_max_nhit_per_subject_mode"] = req.stage2_max_nhit_per_subject_mode;
+    root["stage1_max_nhit_per_subject"] = req.stage1_max_nhit_per_subject;
+    root["stage1_max_nhit_per_subject_mode"] = req.stage1_max_nhit_per_subject_mode;
     if (req.stage1_min_score_frac_x10000 != 0) {
         root["stage1_min_score_frac"] =
             static_cast<double>(req.stage1_min_score_frac_x10000) / 10000.0;
     }
     root["stage2_min_nhit_diag"] = req.stage2_min_nhit_diag;
-    root["stage1_topn"] = req.stage1_topn;
+    root["stage1_max_nhit_per_volume"] = req.stage1_max_nhit_per_volume;
+    root["stage1_max_nhit_in_total"] = req.stage1_max_nhit_in_total;
     root["stage1_min_score"] = req.stage1_min_score;
     root["nresult"] = req.nresult;
     root["mode"] = req.mode;
-    root["stage1_score"] = req.stage1_score;
     root["accept_qdegen"] = req.accept_qdegen;
     root["strand"] = req.strand;
 

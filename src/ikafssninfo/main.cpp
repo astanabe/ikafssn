@@ -539,6 +539,19 @@ static int report_variant(const std::vector<DiscoveredVolume>& vol_files,
 static int run_remote_info(const CliParser& cli, bool verbose) {
     InfoResponse info;
 
+    {
+#ifdef IKAFSSN_ENABLE_HTTP
+        const bool is_http = cli.has("-http");
+#else
+        const bool is_http = false;
+#endif
+        std::string err;
+        if (!validate_http_auth_options(cli, is_http, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 1;
+        }
+    }
+
     if (cli.has("-socket") || cli.has("-tcp")) {
         int fd = -1;
         if (cli.has("-socket")) {
@@ -569,10 +582,6 @@ static int run_remote_info(const CliParser& cli, bool verbose) {
 #ifdef IKAFSSN_ENABLE_HTTP
     else if (cli.has("-http")) {
         HttpAuthConfig auth;
-        if (cli.has("-user") && cli.has("-http_user")) {
-            std::fprintf(stderr, "Error: -user and -http_user are mutually exclusive\n");
-            return 1;
-        }
         if (cli.has("-user")) {
             auth.userpwd = cli.get_string("-user");
         } else if (cli.has("-http_user")) {

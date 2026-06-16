@@ -143,8 +143,14 @@ static void test_server_client_search() {
     CHECK(ksx.open(vols[0].ksx_path));
 
     // Build search config matching server defaults.
+    // The local reference uses search_volume(), which chains per
+    // (fragment, strand) and does not run the orchestrator's parent-level
+    // top-N selection.  Mode 2 (strands separate, no score ties) makes the
+    // parent selection a no-op on this non-fragmented index, so the two
+    // paths stay directly comparable.
     SearchConfig config;
     config.stage2.min_score = 1;
+    config.stage2.max_nhit_per_subject_mode = 2;
     OidFilter no_filter;
 
     std::vector<SearchResult> local_results;

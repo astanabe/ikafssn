@@ -13,7 +13,10 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <tbb/blocked_range.h>
 #include <tbb/enumerable_thread_specific.h>
@@ -84,6 +87,77 @@ std::vector<size_t> indices_for_batch(const std::vector<ExtJob>& ext_jobs,
         if (vi < in_batch.size() && in_batch[vi]) out.push_back(i);
     }
     return out;
+}
+
+// L-th highest value in `v` (0 if fewer than L); reorders v.
+uint32_t lth_highest(std::vector<uint32_t>& v, uint32_t L) {
+    if (L == 0 || v.size() < L) return 0;
+    std::nth_element(v.begin(), v.begin() + (L - 1), v.end(),
+                     std::greater<uint32_t>());
+    return v[L - 1];
+}
+
+// In-total (L) limit for mode 1: keep, per query, the top-L mode1 results plus
+// every result tying the L-th Stage 1 score (coverscore == cr.stage1_score).
+void apply_in_total_mode1(std::vector<OrchestratorHit>& hits, uint32_t L) {
+    if (L == 0 || hits.empty()) return;
+    std::unordered_map<size_t, std::vector<uint32_t>> by_q;
+    for (const auto& h : hits) by_q[h.query_idx].push_back(h.cr.stage1_score);
+    std::unordered_map<size_t, uint32_t> thr;
+    for (auto& kv : by_q) thr[kv.first] = lth_highest(kv.second, L);
+
+    std::vector<OrchestratorHit> out;
+    out.reserve(hits.size());
+    for (auto& h : hits) {
+        uint32_t t = thr[h.query_idx];
+        if (t == 0 || h.cr.stage1_score >= t) out.push_back(std::move(h));
+    }
+    hits = std::move(out);
+}
+
+// In-total (L) limit for modes 2/3: keep, per query (across all volumes and
+// strands), the top-L Stage 1 candidates plus every candidate tying the L-th
+// coverscore, by pruning each ext_job's candidate list.  Derived per-ext_job
+// state is rebuilt to stay consistent with the pruned candidates.
+void apply_in_total_stage1(std::vector<JobState>& states,
+                           const std::vector<ExtJob>& ext_jobs, uint32_t L) {
+    if (L == 0) return;
+    size_t max_qi = 0;
+    for (const auto& ej : ext_jobs) max_qi = std::max(max_qi, ej.qi);
+    std::vector<std::vector<uint32_t>> scores_by_q(max_qi + 1);
+    for (size_t ji = 0; ji < ext_jobs.size(); ++ji) {
+        for (const auto& c : states[ji].candidates)
+            scores_by_q[ext_jobs[ji].qi].push_back(c.score);
+    }
+    std::vector<uint32_t> thr(max_qi + 1, 0);
+    for (size_t qi = 0; qi <= max_qi; ++qi)
+        thr[qi] = lth_highest(scores_by_q[qi], L);
+
+    for (size_t ji = 0; ji < ext_jobs.size(); ++ji) {
+        uint32_t t = thr[ext_jobs[ji].qi];
+        if (t == 0) continue;
+        JobState& st = states[ji];
+        if (st.candidates.empty()) continue;
+        size_t before = st.candidates.size();
+        std::vector<Stage1Candidate> kept;
+        kept.reserve(st.candidates.size());
+        for (const auto& c : st.candidates)
+            if (c.score >= t) kept.push_back(c);
+        if (kept.size() == before) continue;
+        st.candidates = std::move(kept);
+        // Rebuild derived structures consumed by Stage 2.
+        st.stage1_scores.clear();
+        st.stage1_scores.reserve(st.candidates.size());
+        for (const auto& c : st.candidates) st.stage1_scores[c.id] = c.score;
+        if (st.both_mode) {
+            st.sorted_candidate_sids.clear();
+            st.sorted_candidate_sids.reserve(st.candidates.size());
+            for (const auto& c : st.candidates)
+                st.sorted_candidate_sids.push_back(c.id);
+            std::sort(st.sorted_candidate_sids.begin(),
+                      st.sorted_candidate_sids.end());
+        }
+    }
 }
 
 }  // namespace
@@ -289,8 +363,13 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     // Mode 1 fast path: all per-batch folds were drained above.
     // ----------------------------------------------------------------
     if (in.config.mode == 1) {
+        apply_in_total_mode1(mode1_results, in.config.stage1.max_nhit_in_total);
         return mode1_results;
     }
+
+    // Stage 1 in-total (L) limit: prune each query's candidate set across all
+    // volumes / strands before Stage 2 consumes it.
+    apply_in_total_stage1(states, ext_jobs, in.config.stage1.max_nhit_in_total);
 
     // ----------------------------------------------------------------
     // Stage 2 (Stage 2A + Stage 2B fused into one incremental loop)
@@ -424,6 +503,20 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         dedup_stage2_orchestrator_hits(results, in.ksx_per_volume);
         if (logger && before != results.size()) {
             logger->info("Stage 2 dedup: %zu chain(s) -> %zu after dedup",
+                         before, results.size());
+        }
+    }
+
+    // Parent-level top-N chain selection.  After overlap dedup collapses
+    // duplicate per-fragment chains, cap the chains kept per
+    // (query, parent[, strand]) group by chainscore.
+    {
+        const size_t before = results.size();
+        select_parent_topn(results, in.config.stage2.max_nhit_per_subject,
+                           in.config.stage2.max_nhit_per_subject_mode,
+                           in.ksx_per_volume);
+        if (logger && before != results.size()) {
+            logger->info("Parent top-N: %zu chain(s) -> %zu after selection",
                          before, results.size());
         }
     }

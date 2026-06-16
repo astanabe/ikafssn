@@ -35,6 +35,8 @@ public:
 
     // Fragment-aware accessors.
     uint32_t parent_index(uint32_t seq_id)   const { return fragment_parent_idx_[seq_id]; }
+    // Base pointer of the SeqId -> parent-index table (Stage 1 per-parent limits).
+    const uint32_t* parent_index_data() const { return fragment_parent_idx_; }
     uint32_t fragment_start(uint32_t seq_id) const { return fragment_start_[seq_id]; }
     uint32_t fragment_end(uint32_t seq_id)   const { return fragment_end_[seq_id]; }
 

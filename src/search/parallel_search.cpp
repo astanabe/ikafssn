@@ -121,11 +121,21 @@ void stage1_one_strand_single(
 
     if (resolved_threshold == 0 || n_kmers == 0) return;
 
+    const uint32_t M = config.stage1.max_nhit_per_volume;
+    const uint32_t N = config.stage1.max_nhit_per_subject;
+    const bool n_tie = (config.stage1.max_nhit_per_subject_mode == 3 ||
+                        config.stage1.max_nhit_per_subject_mode == 4);
+    const uint32_t* pidx = config.stage1.parent_index;
+
     Stage1Config stage1_config = config.stage1;
     stage1_config.min_stage1_score = resolved_threshold;
-
     state.candidates =
         stage1_filter(positions, kmers, n_kmers, kix, filter, stage1_config, buf);
+    if (state.candidates.empty()) return;
+
+    // Post-selection: per-parent N, then per-volume M (both tie-inclusive for M).
+    if (N > 0) stage1_limit_per_parent(state.candidates, N, n_tie, pidx);
+    if (M > 0) stage1_limit_topk(state.candidates, M, /*tie_inclusive=*/true);
     if (state.candidates.empty()) return;
 
     if (config.mode == 1) {
@@ -193,9 +203,14 @@ void stage1_one_strand_both(
     }
     if (unified_threshold == 0) return;
 
+    const uint32_t M = config.stage1.max_nhit_per_volume;
+    const uint32_t N = config.stage1.max_nhit_per_subject;
+    const bool n_tie = (config.stage1.max_nhit_per_subject_mode == 3 ||
+                        config.stage1.max_nhit_per_subject_mode == 4);
+    const uint32_t* pidx = config.stage1.parent_index;
+
     Stage1Config s1cfg_acc = config.stage1;
     s1cfg_acc.min_stage1_score = 1;
-    s1cfg_acc.stage1_topn = 0;
 
     // Count distinct merged query positions (Nq) so the score cutoff can be
     // engaged.  A sequence's final score is at most the number of distinct
@@ -250,6 +265,11 @@ void stage1_one_strand_both(
     s1cfg_fin.min_stage1_score = unified_threshold;
     state.candidates = stage1_filter_finish(buf, s1cfg_fin);
 
+    if (state.candidates.empty()) return;
+
+    // Post-selection: per-parent N, then per-volume M (both tie-inclusive for M).
+    if (N > 0) stage1_limit_per_parent(state.candidates, N, n_tie, pidx);
+    if (M > 0) stage1_limit_topk(state.candidates, M, /*tie_inclusive=*/true);
     if (state.candidates.empty()) return;
 
     if (config.mode == 1) {
@@ -311,6 +331,12 @@ void dispatch_stage1(
 
     const bool is_reverse = (ej.strand_idx != 0);
 
+    // Inject the volume's SeqId -> parent map so the per-parent N limit can
+    // group candidates by parent.
+    SearchConfig eff = config;
+    eff.stage1.parent_index =
+        vb.ksx ? vb.ksx->parent_index_data() : nullptr;
+
     if (both_mode) {
         const auto& qd_cod = *qb.qdata_primary;
         const auto& qd_opt = *qb.qdata_secondary;
@@ -328,7 +354,7 @@ void dispatch_stage1(
                 qd_opt.fwd_positions.size(),
                 k, false,
                 *vb.kix, *vb.kix_opt,
-                *vb.filter, config,
+                *vb.filter, eff,
                 qd_cod.resolved_threshold_fwd,
                 qd_opt.resolved_threshold_fwd,
                 unify(qd_cod.effective_min_score_fwd,
@@ -348,7 +374,7 @@ void dispatch_stage1(
                 qd_opt.rc_positions.size(),
                 k, true,
                 *vb.kix, *vb.kix_opt,
-                *vb.filter, config,
+                *vb.filter, eff,
                 qd_cod.resolved_threshold_rc,
                 qd_opt.resolved_threshold_rc,
                 unify(qd_cod.effective_min_score_rc,
@@ -363,7 +389,7 @@ void dispatch_stage1(
                 qd.fwd_kmer_values.data(),
                 qd.fwd_positions.size(),
                 k, false,
-                *vb.kix, *vb.filter, config,
+                *vb.kix, *vb.filter, eff,
                 qd.resolved_threshold_fwd,
                 qd.effective_min_score_fwd,
                 buf, state);
@@ -373,7 +399,7 @@ void dispatch_stage1(
                 qd.rc_kmer_values.data(),
                 qd.rc_positions.size(),
                 k, true,
-                *vb.kix, *vb.filter, config,
+                *vb.kix, *vb.filter, eff,
                 qd.resolved_threshold_rc,
                 qd.effective_min_score_rc,
                 buf, state);

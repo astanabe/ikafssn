@@ -89,6 +89,89 @@ void dedup_stage2_orchestrator_hits(
     hits = std::move(out);
 }
 
+void select_parent_topn(
+    std::vector<OrchestratorHit>& hits,
+    uint32_t n,
+    uint8_t mode,
+    const std::vector<const KsxReader*>& ksx_per_volume) {
+    if (n == 0 || hits.size() < 2) return;
+
+    const bool strand_split   = (mode == 2 || mode == 4);
+    const bool tie_inclusive  = (mode == 3 || mode == 4);
+
+    struct ParentKey {
+        size_t   query_idx;
+        size_t   volume_idx;
+        uint32_t parent_idx;
+        bool     is_reverse;  // meaningful only when strand_split
+    };
+
+    const size_t cnt = hits.size();
+    std::vector<ParentKey> keys(cnt);
+    for (size_t i = 0; i < cnt; ++i) {
+        const auto& h = hits[i];
+        const auto* ksx = ksx_per_volume[h.volume_idx];
+        keys[i] = ParentKey{
+            h.query_idx,
+            h.volume_idx,
+            ksx->parent_index(h.cr.seq_id),
+            strand_split ? h.cr.is_reverse : false,
+        };
+    }
+
+    // Order indices by group key, breaking ties on original index so each
+    // group's slice stays in arrival order.
+    std::vector<size_t> order(cnt);
+    for (size_t i = 0; i < cnt; ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        const ParentKey& ka = keys[a];
+        const ParentKey& kb = keys[b];
+        if (ka.query_idx  != kb.query_idx)  return ka.query_idx  < kb.query_idx;
+        if (ka.volume_idx != kb.volume_idx) return ka.volume_idx < kb.volume_idx;
+        if (ka.parent_idx != kb.parent_idx) return ka.parent_idx < kb.parent_idx;
+        if (ka.is_reverse != kb.is_reverse) return ka.is_reverse < kb.is_reverse;
+        return a < b;
+    });
+
+    auto same_group = [&](size_t a, size_t b) {
+        const ParentKey& ka = keys[a];
+        const ParentKey& kb = keys[b];
+        return ka.query_idx  == kb.query_idx
+            && ka.volume_idx == kb.volume_idx
+            && ka.parent_idx == kb.parent_idx
+            && ka.is_reverse == kb.is_reverse;
+    };
+
+    std::vector<bool> survive(cnt, false);
+    size_t run_start = 0;
+    for (size_t i = 0; i <= cnt; ++i) {
+        if (i != cnt && (i == run_start || same_group(order[run_start], order[i])))
+            continue;
+
+        // Process the group order[run_start .. i).
+        std::vector<size_t> grp(order.begin() + run_start, order.begin() + i);
+        std::stable_sort(grp.begin(), grp.end(), [&](size_t a, size_t b) {
+            return hits[a].cr.chainscore > hits[b].cr.chainscore;
+        });
+        if (grp.size() <= n) {
+            for (size_t idx : grp) survive[idx] = true;
+        } else if (!tie_inclusive) {
+            for (uint32_t j = 0; j < n; ++j) survive[grp[j]] = true;
+        } else {
+            const uint32_t s_n = hits[grp[n - 1]].cr.chainscore;
+            for (size_t idx : grp)
+                if (hits[idx].cr.chainscore >= s_n) survive[idx] = true;
+        }
+        run_start = i;
+    }
+
+    std::vector<OrchestratorHit> out;
+    out.reserve(cnt);
+    for (size_t i = 0; i < cnt; ++i)
+        if (survive[i]) out.push_back(std::move(hits[i]));
+    hits = std::move(out);
+}
+
 void dedup_stage3_output_hits(std::vector<OutputHit>& hits) {
     if (hits.size() < 2) return;
 

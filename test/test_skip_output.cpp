@@ -53,8 +53,7 @@ static void test_tsv_skip_row() {
     hits.push_back(make_normal_hit("q3", "ACC2", 30));
 
     std::ostringstream oss;
-    write_results_tsv(oss, hits, /*mode=*/2, /*stage1_score_type=*/1,
-                       /*traceback=*/false);
+    write_results_tsv(oss, hits, /*mode=*/2, /*traceback=*/false);
     std::string out = oss.str();
 
     CHECK(out.find("*SKIPPED:degen_rejected") != std::string::npos);
@@ -80,7 +79,7 @@ static void test_tsv_reader_drops_skip_rows() {
     hits.push_back(make_normal_hit("q3", "ACC2", 30));
 
     std::ostringstream oss;
-    write_results_tsv(oss, hits, 2, 1, false);
+    write_results_tsv(oss, hits, 2, false);
 
     std::istringstream iss(oss.str());
     auto parsed = read_results_tsv(iss);
@@ -105,7 +104,7 @@ static void test_json_skip_status() {
                                   "first invalid char '*' at pos 5", 60));
 
     std::ostringstream oss;
-    write_results_json(oss, hits, 2, 1, false);
+    write_results_json(oss, hits, 2, false);
     std::string out = oss.str();
 
     CHECK(out.find("\"status\": \"skipped\"") != std::string::npos);
@@ -128,7 +127,7 @@ static void test_sam_skip_unmapped() {
                                "Nqkmer=10 threshold=-3", 12);
     hits.push_back(skip);
 
-    write_results_sam(sam_path, hits, 1);
+    write_results_sam(sam_path, hits);
 
     // Read back via htslib
     samFile* fp = sam_open(sam_path.c_str(), "r");

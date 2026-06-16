@@ -20,8 +20,12 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <mutex>
+#include <set>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include <tbb/parallel_for_each.h>
@@ -291,7 +295,6 @@ static void test_multivolume_search() {
     };
 
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -328,7 +331,6 @@ static void test_parallel_equals_sequential() {
     };
 
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -362,7 +364,6 @@ static void test_result_merge_ordering() {
     };
 
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -454,7 +455,6 @@ static void test_parallel_counting_pass() {
 
     OidFilter filter;
     SearchConfig sconfig;
-    sconfig.stage1.stage1_topn = 100;
     sconfig.stage1.min_stage1_score = 1;
     sconfig.stage2.max_gap = 100;
     sconfig.stage2.min_nhit_diag = 1;
@@ -492,7 +492,6 @@ static void test_multivolume_k9() {
     };
 
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -541,7 +540,6 @@ static void test_mode2_batched_equals_single() {
     }
 
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -636,7 +634,6 @@ static void test_mode1_batched_equals_single() {
     }
 
     SearchConfig config;
-    config.stage1.stage1_topn = 100;
     config.stage1.min_stage1_score = 1;
     config.nresult = 0;
     config.mode = 1;
@@ -739,6 +736,152 @@ static void test_mode1_batched_equals_single() {
     for (auto& ksx : ksxs) ksx.close();
 }
 
+// Drive run_search<>() in mode 1 with the Stage 1 candidate-count limits
+// (per-subject N, per-volume M, in-total L) and check each result against the
+// top-K+ties reduction recomputed from the unlimited baseline.
+static void test_stage1_nhit_limits() {
+    std::fprintf(stderr, "-- test_stage1_nhit_limits\n");
+    const int k = 7;
+    const std::string db_base = "mvtest";  // index built by an earlier test
+
+    auto discovered = discover_volumes(g_test_dir + "/" + db_base, k);
+    CHECK_EQ(discovered.size(), 2u);
+
+    std::vector<KsxReader> ksxs(2);
+    std::vector<VolumeMeta> volumes_cod(2);
+    for (size_t vi = 0; vi < 2; vi++) {
+        const auto& vf = discovered[vi];
+        CHECK(ksxs[vi].open(vf.ksx_path));
+        KixReader probe;
+        CHECK(probe.open(vf.kix_path));
+        volumes_cod[vi].files         = vf;
+        volumes_cod[vi].volume_index  = static_cast<uint16_t>(vi);
+        volumes_cod[vi].num_sequences = probe.num_sequences();
+        probe.close();
+    }
+    uint32_t max_num_seqs = 0;
+    for (auto& v : volumes_cod) max_num_seqs = std::max(max_num_seqs, v.num_sequences);
+
+    // Several copies of the query so the per-group candidate lists are large
+    // enough for the limits to bite.
+    std::vector<std::string> qstore(8, g_query_fj);
+    Logger logger(Logger::kError);
+
+    auto run = [&](const SearchConfig& cfg) {
+        std::vector<QueryKmerData<uint16_t>> qdatas;
+        qdatas.reserve(qstore.size());
+        for (auto& q : qstore)
+            qdatas.push_back(preprocess_query<uint16_t>(q, k, nullptr, cfg));
+        std::vector<QueryBundle<uint16_t>> bundles(qstore.size());
+        for (size_t i = 0; i < qstore.size(); i++) {
+            bundles[i].query_id      = &qstore[i];
+            bundles[i].qdata_primary = &qdatas[i];
+        }
+        std::vector<uint8_t> skip(qstore.size(), 0);
+        RunSearchInputs<uint16_t> in;
+        in.volumes_cod = volumes_cod;
+        in.ksx_per_volume.resize(2);
+        in.oid_filters.resize(2);
+        for (size_t vi = 0; vi < 2; vi++) in.ksx_per_volume[vi] = &ksxs[vi];
+        in.queries           = &bundles;
+        in.query_skip_reason = &skip;
+        in.config            = cfg;
+        in.both_mode         = false;
+        in.k                 = k;
+        in.nthread           = 4;
+        in.logger            = &logger;
+        in.max_num_seqs      = max_num_seqs;
+        in.width             = Stage1Width::T32;
+        return run_search<uint16_t>(in);
+    };
+
+    SearchConfig base;
+    base.stage1.min_stage1_score = 1;
+    base.nresult = 0;
+    base.mode = 1;
+    auto baseline = run(base);
+    CHECK(!baseline.empty());
+
+    using Key = std::tuple<size_t, uint16_t, bool, uint32_t>;  // q, vol, strand, seqid
+    auto hkey = [](const OrchestratorHit& h) {
+        return Key(h.query_idx, h.volume_idx, h.cr.is_reverse, h.cr.seq_id);
+    };
+    auto keyset = [&](const std::vector<OrchestratorHit>& v) {
+        std::set<Key> s;
+        for (auto& h : v) s.insert(hkey(h));
+        return s;
+    };
+
+    // Recompute the tie-inclusive top-K survivors from the baseline, grouping
+    // hits by `groupid`.
+    auto expected = [&](uint32_t K, auto groupid) {
+        std::map<std::string, std::vector<std::pair<uint32_t, Key>>> groups;
+        for (auto& h : baseline)
+            groups[groupid(h)].push_back({h.cr.stage1_score, hkey(h)});
+        std::set<Key> keep;
+        for (auto& kv : groups) {
+            auto& v = kv.second;
+            if (v.size() <= K) {
+                for (auto& p : v) keep.insert(p.second);
+                continue;
+            }
+            std::vector<uint32_t> sc;
+            sc.reserve(v.size());
+            for (auto& p : v) sc.push_back(p.first);
+            std::sort(sc.begin(), sc.end(), std::greater<uint32_t>());
+            uint32_t kth = sc[K - 1];
+            for (auto& p : v)
+                if (p.first >= kth) keep.insert(p.second);
+        }
+        return keep;
+    };
+
+    auto gid_total = [](const OrchestratorHit& h) {
+        return std::to_string(h.query_idx);
+    };
+    auto gid_vol = [](const OrchestratorHit& h) {
+        return std::to_string(h.query_idx) + ":" +
+               std::to_string(h.volume_idx) + ":" +
+               std::to_string(h.cr.is_reverse);
+    };
+    auto gid_parent = [&](const OrchestratorHit& h) {
+        uint32_t p = ksxs[h.volume_idx].parent_index(h.cr.seq_id);
+        return gid_vol(h) + ":" + std::to_string(p);
+    };
+
+    // L (in-total): per query, across volumes / strands.
+    for (uint32_t L : {1u, 2u}) {
+        SearchConfig c = base;
+        c.stage1.max_nhit_in_total = L;
+        auto got = keyset(run(c));
+        CHECK(got == expected(L, gid_total));
+        CHECK(got.size() <= baseline.size());
+    }
+    // M (per-volume): per (query, volume, strand).
+    for (uint32_t M : {1u, 2u}) {
+        SearchConfig c = base;
+        c.stage1.max_nhit_per_volume = M;
+        CHECK(keyset(run(c)) == expected(M, gid_vol));
+    }
+    // N (per-subject), mode 3 = tie-inclusive: per (query, parent, volume, strand).
+    {
+        SearchConfig c = base;
+        c.stage1.max_nhit_per_subject = 1;
+        c.stage1.max_nhit_per_subject_mode = 3;
+        CHECK(keyset(run(c)) == expected(1, gid_parent));
+    }
+    // Limits at/above the candidate count are no-ops.
+    {
+        SearchConfig c = base;
+        c.stage1.max_nhit_in_total = 100000;
+        c.stage1.max_nhit_per_volume = 100000;
+        c.stage1.max_nhit_per_subject = 100000;
+        CHECK(keyset(run(c)) == keyset(baseline));
+    }
+
+    for (auto& ksx : ksxs) ksx.close();
+}
+
 int main() {
     check_ssu_available();
     check_derived_data_ready();
@@ -772,6 +915,7 @@ int main() {
     test_parallel_equals_sequential();
     test_mode1_batched_equals_single();
     test_mode2_batched_equals_single();
+    test_stage1_nhit_limits();
     test_result_merge_ordering();
     test_parallel_counting_pass();
     test_multivolume_k9();

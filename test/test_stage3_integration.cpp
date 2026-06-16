@@ -67,7 +67,6 @@ static void test_stage3_pipeline() {
     // Stage 1+2 search
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -175,7 +174,6 @@ static void test_stage3_score_only() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -255,7 +253,6 @@ static void test_stage3_context() {
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 50;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
@@ -343,7 +340,6 @@ static void build_hits_for_batching(std::vector<OutputHit>& all_hits,
 
     OidFilter filter;
     SearchConfig config;
-    config.stage1.stage1_topn = 200;
     config.stage1.min_stage1_score = 1;
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
