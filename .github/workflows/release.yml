@@ -120,8 +120,11 @@ jobs:
           # GitHub's macOS runner ships aws/tap and azure/bicep, which Homebrew's
           # tap-trust policy flags as untrusted.  We don't use them; untap so brew
           # stops warning and stays forward-compatible with Homebrew 5.2/6.0.
+          # --force is required for azure/bicep because its bicep formula is
+          # installed, and plain untap refuses to remove a tap with installed
+          # formulae.
           for t in aws/tap azure/bicep; do
-            brew untap "$t" 2>/dev/null || true
+            brew untap --force "$t" 2>/dev/null || true
           done
 
       - name: Install system dependencies (macOS)
