@@ -299,7 +299,6 @@ static void test_multivolume_search() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 50;
 
     auto results = search_sequential(db_base, k, queries, config);
 
@@ -335,7 +334,6 @@ static void test_parallel_equals_sequential() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 50;
 
     auto seq_results = search_sequential(db_base, k, queries, config);
     auto par_results = search_parallel(db_base, k, queries, config, 4);
@@ -368,7 +366,6 @@ static void test_result_merge_ordering() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 50;
 
     auto results = search_parallel(db_base, k, queries, config, 2);
 
@@ -459,7 +456,6 @@ static void test_parallel_counting_pass() {
     sconfig.stage2.max_gap = 100;
     sconfig.stage2.min_nhit_diag = 1;
     sconfig.stage2.min_score = 2;
-    sconfig.nresult = 50;
 
     auto qdata_st = preprocess_query<uint16_t>(g_query_fj, 7, nullptr, sconfig);
     auto sr_st = search_volume<uint16_t>(
@@ -496,7 +492,6 @@ static void test_multivolume_k9() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 50;
 
     auto seq_results = search_sequential(db_base, k, queries, config);
     auto par_results = search_parallel(db_base, k, queries, config, 2);
@@ -544,7 +539,6 @@ static void test_mode2_batched_equals_single() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 0;
     config.mode = 2;
 
     auto qdata = preprocess_query<uint16_t>(g_query_fj, k, nullptr, config);
@@ -604,6 +598,113 @@ static void test_mode2_batched_equals_single() {
     for (auto& ksx : ksxs) ksx.close();
 }
 
+// Drive run_search<>() in mode 2 with the Stage 2 in-total (L) cap and check
+// the result against the tie-inclusive top-L reduction (by chainscore)
+// recomputed from the unlimited baseline.
+static void test_stage2_in_total_limit() {
+    std::fprintf(stderr, "-- test_stage2_in_total_limit\n");
+    const int k = 7;
+    const std::string db_base = "mvtest";  // index built by an earlier test
+
+    auto discovered = discover_volumes(g_test_dir + "/" + db_base, k);
+    CHECK_EQ(discovered.size(), 2u);
+
+    std::vector<KsxReader> ksxs(2);
+    std::vector<VolumeMeta> volumes_cod(2);
+    for (size_t vi = 0; vi < 2; vi++) {
+        const auto& vf = discovered[vi];
+        CHECK(ksxs[vi].open(vf.ksx_path));
+        KixReader probe;
+        CHECK(probe.open(vf.kix_path));
+        volumes_cod[vi].files         = vf;
+        volumes_cod[vi].volume_index  = static_cast<uint16_t>(vi);
+        volumes_cod[vi].num_sequences = probe.num_sequences();
+        probe.close();
+    }
+    uint32_t max_num_seqs = 0;
+    for (auto& v : volumes_cod) max_num_seqs = std::max(max_num_seqs, v.num_sequences);
+
+    Logger logger(Logger::kError);
+    auto run = [&](const SearchConfig& cfg) {
+        auto qdata = preprocess_query<uint16_t>(g_query_fj, k, nullptr, cfg);
+        std::vector<QueryBundle<uint16_t>> bundles(1);
+        bundles[0].query_id      = &g_query_fj;
+        bundles[0].qdata_primary = &qdata;
+        std::vector<uint8_t> skip(1, 0);
+        RunSearchInputs<uint16_t> in;
+        in.volumes_cod = volumes_cod;
+        in.ksx_per_volume.resize(2);
+        in.oid_filters.resize(2);
+        for (size_t vi = 0; vi < 2; vi++) in.ksx_per_volume[vi] = &ksxs[vi];
+        in.queries           = &bundles;
+        in.query_skip_reason = &skip;
+        in.config            = cfg;
+        in.both_mode         = false;
+        in.k                 = k;
+        in.nthread           = 4;
+        in.logger            = &logger;
+        in.max_num_seqs      = max_num_seqs;
+        in.width             = Stage1Width::T32;
+        return run_search<uint16_t>(in);
+    };
+
+    // Unlimited baseline: keep every chain (no per-subject or in-total cap).
+    SearchConfig base;
+    base.stage1.min_stage1_score = 1;
+    base.stage2.max_gap = 100;
+    base.stage2.min_nhit_diag = 1;
+    base.stage2.min_score = 2;
+    base.stage2.max_nhit_per_subject = 0;
+    base.mode = 2;
+    auto baseline = run(base);
+    CHECK(!baseline.empty());
+
+    using Key = std::tuple<size_t, uint16_t, bool, uint32_t, uint32_t, uint32_t>;
+    auto hkey = [](const OrchestratorHit& h) {
+        return Key(h.query_idx, h.volume_idx, h.cr.is_reverse, h.cr.seq_id,
+                   h.cr.s_start, h.cr.s_end);
+    };
+    auto keyset = [&](const std::vector<OrchestratorHit>& v) {
+        std::set<Key> s;
+        for (auto& h : v) s.insert(hkey(h));
+        return s;
+    };
+
+    // Tie-inclusive top-L per query, by chainscore, recomputed from baseline.
+    auto expected = [&](uint32_t L) {
+        std::map<size_t, std::vector<std::pair<uint32_t, Key>>> by_q;
+        for (auto& h : baseline)
+            by_q[h.query_idx].push_back({h.cr.chainscore, hkey(h)});
+        std::set<Key> keep;
+        for (auto& kv : by_q) {
+            auto& v = kv.second;
+            if (v.size() <= L) {
+                for (auto& p : v) keep.insert(p.second);
+                continue;
+            }
+            std::vector<uint32_t> sc;
+            sc.reserve(v.size());
+            for (auto& p : v) sc.push_back(p.first);
+            std::nth_element(sc.begin(), sc.begin() + (L - 1), sc.end(),
+                             std::greater<uint32_t>());
+            uint32_t thr = sc[L - 1];
+            for (auto& p : v)
+                if (p.first >= thr) keep.insert(p.second);
+        }
+        return keep;
+    };
+
+    for (uint32_t L : {1u, 2u, 3u}) {
+        SearchConfig cfg = base;
+        cfg.stage2.max_nhit_in_total = L;
+        auto limited = run(cfg);
+        CHECK(limited.size() <= baseline.size());
+        CHECK(keyset(limited) == expected(L));
+    }
+
+    for (auto& ksx : ksxs) ksx.close();
+}
+
 // Drive run_search<>() directly with a multi-volume index, in mode 1, with
 // two different nthread values over a single-query, two-volume index: a
 // large nthread bundles both volumes into one Stage 1 group, while
@@ -635,7 +736,6 @@ static void test_mode1_batched_equals_single() {
 
     SearchConfig config;
     config.stage1.min_stage1_score = 1;
-    config.nresult = 0;
     config.mode = 1;
 
     auto qdata = preprocess_query<uint16_t>(g_query_fj, k, nullptr, config);
@@ -797,7 +897,6 @@ static void test_stage1_nhit_limits() {
 
     SearchConfig base;
     base.stage1.min_stage1_score = 1;
-    base.nresult = 0;
     base.mode = 1;
     auto baseline = run(base);
     CHECK(!baseline.empty());
@@ -916,6 +1015,7 @@ int main() {
     test_mode1_batched_equals_single();
     test_mode2_batched_equals_single();
     test_stage1_nhit_limits();
+    test_stage2_in_total_limit();
     test_result_merge_ordering();
     test_parallel_counting_pass();
     test_multivolume_k9();

@@ -190,7 +190,6 @@ SearchConfig make_base_config() {
     c.stage2.max_gap = 100;
     c.stage2.min_nhit_diag = 1;
     c.stage2.min_score = 2;
-    c.nresult = 50;
     return c;
 }
 

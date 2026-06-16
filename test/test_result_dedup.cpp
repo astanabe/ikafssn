@@ -312,11 +312,92 @@ static void test_stage2_trivial_inputs() {
     CHECK_EQ(singleton.size(), 1u);
 }
 
+// Stage 3 per-subject top-N selector over OutputHit, scored by alnscore.
+static void test_select_parent_topn_output() {
+    std::fprintf(stderr, "-- test_select_parent_topn_output\n");
+
+    auto base = []() {
+        // One query, one subject, two strands; alnscores 50/40 on '+',
+        // 30/30 on '-' (a tie on the minus strand).
+        return std::vector<OutputHit>{
+            make_output_hit("q", "S", '+', 1, 100, 50),
+            make_output_hit("q", "S", '+', 200, 300, 40),
+            make_output_hit("q", "S", '-', 1, 100, 30),
+            make_output_hit("q", "S", '-', 200, 300, 30),
+        };
+    };
+
+    // n == 0 disables the selector.
+    {
+        auto hits = base();
+        select_parent_topn_output(hits, 0, 3);
+        CHECK_EQ(hits.size(), 4u);
+    }
+    // mode 1: top-1, strands merged -> a single best hit for the subject.
+    {
+        auto hits = base();
+        select_parent_topn_output(hits, 1, 1);
+        CHECK_EQ(hits.size(), 1u);
+        CHECK_EQ(hits[0].alnscore, 50);
+    }
+    // mode 2: top-1, strands separate -> one best per strand (50 and 30).
+    {
+        auto hits = base();
+        select_parent_topn_output(hits, 1, 2);
+        CHECK_EQ(hits.size(), 2u);
+    }
+    // mode 4: top-1 + ties, strands separate -> '+' keeps 1 (50),
+    // '-' keeps both tied 30s.
+    {
+        auto hits = base();
+        select_parent_topn_output(hits, 1, 4);
+        CHECK_EQ(hits.size(), 3u);
+    }
+}
+
+// Stage 3 in-total (L) cap over OutputHit, per qseqid, tie-inclusive.
+static void test_apply_in_total_output() {
+    std::fprintf(stderr, "-- test_apply_in_total_output\n");
+
+    auto base = []() {
+        // q1 has alnscores 50/40/30/30; q2 has a single hit.
+        return std::vector<OutputHit>{
+            make_output_hit("q1", "A", '+', 1, 100, 50),
+            make_output_hit("q1", "B", '+', 1, 100, 40),
+            make_output_hit("q1", "C", '+', 1, 100, 30),
+            make_output_hit("q1", "D", '+', 1, 100, 30),
+            make_output_hit("q2", "A", '+', 1, 100, 99),
+        };
+    };
+
+    // L == 0 disables the cap.
+    {
+        auto hits = base();
+        apply_in_total_output(hits, 0);
+        CHECK_EQ(hits.size(), 5u);
+    }
+    // L == 2 keeps q1's top-2 (50, 40) and q2's single hit.
+    {
+        auto hits = base();
+        apply_in_total_output(hits, 2);
+        CHECK_EQ(hits.size(), 3u);
+    }
+    // L == 3 is tie-inclusive: the 3rd-ranked score is 30, so both 30s
+    // survive -> q1 keeps 4, plus q2's 1.
+    {
+        auto hits = base();
+        apply_in_total_output(hits, 3);
+        CHECK_EQ(hits.size(), 5u);
+    }
+}
+
 int main() {
     test_stage2_collapses_adjacent_fragment_dups();
     test_select_parent_topn();
     test_stage3_collapses_post_align_dups();
     test_stage3_preserves_skip_rows();
+    test_select_parent_topn_output();
+    test_apply_in_total_output();
     test_stage2_trivial_inputs();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;

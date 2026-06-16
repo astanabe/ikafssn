@@ -22,6 +22,11 @@ struct Stage2Config {
     //   4 = top-N + score ties,      parent grouping splits strands
     // CLI / server resolve the sentinel 0 (auto) to 3 before reaching here.
     uint8_t max_nhit_per_subject_mode = 3;
+    // L: max chains per query across all volumes / strands (0 = unlimited).
+    // Applied after the per-subject selector, by chainscore, keeping the top-L
+    // plus every chain tying the L-th chainscore.  Bounds the chains that enter
+    // Stage 3 alignment.
+    uint32_t max_nhit_in_total = 0;
 };
 
 // Run Stage 2 chaining on hits for a single candidate sequence.

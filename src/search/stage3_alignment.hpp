@@ -23,6 +23,16 @@ struct Stage3Config {
     // estimated heap footprint stays under this budget.  A single
     // oversize group is processed as its own solo batch.
     uint64_t posting_budget = 0;
+    // Candidate-count limits applied by the caller after run_stage3() and the
+    // Stage 3 dedup, scored by alnscore.  They refine the result set but do not
+    // reduce the alignment work (every chain is aligned first); cap the chains
+    // entering Stage 3 via the Stage 2 limits to bound the alignment cost.
+    //   N: max hits per (qseqid, sseqid[, sstrand]) group (0 = unlimited).
+    //   X: selection mode 1..4 (tie / strand semantics, as in Stage 1/2).
+    //   L: max hits per query, tie-inclusive (0 = unlimited).
+    uint32_t max_nhit_per_subject = 1;
+    uint8_t  max_nhit_per_subject_mode = 3;
+    uint32_t max_nhit_in_total = 0;
 };
 
 // Run Stage 3 alignment on merged OutputHits.

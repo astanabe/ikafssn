@@ -15,27 +15,6 @@
 
 namespace ikafssn {
 
-// Sort and truncate a SearchResult per the search config.
-static void sort_and_truncate(SearchResult& result, const SearchConfig& config) {
-    if (config.nresult > 0) {
-        auto cmp = (config.sort_score == 1)
-            ? [](const ChainResult& a, const ChainResult& b) {
-                  return a.stage1_score > b.stage1_score;
-              }
-            : [](const ChainResult& a, const ChainResult& b) {
-                  return a.chainscore > b.chainscore;
-              };
-
-        if (result.hits.size() > config.nresult) {
-            std::nth_element(result.hits.begin(),
-                             result.hits.begin() + config.nresult,
-                             result.hits.end(), cmp);
-            result.hits.resize(config.nresult);
-        }
-        std::sort(result.hits.begin(), result.hits.end(), cmp);
-    }
-}
-
 // Drain a JobState by running Stage 2B for every candidate in the order
 // produced by Stage 1.
 static std::vector<ChainResult>
@@ -121,7 +100,6 @@ SearchResult search_volume(
                            std::make_move_iterator(rc_results.end()));
     }
 
-    sort_and_truncate(result, config);
     return result;
 }
 
@@ -198,7 +176,6 @@ SearchResult search_volume_both(
                            std::make_move_iterator(rc_results.end()));
     }
 
-    sort_and_truncate(result, config);
     return result;
 }
 

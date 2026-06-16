@@ -115,6 +115,26 @@ void apply_in_total_mode1(std::vector<OrchestratorHit>& hits, uint32_t L) {
     hits = std::move(out);
 }
 
+// In-total (L) limit for Stage 2: keep, per query (across all volumes and
+// strands), the top-L chains by chainscore plus every chain tying the L-th
+// chainscore.  Applied after the per-subject selector, before Stage 3 consumes
+// the chains, so it also bounds the alignment work in mode 3.
+void apply_in_total_stage2(std::vector<OrchestratorHit>& hits, uint32_t L) {
+    if (L == 0 || hits.empty()) return;
+    std::unordered_map<size_t, std::vector<uint32_t>> by_q;
+    for (const auto& h : hits) by_q[h.query_idx].push_back(h.cr.chainscore);
+    std::unordered_map<size_t, uint32_t> thr;
+    for (auto& kv : by_q) thr[kv.first] = lth_highest(kv.second, L);
+
+    std::vector<OrchestratorHit> out;
+    out.reserve(hits.size());
+    for (auto& h : hits) {
+        uint32_t t = thr[h.query_idx];
+        if (t == 0 || h.cr.chainscore >= t) out.push_back(std::move(h));
+    }
+    hits = std::move(out);
+}
+
 // In-total (L) limit for modes 2/3: keep, per query (across all volumes and
 // strands), the top-L Stage 1 candidates plus every candidate tying the L-th
 // coverscore, by pruning each ext_job's candidate list.  Derived per-ext_job
@@ -517,6 +537,17 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                            in.ksx_per_volume);
         if (logger && before != results.size()) {
             logger->info("Parent top-N: %zu chain(s) -> %zu after selection",
+                         before, results.size());
+        }
+    }
+
+    // Stage 2 in-total (L) cap: per query, keep the top-L chains by chainscore
+    // (tie-inclusive), bounding the chains that enter Stage 3 alignment.
+    {
+        const size_t before = results.size();
+        apply_in_total_stage2(results, in.config.stage2.max_nhit_in_total);
+        if (logger && before != results.size()) {
+            logger->info("Stage 2 in-total: %zu chain(s) -> %zu after cap",
                          before, results.size());
         }
     }

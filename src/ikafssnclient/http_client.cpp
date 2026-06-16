@@ -30,6 +30,7 @@ std::string build_request_json(const SearchRequest& req) {
     root["stage2_max_lookback"] = req.stage2_max_lookback;
     root["stage2_max_nhit_per_subject"] = req.stage2_max_nhit_per_subject;
     root["stage2_max_nhit_per_subject_mode"] = req.stage2_max_nhit_per_subject_mode;
+    root["stage2_max_nhit_in_total"] = req.stage2_max_nhit_in_total;
     root["stage1_max_nhit_per_subject"] = req.stage1_max_nhit_per_subject;
     root["stage1_max_nhit_per_subject_mode"] = req.stage1_max_nhit_per_subject_mode;
     if (req.stage1_min_score_frac_x10000 != 0) {
@@ -40,7 +41,6 @@ std::string build_request_json(const SearchRequest& req) {
     root["stage1_max_nhit_per_volume"] = req.stage1_max_nhit_per_volume;
     root["stage1_max_nhit_in_total"] = req.stage1_max_nhit_in_total;
     root["stage1_min_score"] = req.stage1_min_score;
-    root["nresult"] = req.nresult;
     root["mode"] = req.mode;
     root["accept_qdegen"] = req.accept_qdegen;
     root["strand"] = req.strand;
@@ -52,6 +52,9 @@ std::string build_request_json(const SearchRequest& req) {
         root["stage3_gapext"] = req.stage3_gapext;
     root["stage3_min_ppositive_x100"] = req.stage3_min_ppositive_x100;
     root["stage3_min_npositive"] = req.stage3_min_npositive;
+    root["stage3_max_nhit_per_subject"] = req.stage3_max_nhit_per_subject;
+    root["stage3_max_nhit_per_subject_mode"] = req.stage3_max_nhit_per_subject_mode;
+    root["stage3_max_nhit_in_total"] = req.stage3_max_nhit_in_total;
     root["context_abs"] = req.context_abs;
     root["context_frac_x10000"] = req.context_frac_x10000;
     root["max_degen_expand"] = req.max_degen_expand;

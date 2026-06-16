@@ -109,8 +109,8 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "stage2_max_lookback=" << req.stage2_max_lookback << "\n";
     oss << "stage2_max_nhit_per_subject=" << req.stage2_max_nhit_per_subject << "\n";
     oss << "stage2_max_nhit_per_subject_mode=" << static_cast<int>(req.stage2_max_nhit_per_subject_mode) << "\n";
+    oss << "stage2_max_nhit_in_total=" << req.stage2_max_nhit_in_total << "\n";
     oss << "stage2_min_nhit_diag=" << static_cast<int>(req.stage2_min_nhit_diag) << "\n";
-    oss << "nresult=" << req.nresult << "\n";
     oss << "accept_qdegen=" << static_cast<int>(req.accept_qdegen) << "\n";
     oss << "strand=" << static_cast<int>(req.strand) << "\n";
     oss << "stage3_traceback=" << static_cast<int>(req.stage3_traceback) << "\n";
@@ -118,6 +118,9 @@ std::string build_options_text(const SearchRequest& req, const DbStats& stats,
     oss << "stage3_gapext=" << req.stage3_gapext << "\n";
     oss << "stage3_min_ppositive_x100=" << req.stage3_min_ppositive_x100 << "\n";
     oss << "stage3_min_npositive=" << req.stage3_min_npositive << "\n";
+    oss << "stage3_max_nhit_per_subject=" << req.stage3_max_nhit_per_subject << "\n";
+    oss << "stage3_max_nhit_per_subject_mode=" << static_cast<int>(req.stage3_max_nhit_per_subject_mode) << "\n";
+    oss << "stage3_max_nhit_in_total=" << req.stage3_max_nhit_in_total << "\n";
     oss << "context_abs=" << req.context_abs << "\n";
     oss << "context_frac_x10000=" << req.context_frac_x10000 << "\n";
     oss << "max_degen_expand=" << req.max_degen_expand << "\n";

@@ -71,7 +71,6 @@ static void test_stage3_pipeline() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 10;
     config.mode = 2;
 
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
@@ -178,7 +177,6 @@ static void test_stage3_score_only() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 5;
 
     auto qdata = preprocess_query<uint16_t>(query, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -257,7 +255,6 @@ static void test_stage3_context() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 5;
 
     auto qdata = preprocess_query<uint16_t>(query, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -344,7 +341,6 @@ static void build_hits_for_batching(std::vector<OutputHit>& all_hits,
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 100;
     config.mode = 2;
 
     auto qdata = preprocess_query<uint16_t>(query_str, 7, nullptr, config);

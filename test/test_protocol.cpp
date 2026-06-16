@@ -133,7 +133,10 @@ static void test_search_request_serialize() {
     req.stage1_max_nhit_per_subject = 3;
     req.stage1_max_nhit_per_subject_mode = 4;
     req.stage1_min_score = 2;
-    req.nresult = 50;
+    req.stage2_max_nhit_in_total = 800;
+    req.stage3_max_nhit_per_subject = 2;
+    req.stage3_max_nhit_per_subject_mode = 3;
+    req.stage3_max_nhit_in_total = 900;
     req.max_degen_expand = 16;
     req.min_seq_length = 64;
     req.min_length_split = 5000;
@@ -159,7 +162,10 @@ static void test_search_request_serialize() {
     assert(req2.stage1_max_nhit_per_subject == 3);
     assert(req2.stage1_max_nhit_per_subject_mode == 4);
     assert(req2.stage1_min_score == 2);
-    assert(req2.nresult == 50);
+    assert(req2.stage2_max_nhit_in_total == 800);
+    assert(req2.stage3_max_nhit_per_subject == 2);
+    assert(req2.stage3_max_nhit_per_subject_mode == 3);
+    assert(req2.stage3_max_nhit_in_total == 900);
     assert(req2.max_degen_expand == 16);
     assert(req2.stage2_max_nhit_per_subject == 0);
     assert(req2.stage2_max_nhit_per_subject_mode == 0);

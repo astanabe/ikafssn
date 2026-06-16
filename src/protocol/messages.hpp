@@ -29,7 +29,6 @@ struct SearchRequest {
     uint16_t stage1_max_nhit_per_volume = 0; // M: 0 = server default
     uint16_t stage1_max_nhit_in_total = 0;   // L: 0 = server default
     uint16_t stage1_min_score = 0;   // 0 = server default
-    uint16_t nresult = 0;            // 0 = server default
     uint16_t stage1_min_score_frac_x10000 = 0; // P * 10000, 0 = use integer field
     SeqidlistMode seqidlist_mode = SeqidlistMode::kNone;
     uint8_t  mode = 0;              // 0 = server default, 1 = stage1 only, 2 = stage1+stage2
@@ -48,8 +47,12 @@ struct SearchRequest {
     uint16_t max_degen_expand = 0;                 // 0 = server default; query value + index-selection tie-break
     uint16_t stage2_max_nhit_per_subject = 0;      // 0 = server default
     uint8_t  stage2_max_nhit_per_subject_mode = 0; // 0 = server default (auto -> 3); 1..4
+    uint16_t stage2_max_nhit_in_total = 0;         // L2: 0 = server default
     uint16_t stage1_max_nhit_per_subject = 0;      // N: 0 = server default
     uint8_t  stage1_max_nhit_per_subject_mode = 0; // X: 0 = server default (auto -> 3); 1..4
+    uint16_t stage3_max_nhit_per_subject = 0;      // N3: 0 = server default
+    uint8_t  stage3_max_nhit_per_subject_mode = 0; // X3: 0 = server default (auto -> 3); 1..4
+    uint16_t stage3_max_nhit_in_total = 0;         // L3: 0 = server default
     uint8_t  t = 0;               // template length (0/16/18/21)
     uint8_t  template_type = 0;   // 0=server default, 1=coding, 2=optimal, 3=both
     uint8_t  score_matrix = 0;   // 0=server default, 1=degmatch, 2=dnafull, 3=nuc44

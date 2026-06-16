@@ -60,7 +60,6 @@ static void test_full_pipeline() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 50;
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
@@ -109,13 +108,16 @@ static void test_full_pipeline() {
     CHECK(fasta_str[0] == '>');
     CHECK(fasta_str.find("query=query1") != std::string::npos);
 
-    // Verify extracted sequence contains only valid bases
+    // Verify extracted sequence contains only valid IUPAC nucleotide codes.
+    // retrieve_local returns the DB bytes verbatim, so subjects carrying
+    // degenerate bases legitimately produce IUPAC ambiguity codes.
     std::istringstream fasta_iss(fasta_str);
     std::string line;
+    const std::string kIupac = "ACGTURYSWKMBDHVN";
     while (std::getline(fasta_iss, line)) {
         if (line.empty() || line[0] == '>') continue;
         for (char c : line) {
-            CHECK(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+            CHECK(kIupac.find(c) != std::string::npos);
         }
     }
 }

@@ -83,6 +83,8 @@ static void print_usage(const char* prog) {
         "  -stage2_max_nhit_per_subject_mode <1|2|3|4>  Per-subject selection mode (default: 3)\n"
         "                           1/2=top-N (no ties), 3/4=top-N + score ties;\n"
         "                           1/3=strands merged per parent, 2/4=strands separate\n"
+        "  -stage2_max_nhit_in_total <int>  Stage 2: max chains per query over all volumes,\n"
+        "                           by chainscore (default: 0=unlimited)\n"
         "  -stage2_min_nhit_diag <int>  Diagonal filter min hits (default: 1)\n"
         "  -stage1_max_nhit_per_subject <int>  Stage 1: max candidates per parent (default: 1, 0=unlimited)\n"
         "  -stage1_max_nhit_per_subject_mode <1|2|3|4>  Per-subject selection mode (default: 3)\n"
@@ -94,7 +96,6 @@ static void print_usage(const char* prog) {
         "                           setting this also sets -stage1_max_nhit_per_volume to the same\n"
         "                           value unless that is given explicitly (must be >= it) (default: 0=unlimited)\n"
         "  -stage1_min_score <num>  Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
-        "  -nresult <int>           Max results per query, 0=unlimited (default: 0)\n"
         "  -seqidlist <path>        Include only listed accessions\n"
         "  -negative_seqidlist <path>  Exclude listed accessions\n"
         "  -strand <-1|1|2>         Strand: 1=plus, -1=minus, 2=both (default: 2)\n"
@@ -105,6 +106,12 @@ static void print_usage(const char* prog) {
         "  -stage3_gapext <int>     Gap extension penalty for mode 3 (default: 1)\n"
         "  -stage3_min_ppositive <num> Min percent positive filter for mode 3 (default: 0)\n"
         "  -stage3_min_npositive <int> Min positive-scoring positions filter for mode 3 (default: 0)\n"
+        "  -stage3_max_nhit_per_subject <int>  Stage 3: max hits per subject, by alnscore (default: 1, 0=unlimited)\n"
+        "  -stage3_max_nhit_per_subject_mode <1|2|3|4>  Per-subject selection mode (default: 3)\n"
+        "                           1/2=top-N (no ties), 3/4=top-N + score ties;\n"
+        "                           1/3=strands merged per parent, 2/4=strands separate\n"
+        "  -stage3_max_nhit_in_total <int>  Stage 3: max hits per query over all volumes,\n"
+        "                           by alnscore (default: 0=unlimited)\n"
         "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
         "  -max_degen_expand <int>  Max degenerate expansion per k-mer (default: 16, max: 256, 0/1: disable)\n"
         "  -t <int>                 Template length for spaced seeds (0=contiguous, 13/15/18 for k=8-9, 16/18/21 for k=11-12; default: 0)\n"
@@ -260,9 +267,10 @@ int main(int argc, char* argv[]) {
         }
         config.stage2.max_nhit_per_subject_mode = static_cast<uint8_t>(m);
     }
+    config.stage2.max_nhit_in_total =
+        static_cast<uint32_t>(cli.get_int("-stage2_max_nhit_in_total", 0));
     config.stage2.min_nhit_diag = static_cast<uint32_t>(cli.get_int("-stage2_min_nhit_diag", 1));
     config.stage2.min_score = static_cast<uint32_t>(cli.get_int("-stage2_min_score", 0));
-    config.nresult = static_cast<uint32_t>(cli.get_int("-nresult", 0));
     config.mode = static_cast<uint8_t>(cli.get_int("-mode", 1));
     config.strand = static_cast<int8_t>(cli.get_int("-strand", 2));
     if (config.strand != -1 && config.strand != 1 && config.strand != 2) {
@@ -270,14 +278,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // sort_score is auto-determined by mode (not a CLI option)
-    switch (config.mode) {
-        case 1: config.sort_score = 1; break; // stage1_score
-        case 2: config.sort_score = 2; break; // chainscore
-        case 3: config.sort_score = 3; break; // alnscore
-        default:
-            std::fprintf(stderr, "Error: -mode must be 1, 2, or 3\n");
-            return 1;
+    if (config.mode < 1 || config.mode > 3) {
+        std::fprintf(stderr, "Error: -mode must be 1, 2, or 3\n");
+        return 1;
     }
 
     // Mode x stage consistency: an option that only takes effect in a later
@@ -287,12 +290,14 @@ int main(int argc, char* argv[]) {
         static const char* const kStage2Opts[] = {
             "-stage2_min_score", "-stage2_max_gap", "-stage2_max_lookback",
             "-stage2_min_nhit_diag", "-stage2_max_nhit_per_subject",
-            "-stage2_max_nhit_per_subject_mode",
+            "-stage2_max_nhit_per_subject_mode", "-stage2_max_nhit_in_total",
         };
         static const char* const kStage3Opts[] = {
             "-stage3_traceback", "-stage3_gapopen", "-stage3_gapext",
             "-stage3_min_ppositive", "-stage3_min_npositive",
             "-stage3_score_matrix", "-context_extend", "-db",
+            "-stage3_max_nhit_per_subject", "-stage3_max_nhit_per_subject_mode",
+            "-stage3_max_nhit_in_total",
         };
         if (config.mode == 1) {
             for (const char* opt : kStage2Opts) {
@@ -328,6 +333,19 @@ int main(int argc, char* argv[]) {
     stage3_config.traceback = (cli.get_int("-stage3_traceback", 0) != 0);
     stage3_config.min_ppositive = cli.get_double("-stage3_min_ppositive", 0.0);
     stage3_config.min_npositive = static_cast<uint32_t>(cli.get_int("-stage3_min_npositive", 0));
+    stage3_config.max_nhit_per_subject =
+        static_cast<uint32_t>(cli.get_int("-stage3_max_nhit_per_subject", 1));
+    if (cli.has("-stage3_max_nhit_per_subject_mode")) {
+        int m = cli.get_int("-stage3_max_nhit_per_subject_mode", 3);
+        if (m < 1 || m > 4) {
+            std::fprintf(stderr,
+                "Error: -stage3_max_nhit_per_subject_mode must be 1, 2, 3, or 4\n");
+            return 1;
+        }
+        stage3_config.max_nhit_per_subject_mode = static_cast<uint8_t>(m);
+    }
+    stage3_config.max_nhit_in_total =
+        static_cast<uint32_t>(cli.get_int("-stage3_max_nhit_in_total", 0));
     {
         std::string err;
         if (!parse_score_matrix(cli, stage3_config.score_matrix, err)) {
@@ -1022,36 +1040,13 @@ int main(int argc, char* argv[]) {
         (outfmt == OutputFormat::kTsv || outfmt == OutputFormat::kJson);
 
     if (use_parallel_mode1) {
-        // Sort by query_idx (always; JSON groups by query, TSV preserves
-        // input order).  When -nresult > 0 also sort within each query
-        // by stage1_score descending.
-        const bool need_score_sort = (config.nresult > 0);
+        // Sort by query_idx (JSON groups by query, TSV preserves input order).
+        // The per-query result cap is the Stage 1 in-total limit, already
+        // applied inside run_search.
         tbb::parallel_sort(orch_hits.begin(), orch_hits.end(),
-            [need_score_sort](const OrchestratorHit& a,
-                              const OrchestratorHit& b) {
-                if (a.query_idx != b.query_idx)
-                    return a.query_idx < b.query_idx;
-                if (need_score_sort)
-                    return a.cr.stage1_score > b.cr.stage1_score;
-                return false;
+            [](const OrchestratorHit& a, const OrchestratorHit& b) {
+                return a.query_idx < b.query_idx;
             });
-
-        if (need_score_sort) {
-            std::vector<OrchestratorHit> truncated;
-            truncated.reserve(std::min<size_t>(
-                static_cast<size_t>(config.nresult) * queries.size(),
-                orch_hits.size()));
-            size_t cur_q = SIZE_MAX;
-            uint32_t cnt = 0;
-            for (auto& h : orch_hits) {
-                if (h.query_idx != cur_q) { cur_q = h.query_idx; cnt = 0; }
-                if (cnt < config.nresult) {
-                    truncated.push_back(std::move(h));
-                    ++cnt;
-                }
-            }
-            orch_hits = std::move(truncated);
-        }
 
         // Open compressed output sink.
         std::string err;
@@ -1146,51 +1141,17 @@ int main(int argc, char* argv[]) {
             logger.info("Stage 3 dedup: %zu hit(s) -> %zu after dedup",
                         before, all_hits.size());
         }
+
+        // Stage 3 per-subject (N) and in-total (L) caps, by alnscore.  Applied
+        // after dedup so duplicates do not count against the limits.
+        select_parent_topn_output(all_hits,
+                                  stage3_config.max_nhit_per_subject,
+                                  stage3_config.max_nhit_per_subject_mode);
+        apply_in_total_output(all_hits, stage3_config.max_nhit_in_total);
     }
 
     // Re-attach skip markers after Stage 3.
     for (auto& m : skip_markers) all_hits.push_back(std::move(m));
-
-    // Sort and truncate final results across volumes (per query)
-    if (config.nresult > 0) {
-        // Sort by (query_id, sort_score desc)
-        if (config.sort_score == 1) {
-            tbb::parallel_sort(all_hits.begin(), all_hits.end(),
-                      [](const OutputHit& a, const OutputHit& b) {
-                          if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
-                          return a.coverscore > b.coverscore;
-                      });
-        } else if (config.sort_score == 3) {
-            tbb::parallel_sort(all_hits.begin(), all_hits.end(),
-                      [](const OutputHit& a, const OutputHit& b) {
-                          if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
-                          return a.alnscore > b.alnscore;
-                      });
-        } else {
-            tbb::parallel_sort(all_hits.begin(), all_hits.end(),
-                      [](const OutputHit& a, const OutputHit& b) {
-                          if (a.qseqid != b.qseqid) return a.qseqid < b.qseqid;
-                          return a.chainscore > b.chainscore;
-                      });
-        }
-
-        // Truncate per query
-        std::vector<OutputHit> truncated;
-        std::string cur_qid;
-        uint32_t cur_count = 0;
-        for (const auto& h : all_hits) {
-            if (h.qseqid != cur_qid) {
-                cur_qid = h.qseqid;
-                cur_count = 0;
-            }
-            if (cur_count < config.nresult) {
-                truncated.push_back(h);
-                cur_count++;
-            }
-        }
-        all_hits = std::move(truncated);
-    }
-    // nresult == 0: unlimited, skip sort and truncation
 
     // Write output
     if (!write_all_results(output_path, all_hits, outfmt,

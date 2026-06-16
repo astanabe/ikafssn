@@ -46,6 +46,7 @@ bool parse_search_request_json(const std::string& body,
     sreq.stage2_max_lookback = static_cast<uint16_t>(j.get("stage2_max_lookback", 0).asUInt());
     sreq.stage2_max_nhit_per_subject = static_cast<uint16_t>(j.get("stage2_max_nhit_per_subject", 0).asUInt());
     sreq.stage2_max_nhit_per_subject_mode = static_cast<uint8_t>(j.get("stage2_max_nhit_per_subject_mode", 0).asUInt());
+    sreq.stage2_max_nhit_in_total = static_cast<uint16_t>(j.get("stage2_max_nhit_in_total", 0).asUInt());
     sreq.stage1_max_nhit_per_subject = static_cast<uint16_t>(j.get("stage1_max_nhit_per_subject", 0).asUInt());
     sreq.stage1_max_nhit_per_subject_mode = static_cast<uint8_t>(j.get("stage1_max_nhit_per_subject_mode", 0).asUInt());
     if (j.isMember("stage1_min_score_frac") && j["stage1_min_score_frac"].isDouble()) {
@@ -58,7 +59,6 @@ bool parse_search_request_json(const std::string& body,
     sreq.stage1_max_nhit_per_volume = static_cast<uint16_t>(j.get("stage1_max_nhit_per_volume", 0).asUInt());
     sreq.stage1_max_nhit_in_total = static_cast<uint16_t>(j.get("stage1_max_nhit_in_total", 0).asUInt());
     sreq.stage1_min_score = static_cast<uint16_t>(j.get("stage1_min_score", 0).asUInt());
-    sreq.nresult = static_cast<uint16_t>(j.get("nresult", 0).asUInt());
     sreq.mode = static_cast<uint8_t>(j.get("mode", 0).asUInt());
     sreq.accept_qdegen = static_cast<uint8_t>(j.get("accept_qdegen", 1).asUInt());
     sreq.strand = static_cast<int8_t>(j.get("strand", 0).asInt());
@@ -71,11 +71,14 @@ bool parse_search_request_json(const std::string& body,
             "stage2_min_score", "has_stage2_min_score", "stage2_max_gap",
             "stage2_max_lookback", "stage2_min_nhit_diag",
             "stage2_max_nhit_per_subject", "stage2_max_nhit_per_subject_mode",
+            "stage2_max_nhit_in_total",
         };
         static const char* const kStage3Fields[] = {
             "stage3_traceback", "stage3_gapopen", "stage3_gapext",
             "stage3_min_ppositive_x100", "stage3_min_npositive",
             "stage3_score_matrix", "context_abs", "context_frac_x10000",
+            "stage3_max_nhit_per_subject", "stage3_max_nhit_per_subject_mode",
+            "stage3_max_nhit_in_total",
         };
         if (sreq.mode == 1) {
             for (const char* f : kStage2Fields) {
@@ -107,6 +110,9 @@ bool parse_search_request_json(const std::string& body,
         ? static_cast<int16_t>(j["stage3_gapext"].asInt()) : INT16_MIN;
     sreq.stage3_min_ppositive_x100 = static_cast<uint16_t>(j.get("stage3_min_ppositive_x100", 0).asUInt());
     sreq.stage3_min_npositive = j.get("stage3_min_npositive", 0).asUInt();
+    sreq.stage3_max_nhit_per_subject = static_cast<uint16_t>(j.get("stage3_max_nhit_per_subject", 0).asUInt());
+    sreq.stage3_max_nhit_per_subject_mode = static_cast<uint8_t>(j.get("stage3_max_nhit_per_subject_mode", 0).asUInt());
+    sreq.stage3_max_nhit_in_total = static_cast<uint16_t>(j.get("stage3_max_nhit_in_total", 0).asUInt());
     sreq.context_abs = j.get("context_abs", 0).asUInt();
     sreq.context_frac_x10000 = static_cast<uint16_t>(j.get("context_frac_x10000", 0).asUInt());
     sreq.max_degen_expand = static_cast<uint16_t>(j.get("max_degen_expand", 0).asUInt());

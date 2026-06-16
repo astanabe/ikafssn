@@ -17,7 +17,6 @@
 #include "search/width_selection.hpp"
 
 #include <algorithm>
-#include <functional>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -117,6 +116,8 @@ SearchResponse process_search_request(
         if (m == 0) m = 3;
         config.stage2.max_nhit_per_subject_mode = m;
     }
+    if (req.stage2_max_nhit_in_total != 0)
+        config.stage2.max_nhit_in_total = req.stage2_max_nhit_in_total;
     if (req.stage2_min_nhit_diag != 0)
         config.stage2.min_nhit_diag = req.stage2_min_nhit_diag;
     if (req.stage1_max_nhit_per_volume != 0)
@@ -139,8 +140,6 @@ SearchResponse process_search_request(
     } else if (req.stage1_min_score != 0) {
         config.stage1.min_stage1_score = req.stage1_min_score;
     }
-    if (req.nresult != 0)
-        config.nresult = req.nresult;
     if (req.mode != 0)
         config.mode = req.mode;
     if (req.strand != 0)
@@ -167,14 +166,6 @@ SearchResponse process_search_request(
     if (config.mode > db.max_mode) {
         resp.status = 4; // mode exceeds max_mode for this DB
         return resp;
-    }
-
-    // sort_score is auto-determined by mode
-    switch (config.mode) {
-        case 1: config.sort_score = 1; break;
-        case 2: config.sort_score = 2; break;
-        case 3: config.sort_score = 3; break;
-        default: config.sort_score = 2; break;
     }
 
     // Mode 1: consistency checks
@@ -206,6 +197,18 @@ SearchResponse process_search_request(
         stage3_config.min_ppositive = static_cast<double>(req.stage3_min_ppositive_x100) / 100.0;
     if (req.stage3_min_npositive != 0)
         stage3_config.min_npositive = req.stage3_min_npositive;
+    if (req.stage3_max_nhit_per_subject != 0)
+        stage3_config.max_nhit_per_subject = req.stage3_max_nhit_per_subject;
+    {
+        // Resolve the Stage 3 per-subject selection mode: request value, else
+        // the server default, else the auto sentinel (0 -> 3).
+        uint8_t m = req.stage3_max_nhit_per_subject_mode;
+        if (m == 0) m = stage3_config.max_nhit_per_subject_mode;  // server default
+        if (m == 0) m = 3;
+        stage3_config.max_nhit_per_subject_mode = m;
+    }
+    if (req.stage3_max_nhit_in_total != 0)
+        stage3_config.max_nhit_in_total = req.stage3_max_nhit_in_total;
     if (req.score_matrix != 0) {
         switch (req.score_matrix) {
             case 1: stage3_config.score_matrix = "degmatch"; break;
@@ -609,6 +612,13 @@ SearchResponse process_search_request(
         // for fragmented indexes.
         dedup_stage3_output_hits(output_hits);
 
+        // Stage 3 per-subject (N) and in-total (L) caps, by alnscore.  Applied
+        // after dedup so duplicates do not count against the limits.
+        select_parent_topn_output(output_hits,
+                                  stage3_config.max_nhit_per_subject,
+                                  stage3_config.max_nhit_per_subject_mode);
+        apply_in_total_output(output_hits, stage3_config.max_nhit_in_total);
+
         // Write back to ResponseHit
         for (auto& qr : resp.results) qr.hits.clear();
         std::unordered_map<std::string, size_t> qid_to_ridx;
@@ -644,38 +654,6 @@ SearchResponse process_search_request(
 
     // Release permits
     server.release_sequences(acquired);
-
-    // Post-process: sort/truncate per accepted query (parallel across queries)
-    if (config.nresult > 0) {
-        std::function<bool(const ResponseHit&, const ResponseHit&)> cmp;
-        if (config.sort_score == 1) {
-            cmp = [](const ResponseHit& a, const ResponseHit& b) {
-                return a.coverscore > b.coverscore;
-            };
-        } else if (config.sort_score == 3) {
-            cmp = [](const ResponseHit& a, const ResponseHit& b) {
-                return a.alnscore > b.alnscore;
-            };
-        } else {
-            cmp = [](const ResponseHit& a, const ResponseHit& b) {
-                return a.chainscore > b.chainscore;
-            };
-        }
-
-        tbb::parallel_for(size_t(0), resp.results.size(), [&](size_t ri) {
-            auto& qr = resp.results[ri];
-            if (qr.skip_reason != 0) return;
-            if (qr.hits.size() <= config.nresult) {
-                std::sort(qr.hits.begin(), qr.hits.end(), cmp);
-                return;
-            }
-            std::nth_element(qr.hits.begin(),
-                             qr.hits.begin() + config.nresult,
-                             qr.hits.end(), cmp);
-            qr.hits.resize(config.nresult);
-            std::sort(qr.hits.begin(), qr.hits.end(), cmp);
-        });
-    }
 
     return resp;
 }

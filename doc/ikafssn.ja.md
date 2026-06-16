@@ -255,6 +255,8 @@ ikafssnsearch [options]
   -stage2_max_nhit_per_subject_mode <1|2|3|4>  サブジェクト単位の選択モード (デフォルト: 3)
                            1/2=上位N位 (タイ非包含)、3/4=上位N位+スコアタイ包含;
                            1/3=parent ごとに strand 統合、2/4=strand 分離
+  -stage2_max_nhit_in_total <int>  全ボリュームを通したクエリあたりの最大チェイン数、
+                          chainscore 基準 (デフォルト: 0=無制限)
   -stage2_min_nhit_diag <int>  対角線フィルタ最小ヒット数 (デフォルト: 1)
   -context_extend <value>        モード 3 のコンテクスト拡張 (デフォルト: 2.0)
                           整数: 拡張する塩基数; 小数: クエリ長に対する倍率
@@ -263,9 +265,14 @@ ikafssnsearch [options]
   -stage3_gapext <int>    モード 3 のギャップ伸長ペナルティ (デフォルト: 1)
   -stage3_min_ppositive <num>  モード 3 の最小正スコア率フィルタ (デフォルト: 0)
   -stage3_min_npositive <int>  モード 3 の最小正スコア塩基数フィルタ (デフォルト: 0)
+  -stage3_max_nhit_per_subject <int>  サブジェクトあたりの最大ヒット数、alnscore 基準 (デフォルト: 1、0=無制限)
+  -stage3_max_nhit_per_subject_mode <1|2|3|4>  サブジェクト単位の選択モード (デフォルト: 3)
+                           1/2=上位N位 (タイ非包含)、3/4=上位N位+スコアタイ包含;
+                           1/3=parent ごとに strand 統合、2/4=strand 分離
+  -stage3_max_nhit_in_total <int>  全ボリュームを通したクエリあたりの最大ヒット数、
+                          alnscore 基準 (デフォルト: 0=無制限)
   -stage3_score_matrix <str>  モード 3 のスコア行列 (デフォルト: degmatch)
                           利用可能: degmatch、dnafull、nuc44
-  -nresult <int>      最終出力件数、0=無制限 (デフォルト: 0)
   -seqidlist <path>       検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>       検索する鎖 (デフォルト: 2)
@@ -331,7 +338,7 @@ both ペアの場合、coding と optimal は `template_type` 以外の全識別
 
 `-seqidlist` と `-negative_seqidlist` は排他的 (同時指定不可) です。ファイル形式はテキスト (1 行 1 アクセッション) と `blastdb_aliastool -seqid_file_in` で生成されるバイナリ形式の両方を受け付け、先頭のマジックバイトで自動判別します。
 
-後段ステージでのみ有効なオプションを、それより前の `-mode` とともに指定した場合は、黙って無視せずエラー (非ゼロ終了) になります。Stage 2 オプション (`-stage2_min_score`、`-stage2_max_gap`、`-stage2_max_lookback`、`-stage2_min_nhit_diag`、`-stage2_max_nhit_per_subject`、`-stage2_max_nhit_per_subject_mode`) は `-mode 2` 以上を、Stage 3 オプション (`-stage3_traceback`、`-stage3_gapopen`、`-stage3_gapext`、`-stage3_min_ppositive`、`-stage3_min_npositive`、`-stage3_score_matrix`、`-context_extend`、`-db`) は `-mode 3` を必要とします。同じ規則は `ikafssnclient` (CLI) と `ikafssnhttpd` (JSON リクエストボディ) でも適用されます。
+後段ステージでのみ有効なオプションを、それより前の `-mode` とともに指定した場合は、黙って無視せずエラー (非ゼロ終了) になります。Stage 2 オプション (`-stage2_min_score`、`-stage2_max_gap`、`-stage2_max_lookback`、`-stage2_min_nhit_diag`、`-stage2_max_nhit_per_subject`、`-stage2_max_nhit_per_subject_mode`、`-stage2_max_nhit_in_total`) は `-mode 2` 以上を、Stage 3 オプション (`-stage3_traceback`、`-stage3_gapopen`、`-stage3_gapext`、`-stage3_min_ppositive`、`-stage3_min_npositive`、`-stage3_score_matrix`、`-stage3_max_nhit_per_subject`、`-stage3_max_nhit_per_subject_mode`、`-stage3_max_nhit_in_total`、`-context_extend`、`-db`) は `-mode 3` を必要とします。同じ規則は `ikafssnclient` (CLI) と `ikafssnhttpd` (JSON リクエストボディ) でも適用されます。
 
 `ikafssnindex` も矛盾するオプションの組み合わせをエラーにします: `-template_type` は `-t > 0` が必要、`-freq_threshold_part` は `-mode 2` または `3` が必要、`-nthread_highfreq_filter` は `-max_freq_build` の有効化が必要です。`ikafssnretrieve` はローカル `-db` 実行時に efetch 専用オプション (`-api_key`、`-batch_size`、`-max_nretry`、`-timeout`、`-range_threshold`) を拒否します。`ikafssnclient` と `ikafssninfo` では、HTTP 認証オプション (`-user`、`-http_user`、`-http_password`、`-netrc_file`) は `-http` が必要で、3 つの方式は相互排他であり、`-http_password` は `-http_user` を必要とします。
 
@@ -358,7 +365,7 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -negative_seqidlist exclude.tx
 ikafssnsearch -ix ./index/mydb -query query.fasta -stage1_min_score 0.5
 
 # モード 3: トレースバック付きペアワイズアライメント
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -nresult 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_max_nhit_in_total 5
 
 # モード 3: SAM 出力
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -output_format sam -o result.sam
@@ -370,10 +377,10 @@ ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -o
 ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -stage3_traceback 1 -stage3_min_ppositive 90
 
 # モード 3: コンテクスト拡張 (前後各50塩基)
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context_extend 50 -nresult 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context_extend 50 -stage3_max_nhit_in_total 5
 
 # モード 3: コンテクスト拡張 (前後各クエリ長の0.1倍)
-ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context_extend 0.1 -nresult 5
+ikafssnsearch -ix ./index/mydb -query query.fasta -mode 3 -context_extend 0.1 -stage3_max_nhit_in_total 5
 
 # パイプラインで ikafssnretrieve に接続
 ikafssnsearch -ix ./index/mydb -query query.fasta | ikafssnretrieve -db nt > matches.fasta
@@ -429,7 +436,7 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 300 \
 
 # モード 3 でアライメントまで実行
 ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
-    -mode 3 -stage3_traceback 1 -nresult 10
+    -mode 3 -stage3_traceback 1 -stage3_max_nhit_in_total 10
 ```
 
 ### ikafssnretrieve
@@ -548,6 +555,7 @@ ikafssnserver [options]
   -stage2_max_nhit_per_subject_mode <1|2|3|4>  デフォルトのサブジェクト単位選択モード (デフォルト: 3)
                            1/2=上位N位 (タイ非包含)、3/4=上位N位+スコアタイ包含;
                            1/3=parent ごとに strand 統合、2/4=strand 分離
+  -stage2_max_nhit_in_total <int>  デフォルトの全ボリューム通算 Stage 2 最大チェイン数 (デフォルト: 0)
   -stage2_min_nhit_diag <int> デフォルト対角線フィルタ最小ヒット数 (デフォルト: 1)
   -context_extend <value>        デフォルトコンテクスト拡張 (デフォルト: 2.0)
                           整数: 拡張する塩基数; 小数: クエリ長に対する倍率
@@ -556,9 +564,11 @@ ikafssnserver [options]
   -stage3_gapext <int>    デフォルトギャップ伸長ペナルティ (デフォルト: 1)
   -stage3_min_ppositive <num>  デフォルト最小正スコア率 (デフォルト: 0)
   -stage3_min_npositive <int>  デフォルト最小正スコア塩基数 (デフォルト: 0)
+  -stage3_max_nhit_per_subject <int>  デフォルトの Stage 3 サブジェクトあたり最大ヒット数 (デフォルト: 1、0=無制限)
+  -stage3_max_nhit_per_subject_mode <1|2|3|4>  デフォルトのサブジェクト単位選択モード (デフォルト: 3)
+  -stage3_max_nhit_in_total <int>  デフォルトの全ボリューム通算 Stage 3 最大ヒット数 (デフォルト: 0)
   -stage3_score_matrix <str>  デフォルトスコア行列 (デフォルト: degmatch)
                           利用可能: degmatch、dnafull、nuc44
-  -nresult <int>      デフォルト最終出力件数 (デフォルト: 0)
   -accept_qdegen <0|1>    デフォルト縮重塩基クエリ許可 (デフォルト: 1)
   -memory_limit <size>    検索メモリ予算 (デフォルト: 物理メモリの半分)
                           .khx/.ksx メタデータを常駐させ、残余で Stage 3 の
@@ -749,6 +759,7 @@ ikafssnclient [options]
   -stage2_max_nhit_per_subject_mode <1|2|3|4>  サブジェクト単位の選択モード (デフォルト: 3)
                            1/2=上位N位 (タイ非包含)、3/4=上位N位+スコアタイ包含;
                            1/3=parent ごとに strand 統合、2/4=strand 分離
+  -stage2_max_nhit_in_total <int>  全ボリュームを通したクエリあたりの最大チェイン数 (-mode 2 以上が必要)
   -stage2_min_nhit_diag <int> 対角線フィルタ最小ヒット数 (デフォルト: サーバ側デフォルト)
   -context_extend <value>         コンテクスト拡張 (デフォルト: 2.0)
                            整数: 拡張する塩基数; 小数: クエリ長に対する倍率
@@ -757,9 +768,11 @@ ikafssnclient [options]
   -stage3_gapext <int>     ギャップ伸長ペナルティ (デフォルト: サーバ側デフォルト)
   -stage3_min_ppositive <num> 最小正スコア率フィルタ (デフォルト: サーバ側デフォルト)
   -stage3_min_npositive <int> 最小正スコア塩基数フィルタ (デフォルト: サーバ側デフォルト)
+  -stage3_max_nhit_per_subject <int>  サブジェクトあたりの最大ヒット数 (-mode 3 が必要)
+  -stage3_max_nhit_per_subject_mode <1|2|3|4>  サブジェクト単位の選択モード (デフォルト: 3; -mode 3 が必要)
+  -stage3_max_nhit_in_total <int>  全ボリュームを通したクエリあたりの最大ヒット数 (-mode 3 が必要)
   -stage3_score_matrix <str> スコア行列 (デフォルト: サーバ側デフォルト)
                            利用可能: degmatch、dnafull、nuc44
-  -nresult <int>       最終出力件数 (デフォルト: サーバ側デフォルト)
   -seqidlist <path>        検索対象を指定アクセッションに限定
   -negative_seqidlist <path>  指定アクセッションを検索対象から除外
   -strand <-1|1|2>         検索する鎖: 1=プラス、-1=マイナス、2=両鎖 (デフォルト: サーバ側デフォルト)
@@ -843,7 +856,7 @@ ikafssnclient -tcp 10.0.1.5:9100 -ix nt -primer primers.fasta -insert_length 300
 
 # プライマーモードでモード 3 アライメント
 ikafssnclient -socket /var/run/ikafssn.sock -ix nt -primer primers.fasta -insert_length 500 \
-    -mode 3 -stage3_traceback 1 -nresult 10
+    -mode 3 -stage3_traceback 1 -stage3_max_nhit_in_total 10
 ```
 
 ### ikafssninfo
@@ -938,13 +951,13 @@ ikafssninfo -http http://search.example.com:8080 -user admin:secret
 
 ikafssn は 3 段階の検索パイプラインを使用します。
 
-デフォルトパラメータはスループットを優先しています。`nresult=0` により最終ソートを省略し、`stage1_min_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。Stage 1 はデフォルトで parent ごとに最大 1 候補のみ残します (`stage1_max_nhit_per_subject=1`)。per-volume (`stage1_max_nhit_per_volume`) と in-total (`stage1_max_nhit_in_total`) の上限はデフォルトで無制限です。ランク付けされた出力が必要な場合は `-nresult` に正の値を設定してください。ソートが有効になりますが、結果件数が多い場合は速度が低下する可能性があります。
+デフォルトパラメータはスループットを優先しています。`stage1_min_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。各ステージは同じ候補数制限のファミリ — per-subject (N)、per-volume (M、Stage 1 のみ)、in-total (L) — を備えており、選択した `-mode` の終端ステージの L で最終出力件数を制限できます (mode 1 → Stage 1 L、mode 2 → Stage 2 L、mode 3 → Stage 3 L)。Stage 1 はデフォルトで parent ごとに最大 1 候補のみ残します (`stage1_max_nhit_per_subject=1`)。その per-volume (`stage1_max_nhit_per_volume`) と in-total (`stage1_max_nhit_in_total`) の上限はデフォルトで無制限です。Stage 1・Stage 2 の制限は高コストな Stage 3 アラインメントの前に候補を絞り込むため、Stage 3 コストを抑えるレバーになります。一方 Stage 3 の制限はアラインメント後 (alnscore 基準) に適用されるため、アラインメント処理量自体は減らさず出力を絞り込みます。
 
 1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとに **coverscore** (配列にマッチしたクエリ k-mer の種類数) を集計します。`stage1_min_score` 以上のスコアを持つ配列を候補として選出します。続いて候補集合を N → M → L の順 (いずれも coverscore 基準・タイ包含) で絞り込みます: `stage1_max_nhit_per_subject` (N) は各 (query, volume, strand) 内で parent ごとに上位 N 件を残し、`stage1_max_nhit_per_volume` (M) は (query, volume, strand) ごとに上位 M 件を残し、`stage1_max_nhit_in_total` (L) は全 volume・strand を通したクエリごとに上位 L 件を残します。
 
-2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。`-stage2_max_nhit_per_subject` が 1 より大きい値 (または 0 で無制限) の場合、貪欲な最良チェイン除去により同一サブジェクトから重複のない複数のチェインを抽出します: 最良チェインを見つけてそのヒットを除去し、残りのヒットで DP を再実行する処理を、制限に達するか `min_score` を満たすチェインがなくなるまで繰り返します。`-stage2_max_nhit_per_subject` (N) は 2 段階で適用されます — 抽出時に (query, fragment, strand) 単位で 1 回、overlap 同一領域の重複除外後に (query, parent[, strand]) 単位でもう 1 回 — いずれも chainscore を基準とします。`-stage2_max_nhit_per_subject_mode` (デフォルト: 3) は両段階を制御します: モード 1/2 はタイを扱わず上位 N 件を保持、モード 3/4 は上位 N 件に加え N 位の chainscore に並ぶチェインをすべて保持します; モード 1/3 は 2 本の strand を parent ごとに 1 つのグループへ統合し、モード 2/4 は strand を分離します。センチネル値 0 はモード 3 に解決され、明示値は 1〜4 のみ有効です。本オプションは `-mode 2` 以上が必要です。
+2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。`-stage2_max_nhit_per_subject` が 1 より大きい値 (または 0 で無制限) の場合、貪欲な最良チェイン除去により同一サブジェクトから重複のない複数のチェインを抽出します: 最良チェインを見つけてそのヒットを除去し、残りのヒットで DP を再実行する処理を、制限に達するか `min_score` を満たすチェインがなくなるまで繰り返します。`-stage2_max_nhit_per_subject` (N) は 2 段階で適用されます — 抽出時に (query, fragment, strand) 単位で 1 回、overlap 同一領域の重複除外後に (query, parent[, strand]) 単位でもう 1 回 — いずれも chainscore を基準とします。`-stage2_max_nhit_per_subject_mode` (デフォルト: 3) は両段階を制御します: モード 1/2 はタイを扱わず上位 N 件を保持、モード 3/4 は上位 N 件に加え N 位の chainscore に並ぶチェインをすべて保持します; モード 1/3 は 2 本の strand を parent ごとに 1 つのグループへ統合し、モード 2/4 は strand を分離します。センチネル値 0 はモード 3 に解決され、明示値は 1〜4 のみ有効です。本オプションは `-mode 2` 以上が必要です。per-subject 選択の後、`-stage2_max_nhit_in_total` (L) が全 volume・strand を通したクエリごとに chainscore 基準で上位 L 件 (タイ包含、0=無制限) に絞り込み、Stage 3 へ進むチェイン数を制限します。
 
-3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context_extend` による拡張オプション付き)、Parasail ライブラリを使って半大域ペアワイズアライメントを実行します (`-stage3_score_matrix` で指定されたスコア行列を使用、デフォルト: DEGMATCH)。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、正スコア率、正スコア塩基数、負スコア数、ギャップ付きアライメント配列も計算されます。`-stage3_min_ppositive` と `-stage3_min_npositive` によるフィルタリングが可能です (トレースバックモードのみ)。サブジェクト部分配列は `-nthread` 全数によるヒット並列でフェッチされ、各 TBB タスク内では (volume, OID) 順に走査して mmap の連続アクセス局所性を保持します。
+3. **Stage 3 (ペアワイズアライメント):** Stage 2 の各ヒットに対して、BLAST DB からサブジェクト部分配列を取得し (`-context_extend` による拡張オプション付き)、Parasail ライブラリを使って半大域ペアワイズアライメントを実行します (`-stage3_score_matrix` で指定されたスコア行列を使用、デフォルト: DEGMATCH)。全ヒットに対してアライメントスコア (**alnscore**) が計算されます。`-stage3_traceback 1` を指定すると、CIGAR 文字列、正スコア率、正スコア塩基数、負スコア数、ギャップ付きアライメント配列も計算されます。`-stage3_min_ppositive` と `-stage3_min_npositive` によるフィルタリングが可能です (トレースバックモードのみ)。アライメントと重複除外の後、`-stage3_max_nhit_per_subject` (N、デフォルト 1) が (qseqid, sseqid[, sstrand]) グループごとに alnscore 基準で上位 N 件を残し (`-stage3_max_nhit_per_subject_mode` がタイ/strand の扱いを Stage 1/2 と同様に制御)、続いて `-stage3_max_nhit_in_total` (L) が全 volume を通したクエリごとに alnscore 基準で上位 L 件 (タイ包含、0=無制限) に絞り込みます。これらの制限はアライメント後に適用されるため、アライメント処理量は減らさず結果集合を絞り込みます。サブジェクト部分配列は `-nthread` 全数によるヒット並列でフェッチされ、各 TBB タスク内では (volume, OID) 順に走査して mmap の連続アクセス局所性を保持します。
 
 **適応的 `-stage2_min_score` (デフォルト):** `-stage2_min_score 0` (デフォルト) の場合、最小チェインスコアはクエリごとに適応的に設定され、解決済みの Stage 1 閾値が使用されます。割合指定の `-stage1_min_score` (例: `0.5`) との組み合わせでは、各クエリの k-mer 構成に基づくクエリごとの適応的閾値が設定されます。絶対値指定の `-stage1_min_score` の場合は、その設定値がそのまま使用されます。固定閾値を使用する場合は `-stage2_min_score` に正の整数を指定してください。
 

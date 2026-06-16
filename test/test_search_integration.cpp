@@ -72,7 +72,6 @@ static void test_build_and_search() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 50;
 
     // Query: 100bp from FJ876973.1 (extracted at runtime)
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
@@ -122,7 +121,6 @@ static void test_revcomp_search() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 50;
 
     // Compute the reverse complement of the query
     std::string rc_query;
@@ -186,7 +184,6 @@ static void test_seqidlist_filter() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 1;
-    config.nresult = 50;
 
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -231,7 +228,6 @@ static void test_negative_seqidlist() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 1;
-    config.nresult = 50;
 
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -353,7 +349,6 @@ static void test_search_k9() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 2;
-    config.nresult = 50;
 
     auto qdata = preprocess_query<uint32_t>(g_query_seq, 9, nullptr, config);
     auto result = search_volume<uint32_t>(
@@ -399,9 +394,7 @@ static void test_search_mode1() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 1;
-    config.nresult = 50;
     config.mode = 1;         // stage1 only
-    config.sort_score = 1;   // sort by stage1 score
 
     auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
     auto result = search_volume<uint16_t>(
@@ -426,61 +419,6 @@ static void test_search_mode1() {
     CHECK(found_fj);
 
     kix.close();
-    ksx.close();
-}
-
-static void test_search_nresult_zero() {
-    Stage1Buffer buf;
-    std::fprintf(stderr, "-- test_search_nresult_zero\n");
-
-    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
-                                         /*t=*/0, /*template_type=*/0,
-                                         /*min_seq_length=*/64,
-                                         /*min_length_split=*/0,
-                                         /*overlap_length=*/0,
-                                         /*max_freq_build=*/1,
-                                         /*max_degen_expand=*/0);
-
-    KixReader kix;
-    KpxReader kpx;
-    KsxReader ksx;
-    CHECK(kix.open(prefix + ".kix"));
-    CHECK(kpx.open(prefix + ".kpx"));
-    CHECK(ksx.open(prefix + ".ksx"));
-
-    OidFilter filter;
-
-    // nresult=50 (limited)
-    SearchConfig config_limited;
-    config_limited.stage1.min_stage1_score = 1;
-    config_limited.stage2.max_gap = 100;
-    config_limited.stage2.min_nhit_diag = 1;
-    config_limited.stage2.min_score = 1;
-    config_limited.nresult = 2;
-
-    auto qdata_lim = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config_limited);
-    auto result_limited = search_volume<uint16_t>(
-        "q_lim", qdata_lim, 7, kix, kpx, ksx, filter, config_limited, buf);
-
-    // nresult=0 (unlimited)
-    SearchConfig config_unlimited;
-    config_unlimited.stage1.min_stage1_score = 1;
-    config_unlimited.stage2.max_gap = 100;
-    config_unlimited.stage2.min_nhit_diag = 1;
-    config_unlimited.stage2.min_score = 1;
-    config_unlimited.nresult = 0;
-
-    auto qdata_unlim = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config_unlimited);
-    auto result_unlimited = search_volume<uint16_t>(
-        "q_unlim", qdata_unlim, 7, kix, kpx, ksx, filter, config_unlimited, buf);
-
-    // Limited should have at most 2
-    CHECK(result_limited.hits.size() <= 2);
-    // Unlimited should have >= limited
-    CHECK(result_unlimited.hits.size() >= result_limited.hits.size());
-
-    kix.close();
-    kpx.close();
     ksx.close();
 }
 
@@ -534,7 +472,6 @@ static void test_search_both_template() {
     config.stage2.max_gap = 100;
     config.stage2.min_nhit_diag = 1;
     config.stage2.min_score = 1;
-    config.nresult = 50;
     config.t = 15;
 
     const auto masks_cod = get_seed_masks(9, 15, TemplateType::kCoding);
@@ -628,10 +565,8 @@ static void test_search_mode1_both_template() {
     OidFilter filter;
     SearchConfig config;
     config.stage1.min_stage1_score = 1;
-    config.nresult = 50;
     config.t = t;
     config.mode = 1;
-    config.sort_score = 1;
 
     const auto masks_cod = get_seed_masks(k, t, TemplateType::kCoding);
     const auto masks_opt = get_seed_masks(k, t, TemplateType::kOptimal);
@@ -793,7 +728,6 @@ int main() {
     test_negative_seqidlist();
     test_search_k9();
     test_search_mode1();
-    test_search_nresult_zero();
     test_search_both_template();
     test_search_mode1_both_template();
     test_search_stage1_both_template();

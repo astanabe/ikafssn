@@ -65,6 +65,7 @@ static void print_usage(const char* prog) {
         "  -stage2_max_lookback <int>  Default chaining DP lookback window (default: 64, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject <int>  Default max chains per subject (default: 1, 0=unlimited)\n"
         "  -stage2_max_nhit_per_subject_mode <1|2|3|4>  Default per-subject selection mode (default: 3)\n"
+        "  -stage2_max_nhit_in_total <int>  Default Stage 2 max chains per query over all volumes (default: 0)\n"
         "                           1/2=top-N (no ties), 3/4=top-N + score ties;\n"
         "                           1/3=strands merged per parent, 2/4=strands separate\n"
         "  -stage2_min_nhit_diag <int>  Default diagonal filter min hits (default: 1)\n"
@@ -73,7 +74,6 @@ static void print_usage(const char* prog) {
         "  -stage1_max_nhit_per_volume <int>  Default Stage 1 max candidates per (query,volume,strand) (default: 0)\n"
         "  -stage1_max_nhit_in_total <int>  Default Stage 1 max candidates per query over all volumes (default: 0)\n"
         "  -stage1_min_score <num>  Default Stage 1 minimum score; integer or 0<P<1 fraction (default: 0.5)\n"
-        "  -nresult <int>           Default max results per query (default: 0)\n"
         "  -accept_qdegen <0|1>     Default accept queries with degenerate bases (default: 1)\n"
         "  -context_extend <value>  Default context extension (int=bases, decimal=ratio, default: 2.0)\n"
         "  -stage3_traceback <0|1>  Default traceback mode (default: 0)\n"
@@ -81,6 +81,9 @@ static void print_usage(const char* prog) {
         "  -stage3_gapext <int>     Default gap extension penalty (default: 1)\n"
         "  -stage3_min_ppositive <num> Default min percent positive (default: 0)\n"
         "  -stage3_min_npositive <int> Default min positive-scoring positions (default: 0)\n"
+        "  -stage3_max_nhit_per_subject <int>  Default Stage 3 max hits per subject (default: 1, 0=unlimited)\n"
+        "  -stage3_max_nhit_per_subject_mode <1|2|3|4>  Default per-subject selection mode (default: 3)\n"
+        "  -stage3_max_nhit_in_total <int>  Default Stage 3 max hits per query over all volumes (default: 0)\n"
         "  -stage3_score_matrix <name> Default score matrix: degmatch, dnafull, nuc44 (default: degmatch)\n"
         "  -memory_limit <size>     Search memory budget (default: half of RAM)\n"
         "                           Pins .khx/.ksx metadata; residual caps the\n"
@@ -297,12 +300,12 @@ int main(int argc, char* argv[]) {
     } else {
         config.search_config.stage2.max_nhit_per_subject_mode = 0;
     }
+    config.search_config.stage2.max_nhit_in_total =
+        static_cast<uint32_t>(cli.get_int("-stage2_max_nhit_in_total", 0));
     config.search_config.stage2.min_nhit_diag =
         static_cast<uint32_t>(cli.get_int("-stage2_min_nhit_diag", 1));
     config.search_config.stage2.min_score =
         static_cast<uint32_t>(cli.get_int("-stage2_min_score", 0));
-    config.search_config.nresult =
-        static_cast<uint32_t>(cli.get_int("-nresult", 0));
     config.search_config.accept_qdegen =
         static_cast<uint8_t>(cli.get_int("-accept_qdegen", 1));
     // Query-side max_degen_expand is a client-supplied parameter; the server
@@ -317,6 +320,22 @@ int main(int argc, char* argv[]) {
     config.stage3_config.traceback = (cli.get_int("-stage3_traceback", 0) != 0);
     config.stage3_config.min_ppositive = cli.get_double("-stage3_min_ppositive", 0.0);
     config.stage3_config.min_npositive = static_cast<uint32_t>(cli.get_int("-stage3_min_npositive", 0));
+    config.stage3_config.max_nhit_per_subject =
+        static_cast<uint32_t>(cli.get_int("-stage3_max_nhit_per_subject", 1));
+    // Default 0 = auto; request_processor resolves the sentinel to 3.
+    if (cli.has("-stage3_max_nhit_per_subject_mode")) {
+        int m = cli.get_int("-stage3_max_nhit_per_subject_mode", 0);
+        if (m < 1 || m > 4) {
+            std::fprintf(stderr,
+                "Error: -stage3_max_nhit_per_subject_mode must be 1, 2, 3, or 4\n");
+            return 1;
+        }
+        config.stage3_config.max_nhit_per_subject_mode = static_cast<uint8_t>(m);
+    } else {
+        config.stage3_config.max_nhit_per_subject_mode = 0;
+    }
+    config.stage3_config.max_nhit_in_total =
+        static_cast<uint32_t>(cli.get_int("-stage3_max_nhit_in_total", 0));
     {
         std::string err;
         if (!parse_score_matrix(cli, config.stage3_config.score_matrix, err)) {

@@ -50,4 +50,21 @@ void select_parent_topn(std::vector<OrchestratorHit>& hits,
 
 void dedup_stage3_output_hits(std::vector<OutputHit>& hits);
 
+// Per-subject top-N selector for Stage 3 aligned hits, applied by callers after
+// run_stage3() and dedup_stage3_output_hits().  Keeps at most `n` hits per
+// (qseqid, sseqid[, sstrand]) group, scored by alnscore.  `mode` is 1..4:
+//   1/2 keep the top `n` (ties broken by arrival order, no secondary key);
+//   3/4 keep the top `n` plus every hit tying the n-th alnscore;
+//   1/3 merge strands into one group; 2/4 keep strands separate.
+// n == 0 disables the selector.  Skip-marker rows must not be present.  Surviving
+// hits keep their input order.
+void select_parent_topn_output(std::vector<OutputHit>& hits,
+                               uint32_t n,
+                               uint8_t mode);
+
+// In-total (L) cap for Stage 3 aligned hits: per qseqid keep the top-L by
+// alnscore plus every hit tying the L-th alnscore.  L == 0 disables it.
+// Surviving hits keep their input order.
+void apply_in_total_output(std::vector<OutputHit>& hits, uint32_t L);
+
 }  // namespace ikafssn

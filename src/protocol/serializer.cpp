@@ -15,7 +15,6 @@ namespace ikafssn {
 //   u16  stage1_max_nhit_per_volume
 //   u16  stage1_max_nhit_in_total
 //   u16  stage1_min_score
-//   u16  nresult
 //   u16  stage1_min_score_frac_x10000
 //   u8   seqidlist_mode
 //   u8   mode
@@ -33,8 +32,12 @@ namespace ikafssn {
 //   u16  max_degen_expand
 //   u16  stage2_max_nhit_per_subject
 //   u8   stage2_max_nhit_per_subject_mode
+//   u16  stage2_max_nhit_in_total
 //   u16  stage1_max_nhit_per_subject
 //   u8   stage1_max_nhit_per_subject_mode
+//   u16  stage3_max_nhit_per_subject
+//   u8   stage3_max_nhit_per_subject_mode
+//   u16  stage3_max_nhit_in_total
 //   u8   t
 //   u8   template_type
 //   u8   score_matrix
@@ -60,7 +63,6 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     w.u16(req.stage1_max_nhit_per_volume);
     w.u16(req.stage1_max_nhit_in_total);
     w.u16(req.stage1_min_score);
-    w.u16(req.nresult);
     w.u16(req.stage1_min_score_frac_x10000);
     w.u8(static_cast<uint8_t>(req.seqidlist_mode));
     w.u8(req.mode);
@@ -78,8 +80,12 @@ std::vector<uint8_t> serialize(const SearchRequest& req) {
     w.u16(req.max_degen_expand);
     w.u16(req.stage2_max_nhit_per_subject);
     w.u8(req.stage2_max_nhit_per_subject_mode);
+    w.u16(req.stage2_max_nhit_in_total);
     w.u16(req.stage1_max_nhit_per_subject);
     w.u8(req.stage1_max_nhit_per_subject_mode);
+    w.u16(req.stage3_max_nhit_per_subject);
+    w.u8(req.stage3_max_nhit_per_subject_mode);
+    w.u16(req.stage3_max_nhit_in_total);
     w.u8(req.t);
     w.u8(req.template_type);
     w.u8(req.score_matrix);
@@ -114,7 +120,6 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u16(req.stage1_max_nhit_per_volume)) return false;
     if (!r.get_u16(req.stage1_max_nhit_in_total)) return false;
     if (!r.get_u16(req.stage1_min_score)) return false;
-    if (!r.get_u16(req.nresult)) return false;
     if (!r.get_u16(req.stage1_min_score_frac_x10000)) return false;
 
     uint8_t seqidlist_mode;
@@ -137,8 +142,12 @@ bool deserialize(const std::vector<uint8_t>& data, SearchRequest& req) {
     if (!r.get_u16(req.max_degen_expand)) return false;
     if (!r.get_u16(req.stage2_max_nhit_per_subject)) return false;
     if (!r.get_u8(req.stage2_max_nhit_per_subject_mode)) return false;
+    if (!r.get_u16(req.stage2_max_nhit_in_total)) return false;
     if (!r.get_u16(req.stage1_max_nhit_per_subject)) return false;
     if (!r.get_u8(req.stage1_max_nhit_per_subject_mode)) return false;
+    if (!r.get_u16(req.stage3_max_nhit_per_subject)) return false;
+    if (!r.get_u8(req.stage3_max_nhit_per_subject_mode)) return false;
+    if (!r.get_u16(req.stage3_max_nhit_in_total)) return false;
     if (!r.get_u8(req.t)) return false;
     if (!r.get_u8(req.template_type)) return false;
     if (!r.get_u8(req.score_matrix)) return false;

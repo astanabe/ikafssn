@@ -81,7 +81,6 @@ static void print_usage(const char* prog) {
         "  -o <path>                Output file (default: stdout)\n"
         "  -output_format <tsv|json|sam|bam>  Output format (default: tsv)\n"
         "  -compression_level <int>    Output compression level (default per codec: gzip=6, bzip2=9, xz=6, zstd=3)\n"
-        "  -nresult <int>           Max results per query, 0=unlimited (default: server default)\n"
         "\n"
         "Filtering:\n"
         "  -min_query_length <int>  Minimum query length; shorter queries are skipped\n"
@@ -116,12 +115,16 @@ static void print_usage(const char* prog) {
         "                           1/2=top-N (no ties), 3/4=top-N + score ties;\n"
         "                           1/3=strands merged per parent, 2/4=strands separate\n"
         "  -stage2_min_nhit_diag <int>  Diagonal filter min hits (requires -mode 2 or higher)\n"
+        "  -stage2_max_nhit_in_total <int>  Max chains per query over all volumes (requires -mode 2 or higher)\n"
         "  -context_extend <value>  Context extension for mode 3 (int=bases, decimal=query length multiplier; requires -mode 3)\n"
         "  -stage3_traceback <0|1>  Enable traceback in mode 3 (requires -mode 3)\n"
         "  -stage3_gapopen <int>    Gap open penalty for mode 3 (requires -mode 3)\n"
         "  -stage3_gapext <int>     Gap extension penalty for mode 3 (requires -mode 3)\n"
         "  -stage3_min_ppositive <num> Min percent positive filter for mode 3 (requires -mode 3)\n"
         "  -stage3_min_npositive <int> Min positive-scoring positions filter for mode 3 (requires -mode 3)\n"
+        "  -stage3_max_nhit_per_subject <int>  Max hits per subject (requires -mode 3)\n"
+        "  -stage3_max_nhit_per_subject_mode <1|2|3|4>  Per-subject selection mode (default: 3; requires -mode 3)\n"
+        "  -stage3_max_nhit_in_total <int>  Max hits per query over all volumes (requires -mode 3)\n"
         "  -stage3_score_matrix <name>  Score matrix: degmatch, dnafull, nuc44 (requires -mode 3)\n"
         "\n"
 #ifdef IKAFSSN_ENABLE_HTTP
@@ -661,6 +664,7 @@ int main(int argc, char* argv[]) {
         }
         base_req.stage2_max_nhit_per_subject_mode = static_cast<uint8_t>(m);
     }
+    base_req.stage2_max_nhit_in_total = static_cast<uint16_t>(cli.get_int("-stage2_max_nhit_in_total", 0));
     base_req.stage2_min_nhit_diag = static_cast<uint8_t>(cli.get_int("-stage2_min_nhit_diag", 0));
     base_req.stage1_max_nhit_per_subject =
         static_cast<uint16_t>(cli.get_int("-stage1_max_nhit_per_subject", 0));
@@ -695,7 +699,6 @@ int main(int argc, char* argv[]) {
             base_req.stage1_min_score = static_cast<uint16_t>(min_s1);
         }
     }
-    base_req.nresult = static_cast<uint16_t>(cli.get_int("-nresult", 0));
     base_req.mode = static_cast<uint8_t>(cli.get_int("-mode", 0));
     // Mode x stage consistency (mirrors ikafssnsearch): Stage 2 options need
     // mode >= 2, Stage 3 options need mode 3.  mode == 0 means "server
@@ -704,12 +707,14 @@ int main(int argc, char* argv[]) {
         static const char* const kStage2Opts[] = {
             "-stage2_min_score", "-stage2_max_gap", "-stage2_max_lookback",
             "-stage2_min_nhit_diag", "-stage2_max_nhit_per_subject",
-            "-stage2_max_nhit_per_subject_mode",
+            "-stage2_max_nhit_per_subject_mode", "-stage2_max_nhit_in_total",
         };
         static const char* const kStage3Opts[] = {
             "-stage3_traceback", "-stage3_gapopen", "-stage3_gapext",
             "-stage3_min_ppositive", "-stage3_min_npositive",
             "-stage3_score_matrix", "-context_extend",
+            "-stage3_max_nhit_per_subject", "-stage3_max_nhit_per_subject_mode",
+            "-stage3_max_nhit_in_total",
         };
         if (base_req.mode == 1) {
             for (const char* opt : kStage2Opts) {
@@ -775,6 +780,19 @@ int main(int argc, char* argv[]) {
         base_req.stage3_min_ppositive_x100 = static_cast<uint16_t>(min_ppositive * 100.0);
     }
     base_req.stage3_min_npositive = static_cast<uint32_t>(cli.get_int("-stage3_min_npositive", 0));
+    base_req.stage3_max_nhit_per_subject =
+        static_cast<uint16_t>(cli.get_int("-stage3_max_nhit_per_subject", 0));
+    if (cli.has("-stage3_max_nhit_per_subject_mode")) {
+        int m = cli.get_int("-stage3_max_nhit_per_subject_mode", 0);
+        if (m < 1 || m > 4) {
+            std::fprintf(stderr,
+                "Error: -stage3_max_nhit_per_subject_mode must be 1, 2, 3, or 4\n");
+            return 1;
+        }
+        base_req.stage3_max_nhit_per_subject_mode = static_cast<uint8_t>(m);
+    }
+    base_req.stage3_max_nhit_in_total =
+        static_cast<uint16_t>(cli.get_int("-stage3_max_nhit_in_total", 0));
     {
         std::string sm;
         std::string err;

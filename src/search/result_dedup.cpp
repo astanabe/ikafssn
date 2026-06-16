@@ -5,7 +5,10 @@
 #include "search/parallel_search.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <cstdint>
+#include <string>
+#include <unordered_map>
 
 namespace ikafssn {
 
@@ -209,6 +212,90 @@ void dedup_stage3_output_hits(std::vector<OutputHit>& hits) {
     hits.reserve(real.size() + skip.size());
     for (auto& h : real) hits.push_back(std::move(h));
     for (auto& h : skip) hits.push_back(std::move(h));
+}
+
+void select_parent_topn_output(std::vector<OutputHit>& hits,
+                               uint32_t n,
+                               uint8_t mode) {
+    if (n == 0 || hits.size() < 2) return;
+
+    const bool strand_split  = (mode == 2 || mode == 4);
+    const bool tie_inclusive = (mode == 3 || mode == 4);
+
+    const size_t cnt = hits.size();
+    std::vector<size_t> order(cnt);
+    for (size_t i = 0; i < cnt; ++i) order[i] = i;
+
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        const OutputHit& ha = hits[a];
+        const OutputHit& hb = hits[b];
+        if (ha.qseqid != hb.qseqid) return ha.qseqid < hb.qseqid;
+        if (ha.sseqid != hb.sseqid) return ha.sseqid < hb.sseqid;
+        if (strand_split && ha.sstrand != hb.sstrand)
+            return ha.sstrand < hb.sstrand;
+        return a < b;
+    });
+
+    auto same_group = [&](size_t a, size_t b) {
+        const OutputHit& ha = hits[a];
+        const OutputHit& hb = hits[b];
+        return ha.qseqid == hb.qseqid
+            && ha.sseqid == hb.sseqid
+            && (!strand_split || ha.sstrand == hb.sstrand);
+    };
+
+    std::vector<bool> survive(cnt, false);
+    size_t run_start = 0;
+    for (size_t i = 0; i <= cnt; ++i) {
+        if (i != cnt && (i == run_start || same_group(order[run_start], order[i])))
+            continue;
+
+        std::vector<size_t> grp(order.begin() + run_start, order.begin() + i);
+        std::stable_sort(grp.begin(), grp.end(), [&](size_t a, size_t b) {
+            return hits[a].alnscore > hits[b].alnscore;
+        });
+        if (grp.size() <= n) {
+            for (size_t idx : grp) survive[idx] = true;
+        } else if (!tie_inclusive) {
+            for (uint32_t j = 0; j < n; ++j) survive[grp[j]] = true;
+        } else {
+            const int32_t s_n = hits[grp[n - 1]].alnscore;
+            for (size_t idx : grp)
+                if (hits[idx].alnscore >= s_n) survive[idx] = true;
+        }
+        run_start = i;
+    }
+
+    std::vector<OutputHit> out;
+    out.reserve(cnt);
+    for (size_t i = 0; i < cnt; ++i)
+        if (survive[i]) out.push_back(std::move(hits[i]));
+    hits = std::move(out);
+}
+
+void apply_in_total_output(std::vector<OutputHit>& hits, uint32_t L) {
+    if (L == 0 || hits.empty()) return;
+
+    // Per-qseqid threshold = the L-th highest alnscore (INT32_MIN keeps all
+    // when a query has at most L hits), then keep every hit at or above it.
+    std::unordered_map<std::string, std::vector<int32_t>> by_q;
+    for (const auto& h : hits) by_q[h.qseqid].push_back(h.alnscore);
+    std::unordered_map<std::string, int32_t> thr;
+    thr.reserve(by_q.size());
+    for (auto& kv : by_q) {
+        std::vector<int32_t>& v = kv.second;
+        if (v.size() <= L) { thr[kv.first] = INT32_MIN; continue; }
+        std::nth_element(v.begin(), v.begin() + (L - 1), v.end(),
+                         std::greater<int32_t>());
+        thr[kv.first] = v[L - 1];
+    }
+
+    std::vector<OutputHit> out;
+    out.reserve(hits.size());
+    for (auto& h : hits) {
+        if (h.alnscore >= thr[h.qseqid]) out.push_back(std::move(h));
+    }
+    hits = std::move(out);
 }
 
 }  // namespace ikafssn

@@ -124,8 +124,8 @@ struct Mode1ParallelInputs {
 // TSV mode 1 parallel writer: header is emitted serially, hit rows are
 // formatted into per-thread chunk buffers (parallel_for over the hits
 // vector range) and written to `out` in chunk order.  Skip rows are
-// appended after hits.  Caller is responsible for sorting `hits` ahead
-// of time when -nresult > 0 (the mode-1 sort is by query_idx + score).
+// appended after hits.  Caller is responsible for ordering `hits` by
+// query_idx ahead of time.
 void write_results_tsv_mode1_parallel(std::ostream& out,
                                        const Mode1ParallelInputs& in);
 
