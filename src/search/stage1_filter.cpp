@@ -108,15 +108,6 @@ static void stage1_filter_accumulate_impl(
     const uint32_t cutoff_rem = config.cutoff_remaining;
     const uint32_t cutoff_thr = config.cutoff_threshold;
 
-    constexpr int kBatch = 16;
-    SeqId sid_batch[kBatch];
-    int batch_count = 0;
-
-    constexpr int kDecBatch = SeqIdDecoder::kMaxBatch;
-    static_assert(kDecBatch >= 1, "kDecBatch must be positive");
-    SeqId   raw_sids[kDecBatch];
-    uint8_t was_new[kDecBatch];
-
     // Hoisted out of the qi loop so the underlying StreamCtx::decoded
     // capacity (which can grow to millions of u32 for conserved k-mers)
     // is reused across all probes on this thread instead of being
@@ -131,18 +122,19 @@ static void stage1_filter_accumulate_impl(
         if (byte_len == 0) continue;
 
         decoder.reset(posting_file + off, posting_file + off + byte_len);
-        while (decoder.has_more()) {
-            int n_dec = decoder.next_batch(raw_sids, was_new, kDecBatch);
-            if (n_dec == 0) break;
-            for (int i = 0; i < n_dec; i++) {
-                SeqId sid = raw_sids[i];
-                // .kix postings are distinct per k-mer, so coverscore counts a
-                // sid at most once per k-mer here; the per-query-position dedup
-                // (last_pos != q_pos) happens in the scatter.
-                if (!was_new[i]) continue;
-                if constexpr (HasFilter) {
-                    if (!filter.pass(sid)) continue;
-                }
+        decoder.ensure_decoded();
+        const SeqId* decoded = decoder.decoded_data();
+        const std::size_t n_dec = decoder.decoded_count();
+
+        if constexpr (HasFilter) {
+            // Only the excluded seq_ids have to be squeezed out, so the
+            // filtered path stages survivors in a small fixed buffer.
+            constexpr int kBatch = 16;
+            SeqId sid_batch[kBatch];
+            int batch_count = 0;
+            for (std::size_t i = 0; i < n_dec; i++) {
+                SeqId sid = decoded[i];
+                if (!filter.pass(sid)) continue;
                 sid_batch[batch_count++] = sid;
                 if (batch_count == kBatch) {
                     flush_batch_simd<Width>(sid_batch, kBatch, q_pos,
@@ -151,12 +143,25 @@ static void stage1_filter_accumulate_impl(
                     batch_count = 0;
                 }
             }
-        }
-        if (batch_count > 0) {
-            flush_batch_simd<Width>(sid_batch, batch_count, q_pos,
-                                   scores, last_pos, buf.dirty,
-                                   cutoff_rem, cutoff_thr);
-            batch_count = 0;
+            if (batch_count > 0) {
+                flush_batch_simd<Width>(sid_batch, batch_count, q_pos,
+                                       scores, last_pos, buf.dirty,
+                                       cutoff_rem, cutoff_thr);
+            }
+        } else {
+            // .kix postings are distinct per k-mer, so coverscore counts a sid
+            // at most once per k-mer and the decoded span goes straight to the
+            // scatter kernel; the per-query-position dedup (last_pos != q_pos)
+            // happens there.  The span is handed over in fixed-width chunks
+            // because decoded_count() is a std::size_t while the kernel takes
+            // an int count.
+            constexpr std::size_t kChunk = std::size_t{1} << 20;
+            for (std::size_t i = 0; i < n_dec; i += kChunk) {
+                const std::size_t len = std::min(kChunk, n_dec - i);
+                flush_batch_simd<Width>(decoded + i, static_cast<int>(len),
+                                       q_pos, scores, last_pos, buf.dirty,
+                                       cutoff_rem, cutoff_thr);
+            }
         }
     }
 }

@@ -16,12 +16,10 @@ static const char* TEST_FILE = "/tmp/test_ikafssn.kix";
 
 // Decode a delta-compressed posting list using byte-limit decoder
 static std::vector<uint32_t> decode_id_postings(const uint8_t* data, uint64_t byte_len) {
-    std::vector<uint32_t> result;
     SeqIdDecoder decoder(data, data + byte_len);
-    while (decoder.has_more()) {
-        result.push_back(decoder.next());
-    }
-    return result;
+    decoder.ensure_decoded();
+    return std::vector<uint32_t>(decoder.decoded_data(),
+                                 decoder.decoded_data() + decoder.decoded_count());
 }
 
 static void test_k7_uint16() {

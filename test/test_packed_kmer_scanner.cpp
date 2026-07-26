@@ -722,11 +722,11 @@ static void test_ambig_expansion_in_index() {
 // the test stays decoupled from the underlying codec.
 static std::vector<uint32_t> decode_id_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len) {
-    std::vector<uint32_t> result;
-    if (byte_len == 0) return result;
+    if (byte_len == 0) return {};
     SeqIdDecoder dec(data + offset, data + offset + byte_len);
-    while (dec.has_more()) result.push_back(dec.next());
-    return result;
+    dec.ensure_decoded();
+    return std::vector<uint32_t>(dec.decoded_data(),
+                                 dec.decoded_data() + dec.decoded_count());
 }
 
 static void test_ssu_db_kmer_check() {

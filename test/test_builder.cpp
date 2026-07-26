@@ -30,11 +30,11 @@ static std::string g_output_dir;
 // Decode ID posting list via the v4 SeqIdDecoder.
 static std::vector<uint32_t> decode_id_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len) {
-    std::vector<uint32_t> result;
-    if (byte_len == 0) return result;
+    if (byte_len == 0) return {};
     SeqIdDecoder dec(data + offset, data + offset + byte_len);
-    while (dec.has_more()) result.push_back(dec.next());
-    return result;
+    dec.ensure_decoded();
+    return std::vector<uint32_t>(dec.decoded_data(),
+                                 dec.decoded_data() + dec.decoded_count());
 }
 
 // Decode pos posting list via PosDecoder.  Candidate-set-driven: pass

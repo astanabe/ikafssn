@@ -6,19 +6,16 @@
 
 namespace ikafssn {
 
-// Streaming decoder for .kix posting lists.
+// Decoder for one .kix posting list.
 //
 // The .kix posting list stream contains **distinct** seq_ids only
-// (intra-sequence k-mer duplicates are removed by a SIMD dedup kernel
-// at build time).  The codec returns absolute distinct seq_ids in
-// StreamCtx::decoded; this class is a thin "absolute id iterator" over
-// that buffer.  next_batch() also reports, per id, whether it differs
-// from the previous id (always true given the distinctness above), which
-// the coverscore path consumes.
+// (intra-sequence k-mer duplicates are removed by a SIMD dedup kernel at
+// build time).  The codec decodes the whole posting list into
+// StreamCtx::decoded as absolute seq_ids; this class owns that buffer and
+// exposes it as a zero-copy span so callers can consume the postings
+// without an intermediate copy.
 class SeqIdDecoder {
 public:
-    static constexpr int kMaxBatch = 16;
-
     SeqIdDecoder() = default;
     SeqIdDecoder(const uint8_t* data, const uint8_t* end)
         : data_(data),
@@ -33,8 +30,6 @@ public:
                      ? static_cast<std::size_t>(end - data)
                      : 0;
         decoded_     = false;
-        first_       = true;
-        prev_id_     = 0;
         ctx_.count   = 0;
         ctx_.pos     = 0;
         // Keep ctx_.decoded capacity intact so the upcoming
@@ -49,50 +44,16 @@ public:
         }
     }
 
-    bool has_more() {
-        ensure_decoded();
-        return ctx_.pos < ctx_.count;
-    }
-
-    uint32_t next() {
-        ensure_decoded();
-        if (ctx_.pos < ctx_.count) return ctx_.decoded[ctx_.pos++];
-        return 0;
-    }
-
-    // Zero-copy view of the decoded distinct seq_id array.
+    // Zero-copy view of the decoded distinct seq_id array.  Valid until the
+    // next reset() + ensure_decoded().
     const uint32_t* decoded_data() const { return ctx_.decoded.data(); }
     std::size_t decoded_count() const { return ctx_.count; }
-
-    int next_batch(uint32_t* out_sids, uint8_t* out_was_new, int max_count) {
-        ensure_decoded();
-        if (max_count <= 0 || ctx_.pos >= ctx_.count) return 0;
-        if (max_count > kMaxBatch) max_count = kMaxBatch;
-        int avail = static_cast<int>(ctx_.count - ctx_.pos);
-        int n = (avail < max_count) ? avail : max_count;
-        for (int i = 0; i < n; i++) {
-            uint32_t id = ctx_.decoded[ctx_.pos + i];
-            if (first_) {
-                prev_id_ = id;
-                first_ = false;
-                out_was_new[i] = 1;
-            } else {
-                out_was_new[i] = (id != prev_id_) ? 1 : 0;
-                prev_id_ = id;
-            }
-            out_sids[i] = id;
-        }
-        ctx_.pos += n;
-        return n;
-    }
 
 private:
     const uint8_t* data_ = nullptr;
     std::size_t bytes_ = 0;
     pfd::StreamCtx ctx_;
     bool decoded_ = false;
-    uint32_t prev_id_ = 0;
-    bool first_ = true;
 };
 
 } // namespace ikafssn
