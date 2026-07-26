@@ -44,10 +44,9 @@ void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx) {
 }
 
 // Ordered (vi, qi, strand): every volume gets the same set of ext_jobs (each
-// non-skipped query, once per strand), so volume vi owns exactly the
-// contiguous range [vi * ejpv, (vi + 1) * ejpv) where ejpv is the per-volume
-// ext_job count.  The orchestrator relies on that invariant to address a
-// batch as a range instead of an index list.
+// non-skipped query, once per strand), so volume vi owns the contiguous range
+// [vi * ejpv, (vi + 1) * ejpv), where ejpv is the per-volume ext_job count.
+// Each batch is addressed as such a range.
 template <typename KmerInt>
 std::vector<ExtJob> build_ext_jobs(const RunSearchInputs<KmerInt>& in,
                                     size_t num_volumes) {

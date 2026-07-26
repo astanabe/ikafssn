@@ -113,21 +113,19 @@ static void collect_position_hits(
         for (size_t m = 0; m < n_match; m++) {
             const uint32_t lo = scratch.out_offsets[m];
             const uint32_t hi = scratch.out_offsets[m + 1];
-            auto& bucket = hits_per_candidate[scratch.out_candidate_idx[m]];
+            auto& cand_hits = hits_per_candidate[scratch.out_candidate_idx[m]];
             for (uint32_t t = lo; t < hi; t++) {
-                bucket.push_back({q_pos, scratch.out_positions[t]});
+                cand_hits.push_back({q_pos, scratch.out_positions[t]});
             }
         }
     }
 }
 
-// Size each hit bucket once, before any collect_position_hits() call fills
-// it.  A candidate's coverscore counts the distinct query positions that
-// matched it and every matched position contributes at least one hit, so the
-// coverscore is a lower bound on the bucket's final size and the reserve
-// never overshoots.  Without it the buckets would start empty and grow one
-// small step at a time, because the hits arrive a few per k-mer.
-static void reserve_hit_buckets(
+// Size every candidate's hit list once up front.  The coverscore counts the
+// distinct query positions a candidate matched and each contributes at least
+// one hit, so it is a lower bound on the final size and never overshoots.
+// Hits arrive a few per k-mer, so without this the lists grow in many steps.
+static void reserve_hits_per_candidate(
     const std::vector<Stage1Candidate>& candidates,
     std::vector<std::vector<Hit>>& hits_per_candidate) {
     const size_t n = candidates.size();
@@ -136,14 +134,12 @@ static void reserve_hit_buckets(
     }
 }
 
-// Hand back what the growth past the reserve overshot, before the next
-// ext_job of the batch fills its own buckets.  A batch keeps every ext_job's
-// hits alive until Stage 2B has consumed them, so the spare capacity would
-// otherwise accumulate into the peak resident set.
-static void shrink_hit_buckets(std::vector<std::vector<Hit>>& hits_per_candidate) {
-    for (auto& bucket : hits_per_candidate) {
-        if (bucket.capacity() > bucket.size()) bucket.shrink_to_fit();
-    }
+// Release the capacity the growth past the reserve overshot.  A batch keeps
+// every ext_job's hits alive until Stage 2B has consumed them, so the spare
+// capacity would otherwise accumulate into the peak resident set.
+static void shrink_hits_per_candidate(
+    std::vector<std::vector<Hit>>& hits_per_candidate) {
+    for (auto& cand_hits : hits_per_candidate) cand_hits.shrink_to_fit();
 }
 
 template <typename KmerInt>
@@ -206,11 +202,11 @@ void stage2a_one_strand_single(
     if (state.candidates.empty()) return;
 
     state.hits_per_candidate.assign(state.candidates.size(), {});
-    reserve_hit_buckets(state.candidates, state.hits_per_candidate);
+    reserve_hits_per_candidate(state.candidates, state.hits_per_candidate);
     collect_position_hits(positions, kmers, n_kmers, kix, kpx,
                           tls_candidate_sids(state.candidates),
                           state.hits_per_candidate);
-    shrink_hit_buckets(state.hits_per_candidate);
+    shrink_hits_per_candidate(state.hits_per_candidate);
 }
 
 template <typename KmerInt>
@@ -338,14 +334,14 @@ void stage2a_one_strand_both(
 
     const std::vector<SeqId>& sids = tls_candidate_sids(state.candidates);
     state.hits_per_candidate.assign(state.candidates.size(), {});
-    // One reserve covers both template passes: the coverscore is a lower
-    // bound on the hits the two of them contribute together.
-    reserve_hit_buckets(state.candidates, state.hits_per_candidate);
+    // One reserve covers both templates: the coverscore bounds their combined
+    // hits from below.
+    reserve_hits_per_candidate(state.candidates, state.hits_per_candidate);
     collect_position_hits(pos_cod, kmers_cod, n_cod, kix_cod, kpx_cod,
                           sids, state.hits_per_candidate);
     collect_position_hits(pos_opt, kmers_opt, n_opt, kix_opt, kpx_opt,
                           sids, state.hits_per_candidate);
-    shrink_hit_buckets(state.hits_per_candidate);
+    shrink_hits_per_candidate(state.hits_per_candidate);
 }
 
 std::vector<ChainResult>
