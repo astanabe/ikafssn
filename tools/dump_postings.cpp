@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
         // Stride-based uniform sampling over non-empty k-mers.
         if ((non_empty_seen++ % args.stride) != 0) continue;
 
-        // Decode distinct seq_ids via the v7 codec.
+        // Decode distinct seq_ids.
         if (!pfd::open_stream_kix(kix_data + kix_off, kix_len, kix_ctx)) {
             std::fprintf(stderr, "kmer %u: kix decode failed\n", kmer);
             continue;
@@ -143,10 +143,9 @@ int main(int argc, char** argv) {
         const uint32_t cnt = kix_ctx.count;
         if (cnt < args.min_count) continue;
 
-        // Decode positions (per distinct seq_id, in seq_id order).  In v8
-        // the candidate set is the full distinct seq_id list itself, so
-        // we feed kix_ctx.decoded both as the .kix decoded array and as
-        // the candidate array.
+        // Decode positions.  The candidate set is the full distinct seq_id
+        // list, so kix_ctx.decoded serves as both the .kix decoded array
+        // and the candidate array.
         if (have_kpx) {
             uint64_t kpx_off = kpx.pos_offset(kmer);
             uint64_t kpx_end = kpx.posting_file_size();
@@ -166,8 +165,6 @@ int main(int argc, char** argv) {
             std::fprintf(out, "%u%s", kix_ctx.decoded[i], (i + 1 == cnt ? "\t" : ","));
         }
         if (have_kpx) {
-            // The candidate set is the full distinct seq_id list, so the CSR
-            // position array is already in distinct seq_id order.
             bool first_p = true;
             for (uint32_t p : pos_scratch.out_positions) {
                 std::fprintf(out, "%s%u", first_p ? "" : ",", p);

@@ -15,8 +15,7 @@
 
 namespace ikafssn {
 
-// Drain a JobState by running Stage 2B for every candidate in candidate
-// order.
+// Run Stage 2B for every candidate in `state`, in candidate order.
 static std::vector<ChainResult>
 drain_stage2b(const JobState& state) {
     if (state.mode1_only) return state.mode1_results;

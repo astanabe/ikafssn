@@ -37,11 +37,9 @@ static std::vector<uint32_t> decode_id_postings(
                                  dec.decoded_data() + dec.decoded_count());
 }
 
-// Decode a .kpx posting list.  Candidate-set-driven: pass a sorted distinct
-// seq_id list (which equals the .kix decoded distinct seq_id array for this
-// k-mer) as both the kix_decoded view and the candidate set.  Every candidate
-// is then in the posting list, so the CSR position array is exactly the
-// per-candidate concatenation in candidate order.
+// Decode a .kpx posting list via the candidate-set API, feeding the k-mer's
+// .kix decoded distinct seq_id list as both the kix_decoded view and the
+// candidate set.  Returns the positions concatenated in seq_id order.
 static std::vector<uint32_t> decode_pos_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len,
     const std::vector<uint32_t>& distinct_sids) {
@@ -224,9 +222,8 @@ static void test_build_and_verify_kix_kpx() {
             CHECK(id < kix.num_sequences());
         }
 
-        // Decode positions via v7 candidate-set API: ids is already a
-        // sorted distinct seq_id list (decoded from .kix v7).  Total
-        // positions returned equal the .kpx per-kmer position_count.
+        // `ids` is already the sorted distinct seq_id list decoded from
+        // .kix, so the position count must match the .kpx posting list.
         std::vector<uint32_t> positions = decode_pos_postings(
             kpx.posting_file(), kpx.pos_offset(kmer),
             kpx.posting_file_size() - kpx.pos_offset(kmer),

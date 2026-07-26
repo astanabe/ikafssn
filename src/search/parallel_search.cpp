@@ -30,10 +30,9 @@ static inline pfd::PosDecodeScratch& tls_pos_scratch() {
     return scratch;
 }
 
-// Per-thread scratch holding the candidate seq_ids as the contiguous
-// ascending array the .kpx candidate-set decoder takes.  `candidates` is
-// already ordered by ascending SeqId on the Stage 2 path, so this is a plain
-// projection.  The buffer grows monotonically across calls.
+// Project the candidates onto the contiguous ascending seq_id array the .kpx
+// decoder takes.  `candidates` is already ordered by ascending SeqId on the
+// Stage 2 path.  The per-thread buffer grows monotonically across calls.
 static inline const std::vector<SeqId>&
 tls_candidate_sids(const std::vector<Stage1Candidate>& candidates) {
     thread_local std::vector<SeqId> sids;
@@ -75,9 +74,8 @@ static void collect_position_hits(
     std::vector<std::vector<Hit>>& hits_per_candidate) {
 
     const uint8_t* kix_data = kix.posting_file();
-    const uint8_t* pos_data = kpx.posting_file();
-    if (kix_data == nullptr || pos_data == nullptr) return;
-    const uint64_t pos_file_size = kpx.posting_file_size();
+    const uint8_t* kpx_data = kpx.posting_file();
+    const uint64_t kpx_file_size = kpx.posting_file_size();
 
     pfd::PosDecodeScratch& scratch = tls_pos_scratch();
 
@@ -96,18 +94,15 @@ static void collect_position_hits(
         kix_dec.reset(kix_data + kix_off,
                       kix_data + kix_off + kix_len);
         kix_dec.ensure_decoded();
-        // An empty .kix posting list means the k-mer's .kpx posting list
-        // cannot be addressed at all (its pos_offset may be 0 — aliasing
-        // the first k-mer's posting list — because the builder does not
-        // write placeholders for empty k-mers).
-        if (kix_dec.decoded_count() == 0) continue;
 
-        const uint64_t pos_off = kpx.pos_offset(kmer_idx);
-        if (pos_off >= pos_file_size) continue;
+        // .kpx has no sentinel, so the rest of the posting file is the
+        // loose upper bound for this k-mer's posting list.
+        const uint64_t kpx_off = kpx.pos_offset(kmer_idx);
+        if (kpx_off >= kpx_file_size) continue;
 
         if (!pfd::open_stream_kpx_for_candidates(
-                pos_data + pos_off,
-                static_cast<size_t>(pos_file_size - pos_off),
+                kpx_data + kpx_off,
+                static_cast<size_t>(kpx_file_size - kpx_off),
                 kix_dec.decoded_data(), kix_dec.decoded_count(),
                 candidate_sids.data(), candidate_sids.size(),
                 scratch)) {
@@ -141,7 +136,6 @@ void stage1_one_strand_single(
     JobState& state) {
 
     state.is_reverse = is_reverse;
-    state.effective_min_score = effective_min_score;
     state.span = seed_span(config.t, k);
     state.stage2_config = config.stage2;
     state.stage2_config.min_score = effective_min_score;
@@ -209,7 +203,6 @@ void stage1_one_strand_both(
     JobState& state) {
 
     state.is_reverse = is_reverse;
-    state.effective_min_score = effective_min_score;
     state.span = seed_span(config.t, k);
     state.stage2_config = config.stage2;
     state.stage2_config.min_score = effective_min_score;

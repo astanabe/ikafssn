@@ -24,7 +24,6 @@
 
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "core/types.hpp"
@@ -55,16 +54,13 @@ struct ExtJob {
 // consumed by Stage 2B.  When `mode1_only` is true the chain_hits step is
 // skipped and `mode1_results` carries the final per-strand results.
 struct JobState {
-    // On the Stage 2 path the candidates are ordered by ascending SeqId, the
-    // order the .kpx candidate-set decoder requires; `Stage1Candidate::score`
-    // carries the Stage 1 score of each candidate.  In mode 1 the list keeps
-    // the order Stage 1 produced it in.
+    // Ordered by ascending SeqId on the Stage 2 path, as the .kpx
+    // candidate-set decoder requires.  Mode 1 keeps Stage 1's own order.
     std::vector<Stage1Candidate> candidates;
-    // Stage 2A output, indexed exactly like `candidates`.
+    // Stage 2A output, indexed like `candidates`.
     std::vector<std::vector<Hit>> hits_per_candidate;
     bool is_reverse = false;
     bool mode1_only = false;
-    uint32_t effective_min_score = 0;
     int span = 0;  // seed span (t for spaced seeds, k for contiguous)
     Stage2Config stage2_config;
     std::vector<ChainResult> mode1_results;
@@ -166,11 +162,10 @@ extern template void stage2a_one_strand_both<uint32_t>(
     const KixReader&, const KpxReader&,
     JobState&);
 
-// Stage 2B — run chain_hits() for `state.candidates[cand_idx]`.  Pure
-// function over read-only state; safe to call concurrently across distinct
-// (state, cand_idx) pairs.  Returns chain results for the subject (empty if
-// no hits or no chain meets min_score).  `cand_idx` must be a valid index
-// into a candidate list that Stage 2A has already run against.
+// Stage 2B — run chain_hits() for `state.candidates[cand_idx]`, which Stage
+// 2A must already have collected hits for.  Pure function over read-only
+// state; safe to call concurrently across distinct (state, cand_idx) pairs.
+// Returns the subject's chains (empty if no hits or none meets min_score).
 std::vector<ChainResult>
 stage2b_one_subject(size_t cand_idx, const JobState& state);
 

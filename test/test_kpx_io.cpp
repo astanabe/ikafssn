@@ -13,13 +13,10 @@ using namespace ikafssn;
 
 static const char* TEST_FILE = "/tmp/test_ikafssn.kpx";
 
-// Decode position posting lists from a v8 .kpx posting list via the
-// candidate-set API.  Builds the kix_decoded array as the sorted union
-// of `candidates` (treating it as the full distinct seq_id list for the
-// k-mer — for these tests the writer adds postings only for those sids,
-// so the .kix decoded array equals the candidate set).  Returns a flat
-// vector of positions ordered by the candidate seq_id list (positions
-// for candidates[0] first, then [1], etc.).
+// Decode a .kpx posting list via the candidate-set API.  The writer adds
+// postings only for `candidates`, so the sorted unique candidate list is
+// also the k-mer's .kix decoded distinct seq_id array.  Returns the
+// positions concatenated in candidate order.
 static std::vector<uint32_t> decode_pos_postings(
     const uint8_t* data, const uint8_t* end,
     const std::vector<uint32_t>& candidates) {
@@ -37,8 +34,6 @@ static std::vector<uint32_t> decode_pos_postings(
             scratch)) {
         return {};
     }
-    // Every candidate is in the posting list here, so the CSR position array
-    // is exactly the per-candidate concatenation.
     return scratch.out_positions;
 }
 

@@ -612,10 +612,9 @@ bool open_stream_kpx_for_candidates(
     }
 
     // 2-pointer merge walk over kix_decoded × candidates, ranking each
-    // distinct sid by its kind to pull positions out of the per-kind
-    // decoded buffers.  `ci` is monotonically non-decreasing and each
-    // candidate matches at most one distinct sid, so appending only the
-    // matches builds the sparse CSR in one pass.
+    // distinct sid by its kind to pull positions out of the per-kind decoded
+    // buffers.  `ci` never decreases and each candidate matches at most one
+    // distinct sid, so appending the matches builds the CSR in one pass.
     std::size_t ci = 0;
     std::uint32_t r_part = 0, r_short1 = 0, r_short2 = 0;
     for (std::uint32_t i = 0; i < distinct_count; i++) {
