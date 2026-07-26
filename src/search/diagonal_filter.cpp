@@ -1,30 +1,37 @@
 #include "search/diagonal_filter.hpp"
 
-#include <unordered_map>
+#include <algorithm>
 
 namespace ikafssn {
 
-std::vector<Hit> diagonal_filter(const std::vector<Hit>& hits,
-                                 uint32_t min_nhit_diag) {
-    if (min_nhit_diag <= 1) return hits;
+void diagonal_filter(std::vector<Hit>& hits,
+                     uint32_t min_nhit_diag,
+                     std::vector<int32_t>& diag_scratch) {
+    if (min_nhit_diag <= 1) return;
+    const size_t n = hits.size();
+    if (n == 0) return;
 
-    std::unordered_map<int32_t, uint32_t> diag_counts;
-    diag_counts.reserve(hits.size());
-    for (const auto& hit : hits) {
-        int32_t diag = static_cast<int32_t>(hit.s_pos) - static_cast<int32_t>(hit.q_pos);
-        diag_counts[diag]++;
+    // Counting via a sorted copy of the diagonals: one buffer instead of a
+    // hash map, and the buffer is reused across calls.
+    diag_scratch.clear();
+    diag_scratch.reserve(n);
+    for (const Hit& hit : hits) {
+        diag_scratch.push_back(static_cast<int32_t>(hit.s_pos) -
+                               static_cast<int32_t>(hit.q_pos));
     }
+    std::sort(diag_scratch.begin(), diag_scratch.end());
 
-    std::vector<Hit> filtered;
-    filtered.reserve(hits.size());
-    for (const auto& hit : hits) {
-        int32_t diag = static_cast<int32_t>(hit.s_pos) - static_cast<int32_t>(hit.q_pos);
-        if (diag_counts[diag] >= min_nhit_diag) {
-            filtered.push_back(hit);
+    size_t w = 0;
+    for (size_t r = 0; r < n; r++) {
+        const int32_t diag = static_cast<int32_t>(hits[r].s_pos) -
+                             static_cast<int32_t>(hits[r].q_pos);
+        const auto range =
+            std::equal_range(diag_scratch.begin(), diag_scratch.end(), diag);
+        if (static_cast<uint32_t>(range.second - range.first) >= min_nhit_diag) {
+            hits[w++] = hits[r];
         }
     }
-
-    return filtered;
+    hits.resize(w);
 }
 
 } // namespace ikafssn

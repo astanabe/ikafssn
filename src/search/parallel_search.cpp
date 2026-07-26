@@ -344,15 +344,15 @@ void stage2a_one_strand_both(
     shrink_hits_per_candidate(state.hits_per_candidate);
 }
 
-std::vector<ChainResult>
-stage2b_one_subject(size_t cand_idx, const JobState& state) {
+void stage2b_one_subject(size_t cand_idx, const JobState& state,
+                         std::vector<ChainResult>& out) {
+    out.clear();
     const std::vector<Hit>& hits = state.hits_per_candidate[cand_idx];
-    if (hits.empty()) return {};
+    if (hits.empty()) return;
     const Stage1Candidate& cand = state.candidates[cand_idx];
-    auto chains = chain_hits(hits, cand.id, state.span,
-                             state.is_reverse, state.stage2_config);
-    for (auto& cr : chains) cr.stage1_score = cand.score;
-    return chains;
+    chain_hits(hits, cand.id, state.span,
+               state.is_reverse, state.stage2_config, out);
+    for (auto& cr : out) cr.stage1_score = cand.score;
 }
 
 namespace {
@@ -602,11 +602,12 @@ void run_stage2b_jobs(
             tbb::blocked_range<size_t>(0, flat.size()),
             [&](const tbb::blocked_range<size_t>& range) {
                 auto& local = tls_results.local();
+                std::vector<ChainResult> chains;
                 for (size_t i = range.begin(); i != range.end(); ++i) {
                     const auto& slot = flat[i];
                     const ExtJob& ej = ext_jobs[slot.ext_job_idx];
                     const JobState& st = states[slot.ext_job_idx];
-                    auto chains = stage2b_one_subject(slot.cand_idx, st);
+                    stage2b_one_subject(slot.cand_idx, st, chains);
                     for (auto& cr : chains) {
                         OrchestratorHit oh;
                         oh.query_idx = ej.qi;

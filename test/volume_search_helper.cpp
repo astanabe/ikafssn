@@ -20,13 +20,10 @@ static std::vector<ChainResult>
 drain_stage2b(const JobState& state) {
     if (state.mode1_only) return state.mode1_results;
     std::vector<ChainResult> results;
+    std::vector<ChainResult> chains;
     for (size_t ci = 0; ci < state.candidates.size(); ++ci) {
-        auto chains = stage2b_one_subject(ci, state);
-        if (!chains.empty()) {
-            results.insert(results.end(),
-                           std::make_move_iterator(chains.begin()),
-                           std::make_move_iterator(chains.end()));
-        }
+        stage2b_one_subject(ci, state, chains);
+        results.insert(results.end(), chains.begin(), chains.end());
     }
     return results;
 }

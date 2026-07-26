@@ -30,19 +30,22 @@ struct Stage2Config {
 };
 
 // Run Stage 2 chaining on hits for a single candidate sequence.
-// 1. Apply diagonal filter
-// 2. Sort hits by q_pos (then s_pos)
-// 3. Run O(n^2) chaining DP
+// 1. Sort hits by q_pos (then s_pos) and drop duplicate (q_pos, s_pos) pairs
+// 2. Apply diagonal filter
+// 3. Run chaining DP over a lookback window
 // 4. Traceback best chain
 // 5. If max_nhit_per_subject > 1 (or 0=unlimited), remove used hits and repeat.
 //    In a tie-inclusive mode (max_nhit_per_subject_mode 3/4) extraction
 //    continues past N while the next chain ties the N-th chain's chainscore.
 //
-// Returns vector of ChainResult (empty if no chain passes min_score).
-std::vector<ChainResult> chain_hits(const std::vector<Hit>& hits,
-                                    SeqId seq_id,
-                                    int span,
-                                    bool is_reverse,
-                                    const Stage2Config& config);
+// Chains are written to `out` (cleared first); it ends up empty when no chain
+// passes min_score.  Working buffers live in per-thread scratch, so reusing
+// one `out` across calls makes the steady state allocation-free.
+void chain_hits(const std::vector<Hit>& hits,
+                SeqId seq_id,
+                int span,
+                bool is_reverse,
+                const Stage2Config& config,
+                std::vector<ChainResult>& out);
 
 } // namespace ikafssn

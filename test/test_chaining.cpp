@@ -1,7 +1,22 @@
 #include "test_util.hpp"
 #include "search/stage2_chaining.hpp"
 
+#include <algorithm>
+#include <random>
+
 using namespace ikafssn;
+
+// chain_hits() writes into a caller-owned vector; the tests below mostly want
+// one result list per call, so wrap it.
+static std::vector<ChainResult> run_chain(const std::vector<Hit>& hits,
+                                          SeqId seq_id,
+                                          int span,
+                                          bool is_reverse,
+                                          const Stage2Config& config) {
+    std::vector<ChainResult> out;
+    chain_hits(hits, seq_id, span, is_reverse, config, out);
+    return out;
+}
 
 static void test_single_hit() {
     std::fprintf(stderr, "-- test_single_hit\n");
@@ -12,7 +27,7 @@ static void test_single_hit() {
     config.min_score = 1;
     config.max_gap = 100;
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     CHECK_EQ(result[0].chainscore, 1u);
     CHECK_EQ(result[0].q_start, 10u);
@@ -34,7 +49,7 @@ static void test_perfect_chain() {
     config.min_score = 1;
     config.max_gap = 100;
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     CHECK_EQ(result[0].chainscore, 5u);
     CHECK_EQ(result[0].q_start, 0u);
@@ -55,7 +70,7 @@ static void test_chain_with_gap() {
     config.min_score = 1;
     config.max_gap = 100; // gap_q=40, gap_s=90, diag_diff=50, within 100
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     CHECK_EQ(result[0].chainscore, 3u);
 }
@@ -73,7 +88,7 @@ static void test_chain_gap_exceeded() {
     config.max_gap = 100;
 
     config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     // Best chain is just one hit (score=1)
     CHECK_EQ(result[0].chainscore, 1u);
@@ -88,7 +103,7 @@ static void test_min_score_filter() {
     config.min_score = 3; // require at least 3
     config.max_gap = 100;
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.empty(), true); // filtered out
 }
 
@@ -101,7 +116,7 @@ static void test_reverse_strand_flag() {
     config.min_score = 1;
     config.max_gap = 100;
 
-    auto result = chain_hits(hits, 5, 7, true, config);
+    auto result = run_chain(hits, 5, 7, true, config);
     CHECK_EQ(result.size(), 1u);
     CHECK_EQ(result[0].is_reverse, true);
     CHECK_EQ(result[0].seq_id, 5u);
@@ -121,7 +136,7 @@ static void test_non_collinear_hits() {
     config.max_gap = 100;
 
     config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     // Each hit is independent, best chain score = 1
     CHECK_EQ(result[0].chainscore, 1u);
@@ -141,7 +156,7 @@ static void test_same_qpos_not_chained() {
     config.max_gap = 100;
 
     config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     // Only one distinct q_pos, so the longest chain must be 1
     CHECK_EQ(result[0].chainscore, 1u);
@@ -162,7 +177,7 @@ static void test_same_qpos_mixed_with_distinct() {
     config.max_gap = 100;
 
     config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     // Best chain: pick one hit from q_pos=0 and one from q_pos=20 → score 2
     CHECK_EQ(result[0].chainscore, 2u);
@@ -181,7 +196,7 @@ static void test_chain_max_lookback_basic() {
     config.max_gap = 100;
     config.chain_max_lookback = 4;
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     CHECK_EQ(result[0].chainscore, 5u);
 }
@@ -207,7 +222,7 @@ static void test_chain_max_lookback_interleaved() {
     // 4: pred [3] 71 < 118, gaps ok -> dp=2.  Best = 2.
     config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
     config.chain_max_lookback = 1;
-    auto result1 = chain_hits(hits, 0, 7, false, config);
+    auto result1 = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result1.size(), 1u);
     CHECK_EQ(result1[0].chainscore, 2u);
 
@@ -216,7 +231,7 @@ static void test_chain_max_lookback_interleaved() {
     // Index 4: looks at [2,3] -> from 2: s 118>104 yes, diag_diff=|118-28-(104-14)|=0<=100. dp=3
     // Best = 3 (chain A fully recovered)
     config.chain_max_lookback = 2;
-    auto result2 = chain_hits(hits, 0, 7, false, config);
+    auto result2 = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result2.size(), 1u);
     CHECK_EQ(result2[0].chainscore, 3u);
 }
@@ -234,7 +249,7 @@ static void test_chain_max_lookback_zero_unlimited() {
     config.max_gap = 100;
     config.chain_max_lookback = 0; // unlimited
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     CHECK_EQ(result[0].chainscore, 5u);
 }
@@ -248,7 +263,7 @@ static void test_empty_hits() {
     config.min_score = 1;
     config.max_gap = 100;
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.empty(), true);
 }
 
@@ -263,7 +278,7 @@ static void test_duplicate_hits_dedup() {
     config.min_score = 1;
     config.max_gap = 100;
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     CHECK_EQ(result[0].chainscore, 2u);  // 2 distinct positions, not 5
 }
@@ -286,7 +301,7 @@ static void test_multi_chain_two_regions() {
     config.max_gap = 50; // tight gap: prevents cross-region chaining
     config.max_nhit_per_subject = 2;
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 2u);
     CHECK_EQ(result[0].chainscore, 5u);
     CHECK_EQ(result[1].chainscore, 5u);
@@ -307,7 +322,7 @@ static void test_multi_chain_unlimited() {
     config.max_gap = 50;
     config.max_nhit_per_subject = 0; // unlimited
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 3u);
     // Should be in descending score order: 4, 3, 2
     CHECK_EQ(result[0].chainscore, 4u);
@@ -329,7 +344,7 @@ static void test_multi_chain_default_one() {
     config.max_gap = 50;
     // max_nhit_per_subject = 1 (default)
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 1u);
     CHECK_EQ(result[0].chainscore, 4u); // best chain
 }
@@ -349,7 +364,7 @@ static void test_multi_chain_score_order() {
     config.max_gap = 50;
     config.max_nhit_per_subject = 3;
 
-    auto result = chain_hits(hits, 0, 7, false, config);
+    auto result = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(result.size(), 3u);
     // Greedy removal: first finds best (4), then best of remainder (3), then (2)
     CHECK_EQ(result[0].chainscore, 4u);
@@ -374,26 +389,141 @@ static void test_tie_inclusive_take_n() {
 
     // Strict take-1 (mode 1): only the single best chain survives.
     config.max_nhit_per_subject_mode = 1;
-    auto strict = chain_hits(hits, 0, 7, false, config);
+    auto strict = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(strict.size(), 1u);
     CHECK_EQ(strict[0].chainscore, 3u);
 
     // Tie-inclusive take-1 (mode 3): the top score (3) plus its tie -> 2.
     config.max_nhit_per_subject_mode = 3;
-    auto tie = chain_hits(hits, 0, 7, false, config);
+    auto tie = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(tie.size(), 2u);
     CHECK_EQ(tie[0].chainscore, 3u);
     CHECK_EQ(tie[1].chainscore, 3u);
 
     // Tie-inclusive N=2: 2nd score is 3, so the score-2 region C is dropped.
     config.max_nhit_per_subject = 2;
-    auto tie2 = chain_hits(hits, 0, 7, false, config);
+    auto tie2 = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(tie2.size(), 2u);
 
     // Unlimited (N=0) returns everything regardless of mode.
     config.max_nhit_per_subject = 0;
-    auto all = chain_hits(hits, 0, 7, false, config);
+    auto all = run_chain(hits, 0, 7, false, config);
     CHECK_EQ(all.size(), 3u);
+}
+
+// Two collinear regions plus a scatter of off-diagonal noise, enough hits to
+// exercise the lookback window and several extraction iterations.
+static std::vector<Hit> make_two_region_hits() {
+    std::vector<Hit> hits;
+    for (uint32_t i = 0; i < 40; i++) hits.push_back({i * 7, 1000 + i * 7});
+    for (uint32_t i = 0; i < 25; i++) hits.push_back({i * 7, 5000 + i * 8});
+    for (uint32_t i = 0; i < 10; i++) hits.push_back({i * 31 + 3, 9000 - i * 211});
+    std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
+        return a.q_pos < b.q_pos || (a.q_pos == b.q_pos && a.s_pos < b.s_pos);
+    });
+    return hits;
+}
+
+static Stage2Config two_region_config() {
+    Stage2Config config;
+    config.min_nhit_diag = 1;
+    config.min_score = 1;
+    config.max_gap = 50;
+    config.max_nhit_per_subject = 0;  // unlimited: exercise the removal loop
+    return config;
+}
+
+static bool same_chains(const std::vector<ChainResult>& a,
+                        const std::vector<ChainResult>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++) {
+        if (a[i].seq_id != b[i].seq_id) return false;
+        if (a[i].chainscore != b[i].chainscore) return false;
+        if (a[i].q_start != b[i].q_start || a[i].q_end != b[i].q_end) return false;
+        if (a[i].s_start != b[i].s_start || a[i].s_end != b[i].s_end) return false;
+        if (a[i].is_reverse != b[i].is_reverse) return false;
+    }
+    return true;
+}
+
+static void test_scratch_reuse_across_calls() {
+    std::fprintf(stderr, "-- test_scratch_reuse_across_calls\n");
+
+    // A large subject, then a small one, then the large one again.  The
+    // per-thread working buffers are sized for the first call, so a missing
+    // clear or resize would let its leftovers leak into the later calls.
+    const std::vector<Hit> big = make_two_region_hits();
+    const std::vector<Hit> small = {{0, 100}, {7, 107}, {14, 114}};
+    const Stage2Config config = two_region_config();
+
+    std::vector<ChainResult> out;
+    chain_hits(big, 3, 7, false, config, out);
+    const std::vector<ChainResult> first = out;
+    CHECK_EQ(first.empty(), false);
+
+    chain_hits(small, 3, 7, false, config, out);
+    CHECK_EQ(out.size(), 1u);
+    CHECK_EQ(out[0].chainscore, 3u);
+
+    chain_hits(big, 3, 7, false, config, out);
+    CHECK_EQ(same_chains(first, out), true);
+}
+
+static void test_unsorted_input_equivalence() {
+    std::fprintf(stderr, "-- test_unsorted_input_equivalence\n");
+
+    // The same hit set in five arrangements: one ascending run, one descending
+    // run, two ascending runs, two descending runs, and a shuffle.
+    const std::vector<Hit> ascending = make_two_region_hits();
+    const size_t n = ascending.size();
+
+    std::vector<Hit> descending(ascending.rbegin(), ascending.rend());
+
+    std::vector<Hit> two_asc_runs, two_desc_runs;
+    for (size_t i = 0; i < n; i += 2) two_asc_runs.push_back(ascending[i]);
+    const size_t run1_len = two_asc_runs.size();
+    for (size_t i = 1; i < n; i += 2) two_asc_runs.push_back(ascending[i]);
+    two_desc_runs = two_asc_runs;
+    std::reverse(two_desc_runs.begin(), two_desc_runs.begin() + run1_len);
+    std::reverse(two_desc_runs.begin() + run1_len, two_desc_runs.end());
+
+    std::vector<Hit> shuffled = ascending;
+    std::mt19937 rng(20260727u);
+    std::shuffle(shuffled.begin(), shuffled.end(), rng);
+
+    const Stage2Config config = two_region_config();
+    const std::vector<ChainResult> expected =
+        run_chain(ascending, 3, 7, false, config);
+    CHECK_EQ(expected.empty(), false);
+
+    CHECK_EQ(same_chains(expected, run_chain(descending, 3, 7, false, config)), true);
+    CHECK_EQ(same_chains(expected, run_chain(two_asc_runs, 3, 7, false, config)), true);
+    CHECK_EQ(same_chains(expected, run_chain(two_desc_runs, 3, 7, false, config)), true);
+    CHECK_EQ(same_chains(expected, run_chain(shuffled, 3, 7, false, config)), true);
+}
+
+static void test_max_gap_boundary() {
+    std::fprintf(stderr, "-- test_max_gap_boundary\n");
+
+    // Anchor on diagonal 1000; the partner's diagonal is offset by exactly
+    // +/- max_gap and by one more.  Both signs must behave the same way.
+    Stage2Config config;
+    config.min_nhit_diag = 1;
+    config.min_score = 1;
+    config.max_gap = 100;
+    config.max_nhit_per_subject_mode = 1;  // strict take-N (no ties)
+
+    auto score_for = [&](uint32_t s2) {
+        std::vector<Hit> hits = {{0, 1000}, {200, s2}};
+        auto result = run_chain(hits, 0, 7, false, config);
+        CHECK_EQ(result.size(), 1u);
+        return result.empty() ? 0u : result[0].chainscore;
+    };
+
+    CHECK_EQ(score_for(1300), 2u);  // diag_diff = +100 == max_gap
+    CHECK_EQ(score_for(1301), 1u);  // diag_diff = +101 >  max_gap
+    CHECK_EQ(score_for(1100), 2u);  // diag_diff = -100, |.| == max_gap
+    CHECK_EQ(score_for(1099), 1u);  // diag_diff = -101, |.| >  max_gap
 }
 
 int main() {
@@ -416,6 +546,9 @@ int main() {
     test_multi_chain_default_one();
     test_multi_chain_score_order();
     test_tie_inclusive_take_n();
+    test_scratch_reuse_across_calls();
+    test_unsorted_input_equivalence();
+    test_max_gap_boundary();
 
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;

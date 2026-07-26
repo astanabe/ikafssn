@@ -7,28 +7,61 @@
 
 namespace ikafssn {
 
-std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
-                                    SeqId seq_id,
-                                    int span,
-                                    bool is_reverse,
-                                    const Stage2Config& config) {
-    if (raw_hits.empty()) return {};
+namespace {
 
-    // Step 1: deduplicate (q_pos, s_pos) pairs from degenerate base expansion
-    std::vector<Hit> deduped = raw_hits;
-    std::sort(deduped.begin(), deduped.end(), [](const Hit& a, const Hit& b) {
+// Per-thread working buffers for chain_hits().  They grow monotonically to the
+// largest subject seen so far, so the steady state performs no allocation.
+struct ChainScratch {
+    std::vector<Hit>      work;           // sorted, deduped, filtered hits
+    std::vector<uint32_t> dp;
+    std::vector<int32_t>  prev;
+    std::vector<size_t>   chain_indices;  // traceback, strictly decreasing
+    std::vector<int32_t>  diags;          // diagonal_filter counting buffer
+};
+
+inline ChainScratch& tls_chain_scratch() {
+    thread_local ChainScratch scratch;
+    return scratch;
+}
+
+// Function objects rather than free functions: std::sort / std::unique would
+// otherwise be instantiated on a function pointer and call through it.
+struct HitLess {
+    bool operator()(const Hit& a, const Hit& b) const {
         return a.q_pos < b.q_pos || (a.q_pos == b.q_pos && a.s_pos < b.s_pos);
-    });
-    deduped.erase(std::unique(deduped.begin(), deduped.end(),
-        [](const Hit& a, const Hit& b) {
-            return a.q_pos == b.q_pos && a.s_pos == b.s_pos;
-        }), deduped.end());
+    }
+};
 
-    // Step 2: diagonal filter
-    std::vector<Hit> hits = diagonal_filter(deduped, config.min_nhit_diag);
-    if (hits.empty()) return {};
+struct HitSamePos {
+    bool operator()(const Hit& a, const Hit& b) const {
+        return a.q_pos == b.q_pos && a.s_pos == b.s_pos;
+    }
+};
 
-    // Already sorted by (q_pos, s_pos) from dedup step
+}  // namespace
+
+void chain_hits(const std::vector<Hit>& raw_hits,
+                SeqId seq_id,
+                int span,
+                bool is_reverse,
+                const Stage2Config& config,
+                std::vector<ChainResult>& out) {
+    out.clear();
+    if (raw_hits.empty()) return;
+
+    ChainScratch& scratch = tls_chain_scratch();
+    std::vector<Hit>& work = scratch.work;
+    std::vector<uint32_t>& dp = scratch.dp;
+    std::vector<int32_t>& prev = scratch.prev;
+    std::vector<size_t>& chain_indices = scratch.chain_indices;
+
+    // Deduplicate (q_pos, s_pos) pairs from degenerate base expansion.
+    work.assign(raw_hits.begin(), raw_hits.end());
+    std::sort(work.begin(), work.end(), HitLess{});
+    work.erase(std::unique(work.begin(), work.end(), HitSamePos{}), work.end());
+
+    diagonal_filter(work, config.min_nhit_diag, scratch.diags);
+    if (work.empty()) return;
 
     // Extraction limit and tie behaviour.  N == 0 means unlimited.  In a
     // tie-inclusive mode the chainscore of the N-th chain (s_n) bounds how
@@ -41,36 +74,37 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
     uint32_t s_n = 0;
     bool s_n_set = false;
 
-    std::vector<ChainResult> results;
-
-    // Working copy of hits for iterative removal
-    std::vector<Hit> remaining = std::move(hits);
-
-    while (!remaining.empty()) {
+    while (!work.empty()) {
         // Strict take-N stop: N chains already produced.
-        if (!unlimited && !tie_inclusive && results.size() >= n_limit) break;
+        if (!unlimited && !tie_inclusive && out.size() >= n_limit) break;
 
-        size_t n = remaining.size();
+        const size_t n = work.size();
 
-        // DP arrays
-        std::vector<uint32_t> dp(n, 1);
-        std::vector<int32_t> prev(n, -1);
+        dp.assign(n, 1);
+        prev.assign(n, -1);
+
+        // The buffers live in thread-local storage, so index them through
+        // local pointers to keep the DP loop free of base-pointer reloads.
+        const Hit* const wp = work.data();
+        uint32_t* const dpp = dp.data();
+        int32_t* const prevp = prev.data();
+        const int64_t max_gap = static_cast<int64_t>(config.max_gap);
+        const size_t lookback = config.chain_max_lookback;
 
         for (size_t i = 1; i < n; i++) {
-            size_t j_start = (config.chain_max_lookback > 0 && i > config.chain_max_lookback)
-                              ? (i - config.chain_max_lookback) : 0;
+            size_t j_start = (lookback > 0 && i > lookback) ? (i - lookback) : 0;
             for (size_t j = j_start; j < i; j++) {
-                if (remaining[j].q_pos >= remaining[i].q_pos) continue;
-                if (remaining[j].s_pos >= remaining[i].s_pos) continue;
+                if (wp[j].q_pos >= wp[i].q_pos) continue;
+                if (wp[j].s_pos >= wp[i].s_pos) continue;
 
-                int64_t gap_q = static_cast<int64_t>(remaining[i].q_pos) - static_cast<int64_t>(remaining[j].q_pos);
-                int64_t gap_s = static_cast<int64_t>(remaining[i].s_pos) - static_cast<int64_t>(remaining[j].s_pos);
+                int64_t gap_q = static_cast<int64_t>(wp[i].q_pos) - static_cast<int64_t>(wp[j].q_pos);
+                int64_t gap_s = static_cast<int64_t>(wp[i].s_pos) - static_cast<int64_t>(wp[j].s_pos);
                 int64_t diag_diff = std::abs(gap_s - gap_q);
 
-                if (diag_diff <= static_cast<int64_t>(config.max_gap)) {
-                    if (dp[j] + 1 > dp[i]) {
-                        dp[i] = dp[j] + 1;
-                        prev[i] = static_cast<int32_t>(j);
+                if (diag_diff <= max_gap) {
+                    if (dpp[j] + 1 > dpp[i]) {
+                        dpp[i] = dpp[j] + 1;
+                        prevp[i] = static_cast<int32_t>(j);
                     }
                 }
             }
@@ -79,12 +113,12 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
         // Find best chain endpoint
         size_t best_idx = 0;
         for (size_t i = 1; i < n; i++) {
-            if (dp[i] > dp[best_idx]) {
+            if (dpp[i] > dpp[best_idx]) {
                 best_idx = i;
             }
         }
 
-        uint32_t best_score = dp[best_idx];
+        uint32_t best_score = dpp[best_idx];
         if (best_score < config.min_score) break;
 
         // Tie-inclusive stop: past the N-th chain, only chains tying the
@@ -92,7 +126,7 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
         if (!unlimited && tie_inclusive && s_n_set && best_score < s_n) break;
 
         // Traceback to collect chain hit indices
-        std::vector<size_t> chain_indices;
+        chain_indices.clear();
         size_t idx = best_idx;
         while (idx != SIZE_MAX) {
             chain_indices.push_back(idx);
@@ -107,17 +141,17 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
         cr.seq_id = seq_id;
         cr.chainscore = best_score;
         cr.is_reverse = is_reverse;
-        cr.q_start = remaining[chain_start_idx].q_pos;
-        cr.q_end = remaining[chain_end_idx].q_pos + static_cast<uint32_t>(span);
-        cr.s_start = remaining[chain_start_idx].s_pos;
-        cr.s_end = remaining[chain_end_idx].s_pos + static_cast<uint32_t>(span);
+        cr.q_start = work[chain_start_idx].q_pos;
+        cr.q_end = work[chain_end_idx].q_pos + static_cast<uint32_t>(span);
+        cr.s_start = work[chain_start_idx].s_pos;
+        cr.s_end = work[chain_end_idx].s_pos + static_cast<uint32_t>(span);
 
-        results.push_back(cr);
+        out.push_back(cr);
 
         // Record the N-th chain's chainscore the moment N is reached
         // (tie-inclusive mode only).
         if (!unlimited && tie_inclusive && !s_n_set &&
-            results.size() == n_limit) {
+            out.size() == n_limit) {
             s_n = best_score;
             s_n_set = true;
         }
@@ -125,23 +159,18 @@ std::vector<ChainResult> chain_hits(const std::vector<Hit>& raw_hits,
         // Early return for a strict single-chain take (no removal overhead).
         if (!unlimited && !tie_inclusive && n_limit == 1) break;
 
-        // Remove used hits for next iteration
-        std::vector<bool> used(n, false);
-        for (size_t ci : chain_indices) {
-            used[ci] = true;
+        // Drop the chain's hits so the next iteration sees the remainder.
+        // prev[i] < i holds for every link, so chain_indices is strictly
+        // decreasing and walking it backwards yields the removal targets in
+        // ascending order — enough to compact `work` in a single pass.
+        size_t w = 0;
+        size_t ci = chain_indices.size();
+        for (size_t r = 0; r < n; r++) {
+            if (ci > 0 && chain_indices[ci - 1] == r) { ci--; continue; }
+            work[w++] = work[r];
         }
-
-        std::vector<Hit> next_remaining;
-        next_remaining.reserve(n - chain_indices.size());
-        for (size_t i = 0; i < n; i++) {
-            if (!used[i]) {
-                next_remaining.push_back(remaining[i]);
-            }
-        }
-        remaining = std::move(next_remaining);
+        work.resize(w);
     }
-
-    return results;
 }
 
 } // namespace ikafssn

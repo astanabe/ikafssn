@@ -163,11 +163,12 @@ extern template void stage2a_one_strand_both<uint32_t>(
     JobState&);
 
 // Stage 2B — run chain_hits() for `state.candidates[cand_idx]`, which Stage
-// 2A must already have collected hits for.  Pure function over read-only
-// state; safe to call concurrently across distinct (state, cand_idx) pairs.
-// Returns the subject's chains (empty if no hits or none meets min_score).
-std::vector<ChainResult>
-stage2b_one_subject(size_t cand_idx, const JobState& state);
+// 2A must already have collected hits for.  Reads only from `state`; safe to
+// call concurrently across distinct (state, cand_idx) pairs.  The subject's
+// chains are written to `out` (cleared first), which the caller can reuse
+// across candidates to keep the loop allocation-free.
+void stage2b_one_subject(size_t cand_idx, const JobState& state,
+                         std::vector<ChainResult>& out);
 
 // Volume-side bundle — pointers are non-owning and caller-managed.
 // `kix_opt` / `kpx_opt` are nullptr in single-template mode and point to the
