@@ -11,13 +11,13 @@ namespace {
 // Per-thread working buffers for chain_hits().  They grow monotonically to the
 // largest subject seen so far, so the steady state performs no allocation.
 struct ChainScratch {
-    std::vector<Hit>      work;           // sorted, deduped, filtered hits
+    std::vector<Hit>      work;           // hits still available for extraction
     std::vector<Hit>      merge;          // natural-merge destination
     std::vector<uint32_t> q;              // DP input, split out of `work`
     std::vector<uint32_t> s;
     std::vector<int32_t>  diag;           // s - q, per hit
-    std::vector<uint32_t> dp;
-    std::vector<int32_t>  prev;
+    std::vector<uint32_t> dp;             // longest chain ending at each hit
+    std::vector<int32_t>  prev;           // that chain's predecessor, -1 if none
     std::vector<size_t>   chain_indices;  // traceback, strictly decreasing
     std::vector<int32_t>  diag_counts;    // diagonal_filter counting buffer
 };
@@ -65,12 +65,12 @@ void chain_hits(const std::vector<Hit>& raw_hits,
     std::vector<Hit>& work = scratch.work;
     std::vector<size_t>& chain_indices = scratch.chain_indices;
 
-    // Order by (q_pos, s_pos) and drop the duplicate pairs degenerate base
-    // expansion produces.  Stage 2A emits one monotonic run per seed template,
-    // ascending on the forward strand and descending on the reverse-complement
-    // strand (fwd_pos = len - pos - span), so detect the runs and merge them
-    // instead of sorting blind.  Reversing a descending run reorders only
-    // hits that compare equal, which the dedup below collapses anyway.
+    // Order by (q_pos, s_pos).  Stage 2A emits one monotonic run of hits per
+    // seed template — ascending on the forward strand, descending on the
+    // reverse-complement strand because fwd_pos = len - pos - span — so detect
+    // the runs and merge them instead of sorting blind.  Reversing a
+    // descending run reorders only hits that compare equal, which the dedup
+    // below collapses anyway.
     work.assign(raw_hits.begin(), raw_hits.end());
     {
         const size_t n = work.size();
@@ -88,16 +88,19 @@ void chain_hits(const std::vector<Hit>& raw_hits,
         }
         if (nruns == 2) {
             std::vector<Hit>& merged = scratch.merge;
-            scratch_ptr(merged, n);
+            Hit* const mp = scratch_ptr(merged, n);
             std::merge(work.begin(), work.begin() + run1_end,
                        work.begin() + run1_end, work.begin() + n,
-                       merged.begin(), HitLess{});
+                       mp, HitLess{});
             work.swap(merged);
             work.resize(n);
         } else if (nruns > 2) {
             std::sort(work.begin(), work.end(), HitLess{});
         }
     }
+
+    // Drop the duplicate (q_pos, s_pos) pairs degenerate base expansion
+    // produces; they would otherwise inflate the chainscore.
     work.erase(std::unique(work.begin(), work.end(), HitSamePos{}), work.end());
 
     diagonal_filter(work, config.min_nhit_diag, scratch.diag_counts);
