@@ -10,6 +10,7 @@
 #include "search/stage1_filter.hpp"
 #include "util/common_init.hpp"
 #include "util/logger.hpp"
+#include "util/stopwatch.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -189,9 +190,42 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
 
     Logger* logger = in.logger;
 
+    // Per-stage wall-time accumulators.  Stages run sequentially inside
+    // run_search, so reading a steady clock around each one attributes the
+    // whole call without overlap.
+    double t_s1_open = 0.0, t_s1_compute = 0.0, t_s1_fold = 0.0;
+    double t_s1_intotal = 0.0;
+    double t_s2_open = 0.0, t_s2a = 0.0, t_s2b = 0.0, t_s2_free = 0.0;
+    double t_dedup = 0.0, t_parent_topn = 0.0, t_s2_intotal = 0.0;
+    Stopwatch sw_total;
+    Stopwatch sw;
+
+    // Machine-readable per-stage breakdown, emitted once per run_search call.
+    // stage1_only drops the Stage 2 keys for the mode 1 early return.
+    auto log_timing = [&](bool stage1_only) {
+        if (!logger) return;
+        if (stage1_only) {
+            logger->info("Timing run_search (s): s1_open=%.3f s1_compute=%.3f "
+                         "s1_fold=%.3f s1_intotal=%.3f total=%.3f",
+                         t_s1_open, t_s1_compute, t_s1_fold, t_s1_intotal,
+                         sw_total.elapsed());
+        } else {
+            logger->info("Timing run_search (s): s1_open=%.3f s1_compute=%.3f "
+                         "s1_fold=%.3f s1_intotal=%.3f s2_open=%.3f s2a=%.3f "
+                         "s2b=%.3f s2_free=%.3f dedup=%.3f parent_topn=%.3f "
+                         "s2_intotal=%.3f total=%.3f",
+                         t_s1_open, t_s1_compute, t_s1_fold, t_s1_intotal,
+                         t_s2_open, t_s2a, t_s2b, t_s2_free, t_dedup,
+                         t_parent_topn, t_s2_intotal, sw_total.elapsed());
+        }
+    };
+
     // Build ext_jobs.
     std::vector<ExtJob> ext_jobs = build_ext_jobs<KmerInt>(in, num_volumes);
-    if (ext_jobs.empty()) return {};
+    if (ext_jobs.empty()) {
+        log_timing(true);
+        return {};
+    }
 
     std::vector<JobState> states(ext_jobs.size());
 
@@ -255,9 +289,13 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     auto run_stage1_batch_and_close = [&]() {
         if (s1_cur_vols.empty()) return;
         auto idxs = indices_for_batch(ext_jobs, s1_cur_vols);
+        sw.reset();
         run_stage1_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
                                   in.k, in.config, in.both_mode,
                                   states, arena, tls_bufs);
+        const double batch_compute = sw.lap();
+        t_s1_compute += batch_compute;
+        double batch_fold = 0.0;
 
         // Mode 1: drain this batch's mode1_results into the run
         // accumulator using a 2-pass parallel_scan + parallel_for so
@@ -318,14 +356,18 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                         });
                 });
             }
+            batch_fold = sw.lap();
+            t_s1_fold += batch_fold;
         }
 
         if (logger) {
-            logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s)",
-                         s1_batch_seq, s1_cur_vols.size(), idxs.size());
+            logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s), %.3f s",
+                         s1_batch_seq, s1_cur_vols.size(), idxs.size(),
+                         batch_compute + batch_fold);
         }
         ++s1_batch_seq;
 
+        sw.reset();
         for (uint16_t vi : s1_cur_vols) {
             kix_cod[vi].close();
             bundles[vi].kix = nullptr;
@@ -334,14 +376,18 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 bundles[vi].kix_opt = nullptr;
             }
         }
+        t_s1_open += sw.lap();
         s1_cur_vols.clear();
         s1_cur_ext_jobs = 0;
     };
 
     for (size_t vi = 0; vi < num_volumes; ++vi) {
+        sw.reset();
         if (!kix_cod[vi].open(in.volumes_cod[vi].files.kix_path)) {
             if (logger) logger->error("Cannot open %s",
                 in.volumes_cod[vi].files.kix_path.c_str());
+            t_s1_open += sw.lap();
+            log_timing(true);
             return {};
         }
         if (in.both_mode) {
@@ -349,6 +395,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 if (logger) logger->error("Cannot open %s",
                     in.volumes_opt[vi].files.kix_path.c_str());
                 kix_cod[vi].close();
+                t_s1_open += sw.lap();
+                log_timing(true);
                 return {};
             }
         }
@@ -366,6 +414,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         }
         s1_cur_vols.push_back(static_cast<uint16_t>(vi));
         s1_cur_ext_jobs += ext_jobs_per_volume;
+        t_s1_open += sw.lap();
         if (s1_cur_ext_jobs >= group_ext_job_target) {
             run_stage1_batch_and_close();
         }
@@ -375,21 +424,27 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     if (logger) {
         size_t total_candidates = 0;
         for (auto& st : states) total_candidates += st.candidates.size();
-        logger->info("Stage 1 complete: %zu candidate(s) across %zu ext_job(s)",
-                     total_candidates, ext_jobs.size());
+        logger->info("Stage 1 complete: %zu candidate(s) across %zu ext_job(s), %.3f s",
+                     total_candidates, ext_jobs.size(),
+                     t_s1_open + t_s1_compute + t_s1_fold);
     }
 
     // ----------------------------------------------------------------
     // Mode 1 fast path: all per-batch folds were drained above.
     // ----------------------------------------------------------------
     if (in.config.mode == 1) {
+        sw.reset();
         apply_in_total_mode1(mode1_results, in.config.stage1.max_nhit_in_total);
+        t_s1_intotal += sw.lap();
+        log_timing(true);
         return mode1_results;
     }
 
     // Stage 1 in-total (L) limit: prune each query's candidate set across all
     // volumes / strands before Stage 2 consumes it.
+    sw.reset();
     apply_in_total_stage1(states, ext_jobs, in.config.stage1.max_nhit_in_total);
+    t_s1_intotal += sw.lap();
 
     // ----------------------------------------------------------------
     // Stage 2 (Stage 2A + Stage 2B fused into one incremental loop)
@@ -408,8 +463,11 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     auto run_stage2_batch_and_close = [&]() {
         if (s2_cur_vols.empty()) return;
         auto idxs = indices_for_batch(ext_jobs, s2_cur_vols);
+        sw.reset();
         run_stage2a_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
                                    in.both_mode, states, arena);
+        const double batch_s2a = sw.lap();
+        t_s2a += batch_s2a;
 
         // Close .kix/.kpx readers before Stage 2B — Stage 2B reads only
         // JobState and does not need the posting files.
@@ -425,6 +483,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 bundles[vi].kpx_opt = nullptr;
             }
         }
+        t_s2_open += sw.lap();
 
         if (logger) {
             size_t batch_hits = 0;
@@ -433,19 +492,24 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                     batch_hits += kv.second.size();
             }
             total_stage2a_hits += batch_hits;
-            logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), %zu hit(s)",
+            logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), %zu hit(s), %.3f s",
                          s2_batch_seq, s2_cur_vols.size(), idxs.size(),
-                         batch_hits);
+                         batch_hits, batch_s2a);
         }
 
         size_t chains_before = results.size();
+        sw.reset();
         run_stage2b_jobs(idxs, ext_jobs, states, volume_indices, arena, results);
+        const double batch_s2b = sw.lap();
+        t_s2b += batch_s2b;
         if (logger) {
-            logger->info("Stage 2B batch %zu: %zu chain(s)",
-                         s2_batch_seq, results.size() - chains_before);
+            logger->info("Stage 2B batch %zu: %zu chain(s), %.3f s",
+                         s2_batch_seq, results.size() - chains_before,
+                         batch_s2b);
         }
         ++s2_batch_seq;
 
+        sw.reset();
         for (size_t ji : idxs) {
             JobState& st = states[ji];
             st.hits_per_seq  = {};
@@ -453,21 +517,27 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
             std::vector<SeqId>().swap(st.sorted_candidate_sids);
             std::vector<Stage1Candidate>().swap(st.candidates);
         }
+        t_s2_free += sw.lap();
 
         s2_cur_vols.clear();
         s2_cur_ext_jobs = 0;
     };
 
     for (size_t vi = 0; vi < num_volumes; ++vi) {
+        sw.reset();
         if (!kix_cod[vi].open(in.volumes_cod[vi].files.kix_path)) {
             if (logger) logger->error("Cannot open %s",
                 in.volumes_cod[vi].files.kix_path.c_str());
+            t_s2_open += sw.lap();
+            log_timing(false);
             return {};
         }
         if (!kpx_cod[vi].open(in.volumes_cod[vi].files.kpx_path)) {
             if (logger) logger->error("Cannot open %s",
                 in.volumes_cod[vi].files.kpx_path.c_str());
             kix_cod[vi].close();
+            t_s2_open += sw.lap();
+            log_timing(false);
             return {};
         }
         if (in.both_mode) {
@@ -476,6 +546,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                     in.volumes_opt[vi].files.kix_path.c_str());
                 kpx_cod[vi].close();
                 kix_cod[vi].close();
+                t_s2_open += sw.lap();
+                log_timing(false);
                 return {};
             }
             if (!kpx_opt[vi].open(in.volumes_opt[vi].files.kpx_path)) {
@@ -484,6 +556,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 kix_opt[vi].close();
                 kpx_cod[vi].close();
                 kix_cod[vi].close();
+                t_s2_open += sw.lap();
+                log_timing(false);
                 return {};
             }
         }
@@ -501,6 +575,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         }
         s2_cur_vols.push_back(static_cast<uint16_t>(vi));
         s2_cur_ext_jobs += ext_jobs_per_volume;
+        t_s2_open += sw.lap();
         if (s2_cur_ext_jobs >= group_ext_job_target) {
             run_stage2_batch_and_close();
         }
@@ -508,9 +583,10 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     run_stage2_batch_and_close();
 
     if (logger) {
-        logger->info("Stage 2A complete: %zu hit(s) collected (aggregated)",
-                     total_stage2a_hits);
-        logger->info("Stage 2B complete: %zu chain(s)", results.size());
+        logger->info("Stage 2A complete: %zu hit(s) collected (aggregated), %.3f s",
+                     total_stage2a_hits, t_s2a);
+        logger->info("Stage 2B complete: %zu chain(s), %.3f s",
+                     results.size(), t_s2b);
     }
 
     // Stage 2 dedup over the parent-relative key.  Fragment
@@ -520,7 +596,9 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     // Stage 3 alignment nor TSV writing wastes work on duplicates.
     {
         const size_t before = results.size();
+        sw.reset();
         dedup_stage2_orchestrator_hits(results, in.ksx_per_volume);
+        t_dedup += sw.lap();
         if (logger && before != results.size()) {
             logger->info("Stage 2 dedup: %zu chain(s) -> %zu after dedup",
                          before, results.size());
@@ -532,9 +610,11 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     // (query, parent[, strand]) group by chainscore.
     {
         const size_t before = results.size();
+        sw.reset();
         select_parent_topn(results, in.config.stage2.max_nhit_per_subject,
                            in.config.stage2.max_nhit_per_subject_mode,
                            in.ksx_per_volume);
+        t_parent_topn += sw.lap();
         if (logger && before != results.size()) {
             logger->info("Parent top-N: %zu chain(s) -> %zu after selection",
                          before, results.size());
@@ -545,12 +625,15 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     // (tie-inclusive), bounding the chains that enter Stage 3 alignment.
     {
         const size_t before = results.size();
+        sw.reset();
         apply_in_total_stage2(results, in.config.stage2.max_nhit_in_total);
+        t_s2_intotal += sw.lap();
         if (logger && before != results.size()) {
             logger->info("Stage 2 in-total: %zu chain(s) -> %zu after cap",
                          before, results.size());
         }
     }
+    log_timing(false);
     return results;
 }
 

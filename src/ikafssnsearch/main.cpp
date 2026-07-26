@@ -32,6 +32,7 @@
 #include "util/context_parser.hpp"
 #include "util/logger.hpp"
 #include "util/size_parser.hpp"
+#include "util/stopwatch.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -728,10 +729,28 @@ int main(int argc, char* argv[]) {
 
     const bool need_kpx = (config.mode != 1);
 
+    // Wall-time accumulators for the stages that live outside run_search.
+    // Together with the orchestrator's own breakdown they account for the
+    // whole search path.
+    double t_open_index = 0.0, t_preprocess = 0.0, t_run_search = 0.0;
+    double t_convert = 0.0, t_stage3 = 0.0, t_stage3_select = 0.0, t_write = 0.0;
+    Stopwatch sw_overall;
+    Stopwatch sw;
+
+    auto log_timing_overall = [&]() {
+        logger.info("Timing overall (s): open_index=%.3f preprocess=%.3f "
+                    "run_search=%.3f convert=%.3f stage3=%.3f "
+                    "stage3_select=%.3f write=%.3f total=%.3f",
+                    t_open_index, t_preprocess, t_run_search, t_convert,
+                    t_stage3, t_stage3_select, t_write, sw_overall.elapsed());
+    };
+
     // Pre-open / validate volumes for every context.
+    sw.reset();
     for (auto& ctx : ctxs) {
         if (!open_volumes(ctx.vol_files, ctx.volumes, need_kpx)) return 1;
     }
+    t_open_index += sw.lap();
 
     // Drive max_query_length from the index's overlap_length; 0
     // disables the upper-bound check (no fragment splitting).
@@ -874,6 +893,7 @@ int main(int argc, char* argv[]) {
     std::vector<uint8_t> any_multi_degen_per_q(queries.size(), 0);
 
     {
+        sw.reset();
         tbb::task_arena arena_pp(nthread);
         arena_pp.execute([&] {
             tbb::parallel_for(
@@ -914,6 +934,7 @@ int main(int argc, char* argv[]) {
                     }
                 });
         });
+        t_preprocess += sw.lap();
     }
 
     uint32_t skipped_too_short = 0;
@@ -1021,8 +1042,10 @@ int main(int argc, char* argv[]) {
     };
 
     std::vector<OrchestratorHit> orch_hits;
+    sw.reset();
     if (use_uint16) orch_hits = run_orchestrated(uint16_t{});
     else            orch_hits = run_orchestrated(uint32_t{});
+    t_run_search += sw.lap();
 
     // ----------------------------------------------------------------
     // Mode 1 parallel TSV / JSON path.
@@ -1067,10 +1090,13 @@ int main(int argc, char* argv[]) {
             in.ksx_per_volume[vi] = &ctxs[0].volumes[vi].ksx;
 
         logger.info("Writing %zu hit(s)...", orch_hits.size());
+        sw.reset();
         if (outfmt == OutputFormat::kTsv)
             write_results_tsv_mode1_parallel(*out.stream, in);
         else
             write_results_json_mode1_parallel(*out.stream, in);
+        t_write += sw.lap();
+        log_timing_overall();
         logger.info("Done. %zu hit(s) reported.", orch_hits.size());
         return has_skipped ? 2 : 0;
     }
@@ -1082,6 +1108,7 @@ int main(int argc, char* argv[]) {
     // becomes the parent accession, slen becomes the parent length, and
     // sstart/send shift by (fragment_start - 1).
     std::vector<OutputHit> all_hits;
+    sw.reset();
     all_hits.reserve(orch_hits.size());
     for (const auto& oh_in : orch_hits) {
         const auto& cr = oh_in.cr;
@@ -1108,6 +1135,7 @@ int main(int argc, char* argv[]) {
         oh.slen = ksx_primary.parent_length(parent_idx);
         all_hits.push_back(std::move(oh));
     }
+    t_convert += sw.lap();
 
     // Build skip-marker rows for queries that were not searched. Held aside
     // so Stage 3 only sees real hits.
@@ -1126,6 +1154,7 @@ int main(int argc, char* argv[]) {
     // Stage 3 alignment (mode 3 only)
     if (config.mode == 3) {
         logger.info("Running Stage 3 alignment on %zu hits...", all_hits.size());
+        sw.reset();
         stage3_config.posting_budget = posting_budget;
         all_hits = run_stage3(all_hits, queries, db_path, stage3_config,
                               ctx_param.is_ratio, ctx_param.ratio, ctx_param.abs,
@@ -1137,6 +1166,7 @@ int main(int argc, char* argv[]) {
         // distinct (sstart, chainscore) but identical (send, alnscore).
         const size_t before = all_hits.size();
         dedup_stage3_output_hits(all_hits);
+        t_stage3 += sw.lap();
         if (before != all_hits.size()) {
             logger.info("Stage 3 dedup: %zu hit(s) -> %zu after dedup",
                         before, all_hits.size());
@@ -1144,22 +1174,27 @@ int main(int argc, char* argv[]) {
 
         // Stage 3 per-subject (N) and in-total (L) caps, by alnscore.  Applied
         // after dedup so duplicates do not count against the limits.
+        sw.reset();
         select_parent_topn_output(all_hits,
                                   stage3_config.max_nhit_per_subject,
                                   stage3_config.max_nhit_per_subject_mode);
         apply_in_total_output(all_hits, stage3_config.max_nhit_in_total);
+        t_stage3_select += sw.lap();
     }
 
     // Re-attach skip markers after Stage 3.
     for (auto& m : skip_markers) all_hits.push_back(std::move(m));
 
     // Write output
+    sw.reset();
     if (!write_all_results(output_path, all_hits, outfmt,
                            config.mode,
                            stage3_config.traceback, compression_level)) {
         return 1;
     }
+    t_write += sw.lap();
 
+    log_timing_overall();
     logger.info("Done. %zu hit(s) reported.", all_hits.size());
     return has_skipped ? 2 : 0;
 }
