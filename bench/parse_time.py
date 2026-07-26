@@ -10,9 +10,11 @@ Usage:
     /usr/bin/time -v ikafssnsearch ... 2> time.log
     python3 bench/parse_time.py --tier avx2 time.log > run.json
 
-Schema (matches bench/run_e2e_search.sh single-run object):
+Schema (matches bench/run_e2e_search.sh single-run object, plus the
+minor page fault count that bench/run_warm_e2e.sh uses as the "touched
+posting pages" indicator):
     {"tier": "avx2", "wall_s": 1.23, "user_s": 0.98, "max_rss_kb": 12345,
-     "exit_code": 0}
+     "minor_faults": 4096, "exit_code": 0}
 """
 
 from __future__ import annotations
@@ -29,6 +31,9 @@ WALL_RE = re.compile(
 )
 USER_RE = re.compile(r"User time \(seconds\):\s*([0-9.]+)")
 RSS_RE = re.compile(r"Maximum resident set size \(kbytes\):\s*([0-9]+)")
+MINFLT_RE = re.compile(
+    r"Minor \(reclaiming a frame\) page faults:\s*([0-9]+)"
+)
 EXIT_RE = re.compile(r"Exit status:\s*([0-9]+)")
 
 
@@ -49,6 +54,7 @@ def parse_time_log(text: str) -> dict[str, float | int]:
         "wall_s": 0.0,
         "user_s": 0.0,
         "max_rss_kb": 0,
+        "minor_faults": 0,
         "exit_code": 0,
     }
     m = WALL_RE.search(text)
@@ -60,6 +66,9 @@ def parse_time_log(text: str) -> dict[str, float | int]:
     m = RSS_RE.search(text)
     if m:
         out["max_rss_kb"] = int(m.group(1))
+    m = MINFLT_RE.search(text)
+    if m:
+        out["minor_faults"] = int(m.group(1))
     m = EXIT_RE.search(text)
     if m:
         out["exit_code"] = int(m.group(1))
