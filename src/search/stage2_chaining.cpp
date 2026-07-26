@@ -2,7 +2,6 @@
 #include "search/diagonal_filter.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdlib>
 
 namespace ikafssn {
@@ -13,15 +12,27 @@ namespace {
 // largest subject seen so far, so the steady state performs no allocation.
 struct ChainScratch {
     std::vector<Hit>      work;           // sorted, deduped, filtered hits
+    std::vector<uint32_t> q;              // DP input, split out of `work`
+    std::vector<uint32_t> s;
+    std::vector<int32_t>  diag;           // s - q, per hit
     std::vector<uint32_t> dp;
     std::vector<int32_t>  prev;
     std::vector<size_t>   chain_indices;  // traceback, strictly decreasing
-    std::vector<int32_t>  diags;          // diagonal_filter counting buffer
+    std::vector<int32_t>  diag_counts;    // diagonal_filter counting buffer
 };
 
 inline ChainScratch& tls_chain_scratch() {
     thread_local ChainScratch scratch;
     return scratch;
+}
+
+// Make `v` hold at least n elements and hand back its data pointer.  Callers
+// overwrite every element they read, so the array never shrinks and the grown
+// part needs no particular value.
+template <typename T>
+inline T* scratch_ptr(std::vector<T>& v, size_t n) {
+    if (v.size() < n) v.resize(n);
+    return v.data();
 }
 
 // Function objects rather than free functions: std::sort / std::unique would
@@ -51,8 +62,6 @@ void chain_hits(const std::vector<Hit>& raw_hits,
 
     ChainScratch& scratch = tls_chain_scratch();
     std::vector<Hit>& work = scratch.work;
-    std::vector<uint32_t>& dp = scratch.dp;
-    std::vector<int32_t>& prev = scratch.prev;
     std::vector<size_t>& chain_indices = scratch.chain_indices;
 
     // Deduplicate (q_pos, s_pos) pairs from degenerate base expansion.
@@ -60,7 +69,7 @@ void chain_hits(const std::vector<Hit>& raw_hits,
     std::sort(work.begin(), work.end(), HitLess{});
     work.erase(std::unique(work.begin(), work.end(), HitSamePos{}), work.end());
 
-    diagonal_filter(work, config.min_nhit_diag, scratch.diags);
+    diagonal_filter(work, config.min_nhit_diag, scratch.diag_counts);
     if (work.empty()) return;
 
     // Extraction limit and tie behaviour.  N == 0 means unlimited.  In a
@@ -80,34 +89,52 @@ void chain_hits(const std::vector<Hit>& raw_hits,
 
         const size_t n = work.size();
 
-        dp.assign(n, 1);
-        prev.assign(n, -1);
-
-        // The buffers live in thread-local storage, so index them through
-        // local pointers to keep the DP loop free of base-pointer reloads.
+        // Split the hits into parallel arrays and precompute each hit's
+        // diagonal.  The gap test between hits i and j is
+        //   |(s_i - s_j) - (q_i - q_j)| = |diag_i - diag_j|,
+        // so the DP inner loop reduces to one subtraction on values it can
+        // read straight out of `diag`.  The buffers live in thread-local
+        // storage, so index them through local pointers to keep the loop free
+        // of base-pointer reloads.
         const Hit* const wp = work.data();
-        uint32_t* const dpp = dp.data();
-        int32_t* const prevp = prev.data();
+        uint32_t* const qp = scratch_ptr(scratch.q, n);
+        uint32_t* const sp = scratch_ptr(scratch.s, n);
+        int32_t* const dg = scratch_ptr(scratch.diag, n);
+        uint32_t* const dpp = scratch_ptr(scratch.dp, n);
+        int32_t* const prevp = scratch_ptr(scratch.prev, n);
+        for (size_t i = 0; i < n; i++) {
+            qp[i] = wp[i].q_pos;
+            sp[i] = wp[i].s_pos;
+            dg[i] = static_cast<int32_t>(wp[i].s_pos) -
+                    static_cast<int32_t>(wp[i].q_pos);
+        }
+
         const int64_t max_gap = static_cast<int64_t>(config.max_gap);
         const size_t lookback = config.chain_max_lookback;
 
+        dpp[0] = 1;
+        prevp[0] = -1;
         for (size_t i = 1; i < n; i++) {
-            size_t j_start = (lookback > 0 && i > lookback) ? (i - lookback) : 0;
+            const size_t j_start = (lookback > 0 && i > lookback) ? (i - lookback) : 0;
+            const uint32_t q_i = qp[i];
+            const uint32_t s_i = sp[i];
+            const int64_t diag_i = dg[i];
+            // Predecessors are scanned in ascending j and only a strictly
+            // longer chain replaces the incumbent, so ties keep the smallest
+            // j.  Reversing or vectorising this scan would change which
+            // predecessor wins a tie, and with it the reported coordinates.
+            uint32_t dp_i = 1;
+            int32_t prev_i = -1;
             for (size_t j = j_start; j < i; j++) {
-                if (wp[j].q_pos >= wp[i].q_pos) continue;
-                if (wp[j].s_pos >= wp[i].s_pos) continue;
-
-                int64_t gap_q = static_cast<int64_t>(wp[i].q_pos) - static_cast<int64_t>(wp[j].q_pos);
-                int64_t gap_s = static_cast<int64_t>(wp[i].s_pos) - static_cast<int64_t>(wp[j].s_pos);
-                int64_t diag_diff = std::abs(gap_s - gap_q);
-
-                if (diag_diff <= max_gap) {
-                    if (dpp[j] + 1 > dpp[i]) {
-                        dpp[i] = dpp[j] + 1;
-                        prevp[i] = static_cast<int32_t>(j);
-                    }
-                }
+                if (qp[j] >= q_i) continue;
+                if (sp[j] >= s_i) continue;
+                if (dpp[j] < dp_i) continue;
+                if (std::llabs(diag_i - static_cast<int64_t>(dg[j])) > max_gap) continue;
+                dp_i = dpp[j] + 1;
+                prev_i = static_cast<int32_t>(j);
             }
+            dpp[i] = dp_i;
+            prevp[i] = prev_i;
         }
 
         // Find best chain endpoint
@@ -130,7 +157,7 @@ void chain_hits(const std::vector<Hit>& raw_hits,
         size_t idx = best_idx;
         while (idx != SIZE_MAX) {
             chain_indices.push_back(idx);
-            idx = (prev[idx] >= 0) ? static_cast<size_t>(prev[idx]) : SIZE_MAX;
+            idx = (prevp[idx] >= 0) ? static_cast<size_t>(prevp[idx]) : SIZE_MAX;
         }
 
         // chain_indices is in reverse order; first element is end, last is start
