@@ -397,8 +397,8 @@ static void test_clear_dirty_bulk_reset() {
 
 // Drive the thread_local SeqIdDecoder through three consecutive runs with
 // different query inputs on the same thread. If reset() forgot any field
-// (decoded_, ctx_.pos / count), the result of run 2 or 3 would differ from
-// the result computed in isolation by a fresh call.
+// (decoded_, ctx_.count), the result of run 2 or 3 would differ from the
+// result computed in isolation by a fresh call.
 static void test_seq_id_decoder_reset_across_runs() {
     std::fprintf(stderr, "-- test_seq_id_decoder_reset_across_runs\n");
 

@@ -729,9 +729,8 @@ int main(int argc, char* argv[]) {
 
     const bool need_kpx = (config.mode != 1);
 
-    // Wall-time accumulators for the stages that live outside run_search.
-    // Together with the orchestrator's own breakdown they account for the
-    // whole search path.
+    // Wall time of the stages outside run_search; together with the
+    // orchestrator's own breakdown they cover the whole search path.
     double t_open_index = 0.0, t_preprocess = 0.0, t_run_search = 0.0;
     double t_convert = 0.0, t_stage3 = 0.0, t_stage3_select = 0.0, t_write = 0.0;
     Stopwatch sw_overall;

@@ -4,13 +4,10 @@
 
 namespace ikafssn {
 
-// Monotonic elapsed-time probe used to attribute wall time to search stages.
-// Callers accumulate the returned seconds in their own variables, so the class
-// itself stays stateless beyond the single start point.
+// Monotonic elapsed-time probe.  Holds only a start point; callers accumulate
+// the returned seconds themselves.
 class Stopwatch {
 public:
-    using Clock = std::chrono::steady_clock;
-
     Stopwatch() : start_(Clock::now()) {}
 
     void reset() { start_ = Clock::now(); }
@@ -29,6 +26,7 @@ public:
     }
 
 private:
+    using Clock = std::chrono::steady_clock;
     Clock::time_point start_;
 };
 

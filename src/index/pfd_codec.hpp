@@ -104,14 +104,13 @@ size_t encode_posting_kpx(const uint32_t* distinct_sid,
                           uint32_t freq_threshold_part,
                           std::vector<uint8_t>& out);
 
-// === streaming decode context (for .kix only) ===
+// === decode context (for .kix only) ===
 //
 // open_stream_kix materialises the entire decoded posting list into `decoded`.
-// .kpx decoding moved to a candidate-set-driven API (see below).
+// .kpx uses the candidate-set-driven API below instead.
 struct StreamCtx {
     std::vector<uint32_t> decoded;
     uint32_t count = 0;     // total elements in `decoded`
-    uint32_t pos   = 0;     // next read index
 };
 
 // Initialise a StreamCtx for a .kix posting list starting at `posting_list`.

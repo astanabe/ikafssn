@@ -127,8 +127,8 @@ static void stage1_filter_accumulate_impl(
         const std::size_t n_dec = decoder.decoded_count();
 
         if constexpr (HasFilter) {
-            // Only the excluded seq_ids have to be squeezed out, so the
-            // filtered path stages survivors in a small fixed buffer.
+            // Excluded seq_ids have to be squeezed out, so survivors are
+            // staged in a small fixed buffer.
             constexpr int kBatch = 16;
             SeqId sid_batch[kBatch];
             int batch_count = 0;
@@ -151,13 +151,12 @@ static void stage1_filter_accumulate_impl(
         } else {
             // .kix postings are distinct per k-mer, so coverscore counts a sid
             // at most once per k-mer and the decoded span goes straight to the
-            // scatter kernel; the per-query-position dedup (last_pos != q_pos)
-            // happens there.  The span is handed over in fixed-width chunks
-            // because decoded_count() is a std::size_t while the kernel takes
-            // an int count.
-            constexpr std::size_t kChunk = std::size_t{1} << 20;
-            for (std::size_t i = 0; i < n_dec; i += kChunk) {
-                const std::size_t len = std::min(kChunk, n_dec - i);
+            // scatter kernel, which does the per-query-position dedup
+            // (last_pos != q_pos).  Split because decoded_count() is a
+            // std::size_t while the kernel takes an int count.
+            constexpr std::size_t kMaxBatch = std::size_t{1} << 20;
+            for (std::size_t i = 0; i < n_dec; i += kMaxBatch) {
+                const std::size_t len = std::min(kMaxBatch, n_dec - i);
                 flush_batch_simd<Width>(decoded + i, static_cast<int>(len),
                                        q_pos, scores, last_pos, buf.dirty,
                                        cutoff_rem, cutoff_thr);

@@ -10,9 +10,7 @@ Usage:
     /usr/bin/time -v ikafssnsearch ... 2> time.log
     python3 bench/parse_time.py --tier avx2 time.log > run.json
 
-Schema (matches bench/run_e2e_search.sh single-run object, plus the
-minor page fault count that bench/run_warm_e2e.sh uses as the "touched
-posting pages" indicator):
+Schema:
     {"tier": "avx2", "wall_s": 1.23, "user_s": 0.98, "max_rss_kb": 12345,
      "minor_faults": 4096, "exit_code": 0}
 """

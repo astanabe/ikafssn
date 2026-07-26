@@ -466,13 +466,12 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
     return out.size() - before;
 }
 
-// ===== open_stream_kix: decode the entire .kix posting list list into the StreamCtx =====
+// ===== open_stream_kix: decode the entire .kix posting list into the StreamCtx =====
 
 bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
                      ikafssn::pfd::StreamCtx& ctx) {
     ctx.decoded.clear();
     ctx.count = 0;
-    ctx.pos = 0;
     if (bytes == 0) return true;
     if (bytes < 4) return false;  // header is just [u32 distinct_count]
 
@@ -518,7 +517,6 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
     }
 
     ctx.count = count;
-    ctx.pos = 0;
     return true;
 }
 

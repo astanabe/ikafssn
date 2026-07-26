@@ -718,8 +718,8 @@ static void test_ambig_expansion_in_index() {
     kix.close();
 }
 
-// Decode ID posting list. Reads the v4-formatted blob via SeqIdDecoder so
-// the test stays decoupled from the underlying codec.
+// Collect a whole .kix posting list into a vector.  Going through
+// SeqIdDecoder keeps the test decoupled from the underlying codec.
 static std::vector<uint32_t> decode_id_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len) {
     if (byte_len == 0) return {};

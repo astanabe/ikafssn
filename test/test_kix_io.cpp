@@ -14,7 +14,7 @@ using namespace ikafssn;
 
 static const char* TEST_FILE = "/tmp/test_ikafssn.kix";
 
-// Decode a delta-compressed posting list using byte-limit decoder
+// Collect a whole .kix posting list into a vector.
 static std::vector<uint32_t> decode_id_postings(const uint8_t* data, uint64_t byte_len) {
     SeqIdDecoder decoder(data, data + byte_len);
     decoder.ensure_decoded();
@@ -77,7 +77,7 @@ static void test_k7_uint16() {
         CHECK_EQ(counts[100], 6u);
         CHECK_EQ(counts[ts - 1], 1u);
 
-        // Decode and verify postings using byte-limit decoder
+        // Decode and verify postings
         auto decoded0 = decode_id_postings(
             reader.posting_file() + reader.posting_list_offset(0),
             reader.posting_list_byte_length(0));

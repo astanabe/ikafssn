@@ -8,12 +8,10 @@ namespace ikafssn {
 
 // Decoder for one .kix posting list.
 //
-// The .kix posting list stream contains **distinct** seq_ids only
-// (intra-sequence k-mer duplicates are removed by a SIMD dedup kernel at
-// build time).  The codec decodes the whole posting list into
-// StreamCtx::decoded as absolute seq_ids; this class owns that buffer and
-// exposes it as a zero-copy span so callers can consume the postings
-// without an intermediate copy.
+// A .kix posting list holds **distinct** seq_ids only (intra-sequence k-mer
+// duplicates are removed by a SIMD dedup kernel at build time).  This class
+// owns the decode buffer and exposes the decoded absolute seq_ids as a
+// zero-copy span.
 class SeqIdDecoder {
 public:
     SeqIdDecoder() = default;
@@ -21,19 +19,16 @@ public:
         : data_(data),
           bytes_(end && end >= data ? static_cast<std::size_t>(end - data) : 0) {}
 
-    // Reset to point at a new posting list without reconstructing the
-    // object. Reuses the StreamCtx::decoded heap buffer so the next
-    // ensure_decoded() does not have to re-grow it from zero.
+    // Point at a new posting list without reconstructing the object.  The
+    // ctx_.decoded capacity is left intact so the next open_stream_kix can
+    // resize() in place instead of re-growing from zero.
     void reset(const uint8_t* data, const uint8_t* end) {
         data_ = data;
         bytes_ = (end && end >= data)
                      ? static_cast<std::size_t>(end - data)
                      : 0;
-        decoded_     = false;
-        ctx_.count   = 0;
-        ctx_.pos     = 0;
-        // Keep ctx_.decoded capacity intact so the upcoming
-        // open_stream_kix can resize() in-place.
+        decoded_   = false;
+        ctx_.count = 0;
     }
 
     void ensure_decoded() {

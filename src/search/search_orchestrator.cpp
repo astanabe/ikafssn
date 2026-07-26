@@ -190,9 +190,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
 
     Logger* logger = in.logger;
 
-    // Per-stage wall-time accumulators.  Stages run sequentially inside
-    // run_search, so reading a steady clock around each one attributes the
-    // whole call without overlap.
+    // Stages run sequentially, so reading a steady clock around each one
+    // attributes the whole call without overlap.
     double t_s1_open = 0.0, t_s1_compute = 0.0, t_s1_fold = 0.0;
     double t_s1_intotal = 0.0;
     double t_s2_open = 0.0, t_s2a = 0.0, t_s2b = 0.0, t_s2_free = 0.0;
@@ -200,7 +199,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     Stopwatch sw_total;
     Stopwatch sw;
 
-    // Machine-readable per-stage breakdown, emitted once per run_search call.
+    // Machine-readable breakdown, emitted once per completed run_search.
     // stage1_only drops the Stage 2 keys for the mode 1 early return.
     auto log_timing = [&](bool stage1_only) {
         if (!logger) return;
@@ -222,10 +221,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
 
     // Build ext_jobs.
     std::vector<ExtJob> ext_jobs = build_ext_jobs<KmerInt>(in, num_volumes);
-    if (ext_jobs.empty()) {
-        log_timing(true);
-        return {};
-    }
+    if (ext_jobs.empty()) return {};
 
     std::vector<JobState> states(ext_jobs.size());
 
@@ -386,8 +382,6 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         if (!kix_cod[vi].open(in.volumes_cod[vi].files.kix_path)) {
             if (logger) logger->error("Cannot open %s",
                 in.volumes_cod[vi].files.kix_path.c_str());
-            t_s1_open += sw.lap();
-            log_timing(true);
             return {};
         }
         if (in.both_mode) {
@@ -395,8 +389,6 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 if (logger) logger->error("Cannot open %s",
                     in.volumes_opt[vi].files.kix_path.c_str());
                 kix_cod[vi].close();
-                t_s1_open += sw.lap();
-                log_timing(true);
                 return {};
             }
         }
@@ -528,16 +520,12 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         if (!kix_cod[vi].open(in.volumes_cod[vi].files.kix_path)) {
             if (logger) logger->error("Cannot open %s",
                 in.volumes_cod[vi].files.kix_path.c_str());
-            t_s2_open += sw.lap();
-            log_timing(false);
             return {};
         }
         if (!kpx_cod[vi].open(in.volumes_cod[vi].files.kpx_path)) {
             if (logger) logger->error("Cannot open %s",
                 in.volumes_cod[vi].files.kpx_path.c_str());
             kix_cod[vi].close();
-            t_s2_open += sw.lap();
-            log_timing(false);
             return {};
         }
         if (in.both_mode) {
@@ -546,8 +534,6 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                     in.volumes_opt[vi].files.kix_path.c_str());
                 kpx_cod[vi].close();
                 kix_cod[vi].close();
-                t_s2_open += sw.lap();
-                log_timing(false);
                 return {};
             }
             if (!kpx_opt[vi].open(in.volumes_opt[vi].files.kpx_path)) {
@@ -556,8 +542,6 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                 kix_opt[vi].close();
                 kpx_cod[vi].close();
                 kix_cod[vi].close();
-                t_s2_open += sw.lap();
-                log_timing(false);
                 return {};
             }
         }

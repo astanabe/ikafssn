@@ -27,7 +27,7 @@ using namespace ssu_fixture;
 static std::string g_testdb_path;
 static std::string g_output_dir;
 
-// Decode ID posting list via the v4 SeqIdDecoder.
+// Collect a whole .kix posting list into a vector.
 static std::vector<uint32_t> decode_id_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len) {
     if (byte_len == 0) return {};
