@@ -48,7 +48,7 @@ SearchResult search_volume(
         stage1_one_strand_single(
             qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
             qdata.fwd_positions.size(),
-            k, false, kix, filter, config,
+            k, false, kix, filter, config, ksx.parent_index_data(),
             qdata.resolved_threshold_fwd, qdata.effective_min_score_fwd,
             buf, state);
         stage2a_one_strand_single(
@@ -66,7 +66,7 @@ SearchResult search_volume(
         stage1_one_strand_single(
             qdata.rc_positions.data(), qdata.rc_kmer_values.data(),
             qdata.rc_positions.size(),
-            k, true, kix, filter, config,
+            k, true, kix, filter, config, ksx.parent_index_data(),
             qdata.resolved_threshold_rc, qdata.effective_min_score_rc,
             buf, state);
         stage2a_one_strand_single(
@@ -112,7 +112,7 @@ SearchResult search_volume_both(
             qdata_opt.fwd_positions.size(),
             k, false,
             kix_cod, kix_opt,
-            filter, config,
+            filter, config, ksx.parent_index_data(),
             qdata_cod.resolved_threshold_fwd, qdata_opt.resolved_threshold_fwd,
             unify_min(qdata_cod.effective_min_score_fwd,
                       qdata_opt.effective_min_score_fwd),
@@ -138,7 +138,7 @@ SearchResult search_volume_both(
             qdata_opt.rc_positions.size(),
             k, true,
             kix_cod, kix_opt,
-            filter, config,
+            filter, config, ksx.parent_index_data(),
             qdata_cod.resolved_threshold_rc, qdata_opt.resolved_threshold_rc,
             unify_min(qdata_cod.effective_min_score_rc,
                       qdata_opt.effective_min_score_rc),

@@ -76,6 +76,7 @@ void stage1_one_strand_single(
     const KixReader& kix,
     const OidFilter& filter,
     const SearchConfig& config,
+    const uint32_t* parent_index,
     uint32_t resolved_threshold,
     uint32_t effective_min_score,
     Stage1Buffer& buf,
@@ -84,11 +85,13 @@ void stage1_one_strand_single(
 extern template void stage1_one_strand_single<uint16_t>(
     const uint32_t*, const uint16_t*, size_t, int, bool,
     const KixReader&, const OidFilter&,
-    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, JobState&);
+    const SearchConfig&, const uint32_t*, uint32_t, uint32_t,
+    Stage1Buffer&, JobState&);
 extern template void stage1_one_strand_single<uint32_t>(
     const uint32_t*, const uint32_t*, size_t, int, bool,
     const KixReader&, const OidFilter&,
-    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, JobState&);
+    const SearchConfig&, const uint32_t*, uint32_t, uint32_t,
+    Stage1Buffer&, JobState&);
 
 // Stage 2A — single-template path.  Collects (q_pos, s_pos) hits for the
 // candidates produced by stage1_one_strand_single().  Populates
@@ -118,6 +121,7 @@ void stage1_one_strand_both(
     const KixReader& kix_cod, const KixReader& kix_opt,
     const OidFilter& filter,
     const SearchConfig& config,
+    const uint32_t* parent_index,
     uint32_t resolved_threshold_cod,
     uint32_t resolved_threshold_opt,
     uint32_t effective_min_score,
@@ -129,14 +133,14 @@ extern template void stage1_one_strand_both<uint16_t>(
     const uint32_t*, const uint16_t*, size_t,
     int, bool,
     const KixReader&, const KixReader&,
-    const OidFilter&, const SearchConfig&,
+    const OidFilter&, const SearchConfig&, const uint32_t*,
     uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 extern template void stage1_one_strand_both<uint32_t>(
     const uint32_t*, const uint32_t*, size_t,
     const uint32_t*, const uint32_t*, size_t,
     int, bool,
     const KixReader&, const KixReader&,
-    const OidFilter&, const SearchConfig&,
+    const OidFilter&, const SearchConfig&, const uint32_t*,
     uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 
 // Stage 2A — both-mode path.  Hits from coding and optimal indexes are

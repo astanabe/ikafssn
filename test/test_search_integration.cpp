@@ -457,7 +457,7 @@ static void test_stage1_candidate_order() {
         stage1_one_strand_single<uint16_t>(
             qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
             qdata.fwd_positions.size(), 7, /*is_reverse=*/false,
-            kix, filter, config,
+            kix, filter, config, /*parent_index=*/nullptr,
             qdata.resolved_threshold_fwd, /*effective_min_score=*/1,
             buf, state);
     };
@@ -707,7 +707,7 @@ static void test_search_stage1_both_template() {
         qdata_opt.fwd_positions.size(),
         k,
         /*is_reverse=*/false,
-        kix_cod, kix_opt, filter, config,
+        kix_cod, kix_opt, filter, config, /*parent_index=*/nullptr,
         qdata_cod.resolved_threshold_fwd,
         qdata_opt.resolved_threshold_fwd,
         /*effective_min_score=*/1,
@@ -781,7 +781,7 @@ static void test_stage2a_hit_list_sizing() {
         stage1_one_strand_single<uint16_t>(
             qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
             qdata.fwd_positions.size(), 7, /*is_reverse=*/false,
-            kix, filter, config,
+            kix, filter, config, /*parent_index=*/nullptr,
             qdata.resolved_threshold_fwd, /*effective_min_score=*/1,
             buf, state);
         stage2a_one_strand_single<uint16_t>(
@@ -829,7 +829,7 @@ static void test_stage2a_hit_list_sizing() {
             qdata_opt.fwd_positions.data(), qdata_opt.fwd_kmer_values.data(),
             qdata_opt.fwd_positions.size(),
             k, /*is_reverse=*/false,
-            kix_cod, kix_opt, filter, config,
+            kix_cod, kix_opt, filter, config, /*parent_index=*/nullptr,
             qdata_cod.resolved_threshold_fwd, qdata_opt.resolved_threshold_fwd,
             /*effective_min_score=*/1, buf, state);
         stage2a_one_strand_both<uint32_t>(

@@ -48,6 +48,7 @@ stage1_only_results(const std::vector<Stage1Candidate>& candidates,
                     bool is_reverse,
                     uint32_t min_score) {
     std::vector<ChainResult> results;
+    results.reserve(candidates.size());
     for (const auto& c : candidates) {
         if (c.score < min_score) continue;
         ChainResult cr{};
@@ -150,6 +151,7 @@ void stage1_one_strand_single(
     const KixReader& kix,
     const OidFilter& filter,
     const SearchConfig& config,
+    const uint32_t* parent_index,
     uint32_t resolved_threshold,
     uint32_t effective_min_score,
     Stage1Buffer& buf,
@@ -166,7 +168,6 @@ void stage1_one_strand_single(
     const uint32_t N = config.stage1.max_nhit_per_subject;
     const bool n_tie = (config.stage1.max_nhit_per_subject_mode == 3 ||
                         config.stage1.max_nhit_per_subject_mode == 4);
-    const uint32_t* pidx = config.stage1.parent_index;
 
     Stage1Config stage1_config = config.stage1;
     stage1_config.min_stage1_score = resolved_threshold;
@@ -175,7 +176,7 @@ void stage1_one_strand_single(
     if (state.candidates.empty()) return;
 
     // Post-selection: per-parent N, then per-volume M (both tie-inclusive for M).
-    if (N > 0) stage1_limit_per_parent(state.candidates, N, n_tie, pidx);
+    if (N > 0) stage1_limit_per_parent(state.candidates, N, n_tie, parent_index);
     if (M > 0) stage1_limit_topk(state.candidates, M, /*tie_inclusive=*/true);
     if (state.candidates.empty()) return;
 
@@ -218,6 +219,7 @@ void stage1_one_strand_both(
     const KixReader& kix_cod, const KixReader& kix_opt,
     const OidFilter& filter,
     const SearchConfig& config,
+    const uint32_t* parent_index,
     uint32_t resolved_threshold_cod,
     uint32_t resolved_threshold_opt,
     uint32_t effective_min_score,
@@ -243,7 +245,6 @@ void stage1_one_strand_both(
     const uint32_t N = config.stage1.max_nhit_per_subject;
     const bool n_tie = (config.stage1.max_nhit_per_subject_mode == 3 ||
                         config.stage1.max_nhit_per_subject_mode == 4);
-    const uint32_t* pidx = config.stage1.parent_index;
 
     Stage1Config s1cfg_acc = config.stage1;
     s1cfg_acc.min_stage1_score = 1;
@@ -304,7 +305,7 @@ void stage1_one_strand_both(
     if (state.candidates.empty()) return;
 
     // Post-selection: per-parent N, then per-volume M (both tie-inclusive for M).
-    if (N > 0) stage1_limit_per_parent(state.candidates, N, n_tie, pidx);
+    if (N > 0) stage1_limit_per_parent(state.candidates, N, n_tie, parent_index);
     if (M > 0) stage1_limit_topk(state.candidates, M, /*tie_inclusive=*/true);
     if (state.candidates.empty()) return;
 
@@ -370,10 +371,9 @@ void dispatch_stage1(
 
     const bool is_reverse = (ej.strand_idx != 0);
 
-    // Inject the volume's SeqId -> parent map so the per-parent N limit can
-    // group candidates by parent.
-    SearchConfig eff = config;
-    eff.stage1.parent_index =
+    // The volume's SeqId -> parent map lets the per-parent N limit group
+    // candidates by parent; a volume without a .ksx disables the grouping.
+    const uint32_t* parent_index =
         vb.ksx ? vb.ksx->parent_index_data() : nullptr;
 
     if (both_mode) {
@@ -393,7 +393,7 @@ void dispatch_stage1(
                 qd_opt.fwd_positions.size(),
                 k, false,
                 *vb.kix, *vb.kix_opt,
-                *vb.filter, eff,
+                *vb.filter, config, parent_index,
                 qd_cod.resolved_threshold_fwd,
                 qd_opt.resolved_threshold_fwd,
                 unify(qd_cod.effective_min_score_fwd,
@@ -413,7 +413,7 @@ void dispatch_stage1(
                 qd_opt.rc_positions.size(),
                 k, true,
                 *vb.kix, *vb.kix_opt,
-                *vb.filter, eff,
+                *vb.filter, config, parent_index,
                 qd_cod.resolved_threshold_rc,
                 qd_opt.resolved_threshold_rc,
                 unify(qd_cod.effective_min_score_rc,
@@ -428,7 +428,7 @@ void dispatch_stage1(
                 qd.fwd_kmer_values.data(),
                 qd.fwd_positions.size(),
                 k, false,
-                *vb.kix, *vb.filter, eff,
+                *vb.kix, *vb.filter, config, parent_index,
                 qd.resolved_threshold_fwd,
                 qd.effective_min_score_fwd,
                 buf, state);
@@ -438,7 +438,7 @@ void dispatch_stage1(
                 qd.rc_kmer_values.data(),
                 qd.rc_positions.size(),
                 k, true,
-                *vb.kix, *vb.filter, eff,
+                *vb.kix, *vb.filter, config, parent_index,
                 qd.resolved_threshold_rc,
                 qd.effective_min_score_rc,
                 buf, state);
@@ -631,11 +631,13 @@ void run_stage2b_jobs(
 template void stage1_one_strand_single<uint16_t>(
     const uint32_t*, const uint16_t*, size_t, int, bool,
     const KixReader&, const OidFilter&,
-    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, JobState&);
+    const SearchConfig&, const uint32_t*, uint32_t, uint32_t,
+    Stage1Buffer&, JobState&);
 template void stage1_one_strand_single<uint32_t>(
     const uint32_t*, const uint32_t*, size_t, int, bool,
     const KixReader&, const OidFilter&,
-    const SearchConfig&, uint32_t, uint32_t, Stage1Buffer&, JobState&);
+    const SearchConfig&, const uint32_t*, uint32_t, uint32_t,
+    Stage1Buffer&, JobState&);
 
 template void stage2a_one_strand_single<uint16_t>(
     const uint32_t*, const uint16_t*, size_t,
@@ -649,14 +651,14 @@ template void stage1_one_strand_both<uint16_t>(
     const uint32_t*, const uint16_t*, size_t,
     int, bool,
     const KixReader&, const KixReader&,
-    const OidFilter&, const SearchConfig&,
+    const OidFilter&, const SearchConfig&, const uint32_t*,
     uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 template void stage1_one_strand_both<uint32_t>(
     const uint32_t*, const uint32_t*, size_t,
     const uint32_t*, const uint32_t*, size_t,
     int, bool,
     const KixReader&, const KixReader&,
-    const OidFilter&, const SearchConfig&,
+    const OidFilter&, const SearchConfig&, const uint32_t*,
     uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 
 template void stage2a_one_strand_both<uint16_t>(

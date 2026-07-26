@@ -97,12 +97,6 @@ struct Stage1Config {
     // the plain accumulate).  Set per position group by the both-mode driver.
     uint32_t cutoff_remaining = 0;
     uint32_t cutoff_threshold = 0;
-
-    // Transient, per-ext_job: maps internal SeqId -> parent index (from the
-    // volume's .ksx).  Set by the Stage 1 dispatcher so the per-parent N limit
-    // can group candidates by parent.  Not serialized; nullptr disables
-    // per-parent grouping.
-    const uint32_t* parent_index = nullptr;
 };
 
 template <typename KmerInt>
