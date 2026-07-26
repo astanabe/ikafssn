@@ -2,7 +2,6 @@
 
 #include "search/oid_filter.hpp"
 #include "search/seq_id_decoder.hpp"
-#include "search/posting_decoder.hpp"
 #include "search/stage1_filter.hpp"
 #include "search/stage2_chaining.hpp"
 #include "search/query_preprocessor.hpp"
@@ -66,16 +65,20 @@ stage1_only_results(const std::vector<Stage1Candidate>& candidates,
     return results;
 }
 
-// Collect position hits for Stage 2A from one index set.
+// Collect position hits for Stage 2A from one index set.  Hits are appended
+// to `hits_per_candidate`, indexed exactly like `candidate_sids`.
 template <typename KmerInt>
 static void collect_position_hits(
     const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
     const KixReader& kix, const KpxReader& kpx,
     const std::vector<SeqId>& candidate_sids,
-    std::unordered_map<SeqId, std::vector<Hit>>& hits_per_seq) {
+    std::vector<std::vector<Hit>>& hits_per_candidate) {
 
     const uint8_t* kix_data = kix.posting_file();
     const uint8_t* pos_data = kpx.posting_file();
+    if (kix_data == nullptr || pos_data == nullptr) return;
+    const uint64_t pos_file_size = kpx.posting_file_size();
+
     pfd::PosDecodeScratch& scratch = tls_pos_scratch();
 
     // Hoisted out of the qi loop so the StreamCtx::decoded buffer is
@@ -93,22 +96,34 @@ static void collect_position_hits(
         kix_dec.reset(kix_data + kix_off,
                       kix_data + kix_off + kix_len);
         kix_dec.ensure_decoded();
+        // An empty .kix posting list means the k-mer's .kpx posting list
+        // cannot be addressed at all (its pos_offset may be 0 — aliasing
+        // the first k-mer's posting list — because the builder does not
+        // write placeholders for empty k-mers).
+        if (kix_dec.decoded_count() == 0) continue;
 
-        PosDecoder pos_decoder(pos_data + kpx.pos_offset(kmer_idx),
-                               pos_data + kpx.posting_file_size(),
-                               kix_dec.decoded_data(),
-                               kix_dec.decoded_count(),
-                               candidate_sids.data(),
-                               candidate_sids.size(),
-                               &scratch);
-        pos_decoder.for_each_candidate(
-            [&](uint32_t sid, const std::vector<uint32_t>& positions_v) {
-                auto& bucket = hits_per_seq[sid];
-                bucket.reserve(bucket.size() + positions_v.size());
-                for (uint32_t spos : positions_v) {
-                    bucket.push_back({q_pos, spos});
-                }
-            });
+        const uint64_t pos_off = kpx.pos_offset(kmer_idx);
+        if (pos_off >= pos_file_size) continue;
+
+        if (!pfd::open_stream_kpx_for_candidates(
+                pos_data + pos_off,
+                static_cast<size_t>(pos_file_size - pos_off),
+                kix_dec.decoded_data(), kix_dec.decoded_count(),
+                candidate_sids.data(), candidate_sids.size(),
+                scratch)) {
+            continue;
+        }
+
+        const size_t n_match = scratch.out_candidate_idx.size();
+        for (size_t m = 0; m < n_match; m++) {
+            const uint32_t lo = scratch.out_offsets[m];
+            const uint32_t hi = scratch.out_offsets[m + 1];
+            auto& bucket = hits_per_candidate[scratch.out_candidate_idx[m]];
+            bucket.reserve(bucket.size() + (hi - lo));
+            for (uint32_t t = lo; t < hi; t++) {
+                bucket.push_back({q_pos, scratch.out_positions[t]});
+            }
+        }
     }
 }
 
@@ -126,7 +141,6 @@ void stage1_one_strand_single(
     JobState& state) {
 
     state.is_reverse = is_reverse;
-    state.both_mode = false;
     state.effective_min_score = effective_min_score;
     state.span = seed_span(config.t, k);
     state.stage2_config = config.stage2;
@@ -173,9 +187,10 @@ void stage2a_one_strand_single(
     if (state.mode1_only) return;
     if (state.candidates.empty()) return;
 
+    state.hits_per_candidate.assign(state.candidates.size(), {});
     collect_position_hits(positions, kmers, n_kmers, kix, kpx,
                           tls_candidate_sids(state.candidates),
-                          state.hits_per_seq);
+                          state.hits_per_candidate);
 }
 
 template <typename KmerInt>
@@ -194,7 +209,6 @@ void stage1_one_strand_both(
     JobState& state) {
 
     state.is_reverse = is_reverse;
-    state.both_mode = true;
     state.effective_min_score = effective_min_score;
     state.span = seed_span(config.t, k);
     state.stage2_config = config.stage2;
@@ -304,18 +318,19 @@ void stage2a_one_strand_both(
     if (state.candidates.empty()) return;
 
     const std::vector<SeqId>& sids = tls_candidate_sids(state.candidates);
+    state.hits_per_candidate.assign(state.candidates.size(), {});
     collect_position_hits(pos_cod, kmers_cod, n_cod, kix_cod, kpx_cod,
-                          sids, state.hits_per_seq);
+                          sids, state.hits_per_candidate);
     collect_position_hits(pos_opt, kmers_opt, n_opt, kix_opt, kpx_opt,
-                          sids, state.hits_per_seq);
+                          sids, state.hits_per_candidate);
 }
 
 std::vector<ChainResult>
 stage2b_one_subject(size_t cand_idx, const JobState& state) {
+    const std::vector<Hit>& hits = state.hits_per_candidate[cand_idx];
+    if (hits.empty()) return {};
     const Stage1Candidate& cand = state.candidates[cand_idx];
-    auto it = state.hits_per_seq.find(cand.id);
-    if (it == state.hits_per_seq.end()) return {};
-    auto chains = chain_hits(it->second, cand.id, state.span,
+    auto chains = chain_hits(hits, cand.id, state.span,
                              state.is_reverse, state.stage2_config);
     for (auto& cr : chains) cr.stage1_score = cand.score;
     return chains;

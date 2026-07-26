@@ -57,8 +57,7 @@ namespace ikafssn::pfd {
             const std::uint8_t*, std::size_t,                                 \
             const std::uint32_t*, std::size_t,                                \
             const std::uint32_t*, std::size_t,                                \
-            PosDecodeScratch&,                                                \
-            std::vector<std::vector<std::uint32_t>>&);                        \
+            PosDecodeScratch&);                                               \
         void popcount_kinds(const std::uint8_t*,                              \
                             std::uint32_t,                                    \
                             std::uint32_t*,                                   \
@@ -93,8 +92,7 @@ struct VTable {
     bool (*open_kpx)(const std::uint8_t*, std::size_t,
                      const std::uint32_t*, std::size_t,
                      const std::uint32_t*, std::size_t,
-                     PosDecodeScratch&,
-                     std::vector<std::vector<std::uint32_t>>&);
+                     PosDecodeScratch&);
     void (*popcount)(const std::uint8_t*, std::uint32_t,
                      std::uint32_t*, std::uint32_t*, std::uint32_t*) noexcept;
 };
@@ -200,12 +198,11 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
 bool open_stream_kpx_for_candidates(const std::uint8_t* posting_list, std::size_t bytes,
                                     const std::uint32_t* kix_decoded, std::size_t kix_count,
                                     const std::uint32_t* candidates, std::size_t n_candidates,
-                                    PosDecodeScratch& scratch,
-                                    std::vector<std::vector<std::uint32_t>>& out) {
+                                    PosDecodeScratch& scratch) {
     return active_vtable().open_kpx(posting_list, bytes,
                                     kix_decoded, kix_count,
                                     candidates, n_candidates,
-                                    scratch, out);
+                                    scratch);
 }
 
 void popcount_kinds(const std::uint8_t* km, std::uint32_t distinct_count,

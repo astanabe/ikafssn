@@ -2,7 +2,7 @@
 #include "kpx_writer.hpp"
 #include "index/kpx_reader.hpp"
 #include "core/config.hpp"
-#include "search/posting_decoder.hpp"
+#include "index/pfd_codec.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -30,16 +30,16 @@ static std::vector<uint32_t> decode_pos_postings(
                           distinct_sorted.end());
 
     pfd::PosDecodeScratch scratch;
-    PosDecoder decoder(data, end,
-                       distinct_sorted.data(), distinct_sorted.size(),
-                       distinct_sorted.data(), distinct_sorted.size(),
-                       &scratch);
-    std::vector<uint32_t> result;
-    for (size_t i = 0; i < distinct_sorted.size(); i++) {
-        const auto& v = decoder.positions_for(i);
-        result.insert(result.end(), v.begin(), v.end());
+    if (!pfd::open_stream_kpx_for_candidates(
+            data, static_cast<size_t>(end - data),
+            distinct_sorted.data(), distinct_sorted.size(),
+            distinct_sorted.data(), distinct_sorted.size(),
+            scratch)) {
+        return {};
     }
-    return result;
+    // Every candidate is in the posting list here, so the CSR position array
+    // is exactly the per-candidate concatenation.
+    return scratch.out_positions;
 }
 
 static void test_single_seq() {
@@ -409,14 +409,15 @@ static void test_all_candidates_miss() {
         std::vector<uint32_t> kix_decoded = {1, 2, 3};
         std::vector<uint32_t> candidates  = {7, 8, 9};
         pfd::PosDecodeScratch scratch;
-        PosDecoder decoder(reader.posting_file() + reader.pos_offset(99),
-                           reader.posting_file() + reader.posting_file_size(),
-                           kix_decoded.data(), kix_decoded.size(),
-                           candidates.data(), candidates.size(),
-                           &scratch);
-        for (size_t i = 0; i < candidates.size(); i++) {
-            CHECK_EQ(decoder.positions_for(i).size(), 0u);
-        }
+        const uint64_t off = reader.pos_offset(99);
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            reader.posting_file() + off,
+            static_cast<size_t>(reader.posting_file_size() - off),
+            kix_decoded.data(), kix_decoded.size(),
+            candidates.data(), candidates.size(),
+            scratch));
+        CHECK_EQ(scratch.out_candidate_idx.size(), 0u);
+        CHECK_EQ(scratch.out_positions.size(), 0u);
         reader.close();
     }
     std::remove(TEST_FILE);

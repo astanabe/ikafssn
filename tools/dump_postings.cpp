@@ -124,7 +124,6 @@ int main(int argc, char** argv) {
 
     pfd::StreamCtx kix_ctx;
     pfd::PosDecodeScratch pos_scratch;
-    std::vector<std::vector<uint32_t>> per_cand_pos;
 
     for (uint32_t kmer = 0; kmer < tbl; kmer++) {
         if (args.max_kmers > 0 && emitted >= args.max_kmers) break;
@@ -155,8 +154,7 @@ int main(int argc, char** argv) {
                     kpx_data + kpx_off, kpx_end - kpx_off,
                     kix_ctx.decoded.data(), cnt,
                     kix_ctx.decoded.data(), cnt,
-                    pos_scratch,
-                    per_cand_pos)) {
+                    pos_scratch)) {
                 std::fprintf(stderr, "kmer %u: kpx decode failed\n", kmer);
                 continue;
             }
@@ -168,12 +166,12 @@ int main(int argc, char** argv) {
             std::fprintf(out, "%u%s", kix_ctx.decoded[i], (i + 1 == cnt ? "\t" : ","));
         }
         if (have_kpx) {
+            // The candidate set is the full distinct seq_id list, so the CSR
+            // position array is already in distinct seq_id order.
             bool first_p = true;
-            for (uint32_t i = 0; i < cnt; i++) {
-                for (uint32_t p : per_cand_pos[i]) {
-                    std::fprintf(out, "%s%u", first_p ? "" : ",", p);
-                    first_p = false;
-                }
+            for (uint32_t p : pos_scratch.out_positions) {
+                std::fprintf(out, "%s%u", first_p ? "" : ",", p);
+                first_p = false;
             }
         }
         std::fputc('\n', out);

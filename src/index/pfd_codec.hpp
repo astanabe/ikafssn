@@ -51,8 +51,10 @@
 //            the kind map in lockstep with the .kix decoded array and
 //            the (sorted) candidate list, resolving each candidate's
 //            (kind, rank) pair which then indexes into the per-kind
-//            decoded position buffers (see open_stream_kpx_for_candidates
-//            and PosDecodeScratch).
+//            decoded position buffers.  The result is emitted as a
+//            sparse CSR over the candidates that the posting list
+//            actually contains (see open_stream_kpx_for_candidates and
+//            PosDecodeScratch).
 
 #include <cstdint>
 #include <cstddef>
@@ -127,27 +129,36 @@ bool open_stream_kix(const uint8_t* posting_list, size_t bytes, StreamCtx& ctx);
 // candidates() calls; capacity grows monotonically to avoid per-call
 // allocation in the search hot path.
 struct PosDecodeScratch {
+    // Per-kind decoded position buffers.
     std::vector<uint32_t> partition_positions;   // concatenated partition pos
     std::vector<uint32_t> partition_offsets;     // sentinel at partition_count
     std::vector<uint32_t> short1_positions;      // one position per short_occ1
     std::vector<uint32_t> short2_positions;      // concatenated short_occ_ge2
     std::vector<uint32_t> short2_offsets;        // sentinel at short2_count
     std::vector<uint8_t>  short2_occ;            // u8 occ_count[short2_count]
+
+    // Result of the last open_stream_kpx_for_candidates() call: a sparse
+    // CSR over the candidates the posting list actually contains, in
+    // ascending candidate-index order.  The positions of the m-th such
+    // candidate (whose candidate index is out_candidate_idx[m]) are
+    // out_positions[out_offsets[m] .. out_offsets[m + 1]).
+    std::vector<uint32_t> out_candidate_idx;
+    std::vector<uint32_t> out_offsets;           // out_candidate_idx.size() + 1
+    std::vector<uint32_t> out_positions;         // concatenated positions
 };
 
 // Given the .kix decoded distinct_seq_id array (kix_decoded[0..kix_count),
 // strictly increasing) and a sorted candidate seq_id array, decode the
-// .kpx posting list and return the position vector for each candidate.
-// out is resized to n_candidates; out[i] holds the positions of
-// candidates[i] (empty if the candidate is not present in the posting
-// list).  scratch is a per-thread reusable buffer (see PosDecodeScratch).
-// Returns false on corrupt input.
+// .kpx posting list into scratch.out_candidate_idx / out_offsets /
+// out_positions (see PosDecodeScratch); candidates absent from the posting
+// list are simply not listed.  scratch is a per-thread reusable buffer whose
+// capacity grows monotonically.  Returns false on corrupt input, in which
+// case the CSR is partially filled and must not be read.
 bool open_stream_kpx_for_candidates(
     const uint8_t* posting_list, size_t bytes,
     const uint32_t* kix_decoded, size_t kix_count,
     const uint32_t* candidates, size_t n_candidates,
-    PosDecodeScratch& scratch,
-    std::vector<std::vector<uint32_t>>& out);
+    PosDecodeScratch& scratch);
 
 // === posting list inspection (no decode) ===
 

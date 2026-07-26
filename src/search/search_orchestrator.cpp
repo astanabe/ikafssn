@@ -469,8 +469,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         if (logger) {
             size_t batch_hits = 0;
             for (size_t ji : idxs) {
-                for (auto& kv : states[ji].hits_per_seq)
-                    batch_hits += kv.second.size();
+                for (const auto& hits : states[ji].hits_per_candidate)
+                    batch_hits += hits.size();
             }
             total_stage2a_hits += batch_hits;
             logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), %zu hit(s), %.3f s",
@@ -493,7 +493,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         sw.reset();
         for (size_t ji : idxs) {
             JobState& st = states[ji];
-            st.hits_per_seq = {};
+            std::vector<std::vector<Hit>>().swap(st.hits_per_candidate);
             std::vector<Stage1Candidate>().swap(st.candidates);
         }
         t_s2_free += sw.lap();

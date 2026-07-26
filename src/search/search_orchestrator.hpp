@@ -8,7 +8,7 @@
 //   Stage 2  — one group loop over volumes (.kix + .kpx).  Only mode 2/3.
 //              Each iteration runs Stage 2A then Stage 2B for the group
 //              and frees the group's per-ext_job transient JobState
-//              (hits_per_seq etc.) before the next group begins, so peak
+//              (hits_per_candidate etc.) before the next group begins, so peak
 //              heap usage stays bounded by one group rather than the total
 //              volume × query fan-out.
 //

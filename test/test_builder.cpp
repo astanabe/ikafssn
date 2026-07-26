@@ -10,7 +10,7 @@
 #include "core/types.hpp"
 #include "core/kmer_encoding.hpp"
 #include "search/seq_id_decoder.hpp"
-#include "search/posting_decoder.hpp"
+#include "index/pfd_codec.hpp"
 #include "util/logger.hpp"
 #include "util/simd_dispatch.hpp"
 
@@ -37,26 +37,24 @@ static std::vector<uint32_t> decode_id_postings(
                                  dec.decoded_data() + dec.decoded_count());
 }
 
-// Decode pos posting list via PosDecoder.  Candidate-set-driven: pass
-// a sorted distinct seq_id list (which equals the .kix decoded distinct
-// seq_id array for this k-mer) as both the kix_decoded view and the
-// candidate set, then concatenate the per-candidate position vectors
-// in candidate order.
+// Decode a .kpx posting list.  Candidate-set-driven: pass a sorted distinct
+// seq_id list (which equals the .kix decoded distinct seq_id array for this
+// k-mer) as both the kix_decoded view and the candidate set.  Every candidate
+// is then in the posting list, so the CSR position array is exactly the
+// per-candidate concatenation in candidate order.
 static std::vector<uint32_t> decode_pos_postings(
     const uint8_t* data, uint64_t offset, uint64_t byte_len,
     const std::vector<uint32_t>& distinct_sids) {
-    std::vector<uint32_t> result;
-    if (byte_len == 0 || distinct_sids.empty()) return result;
+    if (byte_len == 0 || distinct_sids.empty()) return {};
     pfd::PosDecodeScratch scratch;
-    PosDecoder dec(data + offset, data + offset + byte_len,
-                   distinct_sids.data(), distinct_sids.size(),
-                   distinct_sids.data(), distinct_sids.size(),
-                   &scratch);
-    for (size_t i = 0; i < distinct_sids.size(); i++) {
-        const auto& v = dec.positions_for(i);
-        result.insert(result.end(), v.begin(), v.end());
+    if (!pfd::open_stream_kpx_for_candidates(
+            data + offset, static_cast<size_t>(byte_len),
+            distinct_sids.data(), distinct_sids.size(),
+            distinct_sids.data(), distinct_sids.size(),
+            scratch)) {
+        return {};
     }
-    return result;
+    return scratch.out_positions;
 }
 
 // Compute the .kpx per-kmer position count by summing partition

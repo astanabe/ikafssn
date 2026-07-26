@@ -646,7 +646,6 @@ static void test_search_stage1_both_template() {
         /*effective_min_score=*/1,
         buf, state);
 
-    CHECK(state.both_mode);
     CHECK(!state.candidates.empty());
     bool found_fj = false;
     uint32_t Nqkmer = static_cast<uint32_t>(g_query_seq.size()) - t + 1;

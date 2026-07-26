@@ -526,10 +526,14 @@ bool open_stream_kpx_for_candidates(
         const std::uint8_t* posting_list, std::size_t bytes,
         const std::uint32_t* kix_decoded, std::size_t kix_count,
         const std::uint32_t* candidates, std::size_t n_candidates,
-        ikafssn::pfd::PosDecodeScratch& scratch,
-        std::vector<std::vector<std::uint32_t>>& out) {
+        ikafssn::pfd::PosDecodeScratch& scratch) {
 
-    out.assign(n_candidates, std::vector<std::uint32_t>{});
+    auto& out_cand = scratch.out_candidate_idx;
+    auto& out_off  = scratch.out_offsets;
+    auto& out_pos  = scratch.out_positions;
+    out_cand.clear();
+    out_pos.clear();
+    out_off.assign(1, 0);
 
     if (n_candidates == 0) return true;
     if (bytes == 0) return true;
@@ -609,7 +613,9 @@ bool open_stream_kpx_for_candidates(
 
     // 2-pointer merge walk over kix_decoded × candidates, ranking each
     // distinct sid by its kind to pull positions out of the per-kind
-    // decoded buffers.
+    // decoded buffers.  `ci` is monotonically non-decreasing and each
+    // candidate matches at most one distinct sid, so appending only the
+    // matches builds the sparse CSR in one pass.
     std::size_t ci = 0;
     std::uint32_t r_part = 0, r_short1 = 0, r_short2 = 0;
     for (std::uint32_t i = 0; i < distinct_count; i++) {
@@ -622,21 +628,27 @@ bool open_stream_kpx_for_candidates(
             if (match) {
                 const std::uint32_t lo = part_off[r_part];
                 const std::uint32_t hi = part_off[r_part + 1];
-                out[ci].assign(part_pos.begin() + lo, part_pos.begin() + hi);
+                out_pos.insert(out_pos.end(),
+                               part_pos.begin() + lo, part_pos.begin() + hi);
             }
             r_part++;
         } else if (kind == 0) {
             if (match) {
-                out[ci].assign(1, short1_pos[r_short1]);
+                out_pos.push_back(short1_pos[r_short1]);
             }
             r_short1++;
         } else { // kind == 1
             if (match) {
                 const std::uint32_t lo = short2_off[r_short2];
                 const std::uint32_t hi = short2_off[r_short2 + 1];
-                out[ci].assign(short2_pos.begin() + lo, short2_pos.begin() + hi);
+                out_pos.insert(out_pos.end(),
+                               short2_pos.begin() + lo, short2_pos.begin() + hi);
             }
             r_short2++;
+        }
+        if (match) {
+            out_cand.push_back(static_cast<std::uint32_t>(ci));
+            out_off.push_back(static_cast<std::uint32_t>(out_pos.size()));
         }
     }
     if (r_part   != partition_count) return false;

@@ -8,7 +8,7 @@
 //              `JobState::mode1_results` is also produced.
 //   Stage 2A — collect (q_pos, s_pos) hits from the .kpx posting file for
 //              every candidate that survived Stage 1.  Populates
-//              `JobState::hits_per_seq`.
+//              `JobState::hits_per_candidate`.
 //   Stage 2B — per-subject chain_hits().  Pure function over read-only
 //              JobState; runs as a flat parallel_for over
 //              (ext_job, candidate index) tuples.
@@ -17,14 +17,13 @@
 // volume-batched WILLNEED window: Stage 1 has its own batch loop, and
 // Stage 2 has a single batch loop where each iteration runs Stage 2A then
 // Stage 2B for the batch — the batch's per-ext_job transient state
-// (hits_per_seq etc.) is freed before the next batch begins, so peak
+// (hits_per_candidate etc.) is freed before the next batch begins, so peak
 // memory tracks `posting_budget` rather than the total volume × query
 // fan-out.  The .kix / .kpx readers are opened / closed per batch so the
 // kernel-level page cache is bounded by the configured memory budget.
 
 #include <cstdint>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -61,10 +60,10 @@ struct JobState {
     // carries the Stage 1 score of each candidate.  In mode 1 the list keeps
     // the order Stage 1 produced it in.
     std::vector<Stage1Candidate> candidates;
-    std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
+    // Stage 2A output, indexed exactly like `candidates`.
+    std::vector<std::vector<Hit>> hits_per_candidate;
     bool is_reverse = false;
     bool mode1_only = false;
-    bool both_mode = false;
     uint32_t effective_min_score = 0;
     int span = 0;  // seed span (t for spaced seeds, k for contiguous)
     Stage2Config stage2_config;
@@ -97,7 +96,7 @@ extern template void stage1_one_strand_single<uint32_t>(
 
 // Stage 2A — single-template path.  Collects (q_pos, s_pos) hits for the
 // candidates produced by stage1_one_strand_single().  Populates
-// state.hits_per_seq.
+// state.hits_per_candidate.
 template <typename KmerInt>
 void stage2a_one_strand_single(
     const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
@@ -145,7 +144,7 @@ extern template void stage1_one_strand_both<uint32_t>(
     uint32_t, uint32_t, uint32_t, Stage1Buffer&, JobState&);
 
 // Stage 2A — both-mode path.  Hits from coding and optimal indexes are
-// merged into one hits_per_seq.
+// merged into one hits_per_candidate.
 template <typename KmerInt>
 void stage2a_one_strand_both(
     const uint32_t* pos_cod, const KmerInt* kmers_cod, size_t n_cod,
