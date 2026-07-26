@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <set>
@@ -27,6 +28,9 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <tbb/parallel_for_each.h>
 #include <tbb/task_arena.h>
@@ -598,6 +602,110 @@ static void test_mode2_batched_equals_single() {
     for (auto& ksx : ksxs) ksx.close();
 }
 
+// bench/run_warm_e2e.sh attributes a run by parsing the key=value pairs of the
+// "Timing run_search (s):" line, so pin the key set: renaming one key would
+// silently drop a metric from every measurement instead of failing loudly.
+static void test_timing_line_keys() {
+    std::fprintf(stderr, "-- test_timing_line_keys\n");
+    const int k = 7;
+    const std::string db_base = "mvtest";
+
+    auto discovered = discover_volumes(g_test_dir + "/" + db_base, k);
+    CHECK_EQ(discovered.size(), 2u);
+
+    std::vector<KsxReader> ksxs(2);
+    std::vector<VolumeMeta> volumes_cod(2);
+    for (size_t vi = 0; vi < 2; vi++) {
+        const auto& vf = discovered[vi];
+        CHECK(ksxs[vi].open(vf.ksx_path));
+        KixReader kix_probe;
+        CHECK(kix_probe.open(vf.kix_path));
+        volumes_cod[vi].files         = vf;
+        volumes_cod[vi].volume_index  = static_cast<uint16_t>(vi);
+        volumes_cod[vi].num_sequences = kix_probe.num_sequences();
+        kix_probe.close();
+    }
+
+    SearchConfig config;
+    config.stage1.min_stage1_score = 1;
+    config.stage2.max_gap = 100;
+    config.stage2.min_nhit_diag = 1;
+    config.stage2.min_score = 2;
+
+    auto qdata = preprocess_query<uint16_t>(g_query_fj, k, nullptr, config);
+    std::vector<QueryBundle<uint16_t>> bundles(1);
+    bundles[0].query_id = &g_query_fj;
+    bundles[0].qdata_primary = &qdata;
+    std::vector<uint8_t> skip_reason(1, 0);
+
+    Logger info_logger(Logger::kInfo);
+    uint32_t max_num_seqs = 0;
+    for (auto& v : volumes_cod) max_num_seqs = std::max(max_num_seqs, v.num_sequences);
+
+    // Run run_search with stderr redirected to a file and return the last
+    // Timing line it wrote.
+    auto captured_timing_line = [&](uint8_t mode) {
+        RunSearchInputs<uint16_t> in;
+        in.volumes_cod = volumes_cod;
+        in.ksx_per_volume.resize(2);
+        in.oid_filters.resize(2);
+        for (size_t vi = 0; vi < 2; vi++) in.ksx_per_volume[vi] = &ksxs[vi];
+        in.queries           = &bundles;
+        in.query_skip_reason = &skip_reason;
+        in.config            = config;
+        in.config.mode       = mode;
+        in.both_mode         = false;
+        in.k                 = k;
+        in.nthread           = 2;
+        in.logger            = &info_logger;
+        in.max_num_seqs      = max_num_seqs;
+        in.width             = Stage1Width::T32;
+
+        const std::string log_path =
+            g_test_dir + "/timing_mode" + std::to_string(mode) + ".log";
+        std::fflush(stderr);
+        int saved_fd = dup(STDERR_FILENO);
+        int log_fd = open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        CHECK(saved_fd >= 0);
+        CHECK(log_fd >= 0);
+        CHECK(dup2(log_fd, STDERR_FILENO) >= 0);
+        close(log_fd);
+
+        run_search<uint16_t>(in);
+
+        std::fflush(stderr);
+        CHECK(dup2(saved_fd, STDERR_FILENO) >= 0);
+        close(saved_fd);
+
+        std::ifstream f(log_path);
+        std::string line, timing;
+        while (std::getline(f, line)) {
+            if (line.find("Timing run_search (s):") != std::string::npos)
+                timing = line;
+        }
+        return timing;
+    };
+
+    const std::string mode2 = captured_timing_line(2);
+    CHECK(!mode2.empty());
+    for (const char* key : {"s1_open=", "s1_compute=", "s1_fold=", "s1_intotal=",
+                            "s2_open=", "s2a=", "s2b=", "s2_free=", "dedup=",
+                            "parent_topn=", "s2_intotal=", "total="}) {
+        CHECK(mode2.find(key) != std::string::npos);
+    }
+
+    // The mode 1 early return reports the Stage 1 keys only.
+    const std::string mode1 = captured_timing_line(1);
+    CHECK(!mode1.empty());
+    for (const char* key : {"s1_open=", "s1_compute=", "s1_fold=", "s1_intotal=",
+                            "total="}) {
+        CHECK(mode1.find(key) != std::string::npos);
+    }
+    CHECK(mode1.find("s2a=") == std::string::npos);
+
+    for (auto& ksx : ksxs) ksx.close();
+}
+
 // Drive run_search<>() in mode 2 with the Stage 2 in-total (L) cap and check
 // the result against the tie-inclusive top-L reduction (by chainscore)
 // recomputed from the unlimited baseline.
@@ -1014,6 +1122,7 @@ int main() {
     test_parallel_equals_sequential();
     test_mode1_batched_equals_single();
     test_mode2_batched_equals_single();
+    test_timing_line_keys();
     test_stage1_nhit_limits();
     test_stage2_in_total_limit();
     test_result_merge_ordering();

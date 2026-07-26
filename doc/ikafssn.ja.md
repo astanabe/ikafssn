@@ -342,6 +342,15 @@ both ペアの場合、coding と optimal は `template_type` 以外の全識別
 
 `ikafssnindex` も矛盾するオプションの組み合わせをエラーにします: `-template_type` は `-t > 0` が必要、`-freq_threshold_part` は `-mode 2` または `3` が必要、`-nthread_highfreq_filter` は `-max_freq_build` の有効化が必要です。`ikafssnretrieve` はローカル `-db` 実行時に efetch 専用オプション (`-api_key`、`-batch_size`、`-max_nretry`、`-timeout`、`-range_threshold`) を拒否します。`ikafssnclient` と `ikafssninfo` では、HTTP 認証オプション (`-user`、`-http_user`、`-http_password`、`-netrc_file`) は `-http` が必要で、3 つの方式は相互排他であり、`-http_password` は `-http_user` を必要とします。
 
+**所要時間の出力.** ステージごとの件数に加えて、実行のたびに 2 行の所要時間が標準エラー出力に書かれます。いずれも `info` レベルなので `-v` なしで出力されます。
+
+```
+[INFO] Timing run_search (s): s1_open=0.512 s1_compute=12.345 s1_fold=0.031 s1_intotal=0.002 s2_open=0.220 s2a=45.678 s2b=3.210 s2_free=0.015 dedup=0.012 parent_topn=0.034 s2_intotal=0.005 total=62.064
+[INFO] Timing overall (s): open_index=1.234 preprocess=0.456 run_search=62.064 convert=2.345 stage3=0.000 stage3_select=0.001 write=3.456 total=69.556
+```
+
+`Timing run_search` は検索オーケストレータの内訳です。インデックスボリュームの open / close (`s1_open`、`s2_open`)、Stage 1 の集計 (`s1_compute`)、mode 1 の結果畳み込み (`s1_fold`)、Stage 1 と Stage 2 の in-total (L) 制限 (`s1_intotal`、`s2_intotal`)、Stage 2A と Stage 2B (`s2a`、`s2b`)、ext_job ごとの Stage 2 状態の解放 (`s2_free`)、フラグメント重複の dedup (`dedup`)、parent 単位の上位 N 選択 (`parent_topn`) を表します。`-mode 1` では Stage 1 のキーのみが出力されます。`Timing overall` はその外側の工程、すなわちインデックスの open、クエリ前処理、`run_search` 本体、出力レコードへの変換、Stage 3 アライメント、Stage 3 の各種制限、出力の書き出しを表します。`total` は各キーの和ではなく実測値なので、和との差はどのステージにも帰属されていない時間を示します。オーケストレータは共通なので、`ikafssnserver` でも検索リクエストごとに `Timing run_search` の行が記録されます。
+
 **使用例:**
 
 ```bash

@@ -355,6 +355,15 @@ Options that only take effect in a later stage are rejected with an error (non-z
 
 `ikafssnindex` likewise rejects contradictory option combinations: `-template_type` requires `-t > 0`, `-freq_threshold_part` requires `-mode 2` or `3`, and `-nthread_highfreq_filter` requires an active `-max_freq_build`. `ikafssnretrieve` rejects the efetch-only options (`-api_key`, `-batch_size`, `-max_nretry`, `-timeout`, `-range_threshold`) when run with local `-db`. For `ikafssnclient` and `ikafssninfo`, the HTTP authentication options (`-user`, `-http_user`, `-http_password`, `-netrc_file`) require `-http`, are mutually exclusive across the three methods, and `-http_password` requires `-http_user`.
 
+**Timing output.** Alongside the per-stage counts, every run prints two timing lines to stderr. Both are at `info` level, so they appear without `-v`:
+
+```
+[INFO] Timing run_search (s): s1_open=0.512 s1_compute=12.345 s1_fold=0.031 s1_intotal=0.002 s2_open=0.220 s2a=45.678 s2b=3.210 s2_free=0.015 dedup=0.012 parent_topn=0.034 s2_intotal=0.005 total=62.064
+[INFO] Timing overall (s): open_index=1.234 preprocess=0.456 run_search=62.064 convert=2.345 stage3=0.000 stage3_select=0.001 write=3.456 total=69.556
+```
+
+`Timing run_search` breaks the search orchestrator down into index volume open / close (`s1_open`, `s2_open`), Stage 1 accumulation (`s1_compute`), the mode 1 result fold (`s1_fold`), the Stage 1 and Stage 2 in-total (L) caps (`s1_intotal`, `s2_intotal`), Stage 2A and Stage 2B (`s2a`, `s2b`), release of the per-job Stage 2 state (`s2_free`), fragment-overlap dedup (`dedup`), and parent top-N selection (`parent_topn`). With `-mode 1` only the Stage 1 keys are printed. `Timing overall` covers the stages around it: index open, query preprocessing, `run_search` itself, conversion to output records, Stage 3 alignment, the Stage 3 caps, and output writing. `total` is measured rather than summed, so the gap between it and the sum of the other keys is time not attributed to any listed stage. Since the orchestrator is shared, `ikafssnserver` logs the `Timing run_search` line once per search request too.
+
 **Examples:**
 
 ```bash
