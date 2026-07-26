@@ -15,31 +15,14 @@
 
 namespace ikafssn {
 
-// Drain a JobState by running Stage 2B for every candidate in the order
-// produced by Stage 1.
+// Drain a JobState by running Stage 2B for every candidate in candidate
+// order.
 static std::vector<ChainResult>
-drain_stage2b_single_template(const JobState& state) {
+drain_stage2b(const JobState& state) {
     if (state.mode1_only) return state.mode1_results;
     std::vector<ChainResult> results;
-    for (const auto& c : state.candidates) {
-        auto chains = stage2b_one_subject(c.id, c.score, state);
-        if (!chains.empty()) {
-            results.insert(results.end(),
-                           std::make_move_iterator(chains.begin()),
-                           std::make_move_iterator(chains.end()));
-        }
-    }
-    return results;
-}
-
-static std::vector<ChainResult>
-drain_stage2b_both_template(const JobState& state) {
-    if (state.mode1_only) return state.mode1_results;
-    std::vector<ChainResult> results;
-    for (SeqId sid : state.sorted_candidate_sids) {
-        auto sit = state.stage1_scores.find(sid);
-        uint32_t score = (sit != state.stage1_scores.end()) ? sit->second : 0;
-        auto chains = stage2b_one_subject(sid, score, state);
+    for (size_t ci = 0; ci < state.candidates.size(); ++ci) {
+        auto chains = stage2b_one_subject(ci, state);
         if (!chains.empty()) {
             results.insert(results.end(),
                            std::make_move_iterator(chains.begin()),
@@ -76,7 +59,7 @@ SearchResult search_volume(
             qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
             qdata.fwd_positions.size(),
             kix, kpx, state);
-        auto fwd_results = drain_stage2b_single_template(state);
+        auto fwd_results = drain_stage2b(state);
         result.hits.insert(result.hits.end(),
                            std::make_move_iterator(fwd_results.begin()),
                            std::make_move_iterator(fwd_results.end()));
@@ -94,7 +77,7 @@ SearchResult search_volume(
             qdata.rc_positions.data(), qdata.rc_kmer_values.data(),
             qdata.rc_positions.size(),
             kix, kpx, state);
-        auto rc_results = drain_stage2b_single_template(state);
+        auto rc_results = drain_stage2b(state);
         result.hits.insert(result.hits.end(),
                            std::make_move_iterator(rc_results.begin()),
                            std::make_move_iterator(rc_results.end()));
@@ -144,7 +127,7 @@ SearchResult search_volume_both(
             qdata_opt.fwd_positions.data(), qdata_opt.fwd_kmer_values.data(),
             qdata_opt.fwd_positions.size(),
             kix_cod, kpx_cod, kix_opt, kpx_opt, state);
-        auto fwd_results = drain_stage2b_both_template(state);
+        auto fwd_results = drain_stage2b(state);
         result.hits.insert(result.hits.end(),
                            std::make_move_iterator(fwd_results.begin()),
                            std::make_move_iterator(fwd_results.end()));
@@ -170,7 +153,7 @@ SearchResult search_volume_both(
             qdata_opt.rc_positions.data(), qdata_opt.rc_kmer_values.data(),
             qdata_opt.rc_positions.size(),
             kix_cod, kpx_cod, kix_opt, kpx_opt, state);
-        auto rc_results = drain_stage2b_both_template(state);
+        auto rc_results = drain_stage2b(state);
         result.hits.insert(result.hits.end(),
                            std::make_move_iterator(rc_results.begin()),
                            std::make_move_iterator(rc_results.end()));

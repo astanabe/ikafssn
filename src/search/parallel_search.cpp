@@ -31,6 +31,19 @@ static inline pfd::PosDecodeScratch& tls_pos_scratch() {
     return scratch;
 }
 
+// Per-thread scratch holding the candidate seq_ids as the contiguous
+// ascending array the .kpx candidate-set decoder takes.  `candidates` is
+// already ordered by ascending SeqId on the Stage 2 path, so this is a plain
+// projection.  The buffer grows monotonically across calls.
+static inline const std::vector<SeqId>&
+tls_candidate_sids(const std::vector<Stage1Candidate>& candidates) {
+    thread_local std::vector<SeqId> sids;
+    sids.clear();
+    sids.reserve(candidates.size());
+    for (const auto& c : candidates) sids.push_back(c.id);
+    return sids;
+}
+
 // Stage 1 only: return candidates as ChainResult with stage1_score, no chaining.
 static std::vector<ChainResult>
 stage1_only_results(const std::vector<Stage1Candidate>& candidates,
@@ -145,10 +158,10 @@ void stage1_one_strand_single(
         return;
     }
 
-    state.stage1_scores.reserve(state.candidates.size());
-    for (const auto& c : state.candidates) {
-        state.stage1_scores[c.id] = c.score;
-    }
+    std::sort(state.candidates.begin(), state.candidates.end(),
+              [](const Stage1Candidate& a, const Stage1Candidate& b) {
+                  return a.id < b.id;
+              });
 }
 
 template <typename KmerInt>
@@ -160,15 +173,9 @@ void stage2a_one_strand_single(
     if (state.mode1_only) return;
     if (state.candidates.empty()) return;
 
-    std::vector<SeqId> candidate_sids;
-    candidate_sids.reserve(state.candidates.size());
-    for (const auto& c : state.candidates) {
-        candidate_sids.push_back(c.id);
-    }
-    std::sort(candidate_sids.begin(), candidate_sids.end());
-
     collect_position_hits(positions, kmers, n_kmers, kix, kpx,
-                          candidate_sids, state.hits_per_seq);
+                          tls_candidate_sids(state.candidates),
+                          state.hits_per_seq);
 }
 
 template <typename KmerInt>
@@ -279,14 +286,10 @@ void stage1_one_strand_both(
         return;
     }
 
-    state.sorted_candidate_sids.reserve(state.candidates.size());
-    state.stage1_scores.reserve(state.candidates.size());
-    for (const auto& c : state.candidates) {
-        state.sorted_candidate_sids.push_back(c.id);
-        state.stage1_scores[c.id] = c.score;
-    }
-    std::sort(state.sorted_candidate_sids.begin(),
-              state.sorted_candidate_sids.end());
+    std::sort(state.candidates.begin(), state.candidates.end(),
+              [](const Stage1Candidate& a, const Stage1Candidate& b) {
+                  return a.id < b.id;
+              });
 }
 
 template <typename KmerInt>
@@ -300,19 +303,21 @@ void stage2a_one_strand_both(
     if (state.mode1_only) return;
     if (state.candidates.empty()) return;
 
+    const std::vector<SeqId>& sids = tls_candidate_sids(state.candidates);
     collect_position_hits(pos_cod, kmers_cod, n_cod, kix_cod, kpx_cod,
-                          state.sorted_candidate_sids, state.hits_per_seq);
+                          sids, state.hits_per_seq);
     collect_position_hits(pos_opt, kmers_opt, n_opt, kix_opt, kpx_opt,
-                          state.sorted_candidate_sids, state.hits_per_seq);
+                          sids, state.hits_per_seq);
 }
 
 std::vector<ChainResult>
-stage2b_one_subject(SeqId sid, uint32_t stage1_score, const JobState& state) {
-    auto it = state.hits_per_seq.find(sid);
+stage2b_one_subject(size_t cand_idx, const JobState& state) {
+    const Stage1Candidate& cand = state.candidates[cand_idx];
+    auto it = state.hits_per_seq.find(cand.id);
     if (it == state.hits_per_seq.end()) return {};
-    auto chains = chain_hits(it->second, sid, state.span,
+    auto chains = chain_hits(it->second, cand.id, state.span,
                              state.is_reverse, state.stage2_config);
-    for (auto& cr : chains) cr.stage1_score = stage1_score;
+    for (auto& cr : chains) cr.stage1_score = cand.score;
     return chains;
 }
 
@@ -523,13 +528,11 @@ void run_stage2a_jobs(
 }
 
 namespace {
-// One element of the flat (ext_job, sid) tuple stream consumed by Stage 2B's
-// parallel_for.  Stage1 score is captured at flatten time so Stage 2B does
-// not need to look up `state.stage1_scores` again.
+// One element of the flat (ext_job, candidate index) tuple stream consumed by
+// Stage 2B's parallel_for.
 struct FlatBSlot {
     size_t   ext_job_idx;
-    SeqId    sid;
-    uint32_t stage1_score;
+    uint32_t cand_idx;
 };
 }  // namespace
 
@@ -552,17 +555,9 @@ void run_stage2b_jobs(
     for (size_t ji : batch_indices) {
         const JobState& st = states[ji];
         if (st.mode1_only) continue;
-        if (st.candidates.empty()) continue;
-        if (st.both_mode) {
-            for (SeqId sid : st.sorted_candidate_sids) {
-                auto sit = st.stage1_scores.find(sid);
-                uint32_t sc = (sit != st.stage1_scores.end()) ? sit->second : 0;
-                flat.push_back({ ji, sid, sc });
-            }
-        } else {
-            for (const auto& c : st.candidates) {
-                flat.push_back({ ji, c.id, c.score });
-            }
+        const size_t n_cand = st.candidates.size();
+        for (size_t ci = 0; ci < n_cand; ++ci) {
+            flat.push_back({ ji, static_cast<uint32_t>(ci) });
         }
     }
 
@@ -578,7 +573,7 @@ void run_stage2b_jobs(
                     const auto& slot = flat[i];
                     const ExtJob& ej = ext_jobs[slot.ext_job_idx];
                     const JobState& st = states[slot.ext_job_idx];
-                    auto chains = stage2b_one_subject(slot.sid, slot.stage1_score, st);
+                    auto chains = stage2b_one_subject(slot.cand_idx, st);
                     for (auto& cr : chains) {
                         OrchestratorHit oh;
                         oh.query_idx = ej.qi;

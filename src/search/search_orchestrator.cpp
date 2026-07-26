@@ -138,8 +138,9 @@ void apply_in_total_stage2(std::vector<OrchestratorHit>& hits, uint32_t L) {
 
 // In-total (L) limit for modes 2/3: keep, per query (across all volumes and
 // strands), the top-L Stage 1 candidates plus every candidate tying the L-th
-// coverscore, by pruning each ext_job's candidate list.  Derived per-ext_job
-// state is rebuilt to stay consistent with the pruned candidates.
+// coverscore, by pruning each ext_job's candidate list.  The prune is
+// order-preserving, so the candidates stay ordered by ascending SeqId as
+// Stage 2A requires.
 void apply_in_total_stage1(std::vector<JobState>& states,
                            const std::vector<ExtJob>& ext_jobs, uint32_t L) {
     if (L == 0) return;
@@ -166,18 +167,6 @@ void apply_in_total_stage1(std::vector<JobState>& states,
             if (c.score >= t) kept.push_back(c);
         if (kept.size() == before) continue;
         st.candidates = std::move(kept);
-        // Rebuild derived structures consumed by Stage 2.
-        st.stage1_scores.clear();
-        st.stage1_scores.reserve(st.candidates.size());
-        for (const auto& c : st.candidates) st.stage1_scores[c.id] = c.score;
-        if (st.both_mode) {
-            st.sorted_candidate_sids.clear();
-            st.sorted_candidate_sids.reserve(st.candidates.size());
-            for (const auto& c : st.candidates)
-                st.sorted_candidate_sids.push_back(c.id);
-            std::sort(st.sorted_candidate_sids.begin(),
-                      st.sorted_candidate_sids.end());
-        }
     }
 }
 
@@ -504,9 +493,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         sw.reset();
         for (size_t ji : idxs) {
             JobState& st = states[ji];
-            st.hits_per_seq  = {};
-            st.stage1_scores = {};
-            std::vector<SeqId>().swap(st.sorted_candidate_sids);
+            st.hits_per_seq = {};
             std::vector<Stage1Candidate>().swap(st.candidates);
         }
         t_s2_free += sw.lap();

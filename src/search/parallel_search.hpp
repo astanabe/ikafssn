@@ -4,15 +4,14 @@
 //
 // Each (query, volume, strand) job runs in three stages:
 //   Stage 1  — candidate selection from the .kix posting file.  Output is
-//              `JobState::candidates` and `JobState::stage1_scores`; in mode 1
-//              the per-strand result list `JobState::mode1_results` is also
-//              produced.
+//              `JobState::candidates`; in mode 1 the per-strand result list
+//              `JobState::mode1_results` is also produced.
 //   Stage 2A — collect (q_pos, s_pos) hits from the .kpx posting file for
 //              every candidate that survived Stage 1.  Populates
 //              `JobState::hits_per_seq`.
 //   Stage 2B — per-subject chain_hits().  Pure function over read-only
-//              JobState; runs as a flat parallel_for over (ext_job, sid)
-//              tuples.
+//              JobState; runs as a flat parallel_for over
+//              (ext_job, candidate index) tuples.
 //
 // `search_orchestrator.{hpp,cpp}` drives the three stages with a global
 // volume-batched WILLNEED window: Stage 1 has its own batch loop, and
@@ -57,10 +56,12 @@ struct ExtJob {
 // consumed by Stage 2B.  When `mode1_only` is true the chain_hits step is
 // skipped and `mode1_results` carries the final per-strand results.
 struct JobState {
+    // On the Stage 2 path the candidates are ordered by ascending SeqId, the
+    // order the .kpx candidate-set decoder requires; `Stage1Candidate::score`
+    // carries the Stage 1 score of each candidate.  In mode 1 the list keeps
+    // the order Stage 1 produced it in.
     std::vector<Stage1Candidate> candidates;
-    std::vector<SeqId> sorted_candidate_sids;  // populated only in both-mode
     std::unordered_map<SeqId, std::vector<Hit>> hits_per_seq;
-    std::unordered_map<SeqId, uint32_t> stage1_scores;
     bool is_reverse = false;
     bool mode1_only = false;
     bool both_mode = false;
@@ -70,8 +71,8 @@ struct JobState {
     std::vector<ChainResult> mode1_results;
 };
 
-// Stage 1 — single-template path.  Populates state.candidates,
-// state.stage1_scores, and (when mode == 1) state.mode1_results.
+// Stage 1 — single-template path.  Populates state.candidates and (when
+// mode == 1) state.mode1_results.
 template <typename KmerInt>
 void stage1_one_strand_single(
     const uint32_t* positions, const KmerInt* kmers, size_t n_kmers,
@@ -166,12 +167,13 @@ extern template void stage2a_one_strand_both<uint32_t>(
     const KixReader&, const KpxReader&,
     JobState&);
 
-// Stage 2B — run chain_hits() for one subject in `state`.  Pure function over
-// read-only state; safe to call concurrently across distinct (state, sid)
-// pairs.  Returns chain results for the subject (empty if no hits or no
-// chain meets min_score).
+// Stage 2B — run chain_hits() for `state.candidates[cand_idx]`.  Pure
+// function over read-only state; safe to call concurrently across distinct
+// (state, cand_idx) pairs.  Returns chain results for the subject (empty if
+// no hits or no chain meets min_score).  `cand_idx` must be a valid index
+// into a candidate list that Stage 2A has already run against.
 std::vector<ChainResult>
-stage2b_one_subject(SeqId sid, uint32_t stage1_score, const JobState& state);
+stage2b_one_subject(size_t cand_idx, const JobState& state);
 
 // Volume-side bundle — pointers are non-owning and caller-managed.
 // `kix_opt` / `kpx_opt` are nullptr in single-template mode and point to the
