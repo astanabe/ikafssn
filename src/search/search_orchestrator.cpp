@@ -43,6 +43,11 @@ void apply_stage2a_madvise(KixReader& kix, KpxReader& kpx) {
     kpx.apply_madvise_dict_only();
 }
 
+// Ordered (vi, qi, strand): every volume gets the same set of ext_jobs (each
+// non-skipped query, once per strand), so volume vi owns exactly the
+// contiguous range [vi * ejpv, (vi + 1) * ejpv) where ejpv is the per-volume
+// ext_job count.  The orchestrator relies on that invariant to address a
+// batch as a range instead of an index list.
 template <typename KmerInt>
 std::vector<ExtJob> build_ext_jobs(const RunSearchInputs<KmerInt>& in,
                                     size_t num_volumes) {
@@ -53,10 +58,10 @@ std::vector<ExtJob> build_ext_jobs(const RunSearchInputs<KmerInt>& in,
     std::vector<ExtJob> ext_jobs;
     ext_jobs.reserve(queries.size() * num_volumes * (strand == 2 ? 2 : 1));
 
-    for (size_t qi = 0; qi < queries.size(); ++qi) {
-        if (skip_reason && qi < skip_reason->size() && (*skip_reason)[qi] != 0)
-            continue;
-        for (size_t vi = 0; vi < num_volumes; ++vi) {
+    for (size_t vi = 0; vi < num_volumes; ++vi) {
+        for (size_t qi = 0; qi < queries.size(); ++qi) {
+            if (skip_reason && qi < skip_reason->size() && (*skip_reason)[qi] != 0)
+                continue;
             if (strand == 2) {
                 ext_jobs.push_back({qi, vi, 0});
                 ext_jobs.push_back({qi, vi, 1});
@@ -68,26 +73,6 @@ std::vector<ExtJob> build_ext_jobs(const RunSearchInputs<KmerInt>& in,
         }
     }
     return ext_jobs;
-}
-
-// Build the per-batch index list (indices into ext_jobs) for the volumes in
-// the batch.  Linear scan is fine because num_volumes is small relative to
-// ext_jobs.size().
-std::vector<size_t> indices_for_batch(const std::vector<ExtJob>& ext_jobs,
-                                       const std::vector<uint16_t>& vols) {
-    std::vector<bool> in_batch;
-    uint16_t max_v = 0;
-    for (uint16_t v : vols) max_v = std::max(max_v, v);
-    in_batch.assign(static_cast<size_t>(max_v) + 1, false);
-    for (uint16_t v : vols) in_batch[v] = true;
-
-    std::vector<size_t> out;
-    out.reserve(ext_jobs.size());
-    for (size_t i = 0; i < ext_jobs.size(); ++i) {
-        size_t vi = ext_jobs[i].vi;
-        if (vi < in_batch.size() && in_batch[vi]) out.push_back(i);
-    }
-    return out;
 }
 
 // L-th highest value in `v` (0 if fewer than L); reorders v.
@@ -273,9 +258,12 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
 
     auto run_stage1_batch_and_close = [&]() {
         if (s1_cur_vols.empty()) return;
-        auto idxs = indices_for_batch(ext_jobs, s1_cur_vols);
+        // Volumes are bundled in ascending vi, so the batch spans the
+        // ext_job range owned by its first through its last volume.
+        const size_t begin = s1_cur_vols.front() * ext_jobs_per_volume;
+        const size_t end = (s1_cur_vols.back() + 1) * ext_jobs_per_volume;
         sw.reset();
-        run_stage1_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
+        run_stage1_jobs<KmerInt>(begin, end, ext_jobs, queries, bundles,
                                   in.k, in.config, in.both_mode,
                                   states, arena, tls_bufs);
         const double batch_compute = sw.lap();
@@ -286,8 +274,8 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         // accumulator using a 2-pass parallel_scan + parallel_for so
         // the fold scales with the batch and per-ji capacity is freed
         // immediately.
-        if (in.config.mode == 1 && !idxs.empty()) {
-            const size_t n_batch = idxs.size();
+        if (in.config.mode == 1 && end > begin) {
+            const size_t n_batch = end - begin;
             std::vector<size_t> offsets(n_batch + 1, 0);
             arena.execute([&] {
                 tbb::parallel_scan(
@@ -297,7 +285,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                         size_t sum = acc;
                         for (size_t i = r.begin(); i != r.end(); ++i) {
                             if (is_final) offsets[i] = sum;
-                            sum += states[idxs[i]].mode1_results.size();
+                            sum += states[begin + i].mode1_results.size();
                         }
                         if (is_final && r.end() == n_batch) offsets[n_batch] = sum;
                         return sum;
@@ -314,7 +302,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                         tbb::blocked_range<size_t>(0, n_batch),
                         [&](const tbb::blocked_range<size_t>& r) {
                             for (size_t i = r.begin(); i != r.end(); ++i) {
-                                const size_t ji = idxs[i];
+                                const size_t ji = begin + i;
                                 const ExtJob& ej = ext_jobs[ji];
                                 JobState& st = states[ji];
                                 size_t dst = base + offsets[i];
@@ -336,7 +324,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
                         [&](const tbb::blocked_range<size_t>& r) {
                             for (size_t i = r.begin(); i != r.end(); ++i) {
                                 std::vector<ChainResult>().swap(
-                                    states[idxs[i]].mode1_results);
+                                    states[begin + i].mode1_results);
                             }
                         });
                 });
@@ -347,7 +335,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
 
         if (logger) {
             logger->info("Stage 1 batch %zu: %zu vol(s), %zu ext_job(s), %.3f s",
-                         s1_batch_seq, s1_cur_vols.size(), idxs.size(),
+                         s1_batch_seq, s1_cur_vols.size(), end - begin,
                          batch_compute + batch_fold);
         }
         ++s1_batch_seq;
@@ -443,9 +431,10 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
 
     auto run_stage2_batch_and_close = [&]() {
         if (s2_cur_vols.empty()) return;
-        auto idxs = indices_for_batch(ext_jobs, s2_cur_vols);
+        const size_t begin = s2_cur_vols.front() * ext_jobs_per_volume;
+        const size_t end = (s2_cur_vols.back() + 1) * ext_jobs_per_volume;
         sw.reset();
-        run_stage2a_jobs<KmerInt>(idxs, ext_jobs, queries, bundles,
+        run_stage2a_jobs<KmerInt>(begin, end, ext_jobs, queries, bundles,
                                    in.both_mode, states, arena);
         const double batch_s2a = sw.lap();
         t_s2a += batch_s2a;
@@ -468,19 +457,20 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
 
         if (logger) {
             size_t batch_hits = 0;
-            for (size_t ji : idxs) {
+            for (size_t ji = begin; ji < end; ++ji) {
                 for (const auto& hits : states[ji].hits_per_candidate)
                     batch_hits += hits.size();
             }
             total_stage2a_hits += batch_hits;
             logger->info("Stage 2A batch %zu: %zu vol(s), %zu ext_job(s), %zu hit(s), %.3f s",
-                         s2_batch_seq, s2_cur_vols.size(), idxs.size(),
+                         s2_batch_seq, s2_cur_vols.size(), end - begin,
                          batch_hits, batch_s2a);
         }
 
         size_t chains_before = results.size();
         sw.reset();
-        run_stage2b_jobs(idxs, ext_jobs, states, volume_indices, arena, results);
+        run_stage2b_jobs(begin, end, ext_jobs, states, volume_indices, arena,
+                         results);
         const double batch_s2b = sw.lap();
         t_s2b += batch_s2b;
         if (logger) {
@@ -491,7 +481,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
         ++s2_batch_seq;
 
         sw.reset();
-        for (size_t ji : idxs) {
+        for (size_t ji = begin; ji < end; ++ji) {
             JobState& st = states[ji];
             std::vector<std::vector<Hit>>().swap(st.hits_per_candidate);
             std::vector<Stage1Candidate>().swap(st.candidates);

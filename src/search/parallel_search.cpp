@@ -478,7 +478,7 @@ void dispatch_stage2a(
 
 template <typename KmerInt>
 void run_stage1_jobs(
-    const std::vector<size_t>& batch_indices,
+    size_t batch_begin, size_t batch_end,
     const std::vector<ExtJob>& ext_jobs,
     const std::vector<QueryBundle<KmerInt>>& queries,
     const std::vector<VolumeBundle<KmerInt>>& volumes,
@@ -489,15 +489,14 @@ void run_stage1_jobs(
     tbb::task_arena& arena,
     tbb::enumerable_thread_specific<Stage1Buffer>& tls_bufs) {
 
-    if (batch_indices.empty()) return;
+    if (batch_begin >= batch_end) return;
 
     arena.execute([&] {
         tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, batch_indices.size()),
+            tbb::blocked_range<size_t>(batch_begin, batch_end),
             [&](const tbb::blocked_range<size_t>& range) {
                 auto& buf = tls_bufs.local();
-                for (size_t idx = range.begin(); idx != range.end(); ++idx) {
-                    size_t ji = batch_indices[idx];
+                for (size_t ji = range.begin(); ji != range.end(); ++ji) {
                     const auto& ej = ext_jobs[ji];
                     const auto& qb = queries[ej.qi];
                     const auto& vb = volumes[ej.vi];
@@ -510,7 +509,7 @@ void run_stage1_jobs(
 
 template <typename KmerInt>
 void run_stage2a_jobs(
-    const std::vector<size_t>& batch_indices,
+    size_t batch_begin, size_t batch_end,
     const std::vector<ExtJob>& ext_jobs,
     const std::vector<QueryBundle<KmerInt>>& queries,
     const std::vector<VolumeBundle<KmerInt>>& volumes,
@@ -518,14 +517,13 @@ void run_stage2a_jobs(
     std::vector<JobState>& states,
     tbb::task_arena& arena) {
 
-    if (batch_indices.empty()) return;
+    if (batch_begin >= batch_end) return;
 
     arena.execute([&] {
         tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, batch_indices.size()),
+            tbb::blocked_range<size_t>(batch_begin, batch_end),
             [&](const tbb::blocked_range<size_t>& range) {
-                for (size_t idx = range.begin(); idx != range.end(); ++idx) {
-                    size_t ji = batch_indices[idx];
+                for (size_t ji = range.begin(); ji != range.end(); ++ji) {
                     const auto& ej = ext_jobs[ji];
                     const auto& qb = queries[ej.qi];
                     const auto& vb = volumes[ej.vi];
@@ -545,22 +543,23 @@ struct FlatBSlot {
 }  // namespace
 
 void run_stage2b_jobs(
-    const std::vector<size_t>& batch_indices,
+    size_t batch_begin, size_t batch_end,
     const std::vector<ExtJob>& ext_jobs,
     const std::vector<JobState>& states,
     const std::vector<uint16_t>& volume_indices,
     tbb::task_arena& arena,
     std::vector<OrchestratorHit>& out_results) {
 
-    if (batch_indices.empty()) return;
+    if (batch_begin >= batch_end) return;
 
     std::vector<FlatBSlot> flat;
     {
         size_t reserve = 0;
-        for (size_t ji : batch_indices) reserve += states[ji].candidates.size();
+        for (size_t ji = batch_begin; ji < batch_end; ++ji)
+            reserve += states[ji].candidates.size();
         flat.reserve(reserve);
     }
-    for (size_t ji : batch_indices) {
+    for (size_t ji = batch_begin; ji < batch_end; ++ji) {
         const JobState& st = states[ji];
         if (st.mode1_only) continue;
         const size_t n_cand = st.candidates.size();
@@ -647,7 +646,7 @@ template void stage2a_one_strand_both<uint32_t>(
     JobState&);
 
 template void run_stage1_jobs<uint16_t>(
-    const std::vector<size_t>&,
+    size_t, size_t,
     const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint16_t>>&,
     const std::vector<VolumeBundle<uint16_t>>&,
@@ -656,7 +655,7 @@ template void run_stage1_jobs<uint16_t>(
     tbb::task_arena&,
     tbb::enumerable_thread_specific<Stage1Buffer>&);
 template void run_stage1_jobs<uint32_t>(
-    const std::vector<size_t>&,
+    size_t, size_t,
     const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint32_t>>&,
     const std::vector<VolumeBundle<uint32_t>>&,
@@ -666,7 +665,7 @@ template void run_stage1_jobs<uint32_t>(
     tbb::enumerable_thread_specific<Stage1Buffer>&);
 
 template void run_stage2a_jobs<uint16_t>(
-    const std::vector<size_t>&,
+    size_t, size_t,
     const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint16_t>>&,
     const std::vector<VolumeBundle<uint16_t>>&,
@@ -674,7 +673,7 @@ template void run_stage2a_jobs<uint16_t>(
     std::vector<JobState>&,
     tbb::task_arena&);
 template void run_stage2a_jobs<uint32_t>(
-    const std::vector<size_t>&,
+    size_t, size_t,
     const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint32_t>>&,
     const std::vector<VolumeBundle<uint32_t>>&,

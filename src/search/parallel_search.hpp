@@ -203,13 +203,13 @@ struct OrchestratorHit {
     ChainResult cr;
 };
 
-// Stage 1 orchestrator — runs `stage1_one_strand_*` for every ext_job in
-// `batch_indices` (indices into `ext_jobs`).  States in `states` not
-// referenced by `batch_indices` are left untouched.  `volumes` must have
-// entries populated for every vi referenced by `batch_indices`.
+// Stage 1 orchestrator — runs `stage1_one_strand_*` for every ext_job in the
+// contiguous range `[batch_begin, batch_end)` of `ext_jobs`.  States outside
+// the range are left untouched.  `volumes` must have entries populated for
+// every vi the range references.
 template <typename KmerInt>
 void run_stage1_jobs(
-    const std::vector<size_t>& batch_indices,
+    size_t batch_begin, size_t batch_end,
     const std::vector<ExtJob>& ext_jobs,
     const std::vector<QueryBundle<KmerInt>>& queries,
     const std::vector<VolumeBundle<KmerInt>>& volumes,
@@ -221,7 +221,7 @@ void run_stage1_jobs(
     tbb::enumerable_thread_specific<Stage1Buffer>& tls_bufs);
 
 extern template void run_stage1_jobs<uint16_t>(
-    const std::vector<size_t>&,
+    size_t, size_t,
     const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint16_t>>&,
     const std::vector<VolumeBundle<uint16_t>>&,
@@ -230,7 +230,7 @@ extern template void run_stage1_jobs<uint16_t>(
     tbb::task_arena&,
     tbb::enumerable_thread_specific<Stage1Buffer>&);
 extern template void run_stage1_jobs<uint32_t>(
-    const std::vector<size_t>&,
+    size_t, size_t,
     const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint32_t>>&,
     const std::vector<VolumeBundle<uint32_t>>&,
@@ -240,11 +240,11 @@ extern template void run_stage1_jobs<uint32_t>(
     tbb::enumerable_thread_specific<Stage1Buffer>&);
 
 // Stage 2A orchestrator — runs `stage2a_one_strand_*` for every ext_job in
-// `batch_indices`.  Skips ext_jobs whose Stage 1 produced no candidates or
-// that ran in mode 1 only.
+// the contiguous range `[batch_begin, batch_end)`.  Skips ext_jobs whose
+// Stage 1 produced no candidates or that ran in mode 1 only.
 template <typename KmerInt>
 void run_stage2a_jobs(
-    const std::vector<size_t>& batch_indices,
+    size_t batch_begin, size_t batch_end,
     const std::vector<ExtJob>& ext_jobs,
     const std::vector<QueryBundle<KmerInt>>& queries,
     const std::vector<VolumeBundle<KmerInt>>& volumes,
@@ -253,7 +253,7 @@ void run_stage2a_jobs(
     tbb::task_arena& arena);
 
 extern template void run_stage2a_jobs<uint16_t>(
-    const std::vector<size_t>&,
+    size_t, size_t,
     const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint16_t>>&,
     const std::vector<VolumeBundle<uint16_t>>&,
@@ -261,7 +261,7 @@ extern template void run_stage2a_jobs<uint16_t>(
     std::vector<JobState>&,
     tbb::task_arena&);
 extern template void run_stage2a_jobs<uint32_t>(
-    const std::vector<size_t>&,
+    size_t, size_t,
     const std::vector<ExtJob>&,
     const std::vector<QueryBundle<uint32_t>>&,
     const std::vector<VolumeBundle<uint32_t>>&,
@@ -269,14 +269,14 @@ extern template void run_stage2a_jobs<uint32_t>(
     std::vector<JobState>&,
     tbb::task_arena&);
 
-// Stage 2B orchestrator — flat parallel_for over (ext_job, sid) tuples for
-// the ext_jobs in `batch_indices`.  `volume_indices` provides the wire-level
-// volume_index per ext_job so the returned OrchestratorHits carry the
-// correct value.  Chains are appended to `out_results` (caller-owned
-// accumulator) so per-batch invocations can fold into a single result vector
-// without intermediate copies.
+// Stage 2B orchestrator — flat parallel_for over (ext_job, candidate index)
+// tuples for the ext_jobs in the contiguous range `[batch_begin, batch_end)`.
+// `volume_indices` provides the wire-level volume_index per ext_job so the
+// returned OrchestratorHits carry the correct value.  Chains are appended to
+// `out_results` (caller-owned accumulator) so per-batch invocations can fold
+// into a single result vector without intermediate copies.
 void run_stage2b_jobs(
-    const std::vector<size_t>& batch_indices,
+    size_t batch_begin, size_t batch_end,
     const std::vector<ExtJob>& ext_jobs,
     const std::vector<JobState>& states,
     const std::vector<uint16_t>& volume_indices,
