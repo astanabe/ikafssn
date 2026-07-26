@@ -12,6 +12,7 @@ namespace {
 // largest subject seen so far, so the steady state performs no allocation.
 struct ChainScratch {
     std::vector<Hit>      work;           // sorted, deduped, filtered hits
+    std::vector<Hit>      merge;          // natural-merge destination
     std::vector<uint32_t> q;              // DP input, split out of `work`
     std::vector<uint32_t> s;
     std::vector<int32_t>  diag;           // s - q, per hit
@@ -64,9 +65,39 @@ void chain_hits(const std::vector<Hit>& raw_hits,
     std::vector<Hit>& work = scratch.work;
     std::vector<size_t>& chain_indices = scratch.chain_indices;
 
-    // Deduplicate (q_pos, s_pos) pairs from degenerate base expansion.
+    // Order by (q_pos, s_pos) and drop the duplicate pairs degenerate base
+    // expansion produces.  Stage 2A emits one monotonic run per seed template,
+    // ascending on the forward strand and descending on the reverse-complement
+    // strand (fwd_pos = len - pos - span), so detect the runs and merge them
+    // instead of sorting blind.  Reversing a descending run reorders only
+    // hits that compare equal, which the dedup below collapses anyway.
     work.assign(raw_hits.begin(), raw_hits.end());
-    std::sort(work.begin(), work.end(), HitLess{});
+    {
+        const size_t n = work.size();
+        size_t i = 0, nruns = 0, run1_end = 0;
+        while (i < n) {
+            const size_t start = i++;
+            if (i < n && HitLess{}(work[i], work[i - 1])) {
+                while (i < n && HitLess{}(work[i], work[i - 1])) i++;
+                std::reverse(work.begin() + start, work.begin() + i);
+            } else {
+                while (i < n && !HitLess{}(work[i], work[i - 1])) i++;
+            }
+            if (++nruns == 1) run1_end = i;
+            if (nruns > 2) break;  // hand the rest to std::sort
+        }
+        if (nruns == 2) {
+            std::vector<Hit>& merged = scratch.merge;
+            scratch_ptr(merged, n);
+            std::merge(work.begin(), work.begin() + run1_end,
+                       work.begin() + run1_end, work.begin() + n,
+                       merged.begin(), HitLess{});
+            work.swap(merged);
+            work.resize(n);
+        } else if (nruns > 2) {
+            std::sort(work.begin(), work.end(), HitLess{});
+        }
+    }
     work.erase(std::unique(work.begin(), work.end(), HitSamePos{}), work.end());
 
     diagonal_filter(work, config.min_nhit_diag, scratch.diag_counts);
