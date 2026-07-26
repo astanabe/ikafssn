@@ -418,6 +418,72 @@ static void test_all_candidates_miss() {
     std::remove(TEST_FILE);
 }
 
+// Candidate subset decode: only some of the posting list's distinct sids are
+// candidates, and only some of the candidates are in the posting list.  The
+// CSR must list the matched candidates by their index in the candidate array,
+// which is what Stage 2A uses to address its per-candidate hit buckets.
+static void test_candidate_subset_csr() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    // sid 1 -> occ=1, sid 3 -> occ>=2, sid 5 -> occ=1, sid 7 -> partition.
+    std::vector<KpxWriter::PostingEntry> entries = {
+        {1, 10},
+        {3, 20}, {3, 21}, {3, 22},
+        {5, 30},
+    };
+    for (uint32_t j = 0; j < 12; j++) entries.push_back({7, 40 + j});  // 12 > 8
+
+    {
+        KpxWriter writer(k, /*freq_threshold_part=*/8);
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 77) writer.add_posting_list(i, entries);
+            else         writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+
+        const std::vector<uint32_t> kix_decoded = {1, 3, 5, 7};
+        // sid 1 is in the posting list but not a candidate; sids 0, 4, 9 are
+        // candidates that the posting list does not contain.
+        const std::vector<uint32_t> candidates = {0, 3, 4, 5, 7, 9};
+
+        pfd::PosDecodeScratch scratch;
+        const uint64_t off = reader.pos_offset(77);
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            reader.posting_file() + off,
+            static_cast<size_t>(reader.posting_file_size() - off),
+            kix_decoded.data(), kix_decoded.size(),
+            candidates.data(), candidates.size(),
+            scratch));
+
+        const std::vector<uint32_t> want_idx = {1, 3, 4};
+        const std::vector<uint32_t> want_off = {0, 3, 4, 16};
+        CHECK(scratch.out_candidate_idx == want_idx);
+        CHECK(scratch.out_offsets == want_off);
+        CHECK_EQ(scratch.out_positions.size(), 16u);
+
+        // Positions of each matched candidate, addressed through the CSR.
+        const std::vector<std::vector<uint32_t>> want_pos = {
+            {20, 21, 22},
+            {30},
+            {40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51},
+        };
+        for (size_t m = 0; m < want_idx.size(); m++) {
+            std::vector<uint32_t> got(
+                scratch.out_positions.begin() + scratch.out_offsets[m],
+                scratch.out_positions.begin() + scratch.out_offsets[m + 1]);
+            CHECK(got == want_pos[m]);
+        }
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
 static void test_multiple_kmers() {
     int k = 5;
     uint32_t ts = table_size(k);
@@ -535,6 +601,7 @@ int main() {
     test_short1_full_blocks();
     test_empty_posting();
     test_all_candidates_miss();
+    test_candidate_subset_csr();
     test_multiple_kmers();
     test_partition_group_threshold();
     TEST_SUMMARY();

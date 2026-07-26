@@ -20,11 +20,13 @@
 #include "core/spaced_seed.hpp"
 #include "util/logger.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace ikafssn;
 using namespace ssu_fixture;
@@ -422,6 +424,71 @@ static void test_search_mode1() {
     ksx.close();
 }
 
+// Stage 2A feeds JobState::candidates straight to the .kpx candidate-set
+// decoder, which requires a strictly ascending seq_id array, so Stage 1 must
+// leave the candidates in that order on the Stage 2 path.  Mode 1 returns
+// before the sort and must keep the order Stage 1 produced, since
+// JobState::mode1_results is built in lockstep with it.
+static void test_stage1_candidate_order() {
+    Stage1Buffer buf;
+    std::fprintf(stderr, "-- test_stage1_candidate_order\n");
+
+    std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                         /*t=*/0, /*template_type=*/0,
+                                         /*min_seq_length=*/64,
+                                         /*min_length_split=*/0,
+                                         /*overlap_length=*/0,
+                                         /*max_freq_build=*/1,
+                                         /*max_degen_expand=*/0);
+
+    KixReader kix;
+    CHECK(kix.open(prefix + ".kix"));
+
+    OidFilter filter;
+    SearchConfig config;
+    config.stage1.min_stage1_score = 1;
+
+    auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
+    buf.width = Stage1Width::T32;
+    buf.ensure_capacity(kix.num_sequences());
+
+    auto run = [&](int mode, JobState& state) {
+        config.mode = mode;
+        stage1_one_strand_single<uint16_t>(
+            qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
+            qdata.fwd_positions.size(), 7, /*is_reverse=*/false,
+            kix, filter, config,
+            qdata.resolved_threshold_fwd, /*effective_min_score=*/1,
+            buf, state);
+    };
+
+    JobState stage2_state;
+    run(2, stage2_state);
+    CHECK(!stage2_state.mode1_only);
+    CHECK(stage2_state.candidates.size() > 1);
+    for (size_t i = 1; i < stage2_state.candidates.size(); i++) {
+        CHECK(stage2_state.candidates[i - 1].id < stage2_state.candidates[i].id);
+    }
+
+    JobState mode1_state;
+    run(1, mode1_state);
+    CHECK(mode1_state.mode1_only);
+    CHECK_EQ(mode1_state.mode1_results.size(), mode1_state.candidates.size());
+    for (size_t i = 0; i < mode1_state.candidates.size(); i++) {
+        CHECK_EQ(mode1_state.mode1_results[i].seq_id,
+                 mode1_state.candidates[i].id);
+    }
+
+    // The sort reorders the candidates without changing the set.
+    std::vector<SeqId> mode1_ids, stage2_ids;
+    for (const auto& c : mode1_state.candidates) mode1_ids.push_back(c.id);
+    for (const auto& c : stage2_state.candidates) stage2_ids.push_back(c.id);
+    std::sort(mode1_ids.begin(), mode1_ids.end());
+    CHECK(mode1_ids == stage2_ids);
+
+    kix.close();
+}
+
 // regression: build coding + optimal indexes for k=9, t=15, run
 // search_volume_both, and verify (1) FJ876973.1 is found via the unified
 // Stage 1 path, and (2) the merged Stage 1 score stays in [0, Nqkmer]
@@ -649,9 +716,11 @@ static void test_search_stage1_both_template() {
     CHECK(!state.candidates.empty());
     bool found_fj = false;
     uint32_t Nqkmer = static_cast<uint32_t>(g_query_seq.size()) - t + 1;
-    for (const auto& c : state.candidates) {
+    for (size_t i = 0; i < state.candidates.size(); i++) {
+        const auto& c = state.candidates[i];
         CHECK(c.score >= 1);
         CHECK(c.score <= Nqkmer);
+        if (i > 0) CHECK(state.candidates[i - 1].id < c.id);
         if (c.id == g_fj_oid) found_fj = true;
     }
     CHECK(found_fj);
@@ -727,6 +796,7 @@ int main() {
     test_negative_seqidlist();
     test_search_k9();
     test_search_mode1();
+    test_stage1_candidate_order();
     test_search_both_template();
     test_search_mode1_both_template();
     test_search_stage1_both_template();
