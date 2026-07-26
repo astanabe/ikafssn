@@ -729,6 +729,124 @@ static void test_search_stage1_both_template() {
     kix_opt.close();
 }
 
+// Stage 2A reserves each candidate's hit list from the candidate's coverscore
+// and shrinks the list once it has been filled.  The reserve is only safe
+// because the coverscore -- the number of distinct query positions that
+// matched -- is a lower bound on the hit count, and the shrink is what keeps
+// the growth overshoot from accumulating into a batch's resident set.
+// Neither property reaches the search output, so pin both on a filled
+// JobState, for the single-template and the both-template path.
+static void test_stage2a_hit_list_sizing() {
+    std::fprintf(stderr, "-- test_stage2a_hit_list_sizing\n");
+
+    auto check_state = [](const JobState& state) {
+        CHECK(!state.candidates.empty());
+        CHECK_EQ(state.hits_per_candidate.size(), state.candidates.size());
+        size_t grew = 0;
+        for (size_t i = 0; i < state.candidates.size(); i++) {
+            const auto& hits = state.hits_per_candidate[i];
+            CHECK(hits.size() >= state.candidates[i].score);
+            CHECK_EQ(hits.capacity(), hits.size());
+            if (hits.size() > state.candidates[i].score) grew++;
+        }
+        // Some candidate must outgrow its reserve, or the shrink above would
+        // hold trivially and stop testing anything.
+        CHECK(grew > 0);
+    };
+
+    {
+        std::string prefix = index_file_stem(g_test_dir, "test.00", 7,
+                                             /*t=*/0, /*template_type=*/0,
+                                             /*min_seq_length=*/64,
+                                             /*min_length_split=*/0,
+                                             /*overlap_length=*/0,
+                                             /*max_freq_build=*/1,
+                                             /*max_degen_expand=*/0);
+        KixReader kix;
+        KpxReader kpx;
+        CHECK(kix.open(prefix + ".kix"));
+        CHECK(kpx.open(prefix + ".kpx"));
+
+        OidFilter filter;
+        SearchConfig config;
+        config.stage1.min_stage1_score = 1;
+        config.mode = 2;
+
+        auto qdata = preprocess_query<uint16_t>(g_query_seq, 7, nullptr, config);
+        Stage1Buffer buf;
+        buf.width = Stage1Width::T32;
+        buf.ensure_capacity(kix.num_sequences());
+
+        JobState state;
+        stage1_one_strand_single<uint16_t>(
+            qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
+            qdata.fwd_positions.size(), 7, /*is_reverse=*/false,
+            kix, filter, config,
+            qdata.resolved_threshold_fwd, /*effective_min_score=*/1,
+            buf, state);
+        stage2a_one_strand_single<uint16_t>(
+            qdata.fwd_positions.data(), qdata.fwd_kmer_values.data(),
+            qdata.fwd_positions.size(), kix, kpx, state);
+        check_state(state);
+
+        kix.close();
+        kpx.close();
+    }
+
+    {
+        const int k = 9, t = 15;
+        std::string prefix_cod, prefix_opt;
+        build_both_template_indexes(k, t, prefix_cod, prefix_opt);
+
+        KixReader kix_cod, kix_opt;
+        KpxReader kpx_cod, kpx_opt;
+        CHECK(kix_cod.open(prefix_cod + ".kix"));
+        CHECK(kpx_cod.open(prefix_cod + ".kpx"));
+        CHECK(kix_opt.open(prefix_opt + ".kix"));
+        CHECK(kpx_opt.open(prefix_opt + ".kpx"));
+
+        OidFilter filter;
+        SearchConfig config;
+        config.stage1.min_stage1_score = 1;
+        config.mode = 2;
+        config.t = t;
+
+        const auto masks_cod = get_seed_masks(k, t, TemplateType::kCoding);
+        const auto masks_opt = get_seed_masks(k, t, TemplateType::kOptimal);
+        auto qdata_cod = preprocess_query<uint32_t>(g_query_seq, k, nullptr,
+                                                    config, t, masks_cod);
+        auto qdata_opt = preprocess_query<uint32_t>(g_query_seq, k, nullptr,
+                                                    config, t, masks_opt);
+
+        Stage1Buffer buf;
+        buf.width = Stage1Width::T32;
+        buf.ensure_capacity(kix_cod.num_sequences());
+
+        JobState state;
+        stage1_one_strand_both<uint32_t>(
+            qdata_cod.fwd_positions.data(), qdata_cod.fwd_kmer_values.data(),
+            qdata_cod.fwd_positions.size(),
+            qdata_opt.fwd_positions.data(), qdata_opt.fwd_kmer_values.data(),
+            qdata_opt.fwd_positions.size(),
+            k, /*is_reverse=*/false,
+            kix_cod, kix_opt, filter, config,
+            qdata_cod.resolved_threshold_fwd, qdata_opt.resolved_threshold_fwd,
+            /*effective_min_score=*/1, buf, state);
+        stage2a_one_strand_both<uint32_t>(
+            qdata_cod.fwd_positions.data(), qdata_cod.fwd_kmer_values.data(),
+            qdata_cod.fwd_positions.size(),
+            qdata_opt.fwd_positions.data(), qdata_opt.fwd_kmer_values.data(),
+            qdata_opt.fwd_positions.size(),
+            kix_cod, kpx_cod, kix_opt, kpx_opt, state);
+        check_state(state);
+
+        kix_cod.close();
+        kpx_cod.close();
+        kix_opt.close();
+        kpx_opt.close();
+    }
+}
+
 // v10: -min_query_length integration.  Verify that
 //   1. queries shorter than config.min_query_length are skipped with
 //      kSkipQueryTooShort and produce a clear skip_detail message;
@@ -800,6 +918,7 @@ int main() {
     test_search_both_template();
     test_search_mode1_both_template();
     test_search_stage1_both_template();
+    test_stage2a_hit_list_sizing();
     test_min_query_length_skip();
 
     std::filesystem::remove_all(g_test_dir);

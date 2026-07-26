@@ -962,7 +962,7 @@ ikafssn は 3 段階の検索パイプラインを使用します。
 
 デフォルトパラメータはスループットを優先しています。`stage1_min_score=0.5` (割合指定) でクエリ k-mer の 50% 以上のマッチを要求してフィルタリングします。各ステージは同じ候補数制限のファミリ — per-subject (N)、per-volume (M、Stage 1 のみ)、in-total (L) — を備えており、選択した `-mode` の終端ステージの L で最終出力件数を制限できます (mode 1 → Stage 1 L、mode 2 → Stage 2 L、mode 3 → Stage 3 L)。Stage 1 はデフォルトで parent ごとに最大 1 候補のみ残します (`stage1_max_nhit_per_subject=1`)。その per-volume (`stage1_max_nhit_per_volume`) と in-total (`stage1_max_nhit_in_total`) の上限はデフォルトで無制限です。Stage 1・Stage 2 の制限は高コストな Stage 3 アラインメントの前に候補を絞り込むため、Stage 3 コストを抑えるレバーになります。一方 Stage 3 の制限はアラインメント後 (alnscore 基準) に適用されるため、アラインメント処理量自体は減らさず出力を絞り込みます。
 
-1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとに **coverscore** (配列にマッチしたクエリ k-mer の種類数) を集計します。`stage1_min_score` 以上のスコアを持つ配列を候補として選出します。続いて候補集合を N → M → L の順 (いずれも coverscore 基準・タイ包含) で絞り込みます: `stage1_max_nhit_per_subject` (N) は各 (query, volume, strand) 内で parent ごとに上位 N 件を残し、`stage1_max_nhit_per_volume` (M) は (query, volume, strand) ごとに上位 M 件を残し、`stage1_max_nhit_in_total` (L) は全 volume・strand を通したクエリごとに上位 L 件を残します。
+1. **Stage 1 (候補選択):** クエリの各 k-mer に対して ID ポスティングをスキャンし、配列ごとに **coverscore** (配列にマッチしたクエリ k-mer 位置の数) を集計します。`stage1_min_score` 以上のスコアを持つ配列を候補として選出します。続いて候補集合を N → M → L の順 (いずれも coverscore 基準・タイ包含) で絞り込みます: `stage1_max_nhit_per_subject` (N) は各 (query, volume, strand) 内で parent ごとに上位 N 件を残し、`stage1_max_nhit_per_volume` (M) は (query, volume, strand) ごとに上位 M 件を残し、`stage1_max_nhit_in_total` (L) は全 volume・strand を通したクエリごとに上位 L 件を残します。
 
 2. **Stage 2 (コリニアチェイニング):** 各候補に対して `.kpx` から位置レベルのヒットを収集し、対角線フィルタを適用した後、チェイニング DP により最良のコリニアチェインを求めます。チェインの長さが **chainscore** として報告されます。`chainscore >= stage2_min_score` のチェインが結果に含まれます。DP の内側ループは `-stage2_max_lookback` (デフォルト: 64) で制限され、各ヒットは直前の B 個のヒットのみを前駆候補として参照します。これにより、単一クエリ×サブジェクト間のヒット数が非常に多い場合の最悪計算量を O(n²) から O(n×B) に削減します。0 を指定すると無制限 (従来の O(n²) 動作) になります。`-stage2_max_nhit_per_subject` が 1 より大きい値 (または 0 で無制限) の場合、貪欲な最良チェイン除去により同一サブジェクトから重複のない複数のチェインを抽出します: 最良チェインを見つけてそのヒットを除去し、残りのヒットで DP を再実行する処理を、制限に達するか `min_score` を満たすチェインがなくなるまで繰り返します。`-stage2_max_nhit_per_subject` (N) は 2 段階で適用されます — 抽出時に (query, fragment, strand) 単位で 1 回、overlap 同一領域の重複除外後に (query, parent[, strand]) 単位でもう 1 回 — いずれも chainscore を基準とします。`-stage2_max_nhit_per_subject_mode` (デフォルト: 3) は両段階を制御します: モード 1/2 はタイを扱わず上位 N 件を保持、モード 3/4 は上位 N 件に加え N 位の chainscore に並ぶチェインをすべて保持します; モード 1/3 は 2 本の strand を parent ごとに 1 つのグループへ統合し、モード 2/4 は strand を分離します。センチネル値 0 はモード 3 に解決され、明示値は 1〜4 のみ有効です。本オプションは `-mode 2` 以上が必要です。per-subject 選択の後、`-stage2_max_nhit_in_total` (L) が全 volume・strand を通したクエリごとに chainscore 基準で上位 L 件 (タイ包含、0=無制限) に絞り込み、Stage 3 へ進むチェイン数を制限します。
 
@@ -1074,7 +1074,7 @@ ikafssn は 3 種類のスコアを計算します。
 
 | スコア | 説明 | 計算ステージ |
 |---|---|---|
-| **coverscore** | 参照配列にマッチしたクエリ k-mer の種類数。各クエリ k-mer は参照配列あたり最大 1 回カウントされます (複数位置にマッチしても重複計上されません)。これが Stage 1 スコアです。 | Stage 1 |
+| **coverscore** | 参照配列にマッチしたクエリ k-mer 位置の数。各クエリ位置は参照配列あたり最大 1 回カウントされます (その k-mer が参照配列側の複数位置に出現しても重複計上されません)。これが Stage 1 スコアです。 | Stage 1 |
 | **chainscore** | チェイニング DP が求めた最良コリニアチェインの長さ (k-mer ヒット数)。`.kpx` の位置データを使用します。 | Stage 2 |
 | **alnscore** | Parasail による半大域ペアワイズアライメントスコア (`-stage3_score_matrix` で指定、デフォルト: degmatch)。BLAST DB からのサブジェクト配列取得が必要です。 | Stage 3 |
 

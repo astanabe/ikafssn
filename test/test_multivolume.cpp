@@ -602,6 +602,118 @@ static void test_mode2_batched_equals_single() {
     for (auto& ksx : ksxs) ksx.close();
 }
 
+// The orchestrator addresses each batch as the ext_job range
+// [vi * ejpv, (vi + 1) * ejpv), which only holds while build_ext_jobs orders
+// ext_jobs (vi, qi, strand).  With a single query every ordering degenerates
+// to the same sequence, so drive several queries -- one of them skipped, to
+// pin that skipped queries leave every volume with the same ext_job count --
+// and require the per-volume batches to agree with the bundled batch.  A
+// mis-mapped range hands a batch the ext_jobs of a volume whose readers are
+// not open.
+static void test_ext_job_volume_ranges() {
+    std::fprintf(stderr, "-- test_ext_job_volume_ranges\n");
+    const int k = 7;
+    const std::string db_base = "mvtest";
+
+    auto discovered = discover_volumes(g_test_dir + "/" + db_base, k);
+    CHECK_EQ(discovered.size(), 2u);
+
+    std::vector<KsxReader> ksxs(2);
+    std::vector<VolumeMeta> volumes_cod(2);
+    for (size_t vi = 0; vi < 2; vi++) {
+        const auto& vf = discovered[vi];
+        CHECK(ksxs[vi].open(vf.ksx_path));
+        KixReader kix_probe;
+        CHECK(kix_probe.open(vf.kix_path));
+        volumes_cod[vi].files         = vf;
+        volumes_cod[vi].volume_index  = static_cast<uint16_t>(vi);
+        volumes_cod[vi].num_sequences = kix_probe.num_sequences();
+        kix_probe.close();
+    }
+
+    SearchConfig config;
+    config.stage1.min_stage1_score = 1;
+    config.stage2.max_gap = 100;
+    config.stage2.min_nhit_diag = 1;
+    config.stage2.min_score = 2;
+    config.mode = 2;
+
+    // FJ876973.1 lives in volume 0 and GQ912721.1 in volume 1, so a batch
+    // that reads the wrong volume's ext_jobs cannot produce both.
+    std::vector<std::string> query_ids = {"q_fj", "q_skipped", "q_gq"};
+    std::vector<std::string> query_seqs = {g_query_fj, g_query_gq, g_query_gq};
+    std::vector<QueryKmerData<uint16_t>> qdatas;
+    qdatas.reserve(query_seqs.size());
+    for (const auto& q : query_seqs)
+        qdatas.push_back(preprocess_query<uint16_t>(q, k, nullptr, config));
+
+    std::vector<QueryBundle<uint16_t>> bundles(query_seqs.size());
+    for (size_t i = 0; i < query_seqs.size(); i++) {
+        bundles[i].query_id      = &query_ids[i];
+        bundles[i].qdata_primary = &qdatas[i];
+    }
+    std::vector<uint8_t> skip_reason(query_seqs.size(), 0);
+    skip_reason[1] = 1;
+
+    Logger logger(Logger::kError);
+    uint32_t max_num_seqs = 0;
+    for (auto& v : volumes_cod) max_num_seqs = std::max(max_num_seqs, v.num_sequences);
+
+    auto run_with_nthread = [&](int nthread) {
+        RunSearchInputs<uint16_t> in;
+        in.volumes_cod = volumes_cod;
+        in.ksx_per_volume.resize(2);
+        in.oid_filters.resize(2);
+        for (size_t vi = 0; vi < 2; vi++) in.ksx_per_volume[vi] = &ksxs[vi];
+        in.queries           = &bundles;
+        in.query_skip_reason = &skip_reason;
+        in.config            = config;
+        in.both_mode         = false;
+        in.k                 = k;
+        in.nthread           = nthread;
+        in.logger            = &logger;
+        in.max_num_seqs      = max_num_seqs;
+        in.width             = Stage1Width::T32;
+        return run_search<uint16_t>(in);
+    };
+
+    // nthread == 1: the thread target is met after one volume, so each volume
+    // runs as its own batch.  nthread large: both volumes bundle into one.
+    auto split = run_with_nthread(1);
+    auto bundled = run_with_nthread(64);
+
+    auto key = [](const OrchestratorHit& h) {
+        return std::tuple<size_t, uint16_t, uint16_t, uint32_t, int32_t,
+                          uint32_t, uint32_t, uint32_t, uint32_t>(
+            h.query_idx, h.volume_idx, h.volume_index,
+            h.cr.seq_id, h.cr.chainscore,
+            h.cr.q_start, h.cr.q_end, h.cr.s_start, h.cr.s_end);
+    };
+    auto sorted_keys = [&](const std::vector<OrchestratorHit>& v) {
+        std::vector<decltype(key(OrchestratorHit{}))> ks;
+        ks.reserve(v.size());
+        for (auto& h : v) ks.push_back(key(h));
+        std::sort(ks.begin(), ks.end());
+        return ks;
+    };
+
+    CHECK(!split.empty());
+    CHECK_EQ(split.size(), bundled.size());
+    CHECK(sorted_keys(split) == sorted_keys(bundled));
+
+    // Both volumes are searched, and the skipped query contributes nothing.
+    bool saw_vol0 = false, saw_vol1 = false;
+    for (const auto& h : split) {
+        CHECK(h.query_idx != 1u);
+        if (h.volume_idx == 0) saw_vol0 = true;
+        if (h.volume_idx == 1) saw_vol1 = true;
+    }
+    CHECK(saw_vol0);
+    CHECK(saw_vol1);
+
+    for (auto& ksx : ksxs) ksx.close();
+}
+
 // bench/run_warm_e2e.sh attributes a run by parsing the key=value pairs of the
 // "Timing run_search (s):" line, so pin the key set: renaming one key would
 // silently drop a metric from every measurement instead of failing loudly.
@@ -1122,6 +1234,7 @@ int main() {
     test_parallel_equals_sequential();
     test_mode1_batched_equals_single();
     test_mode2_batched_equals_single();
+    test_ext_job_volume_ranges();
     test_timing_line_keys();
     test_stage1_nhit_limits();
     test_stage2_in_total_limit();
