@@ -219,8 +219,8 @@ static void test_plain_file_flush_visible() {
 }
 
 static void test_codec_sink_tail_drain() {
-    // The codecs finalize through sink_->pubsync(), so a codec stream whose
-    // trailer is still in the fd sink's put area would not be readable back.
+    // The smallest codec streams: their whole body and trailer have to pass
+    // through the fd sink's put area to be readable back.
     std::mt19937 rng(0x7A11);
     auto dir = test_dir();
     const char* exts[] = {"gz", "bz2", "xz", "zst"};

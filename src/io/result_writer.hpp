@@ -86,10 +86,9 @@ bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
                             const std::string& output_path,
                             std::string& error_msg);
 
-// The OutputHit writers below format their rows into per-thread buffers
-// when `nthread` > 1 and concatenate them in row order, so the bytes do
-// not depend on the thread count.  Only large dumps are worth the task
-// setup, which is why the default stays serial.
+// With `nthread` > 1 the writers below format into per-thread buffers and
+// concatenate them in order, so the bytes do not depend on the thread
+// count.  Small dumps do not repay the task setup and stay serial.
 
 // Write results in TSV (tab-delimited) format.
 void write_results_tsv(std::ostream& out,
@@ -124,15 +123,10 @@ void write_results(std::ostream& out,
 // -------------------------------------------------------------------------
 // Mode 1 parallel TSV / JSON writers.
 //
-// Mode 1's output (k-mer-only "did this query hit this subject" rows) is
-// the only path where the OrchestratorHit -> OutputHit boundary is a
-// dominant single-thread cost: nt_v4-scale runs spend a significant
-// fraction of wall on the dump.  These writers consume OrchestratorHit
-// directly, format per-thread chunk strings via std::to_chars, and let
-// the caller drive the (serial) compressed output sink.
-//
-// Mode 2 / Mode 3 still go through the OutputHit-based writers above —
-// those carry chain / Stage 3 / SAM fields and are unchanged.
+// These consume OrchestratorHit directly, which skips the
+// OrchestratorHit -> OutputHit conversion that dominates a mode 1 dump at
+// nt_v4 scale.  Mode 2 / Mode 3 carry chain / Stage 3 / SAM fields and go
+// through the OutputHit writers above.
 // -------------------------------------------------------------------------
 struct Mode1ParallelInputs {
     const std::vector<OrchestratorHit>* hits = nullptr;

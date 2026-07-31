@@ -2,9 +2,9 @@
 
 // Append-style text formatting helpers for the output writers.
 //
-// The writers build their rows in a std::string and hand whole blocks to
-// the output stream, so the per-value formatting has to be cheap and must
-// not depend on the stream's locale.  std::to_chars is both.
+// The writers build rows in a std::string instead of going through the
+// stream, so per-value formatting has to be cheap and independent of the
+// stream's locale.  std::to_chars is both.
 
 #include <charconv>
 #include <cstdint>

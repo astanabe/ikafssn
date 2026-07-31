@@ -312,7 +312,7 @@ static void test_numeric_field_formatting() {
 static void test_writer_thread_count_invariance() {
     std::fprintf(stderr, "-- test_writer_thread_count_invariance\n");
 
-    // Enough queries and hits to cross several windows and chunk splits,
+    // Enough queries and hits to cross several waves and chunk splits,
     // with uneven hits per query so chunk boundaries land inside queries.
     std::vector<OutputHit> hits;
     for (int q = 0; q < 40; q++) {

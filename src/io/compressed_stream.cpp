@@ -835,11 +835,10 @@ private:
 // File-descriptor sink for output side
 // ---------------------------------------------------------------------------
 
-// The put area matters for uncompressed output: with kNone the caller's
-// std::ostream writes straight into this streambuf, so without buffering
-// every insertion would become one write(2).  The codec streambufs above
-// hold their own 64 KiB input buffer and reach this class only in whole
-// compressed blocks.
+// With kNone the caller's std::ostream writes straight into this
+// streambuf, so the put area is what keeps one insertion from becoming one
+// write(2).  The codec streambufs buffer their own input and reach this
+// class only in whole compressed blocks.
 class FdSinkStreambuf final : public std::streambuf {
 public:
     FdSinkStreambuf(int fd, bool owns_fd)
@@ -883,8 +882,8 @@ protected:
     }
 
     int sync() override {
-        // Without this an explicit flush() — and the sink_->pubsync() the
-        // codecs issue from finalize() — would leave the put area unwritten.
+        // Serves both an explicit flush() and the sink_->pubsync() the
+        // codecs issue from finalize().
         return drain() ? 0 : -1;
     }
 

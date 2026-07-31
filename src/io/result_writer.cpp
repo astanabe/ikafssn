@@ -20,21 +20,19 @@ static constexpr const char* kStage1ScoreName = "coverscore";
 
 namespace {
 
-// Rows are formatted into a std::string and handed to the stream in blocks
-// of at least this size.
-constexpr std::size_t kBlockSize = 1u << 20;
+// Formatted rows are handed to the stream once they reach this size.
+constexpr std::size_t kFlushSize = 1u << 20;
 
-// How much formatted output the parallel path holds in memory before
-// writing it out, counted in rows (TSV) or hits (JSON).  Bounding this
-// keeps the extra footprint proportional to one window rather than to the
-// whole output.
-constexpr std::size_t kWindowWeight = 64 * 1024;
+// Work formatted per wave, counted in rows (TSV) or hits (JSON).  The
+// parallel path holds one wave of output in memory, so bounding it bounds
+// the extra footprint.
+constexpr std::size_t kWaveWeight = 64 * 1024;
 
 // Below this much total work the arena setup costs more than the
 // formatting it parallelises, so the serial path stays faster.
 constexpr std::size_t kParallelMinWeight = 256 * 1024;
 
-inline void write_block(std::ostream& out, std::string& buf) {
+inline void flush_buf(std::ostream& out, std::string& buf) {
     if (!buf.empty()) {
         out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
         buf.clear();
@@ -42,11 +40,10 @@ inline void write_block(std::ostream& out, std::string& buf) {
 }
 
 // Format items [begin, end) and write them to `out` in item order.
-// `format_item(buf, i)` appends item i, and `weight_of(i)` is how much of
-// the window budget item i takes up; `total_weight` is their sum.  With
-// more than one thread the items of a window are formatted concurrently
-// into per-chunk buffers that are then written in chunk order, so the
-// bytes do not depend on the thread count.
+// `format_item(buf, i)` appends item i, `weight_of(i)` is its share of the
+// wave budget and `total_weight` their sum.  A wave is formatted into
+// per-chunk buffers concurrently and written in chunk order, so the bytes
+// do not depend on the thread count.
 template <typename FormatItem, typename WeightOf>
 void write_items(std::ostream& out, std::size_t begin, std::size_t end,
                  std::size_t total_weight, int nthread,
@@ -56,12 +53,12 @@ void write_items(std::ostream& out, std::size_t begin, std::size_t end,
     const int threads = std::max(1, nthread);
     if (threads == 1 || total_weight < kParallelMinWeight) {
         std::string buf;
-        buf.reserve(kBlockSize + 4096);
+        buf.reserve(kFlushSize + 4096);
         for (std::size_t i = begin; i < end; ++i) {
             format_item(buf, i);
-            if (buf.size() >= kBlockSize) write_block(out, buf);
+            if (buf.size() >= kFlushSize) flush_buf(out, buf);
         }
-        write_block(out, buf);
+        flush_buf(out, buf);
         return;
     }
 
@@ -76,7 +73,7 @@ void write_items(std::ostream& out, std::size_t begin, std::size_t end,
         do {
             weight += weight_of(whi);
             ++whi;
-        } while (whi < end && weight < kWindowWeight);
+        } while (whi < end && weight < kWaveWeight);
 
         const std::size_t n = whi - wlo;
         const std::size_t nc = std::min(n, nchunks);
@@ -85,8 +82,8 @@ void write_items(std::ostream& out, std::size_t begin, std::size_t end,
                 tbb::blocked_range<std::size_t>(0, nc),
                 [&](const tbb::blocked_range<std::size_t>& r) {
                     for (std::size_t ci = r.begin(); ci != r.end(); ++ci) {
-                        // write_block() left the buffer empty but kept its
-                        // capacity, so windows reuse the same allocations.
+                        // flush_buf() empties the buffer but keeps its
+                        // capacity, so waves reuse the allocations.
                         std::string& buf = bufs[ci];
                         const std::size_t lo = wlo + n * ci / nc;
                         const std::size_t hi = wlo + n * (ci + 1) / nc;
@@ -95,12 +92,12 @@ void write_items(std::ostream& out, std::size_t begin, std::size_t end,
                     }
                 });
         });
-        for (std::size_t ci = 0; ci < nc; ++ci) write_block(out, bufs[ci]);
+        for (std::size_t ci = 0; ci < nc; ++ci) flush_buf(out, bufs[ci]);
         wlo = whi;
     }
 }
 
-// Every TSV row costs the same share of the window budget.
+// Every TSV row costs the same share of the wave budget.
 inline std::size_t one_row(std::size_t) { return 1; }
 
 } // namespace
