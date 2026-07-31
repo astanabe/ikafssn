@@ -835,12 +835,22 @@ private:
 // File-descriptor sink for output side
 // ---------------------------------------------------------------------------
 
-class FdSinkStreambuf : public std::streambuf {
+// The put area matters for uncompressed output: with kNone the caller's
+// std::ostream writes straight into this streambuf, so without buffering
+// every insertion would become one write(2).  The codec streambufs above
+// hold their own 64 KiB input buffer and reach this class only in whole
+// compressed blocks.
+class FdSinkStreambuf final : public std::streambuf {
 public:
     FdSinkStreambuf(int fd, bool owns_fd)
-        : fd_(fd), owns_fd_(owns_fd) {}
+        : fd_(fd), owns_fd_(owns_fd), ok_(fd >= 0) {
+        setp(buf_.data(), buf_.data() + buf_.size());
+    }
 
     ~FdSinkStreambuf() override {
+        // The kNone path has no other flush point: ~ostream does not sync
+        // and OwnedOstream destroys the stream before this streambuf.
+        drain();
         if (owns_fd_ && fd_ >= 0) ::close(fd_);
     }
 
@@ -849,29 +859,68 @@ public:
 
 protected:
     std::streamsize xsputn(const char* s, std::streamsize n) override {
-        if (fd_ < 0) return 0;
+        if (!ok_ || n <= 0) return 0;
+        if (n >= static_cast<std::streamsize>(buf_.size())) {
+            // Buffered bytes precede this chunk in the stream, so they have
+            // to reach the fd first.
+            if (!drain()) return 0;
+            return write_all(s, n);
+        }
+        std::streamsize room = epptr() - pptr();
+        if (n > room && !drain()) return 0;
+        std::memcpy(pptr(), s, static_cast<size_t>(n));
+        pbump(static_cast<int>(n));
+        return n;
+    }
+
+    int_type overflow(int_type ch) override {
+        if (!drain()) return traits_type::eof();
+        if (ch != traits_type::eof()) {
+            *pptr() = static_cast<char>(ch);
+            pbump(1);
+        }
+        return traits_type::not_eof(ch);
+    }
+
+    int sync() override {
+        // Without this an explicit flush() — and the sink_->pubsync() the
+        // codecs issue from finalize() — would leave the put area unwritten.
+        return drain() ? 0 : -1;
+    }
+
+private:
+    // Empty the put area onto the fd.  Resets the put area even on failure so
+    // a later drain() cannot write the same bytes twice.
+    bool drain() {
+        if (!ok_) return false;
+        std::streamsize n = pptr() - pbase();
+        setp(buf_.data(), buf_.data() + buf_.size());
+        if (n == 0) return true;
+        return write_all(pbase(), n) == n;
+    }
+
+    std::streamsize write_all(const char* s, std::streamsize n) {
         std::streamsize wrote = 0;
         while (wrote < n) {
             ssize_t w;
             do {
                 w = ::write(fd_, s + wrote, static_cast<size_t>(n - wrote));
             } while (w < 0 && errno == EINTR);
-            if (w <= 0) break;
+            if (w <= 0) {
+                ok_ = false;
+                std::fprintf(stderr, "compressed_stream: write failed: %s\n",
+                             std::strerror(errno));
+                break;
+            }
             wrote += w;
         }
         return wrote;
     }
 
-    int_type overflow(int_type ch) override {
-        if (ch == traits_type::eof()) return traits_type::not_eof(ch);
-        char c = static_cast<char>(ch);
-        if (xsputn(&c, 1) != 1) return traits_type::eof();
-        return ch;
-    }
-
-private:
     int fd_;
     bool owns_fd_;
+    bool ok_;
+    std::array<char, 64 * 1024> buf_{};
 };
 
 } // namespace

@@ -119,6 +119,121 @@ static void test_concatenated_input() {
     }
 }
 
+// Write each piece with a separate ostream::write call so the order in
+// which buffered and directly-written chunks reach the file is exercised.
+static bool write_pieces_via(const std::string& path,
+                             const std::vector<std::string>& pieces) {
+    std::string err;
+    auto out = open_output_compressed(path, kCompressionLevelDefault, err);
+    if (!out) {
+        std::fprintf(stderr, "open_output_compressed: %s\n", err.c_str());
+        return false;
+    }
+    for (const auto& p : pieces) {
+        out.stream->write(p.data(), static_cast<std::streamsize>(p.size()));
+    }
+    return out.stream->good();
+}
+
+static void test_plain_file_round_trip() {
+    // Uncompressed output goes straight through the fd sink, so its put
+    // area is the only thing between the caller and write(2).
+    std::mt19937 rng(0x9A17);
+    auto dir = test_dir();
+    const std::size_t sizes[] = {0, 1, 64 * 1024 - 1, 64 * 1024,
+                                 64 * 1024 + 1, 5 * 64 * 1024 + 7};
+    int i = 0;
+    for (std::size_t n : sizes) {
+        std::string payload = make_payload(n, rng);
+        std::string path = dir + "/plain_round_trip_" + std::to_string(i++) + ".tsv";
+        CHECK(write_via(path, payload, kCompressionLevelDefault));
+        CHECK(fs::file_size(path) == n);
+        CHECK(read_via(path) == payload);
+    }
+}
+
+static void test_plain_file_write_order() {
+    std::mt19937 rng(0x0DDE1);
+    auto dir = test_dir();
+    std::vector<std::string> pieces = {
+        "# header\n",
+        make_payload(200 * 1024, rng),   // larger than the put area
+        "# mid\n",
+        make_payload(70 * 1024, rng),    // also larger than the put area
+        "x",
+    };
+    std::string expect;
+    for (const auto& p : pieces) expect += p;
+
+    std::string path = dir + "/plain_write_order.tsv";
+    CHECK(write_pieces_via(path, pieces));
+    CHECK(read_via(path) == expect);
+}
+
+static void test_plain_file_put_area_boundary() {
+    std::mt19937 rng(0xB0DE);
+    auto dir = test_dir();
+    std::string a = make_payload(64 * 1024 - 3, rng);
+    std::string b = make_payload(3, rng);           // fills the put area exactly
+    std::string c = make_payload(64 * 1024 + 1, rng);
+    std::string d = make_payload(1, rng);
+
+    std::string path = dir + "/plain_put_area.tsv";
+    std::string err;
+    auto out = open_output_compressed(path, kCompressionLevelDefault, err);
+    CHECK(static_cast<bool>(out));
+    out.stream->write(a.data(), static_cast<std::streamsize>(a.size()));
+    out.stream->write(b.data(), static_cast<std::streamsize>(b.size()));
+    out.stream->put('Z');   // put area full: the only route into overflow()
+    // overflow() has to empty the put area before storing, so the full
+    // 64 KiB is on disk at this point and 'Z' is the only buffered byte.
+    CHECK(fs::file_size(path) == a.size() + b.size());
+    out.stream->write(c.data(), static_cast<std::streamsize>(c.size()));
+    out.stream->write(d.data(), static_cast<std::streamsize>(d.size()));
+    CHECK(out.stream->good());
+    out.stream.reset();
+    out.sb.reset();
+
+    CHECK(read_via(path) == a + b + "Z" + c + d);
+}
+
+static void test_plain_file_flush_visible() {
+    // An explicit flush has to reach the file descriptor, not just sit in
+    // the put area until the stream is destroyed.
+    std::mt19937 rng(0xF1005);
+    auto dir = test_dir();
+    std::string a = make_payload(100, rng);
+    std::string b = make_payload(4000, rng);
+
+    std::string path = dir + "/plain_flush.tsv";
+    std::string err;
+    auto out = open_output_compressed(path, kCompressionLevelDefault, err);
+    CHECK(static_cast<bool>(out));
+    out.stream->write(a.data(), static_cast<std::streamsize>(a.size()));
+    out.stream->flush();
+    CHECK(fs::file_size(path) == a.size());
+    out.stream->write(b.data(), static_cast<std::streamsize>(b.size()));
+    out.stream->flush();
+    CHECK(fs::file_size(path) == a.size() + b.size());
+    CHECK(out.stream->good());
+}
+
+static void test_codec_sink_tail_drain() {
+    // The codecs finalize through sink_->pubsync(), so a codec stream whose
+    // trailer is still in the fd sink's put area would not be readable back.
+    std::mt19937 rng(0x7A11);
+    auto dir = test_dir();
+    const char* exts[] = {"gz", "bz2", "xz", "zst"};
+    for (const char* ext : exts) {
+        for (std::size_t n : {std::size_t(0), std::size_t(16)}) {
+            std::string payload = make_payload(n, rng);
+            std::string path = dir + "/tail_drain_" + std::to_string(n) + "." + ext;
+            CHECK(write_via(path, payload, kCompressionLevelDefault));
+            CHECK(read_via(path) == payload);
+        }
+    }
+}
+
 static void test_buffer_boundary_gzip() {
     // Pick a payload size large enough that the produced gzip stream
     // straddles the 64 KiB raw-input buffer of the decoder.  The exact
@@ -276,6 +391,11 @@ static void test_fasta_round_trip_through_gzip() {
 int main() {
     test_round_trip_each_codec();
     test_concatenated_input();
+    test_plain_file_round_trip();
+    test_plain_file_write_order();
+    test_plain_file_put_area_boundary();
+    test_plain_file_flush_visible();
+    test_codec_sink_tail_drain();
     test_buffer_boundary_gzip();
     test_magic_detection();
     test_extension_detection();
