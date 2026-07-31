@@ -307,13 +307,53 @@ static void test_numeric_field_formatting() {
     }
 }
 
-// The parallel formatting path must produce the same bytes as the serial
-// one, for every mode and both formats.
+// JSON string fields carry whatever the FASTA header or a failure reason
+// held, so the escaping has to survive a round trip through the writer.
+static void test_json_string_escaping() {
+    std::fprintf(stderr, "-- test_json_string_escaping\n");
+
+    std::vector<OutputHit> hits;
+    OutputHit h;
+    h.qseqid = "q\"quoted\"";
+    h.sseqid = "acc\\back";
+    h.sstrand = '+';
+    h.qstart = 1; h.qend = 2; h.qlen = 3;
+    h.sstart = 4; h.send = 5; h.slen = 6;
+    h.coverscore = 7; h.chainscore = 8;
+    h.alnscore = 9; h.ppositive = 50.0;
+    h.npositive = 1; h.nnegative = 1;
+    h.cigar = "a\tb\nc\rd";
+    h.qseq = "A"; h.sseq = "A";
+    h.volume = 0;
+    hits.push_back(h);
+
+    OutputHit sk;
+    sk.qseqid = "skipped\tquery";
+    sk.qlen = 10;
+    sk.skip_reason = ikafssn::kSkipQueryTooShort;
+    sk.skip_detail = "line1\nline2 \"x\"";
+    hits.push_back(sk);
+
+    std::ostringstream oss;
+    write_results_json(oss, hits, /*mode=*/3, /*stage3_traceback=*/true);
+    const std::string out = oss.str();
+
+    CHECK(out.find("\"qseqid\": \"q\\\"quoted\\\"\"") != std::string::npos);
+    CHECK(out.find("\"sseqid\": \"acc\\\\back\"") != std::string::npos);
+    CHECK(out.find("\"cigar\": \"a\\tb\\nc\\rd\"") != std::string::npos);
+    CHECK(out.find("\"qseqid\": \"skipped\\tquery\"") != std::string::npos);
+    CHECK(out.find("\"skip_detail\": \"line1\\nline2 \\\"x\\\"\"") != std::string::npos);
+    // The raw control characters must not survive into the JSON.
+    CHECK(out.find('\t') == std::string::npos);
+    CHECK(out.find('\r') == std::string::npos);
+}
+
+// `nthread` must never change the output, whichever path the writer takes.
 static void test_writer_thread_count_invariance() {
     std::fprintf(stderr, "-- test_writer_thread_count_invariance\n");
 
-    // Enough queries and hits to cross several waves and chunk splits,
-    // with uneven hits per query so chunk boundaries land inside queries.
+    // Uneven hits per query, including a query that is only a skip
+    // sentinel.  Small enough that the writers stay on the serial path.
     std::vector<OutputHit> hits;
     for (int q = 0; q < 40; q++) {
         std::string qid = "query" + std::to_string(q);
@@ -362,6 +402,53 @@ static void test_writer_thread_count_invariance() {
             write_results_json_fragment(fb, hits, c.mode, c.tb, nthread);
             CHECK(fa.str() == fb.str());
         }
+    }
+}
+
+// Above kParallelMinWeight the writers chunk the work across threads and
+// format it a wave at a time, so chunk and wave boundaries have to fall
+// inside the output without disturbing it.
+static void test_writer_parallel_chunking() {
+    std::fprintf(stderr, "-- test_writer_parallel_chunking\n");
+
+    std::vector<OutputHit> hits;
+    for (int q = 0; q < 40; q++) {
+        std::string qid = "query" + std::to_string(q);
+        if (q % 11 == 3) {
+            OutputHit s;
+            s.qseqid = qid;
+            s.qlen = 100 + q;
+            s.skip_reason = ikafssn::kSkipQueryTooShort;
+            s.skip_detail = "too short";
+            hits.push_back(s);
+            continue;
+        }
+        // Uneven per query so a chunk boundary lands inside one, and large
+        // enough in total to cross both the parallel and the wave threshold.
+        for (int i = 0; i < (q % 7) * 2600 + 1; i++) {
+            OutputHit h;
+            h.qseqid = qid;
+            h.sseqid = "ACC" + std::to_string(i);
+            h.sstrand = (i % 2) ? '-' : '+';
+            h.qstart = i; h.qend = i + 40; h.qlen = 100 + q;
+            h.sstart = i * 2; h.send = i * 2 + 40; h.slen = 5000 + i;
+            h.coverscore = i % 31; h.chainscore = i % 17;
+            h.volume = static_cast<uint16_t>(i % 3);
+            hits.push_back(h);
+        }
+    }
+
+    {
+        std::ostringstream a, b;
+        write_results_tsv(a, hits, /*mode=*/2, /*stage3_traceback=*/false, 1);
+        write_results_tsv(b, hits, /*mode=*/2, /*stage3_traceback=*/false, 8);
+        CHECK(a.str() == b.str());
+    }
+    {
+        std::ostringstream a, b;
+        write_results_json(a, hits, /*mode=*/2, /*stage3_traceback=*/false, 1);
+        write_results_json(b, hits, /*mode=*/2, /*stage3_traceback=*/false, 8);
+        CHECK(a.str() == b.str());
     }
 }
 
@@ -447,7 +534,9 @@ int main() {
     test_roundtrip_mode3_no_traceback();
     test_roundtrip_mode3_traceback();
     test_numeric_field_formatting();
+    test_json_string_escaping();
     test_writer_thread_count_invariance();
+    test_writer_parallel_chunking();
     test_header_reordered_columns();
     test_no_header_fallback();
     test_windows_line_endings();

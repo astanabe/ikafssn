@@ -225,7 +225,8 @@ Required:
 Options:
   -k <int>                K-mer size to use (required if multiple k values exist)
   -o <path>               Output file (default: stdout)
-  -nthread <int>          Parallel search threads (default: all cores)
+  -nthread <int>          Threads for search and output formatting
+                          (default: all cores)
   -memory_limit <size>    Search memory budget (default: half of RAM)
                           Pins .khx/.ksx metadata; residual caps the
                           Stage 3 posting heap.  Accepts K, M, G suffixes

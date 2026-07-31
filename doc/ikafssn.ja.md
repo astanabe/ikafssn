@@ -217,7 +217,8 @@ ikafssnsearch [options]
 オプション:
   -k <int>                使用する k-mer サイズ (複数の k 値が存在する場合は必須)
   -o <path>               出力ファイル (デフォルト: 標準出力)
-  -nthread <int>          並列検索スレッド数 (デフォルト: 利用可能な全コア)
+  -nthread <int>          検索と出力整形のスレッド数
+                          (デフォルト: 利用可能な全コア)
   -memory_limit <size>    検索メモリ予算 (デフォルト: 物理メモリの半分)
                           .khx/.ksx メタデータを常駐させ、残余で Stage 3 の
                           posting heap を制限。接尾辞 K, M, G を認識
