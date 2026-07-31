@@ -9,13 +9,12 @@
 #include "io/result_writer.hpp"
 
 #include "io/fasta_reader.hpp"
+#include "io/text_format.hpp"
 #include "index/ksx_reader.hpp"
 #include "protocol/messages.hpp"
 #include "search/parallel_search.hpp"
 
 #include <algorithm>
-#include <charconv>
-#include <cstring>
 #include <string>
 #include <string_view>
 
@@ -29,43 +28,6 @@ namespace {
 
 // Stage 1 score is always coverscore.
 constexpr const char* kMode1Stage1ScoreName = "coverscore";
-
-inline void append_uint(std::string& buf, uint64_t v) {
-    char tmp[24];
-    auto r = std::to_chars(tmp, tmp + sizeof(tmp), v);
-    buf.append(tmp, static_cast<size_t>(r.ptr - tmp));
-}
-
-inline void append_str(std::string& buf, std::string_view s) {
-    buf.append(s.data(), s.size());
-}
-
-inline void append_skipped_sseqid(std::string& buf,
-                                   uint8_t reason,
-                                   const std::string& detail) {
-    if (reason == kFailHttpJob) {
-        buf.append("*FAILED:");
-        buf.append(detail);
-    } else {
-        buf.append("*SKIPPED:");
-        buf.append(skip_reason_str(reason));
-    }
-}
-
-inline void json_escape_into(std::string& buf, std::string_view s) {
-    buf.push_back('"');
-    for (char c : s) {
-        switch (c) {
-            case '"':  buf.append("\\\""); break;
-            case '\\': buf.append("\\\\"); break;
-            case '\n': buf.append("\\n");  break;
-            case '\r': buf.append("\\r");  break;
-            case '\t': buf.append("\\t");  break;
-            default:   buf.push_back(c);   break;
-        }
-    }
-    buf.push_back('"');
-}
 
 void compute_chunk_ranges(size_t n, size_t nchunks,
                           std::vector<std::pair<size_t,size_t>>& out) {

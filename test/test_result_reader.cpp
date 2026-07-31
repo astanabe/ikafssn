@@ -256,6 +256,57 @@ static void test_roundtrip_mode3_traceback() {
     CHECK(read_back[0].sseq == "ACGT");
 }
 
+// The exact bytes of the two fields whose formatting is not a plain
+// unsigned decimal: ppositive (six significant digits, C locale) and
+// alnscore (signed).
+static void test_numeric_field_formatting() {
+    std::fprintf(stderr, "-- test_numeric_field_formatting\n");
+
+    struct Case { double ppositive; int32_t alnscore; const char* pp; const char* aln; };
+    const Case cases[] = {
+        {0.0,                 0,           "0",           "0"},
+        {100.0,               1000,        "100",         "1000"},
+        {94.73684210526316,  -5,           "94.7368",     "-5"},
+        {33.333333333333336, -2147483648,  "33.3333",     "-2147483648"},
+        {99.9999994,          2147483647,  "100",         "2147483647"},
+        {66.66666666666667,  -1,           "66.6667",     "-1"},
+        {0.000123456789,      7,           "0.000123457", "7"},
+        {1e-5,               -12345,       "1e-05",       "-12345"},
+    };
+
+    for (const auto& c : cases) {
+        std::vector<OutputHit> hits;
+        OutputHit h;
+        h.qseqid = "q";
+        h.sseqid = "s";
+        h.sstrand = '+';
+        h.qstart = 1; h.qend = 2; h.qlen = 3;
+        h.sstart = 4; h.send = 5; h.slen = 6;
+        h.coverscore = 7; h.chainscore = 8;
+        h.alnscore = c.alnscore;
+        h.ppositive = c.ppositive;
+        h.npositive = 9; h.nnegative = 10;
+        h.cigar = "1M"; h.qseq = "A"; h.sseq = "A";
+        h.volume = 0;
+        hits.push_back(h);
+
+        std::ostringstream tsv;
+        write_results_tsv(tsv, hits, /*mode=*/3, /*stage3_traceback=*/true);
+        std::string want_tsv = std::string("q\ts\t+\t1\t2\t3\t4\t5\t6\t7\t8\t") +
+                               c.aln + "\t" + c.pp + "\t9\t10\t1M\tA\tA\t0\n";
+        CHECK(tsv.str().size() > want_tsv.size());
+        CHECK(tsv.str().compare(tsv.str().size() - want_tsv.size(),
+                                want_tsv.size(), want_tsv) == 0);
+
+        std::ostringstream json;
+        write_results_json(json, hits, /*mode=*/3, /*stage3_traceback=*/true);
+        CHECK(json.str().find(std::string("\"alnscore\": ") + c.aln + ",") !=
+              std::string::npos);
+        CHECK(json.str().find(std::string("\"ppositive\": ") + c.pp + ",") !=
+              std::string::npos);
+    }
+}
+
 static void test_header_reordered_columns() {
     std::fprintf(stderr, "-- test_header_reordered_columns\n");
 
@@ -337,6 +388,7 @@ int main() {
     test_roundtrip();
     test_roundtrip_mode3_no_traceback();
     test_roundtrip_mode3_traceback();
+    test_numeric_field_formatting();
     test_header_reordered_columns();
     test_no_header_fallback();
     test_windows_line_endings();

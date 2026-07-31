@@ -6,8 +6,24 @@
 #include <vector>
 
 #include "core/types.hpp"
+#include "protocol/messages.hpp"
 
 namespace ikafssn {
+
+// Append the sentinel sseqid for a skipped or failed query.  Server-produced
+// skip reasons render as "*SKIPPED:<reason>", while the client-only
+// kFailHttpJob value renders as "*FAILED:<detail>" so async-job failures
+// carry their full reason string into the output file.
+inline void append_skipped_sseqid(std::string& buf, uint8_t reason,
+                                  const std::string& detail) {
+    if (reason == kFailHttpJob) {
+        buf.append("*FAILED:");
+        buf.append(detail);
+    } else {
+        buf.append("*SKIPPED:");
+        buf.append(skip_reason_str(reason));
+    }
+}
 
 class KsxReader;
 struct FastaRecord;

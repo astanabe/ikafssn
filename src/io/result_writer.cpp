@@ -1,5 +1,6 @@
 #include "io/result_writer.hpp"
 #include "io/compressed_stream.hpp"
+#include "io/text_format.hpp"
 #include "protocol/messages.hpp"
 
 #include <map>
@@ -11,149 +12,149 @@ namespace ikafssn {
 // matching the sequence).
 static constexpr const char* kStage1ScoreName = "coverscore";
 
-// Build the sentinel sseqid for a skipped or failed query.  Server-produced
-// skip reasons render as "*SKIPPED:<reason>", while the client-only
-// kFailHttpJob value renders as "*FAILED:<detail>" so async-job failures
-// carry their full reason string into the output file.
-static std::string skipped_sseqid(uint8_t reason, const std::string& detail) {
-    if (reason == kFailHttpJob) {
-        return "*FAILED:" + detail;
+namespace {
+
+// Rows are formatted into a std::string and handed to the stream in blocks
+// of at least this size.
+constexpr std::size_t kBlockSize = 1u << 20;
+
+inline void write_block(std::ostream& out, std::string& buf) {
+    if (!buf.empty()) {
+        out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+        buf.clear();
     }
-    return std::string("*SKIPPED:") + skip_reason_str(reason);
 }
+
+inline void write_block_if_full(std::ostream& out, std::string& buf) {
+    if (buf.size() >= kBlockSize) write_block(out, buf);
+}
+
+} // namespace
 
 void write_results_tsv(std::ostream& out,
                        const std::vector<OutputHit>& hits,
                        uint8_t mode,
                        bool stage3_traceback) {
     const char* s1name = kStage1ScoreName;
+    std::string buf;
+    buf.reserve(kBlockSize + 4096);
 
     if (mode == 1) {
-        out << "# qseqid\tsseqid\tsstrand\tqlen\tslen\t" << s1name << "\tvolume\n";
+        buf.append("# qseqid\tsseqid\tsstrand\tqlen\tslen\t");
+        buf.append(s1name);
+        buf.append("\tvolume\n");
         for (const auto& h : hits) {
             if (h.skip_reason != 0) {
-                out << h.qseqid << '\t'
-                    << skipped_sseqid(h.skip_reason, h.skip_detail) << '\t'
-                    << '*' << '\t'
-                    << h.qlen << '\t'
-                    << 0 << '\t'
-                    << 0 << '\t'
-                    << 0 << '\n';
+                append_str(buf, h.qseqid);                              buf.push_back('\t');
+                append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
+                buf.append("\t*\t");
+                append_uint(buf, h.qlen);
+                buf.append("\t0\t0\t0\n");
+                write_block_if_full(out, buf);
                 continue;
             }
-            out << h.qseqid << '\t'
-                << h.sseqid << '\t'
-                << h.sstrand << '\t'
-                << h.qlen << '\t'
-                << h.slen << '\t'
-                << h.coverscore << '\t'
-                << h.volume << '\n';
+            append_str(buf, h.qseqid);        buf.push_back('\t');
+            append_str(buf, h.sseqid);        buf.push_back('\t');
+            buf.push_back(h.sstrand);         buf.push_back('\t');
+            append_uint(buf, h.qlen);         buf.push_back('\t');
+            append_uint(buf, h.slen);         buf.push_back('\t');
+            append_uint(buf, h.coverscore);   buf.push_back('\t');
+            append_uint(buf, h.volume);       buf.push_back('\n');
+            write_block_if_full(out, buf);
         }
     } else if (mode == 3 && stage3_traceback) {
-        out << "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t"
-            << s1name << "\tchainscore\talnscore\tppositive\tnpositive\tnnegative\tcigar\tqseq\tsseq\tvolume\n";
+        buf.append("# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t");
+        buf.append(s1name);
+        buf.append("\tchainscore\talnscore\tppositive\tnpositive\tnnegative\tcigar\tqseq\tsseq\tvolume\n");
         for (const auto& h : hits) {
             if (h.skip_reason != 0) {
-                out << h.qseqid << '\t'
-                    << skipped_sseqid(h.skip_reason, h.skip_detail) << '\t'
-                    << '*' << '\t'
-                    << 0 << '\t' << 0 << '\t' << h.qlen << '\t'
-                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
-                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
-                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
-                    << "*" << '\t' << "*" << '\t' << "*" << '\t'
-                    << 0 << '\n';
+                append_str(buf, h.qseqid);                              buf.push_back('\t');
+                append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
+                buf.append("\t*\t0\t0\t");
+                append_uint(buf, h.qlen);
+                buf.append("\t0\t0\t0\t0\t0\t0\t0\t0\t0\t*\t*\t*\t0\n");
+                write_block_if_full(out, buf);
                 continue;
             }
-            out << h.qseqid << '\t'
-                << h.sseqid << '\t'
-                << h.sstrand << '\t'
-                << h.qstart << '\t'
-                << h.qend << '\t'
-                << h.qlen << '\t'
-                << h.sstart << '\t'
-                << h.send << '\t'
-                << h.slen << '\t'
-                << h.coverscore << '\t'
-                << h.chainscore << '\t'
-                << h.alnscore << '\t'
-                << h.ppositive << '\t'
-                << h.npositive << '\t'
-                << h.nnegative << '\t'
-                << h.cigar << '\t'
-                << h.qseq << '\t'
-                << h.sseq << '\t'
-                << h.volume << '\n';
+            append_str(buf, h.qseqid);           buf.push_back('\t');
+            append_str(buf, h.sseqid);           buf.push_back('\t');
+            buf.push_back(h.sstrand);            buf.push_back('\t');
+            append_uint(buf, h.qstart);          buf.push_back('\t');
+            append_uint(buf, h.qend);            buf.push_back('\t');
+            append_uint(buf, h.qlen);            buf.push_back('\t');
+            append_uint(buf, h.sstart);          buf.push_back('\t');
+            append_uint(buf, h.send);            buf.push_back('\t');
+            append_uint(buf, h.slen);            buf.push_back('\t');
+            append_uint(buf, h.coverscore);      buf.push_back('\t');
+            append_uint(buf, h.chainscore);      buf.push_back('\t');
+            append_int(buf, h.alnscore);         buf.push_back('\t');
+            append_double_g6(buf, h.ppositive);  buf.push_back('\t');
+            append_uint(buf, h.npositive);       buf.push_back('\t');
+            append_uint(buf, h.nnegative);       buf.push_back('\t');
+            append_str(buf, h.cigar);            buf.push_back('\t');
+            append_str(buf, h.qseq);             buf.push_back('\t');
+            append_str(buf, h.sseq);             buf.push_back('\t');
+            append_uint(buf, h.volume);          buf.push_back('\n');
+            write_block_if_full(out, buf);
         }
     } else if (mode == 3) {
-        out << "# qseqid\tsseqid\tsstrand\tqend\tqlen\tsend\tslen\t"
-            << s1name << "\tchainscore\talnscore\tvolume\n";
+        buf.append("# qseqid\tsseqid\tsstrand\tqend\tqlen\tsend\tslen\t");
+        buf.append(s1name);
+        buf.append("\tchainscore\talnscore\tvolume\n");
         for (const auto& h : hits) {
             if (h.skip_reason != 0) {
-                out << h.qseqid << '\t'
-                    << skipped_sseqid(h.skip_reason, h.skip_detail) << '\t'
-                    << '*' << '\t'
-                    << 0 << '\t' << h.qlen << '\t'
-                    << 0 << '\t' << 0 << '\t'
-                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
-                    << 0 << '\n';
+                append_str(buf, h.qseqid);                              buf.push_back('\t');
+                append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
+                buf.append("\t*\t0\t");
+                append_uint(buf, h.qlen);
+                buf.append("\t0\t0\t0\t0\t0\t0\n");
+                write_block_if_full(out, buf);
                 continue;
             }
-            out << h.qseqid << '\t'
-                << h.sseqid << '\t'
-                << h.sstrand << '\t'
-                << h.qend << '\t'
-                << h.qlen << '\t'
-                << h.send << '\t'
-                << h.slen << '\t'
-                << h.coverscore << '\t'
-                << h.chainscore << '\t'
-                << h.alnscore << '\t'
-                << h.volume << '\n';
+            append_str(buf, h.qseqid);        buf.push_back('\t');
+            append_str(buf, h.sseqid);        buf.push_back('\t');
+            buf.push_back(h.sstrand);         buf.push_back('\t');
+            append_uint(buf, h.qend);         buf.push_back('\t');
+            append_uint(buf, h.qlen);         buf.push_back('\t');
+            append_uint(buf, h.send);         buf.push_back('\t');
+            append_uint(buf, h.slen);         buf.push_back('\t');
+            append_uint(buf, h.coverscore);   buf.push_back('\t');
+            append_uint(buf, h.chainscore);   buf.push_back('\t');
+            append_int(buf, h.alnscore);      buf.push_back('\t');
+            append_uint(buf, h.volume);       buf.push_back('\n');
+            write_block_if_full(out, buf);
         }
     } else {
-        out << "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t"
-            << s1name << "\tchainscore\tvolume\n";
+        buf.append("# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t");
+        buf.append(s1name);
+        buf.append("\tchainscore\tvolume\n");
         for (const auto& h : hits) {
             if (h.skip_reason != 0) {
-                out << h.qseqid << '\t'
-                    << skipped_sseqid(h.skip_reason, h.skip_detail) << '\t'
-                    << '*' << '\t'
-                    << 0 << '\t' << 0 << '\t' << h.qlen << '\t'
-                    << 0 << '\t' << 0 << '\t' << 0 << '\t'
-                    << 0 << '\t' << 0 << '\t'
-                    << 0 << '\n';
+                append_str(buf, h.qseqid);                              buf.push_back('\t');
+                append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
+                buf.append("\t*\t0\t0\t");
+                append_uint(buf, h.qlen);
+                buf.append("\t0\t0\t0\t0\t0\t0\n");
+                write_block_if_full(out, buf);
                 continue;
             }
-            out << h.qseqid << '\t'
-                << h.sseqid << '\t'
-                << h.sstrand << '\t'
-                << h.qstart << '\t'
-                << h.qend << '\t'
-                << h.qlen << '\t'
-                << h.sstart << '\t'
-                << h.send << '\t'
-                << h.slen << '\t'
-                << h.coverscore << '\t'
-                << h.chainscore << '\t'
-                << h.volume << '\n';
+            append_str(buf, h.qseqid);        buf.push_back('\t');
+            append_str(buf, h.sseqid);        buf.push_back('\t');
+            buf.push_back(h.sstrand);         buf.push_back('\t');
+            append_uint(buf, h.qstart);       buf.push_back('\t');
+            append_uint(buf, h.qend);         buf.push_back('\t');
+            append_uint(buf, h.qlen);         buf.push_back('\t');
+            append_uint(buf, h.sstart);       buf.push_back('\t');
+            append_uint(buf, h.send);         buf.push_back('\t');
+            append_uint(buf, h.slen);         buf.push_back('\t');
+            append_uint(buf, h.coverscore);   buf.push_back('\t');
+            append_uint(buf, h.chainscore);   buf.push_back('\t');
+            append_uint(buf, h.volume);       buf.push_back('\n');
+            write_block_if_full(out, buf);
         }
     }
-}
 
-static void json_escape(std::ostream& out, const std::string& s) {
-    out << '"';
-    for (char c : s) {
-        switch (c) {
-            case '"':  out << "\\\""; break;
-            case '\\': out << "\\\\"; break;
-            case '\n': out << "\\n";  break;
-            case '\r': out << "\\r";  break;
-            case '\t': out << "\\t";  break;
-            default:   out << c;      break;
-        }
-    }
-    out << '"';
+    write_block(out, buf);
 }
 
 // Inner helper: write per-query JSON objects.
@@ -165,6 +166,8 @@ static void write_results_json_inner(std::ostream& out,
                                       bool stage3_traceback,
                                       bool is_fragment) {
     const char* s1name = kStage1ScoreName;
+    std::string buf;
+    buf.reserve(kBlockSize + 4096);
 
     // Group hits by qseqid (preserve order of first appearance)
     std::vector<std::string> query_order;
@@ -189,73 +192,112 @@ static void write_results_json_inner(std::ostream& out,
         if (skip_it != by_query_skip.end() && by_query[qid].empty()) {
             const OutputHit* sk = skip_it->second;
             const bool failed = (sk->skip_reason == kFailHttpJob);
-            out << "    {\n      \"qseqid\": ";
-            json_escape(out, qid);
-            out << ",\n      \"qlen\": " << sk->qlen;
+            buf.append("    {\n      \"qseqid\": ");
+            json_escape_into(buf, qid);
+            buf.append(",\n      \"qlen\": ");
+            append_uint(buf, sk->qlen);
             if (failed) {
-                out << ",\n      \"status\": \"failed\"";
-                out << ",\n      \"reason\": ";
-                json_escape(out, sk->skip_detail);
+                buf.append(",\n      \"status\": \"failed\"");
+                buf.append(",\n      \"reason\": ");
+                json_escape_into(buf, sk->skip_detail);
             } else {
-                out << ",\n      \"status\": \"skipped\"";
-                out << ",\n      \"skip_reason\": ";
-                json_escape(out, std::string(skip_reason_str(sk->skip_reason)));
-                out << ",\n      \"skip_detail\": ";
-                json_escape(out, sk->skip_detail);
+                buf.append(",\n      \"status\": \"skipped\"");
+                buf.append(",\n      \"skip_reason\": ");
+                json_escape_into(buf, skip_reason_str(sk->skip_reason));
+                buf.append(",\n      \"skip_detail\": ");
+                json_escape_into(buf, sk->skip_detail);
             }
-            out << ",\n      \"hits\": []\n    }";
-            if (is_fragment || qi + 1 < query_order.size()) out << ',';
-            out << '\n';
+            buf.append(",\n      \"hits\": []\n    }");
+            if (is_fragment || qi + 1 < query_order.size()) buf.push_back(',');
+            buf.push_back('\n');
+            write_block_if_full(out, buf);
             continue;
         }
         const auto& qhits = by_query[qid];
-        out << "    {\n      \"qseqid\": ";
-        json_escape(out, qid);
-        out << ",\n      \"status\": \"ok\"";
-        out << ",\n      \"hits\": [\n";
+        buf.append("    {\n      \"qseqid\": ");
+        json_escape_into(buf, qid);
+        buf.append(",\n      \"status\": \"ok\"");
+        buf.append(",\n      \"hits\": [\n");
         for (size_t hi = 0; hi < qhits.size(); hi++) {
             const auto* h = qhits[hi];
-            out << "        {\n";
-            out << "          \"sseqid\": "; json_escape(out, h->sseqid); out << ",\n";
-            out << "          \"sstrand\": \"" << h->sstrand << "\",\n";
+            buf.append("        {\n");
+            buf.append("          \"sseqid\": ");
+            json_escape_into(buf, h->sseqid);
+            buf.append(",\n");
+            buf.append("          \"sstrand\": \"");
+            buf.push_back(h->sstrand);
+            buf.append("\",\n");
             if (mode == 2 || (mode == 3 && stage3_traceback)) {
-                out << "          \"qstart\": " << h->qstart << ",\n";
-                out << "          \"qend\": " << h->qend << ",\n";
+                buf.append("          \"qstart\": ");
+                append_uint(buf, h->qstart);
+                buf.append(",\n          \"qend\": ");
+                append_uint(buf, h->qend);
+                buf.append(",\n");
             } else if (mode == 3) {
-                out << "          \"qend\": " << h->qend << ",\n";
+                buf.append("          \"qend\": ");
+                append_uint(buf, h->qend);
+                buf.append(",\n");
             }
-            out << "          \"qlen\": " << h->qlen << ",\n";
+            buf.append("          \"qlen\": ");
+            append_uint(buf, h->qlen);
+            buf.append(",\n");
             if (mode == 2 || (mode == 3 && stage3_traceback)) {
-                out << "          \"sstart\": " << h->sstart << ",\n";
-                out << "          \"send\": " << h->send << ",\n";
+                buf.append("          \"sstart\": ");
+                append_uint(buf, h->sstart);
+                buf.append(",\n          \"send\": ");
+                append_uint(buf, h->send);
+                buf.append(",\n");
             } else if (mode == 3) {
-                out << "          \"send\": " << h->send << ",\n";
+                buf.append("          \"send\": ");
+                append_uint(buf, h->send);
+                buf.append(",\n");
             }
-            out << "          \"slen\": " << h->slen << ",\n";
-            out << "          \"" << s1name << "\": " << h->coverscore << ",\n";
+            buf.append("          \"slen\": ");
+            append_uint(buf, h->slen);
+            buf.append(",\n          \"");
+            buf.append(s1name);
+            buf.append("\": ");
+            append_uint(buf, h->coverscore);
+            buf.append(",\n");
             if (mode != 1) {
-                out << "          \"chainscore\": " << h->chainscore << ",\n";
+                buf.append("          \"chainscore\": ");
+                append_uint(buf, h->chainscore);
+                buf.append(",\n");
             }
             if (mode == 3) {
-                out << "          \"alnscore\": " << h->alnscore << ",\n";
+                buf.append("          \"alnscore\": ");
+                append_int(buf, h->alnscore);
+                buf.append(",\n");
                 if (stage3_traceback) {
-                    out << "          \"ppositive\": " << h->ppositive << ",\n";
-                    out << "          \"npositive\": " << h->npositive << ",\n";
-                    out << "          \"nnegative\": " << h->nnegative << ",\n";
-                    out << "          \"cigar\": "; json_escape(out, h->cigar); out << ",\n";
-                    out << "          \"qseq\": "; json_escape(out, h->qseq); out << ",\n";
-                    out << "          \"sseq\": "; json_escape(out, h->sseq); out << ",\n";
+                    buf.append("          \"ppositive\": ");
+                    append_double_g6(buf, h->ppositive);
+                    buf.append(",\n          \"npositive\": ");
+                    append_uint(buf, h->npositive);
+                    buf.append(",\n          \"nnegative\": ");
+                    append_uint(buf, h->nnegative);
+                    buf.append(",\n          \"cigar\": ");
+                    json_escape_into(buf, h->cigar);
+                    buf.append(",\n          \"qseq\": ");
+                    json_escape_into(buf, h->qseq);
+                    buf.append(",\n          \"sseq\": ");
+                    json_escape_into(buf, h->sseq);
+                    buf.append(",\n");
                 }
             }
-            out << "          \"volume\": " << h->volume << "\n";
-            out << "        }";
-            if (hi + 1 < qhits.size()) out << ',';
-            out << '\n';
+            buf.append("          \"volume\": ");
+            append_uint(buf, h->volume);
+            buf.append("\n        }");
+            if (hi + 1 < qhits.size()) buf.push_back(',');
+            buf.push_back('\n');
+            write_block_if_full(out, buf);
         }
-        out << "      ]\n    }";
-        if (is_fragment || qi + 1 < query_order.size()) out << ',';
-        out << '\n';
+        buf.append("      ]\n    }");
+        if (is_fragment || qi + 1 < query_order.size()) buf.push_back(',');
+        buf.push_back('\n');
+        write_block_if_full(out, buf);
     }
+
+    write_block(out, buf);
 }
 
 void write_results_json(std::ostream& out,
