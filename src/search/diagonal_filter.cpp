@@ -11,8 +11,7 @@ void diagonal_filter(std::vector<Hit>& hits,
     const size_t n = hits.size();
     if (n == 0) return;
 
-    // Counting via a sorted copy of the diagonals: one buffer instead of a
-    // hash map, and the buffer is reused across calls.
+    // Every hit's diagonal, sorted, so equal_range below counts occurrences.
     diag_scratch.clear();
     diag_scratch.reserve(n);
     for (const Hit& hit : hits) {

@@ -168,9 +168,8 @@ extern template void stage2a_one_strand_both<uint32_t>(
 
 // Stage 2B — run chain_hits() for `state.candidates[cand_idx]`, which Stage
 // 2A must already have collected hits for.  Reads only from `state`; safe to
-// call concurrently across distinct (state, cand_idx) pairs.  The subject's
-// chains are written to `out` (cleared first), which the caller can reuse
-// across candidates to keep the loop allocation-free.
+// call concurrently across distinct (state, cand_idx) pairs.  Chains go to
+// `out` (cleared first), reusable across candidates.
 void stage2b_one_subject(size_t cand_idx, const JobState& state,
                          std::vector<ChainResult>& out);
 

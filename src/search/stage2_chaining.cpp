@@ -8,18 +8,18 @@ namespace ikafssn {
 
 namespace {
 
-// Per-thread working buffers for chain_hits().  They grow monotonically to the
-// largest subject seen so far, so the steady state performs no allocation.
+// Per-thread working buffers for chain_hits().  They only ever grow, so once a
+// thread has seen its largest subject the steady state allocates nothing.
 struct ChainScratch {
     std::vector<Hit>      work;           // hits still available for extraction
-    std::vector<Hit>      merge;          // natural-merge destination
+    std::vector<Hit>      merged;         // natural-merge destination
     std::vector<uint32_t> q;              // DP input, split out of `work`
     std::vector<uint32_t> s;
     std::vector<int32_t>  diag;           // s - q, per hit
     std::vector<uint32_t> dp;             // longest chain ending at each hit
     std::vector<int32_t>  prev;           // that chain's predecessor, -1 if none
     std::vector<size_t>   chain_indices;  // traceback, strictly decreasing
-    std::vector<int32_t>  diag_counts;    // diagonal_filter counting buffer
+    std::vector<int32_t>  filter_diags;   // diagonal_filter's working buffer
 };
 
 inline ChainScratch& tls_chain_scratch() {
@@ -27,17 +27,16 @@ inline ChainScratch& tls_chain_scratch() {
     return scratch;
 }
 
-// Make `v` hold at least n elements and hand back its data pointer.  Callers
-// overwrite every element they read, so the array never shrinks and the grown
-// part needs no particular value.
+// Grow `v` to at least n elements and return its data.  Callers overwrite
+// every element they read, so the grown part needs no particular value.
 template <typename T>
 inline T* scratch_ptr(std::vector<T>& v, size_t n) {
     if (v.size() < n) v.resize(n);
     return v.data();
 }
 
-// Function objects rather than free functions: std::sort / std::unique would
-// otherwise be instantiated on a function pointer and call through it.
+// Function objects, not free functions: std::sort / std::unique would
+// otherwise call the comparison through a function pointer.
 struct HitLess {
     bool operator()(const Hit& a, const Hit& b) const {
         return a.q_pos < b.q_pos || (a.q_pos == b.q_pos && a.s_pos < b.s_pos);
@@ -65,12 +64,10 @@ void chain_hits(const std::vector<Hit>& raw_hits,
     std::vector<Hit>& work = scratch.work;
     std::vector<size_t>& chain_indices = scratch.chain_indices;
 
-    // Order by (q_pos, s_pos).  Stage 2A emits one monotonic run of hits per
-    // seed template — ascending on the forward strand, descending on the
-    // reverse-complement strand because fwd_pos = len - pos - span — so detect
-    // the runs and merge them instead of sorting blind.  Reversing a
-    // descending run reorders only hits that compare equal, which the dedup
-    // below collapses anyway.
+    // Order by (q_pos, s_pos).  Stage 2A emits one monotonic run per seed
+    // template, ascending on the forward strand and descending on the
+    // reverse-complement strand (fwd_pos = len - pos - span), so detect and
+    // merge the runs.  Reversing a run only reorders hits the dedup collapses.
     work.assign(raw_hits.begin(), raw_hits.end());
     {
         const size_t n = work.size();
@@ -87,12 +84,11 @@ void chain_hits(const std::vector<Hit>& raw_hits,
             if (nruns > 2) break;  // hand the rest to std::sort
         }
         if (nruns == 2) {
-            std::vector<Hit>& merged = scratch.merge;
-            Hit* const mp = scratch_ptr(merged, n);
+            Hit* const dst = scratch_ptr(scratch.merged, n);
             std::merge(work.begin(), work.begin() + run1_end,
                        work.begin() + run1_end, work.begin() + n,
-                       mp, HitLess{});
-            work.swap(merged);
+                       dst, HitLess{});
+            work.swap(scratch.merged);
             work.resize(n);
         } else if (nruns > 2) {
             std::sort(work.begin(), work.end(), HitLess{});
@@ -103,7 +99,7 @@ void chain_hits(const std::vector<Hit>& raw_hits,
     // produces; they would otherwise inflate the chainscore.
     work.erase(std::unique(work.begin(), work.end(), HitSamePos{}), work.end());
 
-    diagonal_filter(work, config.min_nhit_diag, scratch.diag_counts);
+    diagonal_filter(work, config.min_nhit_diag, scratch.filter_diags);
     if (work.empty()) return;
 
     // Extraction limit and tie behaviour.  N == 0 means unlimited.  In a
@@ -123,63 +119,59 @@ void chain_hits(const std::vector<Hit>& raw_hits,
 
         const size_t n = work.size();
 
-        // Split the hits into parallel arrays and precompute each hit's
-        // diagonal.  The gap test between hits i and j is
-        //   |(s_i - s_j) - (q_i - q_j)| = |diag_i - diag_j|,
-        // so the DP inner loop reduces to one subtraction on values it can
-        // read straight out of `diag`.  The buffers live in thread-local
-        // storage, so index them through local pointers to keep the loop free
-        // of base-pointer reloads.
-        const Hit* const wp = work.data();
-        uint32_t* const qp = scratch_ptr(scratch.q, n);
-        uint32_t* const sp = scratch_ptr(scratch.s, n);
-        int32_t* const dg = scratch_ptr(scratch.diag, n);
-        uint32_t* const dpp = scratch_ptr(scratch.dp, n);
-        int32_t* const prevp = scratch_ptr(scratch.prev, n);
+        // Per-hit diagonal, precomputed: the gap test between hits i and j is
+        //   |(s_i - s_j) - (q_i - q_j)| = |diag_i - diag_j|.
+        // The buffers live in thread-local storage, so index them through
+        // local pointers to keep the DP loop free of base-pointer reloads.
+        const Hit* const src = work.data();
+        uint32_t* const q = scratch_ptr(scratch.q, n);
+        uint32_t* const s = scratch_ptr(scratch.s, n);
+        int32_t* const diag = scratch_ptr(scratch.diag, n);
+        uint32_t* const dp = scratch_ptr(scratch.dp, n);
+        int32_t* const prev = scratch_ptr(scratch.prev, n);
         for (size_t i = 0; i < n; i++) {
-            qp[i] = wp[i].q_pos;
-            sp[i] = wp[i].s_pos;
-            dg[i] = static_cast<int32_t>(wp[i].s_pos) -
-                    static_cast<int32_t>(wp[i].q_pos);
+            q[i] = src[i].q_pos;
+            s[i] = src[i].s_pos;
+            diag[i] = static_cast<int32_t>(src[i].s_pos) -
+                      static_cast<int32_t>(src[i].q_pos);
         }
 
         const int64_t max_gap = static_cast<int64_t>(config.max_gap);
         const size_t lookback = config.chain_max_lookback;
 
-        dpp[0] = 1;
-        prevp[0] = -1;
+        dp[0] = 1;
+        prev[0] = -1;
         for (size_t i = 1; i < n; i++) {
             const size_t j_start = (lookback > 0 && i > lookback) ? (i - lookback) : 0;
-            const uint32_t q_i = qp[i];
-            const uint32_t s_i = sp[i];
-            const int64_t diag_i = dg[i];
-            // Predecessors are scanned in ascending j and only a strictly
-            // longer chain replaces the incumbent, so ties keep the smallest
-            // j.  Reversing or vectorising this scan would change which
-            // predecessor wins a tie, and with it the reported coordinates.
+            const uint32_t q_i = q[i];
+            const uint32_t s_i = s[i];
+            const int64_t diag_i = diag[i];
+            // Ascending j, and only a strictly longer chain replaces the
+            // incumbent, so a tie keeps the smallest j.  Changing the scan
+            // order would change the reported coordinates.
             uint32_t dp_i = 1;
             int32_t prev_i = -1;
             for (size_t j = j_start; j < i; j++) {
-                if (qp[j] >= q_i) continue;
-                if (sp[j] >= s_i) continue;
-                if (dpp[j] < dp_i) continue;
-                if (std::llabs(diag_i - static_cast<int64_t>(dg[j])) > max_gap) continue;
-                dp_i = dpp[j] + 1;
+                if (q[j] >= q_i) continue;
+                if (s[j] >= s_i) continue;
+                if (dp[j] < dp_i) continue;
+                if (std::llabs(diag_i - static_cast<int64_t>(diag[j])) > max_gap) continue;
+                dp_i = dp[j] + 1;
                 prev_i = static_cast<int32_t>(j);
             }
-            dpp[i] = dp_i;
-            prevp[i] = prev_i;
+            dp[i] = dp_i;
+            prev[i] = prev_i;
         }
 
         // Find best chain endpoint
         size_t best_idx = 0;
         for (size_t i = 1; i < n; i++) {
-            if (dpp[i] > dpp[best_idx]) {
+            if (dp[i] > dp[best_idx]) {
                 best_idx = i;
             }
         }
 
-        uint32_t best_score = dpp[best_idx];
+        uint32_t best_score = dp[best_idx];
         if (best_score < config.min_score) break;
 
         // Tie-inclusive stop: past the N-th chain, only chains tying the
@@ -191,7 +183,7 @@ void chain_hits(const std::vector<Hit>& raw_hits,
         size_t idx = best_idx;
         while (idx != SIZE_MAX) {
             chain_indices.push_back(idx);
-            idx = (prevp[idx] >= 0) ? static_cast<size_t>(prevp[idx]) : SIZE_MAX;
+            idx = (prev[idx] >= 0) ? static_cast<size_t>(prev[idx]) : SIZE_MAX;
         }
 
         // chain_indices is in reverse order; first element is end, last is start
@@ -217,13 +209,12 @@ void chain_hits(const std::vector<Hit>& raw_hits,
             s_n_set = true;
         }
 
-        // Early return for a strict single-chain take (no removal overhead).
+        // Strict take-1: no next iteration, so skip the removal pass.
         if (!unlimited && !tie_inclusive && n_limit == 1) break;
 
-        // Drop the chain's hits so the next iteration sees the remainder.
-        // prev[i] < i holds for every link, so chain_indices is strictly
-        // decreasing and walking it backwards yields the removal targets in
-        // ascending order — enough to compact `work` in a single pass.
+        // Drop the chain's hits.  prev[i] < i for every link, so
+        // chain_indices is strictly decreasing and walking it backwards gives
+        // the removal targets in ascending order — one compaction pass.
         size_t w = 0;
         size_t ci = chain_indices.size();
         for (size_t r = 0; r < n; r++) {

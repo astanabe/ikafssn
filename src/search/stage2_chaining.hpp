@@ -38,10 +38,10 @@ struct Stage2Config {
 //    In a tie-inclusive mode (max_nhit_per_subject_mode 3/4) extraction
 //    continues past N while the next chain ties the N-th chain's chainscore.
 //
-// Chains are written to `out` (cleared first); it ends up empty when no chain
-// passes min_score.  Working buffers live in per-thread scratch, so reusing
-// one `out` across calls makes the steady state allocation-free.
-void chain_hits(const std::vector<Hit>& hits,
+// Chains are written to `out` (cleared first), empty when none passes
+// min_score.  Working buffers are per-thread scratch, so reusing one `out`
+// across calls keeps the steady state allocation-free.
+void chain_hits(const std::vector<Hit>& raw_hits,
                 SeqId seq_id,
                 int span,
                 bool is_reverse,

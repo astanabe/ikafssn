@@ -3,7 +3,7 @@
 
 using namespace ikafssn;
 
-// diagonal_filter() shrinks its input in place and borrows a counting buffer;
+// diagonal_filter() shrinks its input in place and borrows a working buffer;
 // the tests below mostly want one filtered list per call, so wrap it.
 static std::vector<Hit> run_filter(std::vector<Hit> hits, uint32_t min_nhit_diag) {
     std::vector<int32_t> diag_scratch;
