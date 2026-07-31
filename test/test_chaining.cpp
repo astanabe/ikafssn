@@ -502,6 +502,38 @@ static void test_unsorted_input_equivalence() {
     CHECK_EQ(same_chains(expected, run_chain(shuffled, 3, 7, false, config)), true);
 }
 
+static void test_out_is_cleared() {
+    std::fprintf(stderr, "-- test_out_is_cleared\n");
+
+    // Stage 2B hands the same vector to every candidate, so whatever the
+    // previous subject left behind must not survive into the next call --
+    // including on the two early-return paths.
+    Stage2Config config;
+    config.min_nhit_diag = 1;
+    config.min_score = 1;
+    config.max_gap = 100;
+
+    ChainResult stale{};
+    stale.seq_id = 99;
+    stale.chainscore = 12345;
+
+    std::vector<ChainResult> out(3, stale);
+    chain_hits({}, 0, 7, false, config, out);      // no hits at all
+    CHECK_EQ(out.empty(), true);
+
+    out.assign(3, stale);
+    config.min_score = 5;                          // no chain reaches it
+    chain_hits({{10, 100}}, 0, 7, false, config, out);
+    CHECK_EQ(out.empty(), true);
+
+    out.assign(3, stale);
+    config.min_score = 1;
+    chain_hits({{10, 100}}, 0, 7, false, config, out);
+    CHECK_EQ(out.size(), 1u);
+    CHECK_EQ(out[0].seq_id, 0u);
+    CHECK_EQ(out[0].chainscore, 1u);
+}
+
 static void test_max_gap_boundary() {
     std::fprintf(stderr, "-- test_max_gap_boundary\n");
 
@@ -548,6 +580,7 @@ int main() {
     test_tie_inclusive_take_n();
     test_scratch_reuse_across_calls();
     test_unsorted_input_equivalence();
+    test_out_is_cleared();
     test_max_gap_boundary();
 
     TEST_SUMMARY();

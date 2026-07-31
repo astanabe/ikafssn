@@ -46,6 +46,7 @@ need no `-DIKAFSSN_BUILD_BENCH=ON`.
 | `run_e2e.sh`           | `ikafssnindex` full index construction, one run per SIMD tier |
 | `run_e2e_search.sh`    | `ikafssnsearch` wall time, one run per SIMD tier; builds the index itself |
 | `run_warm_e2e.sh`      | `ikafssnsearch` against an existing index, repeated, with per-stage attribution |
+| `run_cold_e2e.sh`      | two `ikafssnsearch` builds A/B, index evicted before every run |
 
     bench/run_e2e.sh build/
     bench/run_e2e_search.sh build/ --format json
@@ -70,6 +71,25 @@ the flag).  Exit code 2 — some query skipped, e.g. shorter than
     K=11 T=21 TEMPLATE_TYPE=both MODE=2 STRAND=2 MIN_SCORE=0.1 \
     M_SWEEP="100 1000 10000" REPS=5 OUTDIR=/tmp/warm \
     bench/run_warm_e2e.sh --format json
+
+`run_cold_e2e.sh` is the opposite regime: it is for an index too large to stay
+resident, where the search is I/O bound rather than CPU bound.  It evicts the
+index with `posix_fadvise(POSIX_FADV_DONTNEED)` before every run — no
+privileges needed, and no other process's cache is disturbed — and alternates
+the two binaries so a residual cache trend hits both alike.  Without the
+eviction the page cache carries over between runs and the same binary varies by
+2x or more.  Alongside wall time it reports the read volume summed over the
+`/proc/diskstats` devices in `DISKS` and the major fault count: a change that
+leaves those two alone has not altered which posting bytes the search touches.
+
+    BIN_A=/usr/bin/ikafssnsearch BIN_B=build/src/ikafssnsearch \
+    IX=/path/to/index/prefix QUERY=queries.fasta REPS=3 \
+    EXTRA_ARGS="-k 11 -t 21 -template_type both -mode 1 -strand 2" \
+    bench/run_cold_e2e.sh --format summary
+
+Output equivalence is reported as line count and sorted sha256, not a byte
+comparison: with a large result set mode 1 does not fix the row order within a
+query.
 
 See the header comment of each script for the full environment variable list.
 `parse_time.py` turns a single `/usr/bin/time -v` log into the same JSON

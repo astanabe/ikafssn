@@ -886,6 +886,35 @@ static void test_min_query_length_skip() {
     CHECK_EQ(qdata_ok.skip_reason, 0u);
 }
 
+// Stage 2B walks a whole blocked_range with one ChainResult vector, so
+// stage2b_one_subject() owns clearing it -- including for a candidate Stage 2A
+// left without hits, which returns before chain_hits() gets a chance to.
+// A hand-built JobState is enough and needs no index.
+static void test_stage2b_out_reuse() {
+    std::fprintf(stderr, "-- test_stage2b_out_reuse\n");
+
+    JobState state;
+    state.span = 7;
+    state.is_reverse = false;
+    state.stage2_config.min_nhit_diag = 1;
+    state.stage2_config.min_score = 1;
+    state.stage2_config.max_gap = 100;
+
+    state.candidates = {{/*id=*/11, /*score=*/3}, {/*id=*/22, /*score=*/0}};
+    state.hits_per_candidate = {{{0, 90}, {7, 97}, {14, 104}}, {}};
+
+    std::vector<ChainResult> out;
+    stage2b_one_subject(0, state, out);
+    CHECK_EQ(out.size(), 1u);
+    CHECK_EQ(out[0].seq_id, 11u);
+    CHECK_EQ(out[0].chainscore, 3u);
+    CHECK_EQ(out[0].stage1_score, 3u);
+
+    // Same vector, candidate with no hits: the previous chain must be gone.
+    stage2b_one_subject(1, state, out);
+    CHECK_EQ(out.empty(), true);
+}
+
 int main() {
     check_ssu_available();
 
@@ -919,6 +948,7 @@ int main() {
     test_search_mode1_both_template();
     test_search_stage1_both_template();
     test_stage2a_hit_list_sizing();
+    test_stage2b_out_reuse();
     test_min_query_length_skip();
 
     std::filesystem::remove_all(g_test_dir);
