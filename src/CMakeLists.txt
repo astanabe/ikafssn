@@ -91,7 +91,7 @@ add_library(ikafssn_io STATIC
 )
 target_link_libraries(ikafssn_io
     PUBLIC  ikafssn_core ikafssn_util
-    PRIVATE ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA PkgConfig::ZSTD
+    PRIVATE ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA PkgConfig::ZSTD TBB::tbb
 )
 
 # IO library for BLAST DB access (requires NCBI C++ Toolkit)

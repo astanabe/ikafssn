@@ -1188,7 +1188,8 @@ int main(int argc, char* argv[]) {
     sw.reset();
     if (!write_all_results(output_path, all_hits, outfmt,
                            config.mode,
-                           stage3_config.traceback, compression_level)) {
+                           stage3_config.traceback, compression_level,
+                           nthread)) {
         return 1;
     }
     t_write += sw.lap();

@@ -30,7 +30,8 @@ bool write_all_results(const std::string& output_path,
                        OutputFormat fmt,
                        uint8_t mode,
                        bool stage3_traceback,
-                       int compression_level = -1);
+                       int compression_level = -1,
+                       int nthread = 1);
 
 // Merge multiple SAM batch files into a single output.
 // @SQ headers are unioned across all files; @HD and @PG from the first file.

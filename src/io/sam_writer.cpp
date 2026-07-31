@@ -324,7 +324,8 @@ bool write_all_results(const std::string& output_path,
                        OutputFormat fmt,
                        uint8_t mode,
                        bool stage3_traceback,
-                       int compression_level) {
+                       int compression_level,
+                       int nthread) {
     if (fmt == OutputFormat::kSam) {
         write_results_sam(output_path.empty() ? "-" : output_path, hits);
     } else if (fmt == OutputFormat::kBam) {
@@ -336,7 +337,7 @@ bool write_all_results(const std::string& output_path,
             std::fprintf(stderr, "%s\n", err.c_str());
             return false;
         }
-        write_results(*out.stream, hits, fmt, mode, stage3_traceback);
+        write_results(*out.stream, hits, fmt, mode, stage3_traceback, nthread);
     }
     return true;
 }

@@ -307,6 +307,64 @@ static void test_numeric_field_formatting() {
     }
 }
 
+// The parallel formatting path must produce the same bytes as the serial
+// one, for every mode and both formats.
+static void test_writer_thread_count_invariance() {
+    std::fprintf(stderr, "-- test_writer_thread_count_invariance\n");
+
+    // Enough queries and hits to cross several windows and chunk splits,
+    // with uneven hits per query so chunk boundaries land inside queries.
+    std::vector<OutputHit> hits;
+    for (int q = 0; q < 40; q++) {
+        std::string qid = "query" + std::to_string(q);
+        if (q % 11 == 3) {   // skipped query: no hits, sentinel row only
+            OutputHit s;
+            s.qseqid = qid;
+            s.qlen = 100 + q;
+            s.skip_reason = ikafssn::kSkipQueryTooShort;
+            s.skip_detail = "too short\tand \"quoted\"";
+            hits.push_back(s);
+            continue;
+        }
+        for (int i = 0; i < (q % 7) * 900 + 1; i++) {
+            OutputHit h;
+            h.qseqid = qid;
+            h.sseqid = "ACC" + std::to_string(i);
+            h.sstrand = (i % 2) ? '-' : '+';
+            h.qstart = i; h.qend = i + 40; h.qlen = 100 + q;
+            h.sstart = i * 2; h.send = i * 2 + 40; h.slen = 5000 + i;
+            h.coverscore = i % 31; h.chainscore = i % 17;
+            h.alnscore = (i % 5 == 0) ? -(i + 1) : i;
+            h.ppositive = 100.0 * (i % 19) / 19.0;
+            h.npositive = i % 19; h.nnegative = 19 - (i % 19);
+            h.cigar = "40M"; h.qseq = "ACGT"; h.sseq = "ACGA";
+            h.volume = static_cast<uint16_t>(i % 3);
+            hits.push_back(h);
+        }
+    }
+
+    struct Case { uint8_t mode; bool tb; };
+    const Case cases[] = {{1, false}, {2, false}, {3, false}, {3, true}};
+    for (const auto& c : cases) {
+        for (int nthread : {2, 8}) {
+            std::ostringstream a, b;
+            write_results_tsv(a, hits, c.mode, c.tb, /*nthread=*/1);
+            write_results_tsv(b, hits, c.mode, c.tb, nthread);
+            CHECK(a.str() == b.str());
+
+            std::ostringstream ja, jb;
+            write_results_json(ja, hits, c.mode, c.tb, /*nthread=*/1);
+            write_results_json(jb, hits, c.mode, c.tb, nthread);
+            CHECK(ja.str() == jb.str());
+
+            std::ostringstream fa, fb;
+            write_results_json_fragment(fa, hits, c.mode, c.tb, /*nthread=*/1);
+            write_results_json_fragment(fb, hits, c.mode, c.tb, nthread);
+            CHECK(fa.str() == fb.str());
+        }
+    }
+}
+
 static void test_header_reordered_columns() {
     std::fprintf(stderr, "-- test_header_reordered_columns\n");
 
@@ -389,6 +447,7 @@ int main() {
     test_roundtrip_mode3_no_traceback();
     test_roundtrip_mode3_traceback();
     test_numeric_field_formatting();
+    test_writer_thread_count_invariance();
     test_header_reordered_columns();
     test_no_header_fallback();
     test_windows_line_endings();

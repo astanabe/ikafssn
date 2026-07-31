@@ -86,31 +86,40 @@ bool validate_output_format(OutputFormat fmt, uint8_t mode, bool traceback,
                             const std::string& output_path,
                             std::string& error_msg);
 
+// The OutputHit writers below format their rows into per-thread buffers
+// when `nthread` > 1 and concatenate them in row order, so the bytes do
+// not depend on the thread count.  Only large dumps are worth the task
+// setup, which is why the default stays serial.
+
 // Write results in TSV (tab-delimited) format.
 void write_results_tsv(std::ostream& out,
                        const std::vector<OutputHit>& hits,
                        uint8_t mode = 2,
-                       bool stage3_traceback = false);
+                       bool stage3_traceback = false,
+                       int nthread = 1);
 
 // Write results in JSON format.
 void write_results_json(std::ostream& out,
                         const std::vector<OutputHit>& hits,
                         uint8_t mode = 2,
-                        bool stage3_traceback = false);
+                        bool stage3_traceback = false,
+                        int nthread = 1);
 
 // Write per-query JSON objects without the outer {"results": [...]} wrapper.
 // Used for checkpoint batch intermediate files.
 void write_results_json_fragment(std::ostream& out,
                                   const std::vector<OutputHit>& hits,
                                   uint8_t mode = 2,
-                                  bool stage3_traceback = false);
+                                  bool stage3_traceback = false,
+                                  int nthread = 1);
 
 // Write results in the specified format (tsv or json).
 void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,
                    OutputFormat fmt,
                    uint8_t mode = 2,
-                   bool stage3_traceback = false);
+                   bool stage3_traceback = false,
+                   int nthread = 1);
 
 // -------------------------------------------------------------------------
 // Mode 1 parallel TSV / JSON writers.

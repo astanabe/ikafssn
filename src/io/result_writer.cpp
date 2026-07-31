@@ -3,8 +3,14 @@
 #include "io/text_format.hpp"
 #include "protocol/messages.hpp"
 
+#include <algorithm>
 #include <map>
 #include <string>
+#include <vector>
+
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+#include <tbb/task_arena.h>
 
 namespace ikafssn {
 
@@ -18,6 +24,16 @@ namespace {
 // of at least this size.
 constexpr std::size_t kBlockSize = 1u << 20;
 
+// How much formatted output the parallel path holds in memory before
+// writing it out, counted in rows (TSV) or hits (JSON).  Bounding this
+// keeps the extra footprint proportional to one window rather than to the
+// whole output.
+constexpr std::size_t kWindowWeight = 64 * 1024;
+
+// Below this much total work the arena setup costs more than the
+// formatting it parallelises, so the serial path stays faster.
+constexpr std::size_t kParallelMinWeight = 256 * 1024;
+
 inline void write_block(std::ostream& out, std::string& buf) {
     if (!buf.empty()) {
         out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
@@ -25,136 +41,199 @@ inline void write_block(std::ostream& out, std::string& buf) {
     }
 }
 
-inline void write_block_if_full(std::ostream& out, std::string& buf) {
-    if (buf.size() >= kBlockSize) write_block(out, buf);
+// Format items [begin, end) and write them to `out` in item order.
+// `format_item(buf, i)` appends item i, and `weight_of(i)` is how much of
+// the window budget item i takes up; `total_weight` is their sum.  With
+// more than one thread the items of a window are formatted concurrently
+// into per-chunk buffers that are then written in chunk order, so the
+// bytes do not depend on the thread count.
+template <typename FormatItem, typename WeightOf>
+void write_items(std::ostream& out, std::size_t begin, std::size_t end,
+                 std::size_t total_weight, int nthread,
+                 FormatItem format_item, WeightOf weight_of) {
+    if (begin >= end) return;
+
+    const int threads = std::max(1, nthread);
+    if (threads == 1 || total_weight < kParallelMinWeight) {
+        std::string buf;
+        buf.reserve(kBlockSize + 4096);
+        for (std::size_t i = begin; i < end; ++i) {
+            format_item(buf, i);
+            if (buf.size() >= kBlockSize) write_block(out, buf);
+        }
+        write_block(out, buf);
+        return;
+    }
+
+    const std::size_t nchunks = static_cast<std::size_t>(threads) * 4;
+    std::vector<std::string> bufs(nchunks);
+    tbb::task_arena arena(threads);
+
+    for (std::size_t wlo = begin; wlo < end;) {
+        // Always take at least one item, so a single oversized item still
+        // makes progress.
+        std::size_t whi = wlo, weight = 0;
+        do {
+            weight += weight_of(whi);
+            ++whi;
+        } while (whi < end && weight < kWindowWeight);
+
+        const std::size_t n = whi - wlo;
+        const std::size_t nc = std::min(n, nchunks);
+        arena.execute([&] {
+            tbb::parallel_for(
+                tbb::blocked_range<std::size_t>(0, nc),
+                [&](const tbb::blocked_range<std::size_t>& r) {
+                    for (std::size_t ci = r.begin(); ci != r.end(); ++ci) {
+                        // write_block() left the buffer empty but kept its
+                        // capacity, so windows reuse the same allocations.
+                        std::string& buf = bufs[ci];
+                        const std::size_t lo = wlo + n * ci / nc;
+                        const std::size_t hi = wlo + n * (ci + 1) / nc;
+                        for (std::size_t i = lo; i < hi; ++i)
+                            format_item(buf, i);
+                    }
+                });
+        });
+        for (std::size_t ci = 0; ci < nc; ++ci) write_block(out, bufs[ci]);
+        wlo = whi;
+    }
 }
+
+// Every TSV row costs the same share of the window budget.
+inline std::size_t one_row(std::size_t) { return 1; }
 
 } // namespace
 
 void write_results_tsv(std::ostream& out,
                        const std::vector<OutputHit>& hits,
                        uint8_t mode,
-                       bool stage3_traceback) {
+                       bool stage3_traceback,
+                       int nthread) {
     const char* s1name = kStage1ScoreName;
-    std::string buf;
-    buf.reserve(kBlockSize + 4096);
+
+    std::string header;
+    if (mode == 1) {
+        header.append("# qseqid\tsseqid\tsstrand\tqlen\tslen\t");
+        header.append(s1name);
+        header.append("\tvolume\n");
+    } else if (mode == 3 && stage3_traceback) {
+        header.append("# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t");
+        header.append(s1name);
+        header.append("\tchainscore\talnscore\tppositive\tnpositive\tnnegative\tcigar\tqseq\tsseq\tvolume\n");
+    } else if (mode == 3) {
+        header.append("# qseqid\tsseqid\tsstrand\tqend\tqlen\tsend\tslen\t");
+        header.append(s1name);
+        header.append("\tchainscore\talnscore\tvolume\n");
+    } else {
+        header.append("# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t");
+        header.append(s1name);
+        header.append("\tchainscore\tvolume\n");
+    }
+    out.write(header.data(), static_cast<std::streamsize>(header.size()));
 
     if (mode == 1) {
-        buf.append("# qseqid\tsseqid\tsstrand\tqlen\tslen\t");
-        buf.append(s1name);
-        buf.append("\tvolume\n");
-        for (const auto& h : hits) {
-            if (h.skip_reason != 0) {
-                append_str(buf, h.qseqid);                              buf.push_back('\t');
-                append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
-                buf.append("\t*\t");
-                append_uint(buf, h.qlen);
-                buf.append("\t0\t0\t0\n");
-                write_block_if_full(out, buf);
-                continue;
-            }
-            append_str(buf, h.qseqid);        buf.push_back('\t');
-            append_str(buf, h.sseqid);        buf.push_back('\t');
-            buf.push_back(h.sstrand);         buf.push_back('\t');
-            append_uint(buf, h.qlen);         buf.push_back('\t');
-            append_uint(buf, h.slen);         buf.push_back('\t');
-            append_uint(buf, h.coverscore);   buf.push_back('\t');
-            append_uint(buf, h.volume);       buf.push_back('\n');
-            write_block_if_full(out, buf);
-        }
+        write_items(out, 0, hits.size(), hits.size(), nthread,
+            [&](std::string& buf, std::size_t i) {
+                const auto& h = hits[i];
+                if (h.skip_reason != 0) {
+                    append_str(buf, h.qseqid);                              buf.push_back('\t');
+                    append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
+                    buf.append("\t*\t");
+                    append_uint(buf, h.qlen);
+                    buf.append("\t0\t0\t0\n");
+                    return;
+                }
+                append_str(buf, h.qseqid);        buf.push_back('\t');
+                append_str(buf, h.sseqid);        buf.push_back('\t');
+                buf.push_back(h.sstrand);         buf.push_back('\t');
+                append_uint(buf, h.qlen);         buf.push_back('\t');
+                append_uint(buf, h.slen);         buf.push_back('\t');
+                append_uint(buf, h.coverscore);   buf.push_back('\t');
+                append_uint(buf, h.volume);       buf.push_back('\n');
+            }, one_row);
     } else if (mode == 3 && stage3_traceback) {
-        buf.append("# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t");
-        buf.append(s1name);
-        buf.append("\tchainscore\talnscore\tppositive\tnpositive\tnnegative\tcigar\tqseq\tsseq\tvolume\n");
-        for (const auto& h : hits) {
-            if (h.skip_reason != 0) {
-                append_str(buf, h.qseqid);                              buf.push_back('\t');
-                append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
-                buf.append("\t*\t0\t0\t");
-                append_uint(buf, h.qlen);
-                buf.append("\t0\t0\t0\t0\t0\t0\t0\t0\t0\t*\t*\t*\t0\n");
-                write_block_if_full(out, buf);
-                continue;
-            }
-            append_str(buf, h.qseqid);           buf.push_back('\t');
-            append_str(buf, h.sseqid);           buf.push_back('\t');
-            buf.push_back(h.sstrand);            buf.push_back('\t');
-            append_uint(buf, h.qstart);          buf.push_back('\t');
-            append_uint(buf, h.qend);            buf.push_back('\t');
-            append_uint(buf, h.qlen);            buf.push_back('\t');
-            append_uint(buf, h.sstart);          buf.push_back('\t');
-            append_uint(buf, h.send);            buf.push_back('\t');
-            append_uint(buf, h.slen);            buf.push_back('\t');
-            append_uint(buf, h.coverscore);      buf.push_back('\t');
-            append_uint(buf, h.chainscore);      buf.push_back('\t');
-            append_int(buf, h.alnscore);         buf.push_back('\t');
-            append_double_g6(buf, h.ppositive);  buf.push_back('\t');
-            append_uint(buf, h.npositive);       buf.push_back('\t');
-            append_uint(buf, h.nnegative);       buf.push_back('\t');
-            append_str(buf, h.cigar);            buf.push_back('\t');
-            append_str(buf, h.qseq);             buf.push_back('\t');
-            append_str(buf, h.sseq);             buf.push_back('\t');
-            append_uint(buf, h.volume);          buf.push_back('\n');
-            write_block_if_full(out, buf);
-        }
+        write_items(out, 0, hits.size(), hits.size(), nthread,
+            [&](std::string& buf, std::size_t i) {
+                const auto& h = hits[i];
+                if (h.skip_reason != 0) {
+                    append_str(buf, h.qseqid);                              buf.push_back('\t');
+                    append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
+                    buf.append("\t*\t0\t0\t");
+                    append_uint(buf, h.qlen);
+                    buf.append("\t0\t0\t0\t0\t0\t0\t0\t0\t0\t*\t*\t*\t0\n");
+                    return;
+                }
+                append_str(buf, h.qseqid);           buf.push_back('\t');
+                append_str(buf, h.sseqid);           buf.push_back('\t');
+                buf.push_back(h.sstrand);            buf.push_back('\t');
+                append_uint(buf, h.qstart);          buf.push_back('\t');
+                append_uint(buf, h.qend);            buf.push_back('\t');
+                append_uint(buf, h.qlen);            buf.push_back('\t');
+                append_uint(buf, h.sstart);          buf.push_back('\t');
+                append_uint(buf, h.send);            buf.push_back('\t');
+                append_uint(buf, h.slen);            buf.push_back('\t');
+                append_uint(buf, h.coverscore);      buf.push_back('\t');
+                append_uint(buf, h.chainscore);      buf.push_back('\t');
+                append_int(buf, h.alnscore);         buf.push_back('\t');
+                append_double_g6(buf, h.ppositive);  buf.push_back('\t');
+                append_uint(buf, h.npositive);       buf.push_back('\t');
+                append_uint(buf, h.nnegative);       buf.push_back('\t');
+                append_str(buf, h.cigar);            buf.push_back('\t');
+                append_str(buf, h.qseq);             buf.push_back('\t');
+                append_str(buf, h.sseq);             buf.push_back('\t');
+                append_uint(buf, h.volume);          buf.push_back('\n');
+            }, one_row);
     } else if (mode == 3) {
-        buf.append("# qseqid\tsseqid\tsstrand\tqend\tqlen\tsend\tslen\t");
-        buf.append(s1name);
-        buf.append("\tchainscore\talnscore\tvolume\n");
-        for (const auto& h : hits) {
-            if (h.skip_reason != 0) {
-                append_str(buf, h.qseqid);                              buf.push_back('\t');
-                append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
-                buf.append("\t*\t0\t");
-                append_uint(buf, h.qlen);
-                buf.append("\t0\t0\t0\t0\t0\t0\n");
-                write_block_if_full(out, buf);
-                continue;
-            }
-            append_str(buf, h.qseqid);        buf.push_back('\t');
-            append_str(buf, h.sseqid);        buf.push_back('\t');
-            buf.push_back(h.sstrand);         buf.push_back('\t');
-            append_uint(buf, h.qend);         buf.push_back('\t');
-            append_uint(buf, h.qlen);         buf.push_back('\t');
-            append_uint(buf, h.send);         buf.push_back('\t');
-            append_uint(buf, h.slen);         buf.push_back('\t');
-            append_uint(buf, h.coverscore);   buf.push_back('\t');
-            append_uint(buf, h.chainscore);   buf.push_back('\t');
-            append_int(buf, h.alnscore);      buf.push_back('\t');
-            append_uint(buf, h.volume);       buf.push_back('\n');
-            write_block_if_full(out, buf);
-        }
+        write_items(out, 0, hits.size(), hits.size(), nthread,
+            [&](std::string& buf, std::size_t i) {
+                const auto& h = hits[i];
+                if (h.skip_reason != 0) {
+                    append_str(buf, h.qseqid);                              buf.push_back('\t');
+                    append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
+                    buf.append("\t*\t0\t");
+                    append_uint(buf, h.qlen);
+                    buf.append("\t0\t0\t0\t0\t0\t0\n");
+                    return;
+                }
+                append_str(buf, h.qseqid);        buf.push_back('\t');
+                append_str(buf, h.sseqid);        buf.push_back('\t');
+                buf.push_back(h.sstrand);         buf.push_back('\t');
+                append_uint(buf, h.qend);         buf.push_back('\t');
+                append_uint(buf, h.qlen);         buf.push_back('\t');
+                append_uint(buf, h.send);         buf.push_back('\t');
+                append_uint(buf, h.slen);         buf.push_back('\t');
+                append_uint(buf, h.coverscore);   buf.push_back('\t');
+                append_uint(buf, h.chainscore);   buf.push_back('\t');
+                append_int(buf, h.alnscore);      buf.push_back('\t');
+                append_uint(buf, h.volume);       buf.push_back('\n');
+            }, one_row);
     } else {
-        buf.append("# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\t");
-        buf.append(s1name);
-        buf.append("\tchainscore\tvolume\n");
-        for (const auto& h : hits) {
-            if (h.skip_reason != 0) {
-                append_str(buf, h.qseqid);                              buf.push_back('\t');
-                append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
-                buf.append("\t*\t0\t0\t");
-                append_uint(buf, h.qlen);
-                buf.append("\t0\t0\t0\t0\t0\t0\n");
-                write_block_if_full(out, buf);
-                continue;
-            }
-            append_str(buf, h.qseqid);        buf.push_back('\t');
-            append_str(buf, h.sseqid);        buf.push_back('\t');
-            buf.push_back(h.sstrand);         buf.push_back('\t');
-            append_uint(buf, h.qstart);       buf.push_back('\t');
-            append_uint(buf, h.qend);         buf.push_back('\t');
-            append_uint(buf, h.qlen);         buf.push_back('\t');
-            append_uint(buf, h.sstart);       buf.push_back('\t');
-            append_uint(buf, h.send);         buf.push_back('\t');
-            append_uint(buf, h.slen);         buf.push_back('\t');
-            append_uint(buf, h.coverscore);   buf.push_back('\t');
-            append_uint(buf, h.chainscore);   buf.push_back('\t');
-            append_uint(buf, h.volume);       buf.push_back('\n');
-            write_block_if_full(out, buf);
-        }
+        write_items(out, 0, hits.size(), hits.size(), nthread,
+            [&](std::string& buf, std::size_t i) {
+                const auto& h = hits[i];
+                if (h.skip_reason != 0) {
+                    append_str(buf, h.qseqid);                              buf.push_back('\t');
+                    append_skipped_sseqid(buf, h.skip_reason, h.skip_detail);
+                    buf.append("\t*\t0\t0\t");
+                    append_uint(buf, h.qlen);
+                    buf.append("\t0\t0\t0\t0\t0\t0\n");
+                    return;
+                }
+                append_str(buf, h.qseqid);        buf.push_back('\t');
+                append_str(buf, h.sseqid);        buf.push_back('\t');
+                buf.push_back(h.sstrand);         buf.push_back('\t');
+                append_uint(buf, h.qstart);       buf.push_back('\t');
+                append_uint(buf, h.qend);         buf.push_back('\t');
+                append_uint(buf, h.qlen);         buf.push_back('\t');
+                append_uint(buf, h.sstart);       buf.push_back('\t');
+                append_uint(buf, h.send);         buf.push_back('\t');
+                append_uint(buf, h.slen);         buf.push_back('\t');
+                append_uint(buf, h.coverscore);   buf.push_back('\t');
+                append_uint(buf, h.chainscore);   buf.push_back('\t');
+                append_uint(buf, h.volume);       buf.push_back('\n');
+            }, one_row);
     }
-
-    write_block(out, buf);
 }
 
 // Inner helper: write per-query JSON objects.
@@ -164,10 +243,9 @@ static void write_results_json_inner(std::ostream& out,
                                       const std::vector<OutputHit>& hits,
                                       uint8_t mode,
                                       bool stage3_traceback,
-                                      bool is_fragment) {
+                                      bool is_fragment,
+                                      int nthread) {
     const char* s1name = kStage1ScoreName;
-    std::string buf;
-    buf.reserve(kBlockSize + 4096);
 
     // Group hits by qseqid (preserve order of first appearance)
     std::vector<std::string> query_order;
@@ -186,10 +264,19 @@ static void write_results_json_inner(std::ostream& out,
         }
     }
 
-    for (size_t qi = 0; qi < query_order.size(); qi++) {
+    // Look up by find() rather than operator[]: the formatting below runs
+    // concurrently and must not touch the map.
+    const std::vector<const OutputHit*> no_hits;
+    auto hits_of = [&](const std::string& qid) -> const std::vector<const OutputHit*>& {
+        auto it = by_query.find(qid);
+        return it == by_query.end() ? no_hits : it->second;
+    };
+
+    write_items(out, 0, query_order.size(), hits.size(), nthread,
+        [&](std::string& buf, std::size_t qi) {
         const auto& qid = query_order[qi];
         auto skip_it = by_query_skip.find(qid);
-        if (skip_it != by_query_skip.end() && by_query[qid].empty()) {
+        if (skip_it != by_query_skip.end() && hits_of(qid).empty()) {
             const OutputHit* sk = skip_it->second;
             const bool failed = (sk->skip_reason == kFailHttpJob);
             buf.append("    {\n      \"qseqid\": ");
@@ -210,8 +297,7 @@ static void write_results_json_inner(std::ostream& out,
             buf.append(",\n      \"hits\": []\n    }");
             if (is_fragment || qi + 1 < query_order.size()) buf.push_back(',');
             buf.push_back('\n');
-            write_block_if_full(out, buf);
-            continue;
+            return;
         }
         const auto& qhits = by_query[qid];
         buf.append("    {\n      \"qseqid\": ");
@@ -289,44 +375,44 @@ static void write_results_json_inner(std::ostream& out,
             buf.append("\n        }");
             if (hi + 1 < qhits.size()) buf.push_back(',');
             buf.push_back('\n');
-            write_block_if_full(out, buf);
         }
         buf.append("      ]\n    }");
         if (is_fragment || qi + 1 < query_order.size()) buf.push_back(',');
         buf.push_back('\n');
-        write_block_if_full(out, buf);
-    }
-
-    write_block(out, buf);
+        },
+        [&](std::size_t qi) { return hits_of(query_order[qi]).size() + 1; });
 }
 
 void write_results_json(std::ostream& out,
                         const std::vector<OutputHit>& hits,
                         uint8_t mode,
-                        bool stage3_traceback) {
+                        bool stage3_traceback,
+                        int nthread) {
     out << "{\n  \"results\": [\n";
-    write_results_json_inner(out, hits, mode, stage3_traceback, false);
+    write_results_json_inner(out, hits, mode, stage3_traceback, false, nthread);
     out << "  ]\n}\n";
 }
 
 void write_results_json_fragment(std::ostream& out,
                                   const std::vector<OutputHit>& hits,
                                   uint8_t mode,
-                                  bool stage3_traceback) {
-    write_results_json_inner(out, hits, mode, stage3_traceback, true);
+                                  bool stage3_traceback,
+                                  int nthread) {
+    write_results_json_inner(out, hits, mode, stage3_traceback, true, nthread);
 }
 
 void write_results(std::ostream& out,
                    const std::vector<OutputHit>& hits,
                    OutputFormat fmt,
                    uint8_t mode,
-                   bool stage3_traceback) {
+                   bool stage3_traceback,
+                   int nthread) {
     switch (fmt) {
         case OutputFormat::kTsv:
-            write_results_tsv(out, hits, mode, stage3_traceback);
+            write_results_tsv(out, hits, mode, stage3_traceback, nthread);
             break;
         case OutputFormat::kJson:
-            write_results_json(out, hits, mode, stage3_traceback);
+            write_results_json(out, hits, mode, stage3_traceback, nthread);
             break;
         case OutputFormat::kSam:
         case OutputFormat::kBam:
