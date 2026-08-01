@@ -3,10 +3,11 @@
 #include "io/output_coords.hpp"
 #include "io/text_format.hpp"
 #include "protocol/messages.hpp"
+#include "util/query_order.hpp"
 
 #include <algorithm>
-#include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <tbb/blocked_range.h>
@@ -253,37 +254,45 @@ static void write_results_json_inner(std::ostream& out,
                                       int nthread) {
     const char* s1name = kStage1ScoreName;
 
-    // Group hits by qseqid (preserve order of first appearance)
-    std::vector<std::string> query_order;
-    std::map<std::string, std::vector<const OutputHit*>> by_query;
-    std::map<std::string, const OutputHit*> by_query_skip; // first skip marker per query
-    for (const auto& h : hits) {
-        if (by_query.find(h.qseqid) == by_query.end() &&
-            by_query_skip.find(h.qseqid) == by_query_skip.end()) {
-            query_order.push_back(h.qseqid);
+    // Group hits by qseqid, keeping the order of first appearance.  Each
+    // query owns the slice [query_begin[qi], query_begin[qi] + hit_count[qi])
+    // of `query_hits`; a query's hits need not be contiguous in `hits`.
+    QueryOrder qorder;
+    std::vector<uint32_t> group_of(hits.size());
+    std::vector<uint32_t> hit_count;                // non-skip hits per query
+    std::vector<const OutputHit*> skip_of;          // first skip marker per query
+    for (std::size_t i = 0; i < hits.size(); ++i) {
+        const uint32_t g = qorder.id_of(hits[i].qseqid);
+        group_of[i] = g;
+        if (g == hit_count.size()) {
+            hit_count.push_back(0);
+            skip_of.push_back(nullptr);
         }
-        if (h.skip_reason != 0) {
-            if (by_query_skip.find(h.qseqid) == by_query_skip.end())
-                by_query_skip[h.qseqid] = &h;
+        if (hits[i].skip_reason != 0) {
+            if (skip_of[g] == nullptr) skip_of[g] = &hits[i];
         } else {
-            by_query[h.qseqid].push_back(&h);
+            ++hit_count[g];
         }
     }
 
-    // Look up by find() rather than operator[]: the formatting below runs
-    // concurrently and must not touch the map.
-    const std::vector<const OutputHit*> no_hits;
-    auto hits_of = [&](const std::string& qid) -> const std::vector<const OutputHit*>& {
-        auto it = by_query.find(qid);
-        return it == by_query.end() ? no_hits : it->second;
-    };
+    const std::size_t nqueries = hit_count.size();
+    std::vector<uint32_t> query_begin(nqueries + 1, 0);
+    for (std::size_t g = 0; g < nqueries; ++g)
+        query_begin[g + 1] = query_begin[g] + hit_count[g];
+    std::vector<const OutputHit*> query_hits(query_begin[nqueries]);
+    {
+        std::vector<uint32_t> fill(query_begin.begin(), query_begin.end() - 1);
+        for (std::size_t i = 0; i < hits.size(); ++i) {
+            if (hits[i].skip_reason != 0) continue;
+            query_hits[fill[group_of[i]]++] = &hits[i];
+        }
+    }
 
-    write_items(out, 0, query_order.size(), hits.size(), nthread,
+    write_items(out, 0, nqueries, hits.size(), nthread,
         [&](std::string& buf, std::size_t qi) {
-        const auto& qid = query_order[qi];
-        auto skip_it = by_query_skip.find(qid);
-        if (skip_it != by_query_skip.end() && hits_of(qid).empty()) {
-            const OutputHit* sk = skip_it->second;
+        const std::string_view qid = qorder.qseqids()[qi];
+        if (skip_of[qi] != nullptr && hit_count[qi] == 0) {
+            const OutputHit* sk = skip_of[qi];
             const bool failed = (sk->skip_reason == kFailHttpJob);
             buf.append("    {\n      \"qseqid\": ");
             json_escape_into(buf, qid);
@@ -301,16 +310,17 @@ static void write_results_json_inner(std::ostream& out,
                 json_escape_into(buf, sk->skip_detail);
             }
             buf.append(",\n      \"hits\": []\n    }");
-            if (is_fragment || qi + 1 < query_order.size()) buf.push_back(',');
+            if (is_fragment || qi + 1 < nqueries) buf.push_back(',');
             buf.push_back('\n');
             return;
         }
-        const auto& qhits = by_query[qid];
+        const std::size_t nhits = hit_count[qi];
+        const OutputHit* const* qhits = query_hits.data() + query_begin[qi];
         buf.append("    {\n      \"qseqid\": ");
         json_escape_into(buf, qid);
         buf.append(",\n      \"status\": \"ok\"");
         buf.append(",\n      \"hits\": [\n");
-        for (size_t hi = 0; hi < qhits.size(); hi++) {
+        for (std::size_t hi = 0; hi < nhits; hi++) {
             const auto* h = qhits[hi];
             const OutputCoords c = blast_coords(*h);
             buf.append("        {\n");
@@ -380,14 +390,14 @@ static void write_results_json_inner(std::ostream& out,
             buf.append("          \"volume\": ");
             append_uint(buf, h->volume);
             buf.append("\n        }");
-            if (hi + 1 < qhits.size()) buf.push_back(',');
+            if (hi + 1 < nhits) buf.push_back(',');
             buf.push_back('\n');
         }
         buf.append("      ]\n    }");
-        if (is_fragment || qi + 1 < query_order.size()) buf.push_back(',');
+        if (is_fragment || qi + 1 < nqueries) buf.push_back(',');
         buf.push_back('\n');
         },
-        [&](std::size_t qi) { return hits_of(query_order[qi]).size() + 1; });
+        [&](std::size_t qi) { return hit_count[qi] + std::size_t{1}; });
 }
 
 void write_results_json(std::ostream& out,

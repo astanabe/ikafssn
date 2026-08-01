@@ -616,6 +616,108 @@ static void test_windows_line_endings() {
     CHECK(results[0].sseqid == "A1");
 }
 
+// The JSON writer emits one object per qseqid, in the order the queries first
+// appear, and each object carries that query's hits in input order — even when
+// the hits of one query are not contiguous.
+static void test_json_query_first_appearance_order() {
+    std::fprintf(stderr, "-- test_json_query_first_appearance_order\n");
+
+    auto make = [](const char* q, const char* s) {
+        OutputHit h;
+        h.qseqid = q; h.sseqid = s; h.sstrand = '+';
+        h.qstart = 0; h.qend = 10; h.qlen = 10;
+        h.sstart = 0; h.send = 10; h.slen = 100;
+        h.coverscore = 1; h.chainscore = 2; h.volume = 0;
+        return h;
+    };
+    std::vector<OutputHit> hits{make("qB", "sB1"), make("qA", "sA1"),
+                                make("qB", "sB2")};
+
+    std::ostringstream oss;
+    write_results_json(oss, hits, /*mode=*/2, /*stage3_traceback=*/false);
+    const std::string out = oss.str();
+    const std::size_t npos = std::string::npos;
+
+    const std::size_t p_qb = out.find("\"qseqid\": \"qB\"");
+    const std::size_t p_qa = out.find("\"qseqid\": \"qA\"");
+    CHECK(p_qb != npos);
+    CHECK(p_qa != npos);
+    if (p_qb == npos || p_qa == npos) return;
+    // Two objects, qB's first: the lexicographic order would put qA first.
+    CHECK(p_qb < p_qa);
+    CHECK(out.find("\"qseqid\": \"qB\"", p_qb + 1) == npos);
+    CHECK(out.find("\"qseqid\": \"qA\"", p_qa + 1) == npos);
+
+    const std::size_t p_sb1 = out.find("\"sseqid\": \"sB1\"");
+    const std::size_t p_sb2 = out.find("\"sseqid\": \"sB2\"");
+    const std::size_t p_sa1 = out.find("\"sseqid\": \"sA1\"");
+    CHECK(p_sb1 != npos);
+    CHECK(p_sb2 != npos);
+    CHECK(p_sa1 != npos);
+    if (p_sb1 == npos || p_sb2 == npos || p_sa1 == npos) return;
+    // qB's non-adjacent hits are merged into its one object, in input order.
+    CHECK(p_qb < p_sb1);
+    CHECK(p_sb1 < p_sb2);
+    CHECK(p_sb2 < p_qa);
+    CHECK(p_qa < p_sa1);
+}
+
+// A skip marker only turns into a "skipped" object when the query produced no
+// hits at all; otherwise the query is reported as searched.
+static void test_json_skip_and_hit_same_query() {
+    std::fprintf(stderr, "-- test_json_skip_and_hit_same_query\n");
+
+    OutputHit skip;
+    skip.qseqid = "qA";
+    skip.qlen = 30;
+    skip.sstrand = '*';
+    skip.skip_reason = ikafssn::kSkipQueryTooShort;
+    skip.skip_detail = "too short";
+
+    OutputHit hit_b;
+    hit_b.qseqid = "qB"; hit_b.sseqid = "sB"; hit_b.sstrand = '+';
+    hit_b.qstart = 0; hit_b.qend = 10; hit_b.qlen = 10;
+    hit_b.sstart = 0; hit_b.send = 10; hit_b.slen = 100;
+    hit_b.volume = 0;
+
+    OutputHit hit_a = hit_b;
+    hit_a.qseqid = "qA";
+    hit_a.sseqid = "sA";
+
+    const std::size_t npos = std::string::npos;
+    {
+        std::vector<OutputHit> hits{skip, hit_b, hit_a};
+        std::ostringstream oss;
+        write_results_json(oss, hits, /*mode=*/2, /*stage3_traceback=*/false);
+        const std::string out = oss.str();
+        const std::size_t p_qa = out.find("\"qseqid\": \"qA\"");
+        const std::size_t p_qb = out.find("\"qseqid\": \"qB\"");
+        CHECK(p_qa != npos);
+        CHECK(p_qb != npos);
+        if (p_qa == npos || p_qb == npos) return;
+        // qA is first because its skip marker came first, and it reports the
+        // hit it did produce.
+        CHECK(p_qa < p_qb);
+        CHECK(out.find("\"status\": \"skipped\"") == npos);
+        CHECK(out.find("\"sseqid\": \"sA\"") != npos);
+    }
+    {
+        std::vector<OutputHit> hits{skip, hit_b};
+        std::ostringstream oss;
+        write_results_json(oss, hits, /*mode=*/2, /*stage3_traceback=*/false);
+        const std::string out = oss.str();
+        const std::size_t p_qa = out.find("\"qseqid\": \"qA\"");
+        const std::size_t p_qb = out.find("\"qseqid\": \"qB\"");
+        const std::size_t p_sk = out.find("\"status\": \"skipped\"");
+        CHECK(p_qa != npos);
+        CHECK(p_qb != npos);
+        CHECK(p_sk != npos);
+        if (p_qa == npos || p_qb == npos || p_sk == npos) return;
+        CHECK(p_qa < p_qb);
+        CHECK(p_sk < p_qb);
+    }
+}
+
 int main() {
     g_test_dir = "/tmp/ikafssn_result_reader_test";
     std::filesystem::create_directories(g_test_dir);
@@ -631,6 +733,8 @@ int main() {
     test_roundtrip_mode3_traceback();
     test_numeric_field_formatting();
     test_json_string_escaping();
+    test_json_query_first_appearance_order();
+    test_json_skip_and_hit_same_query();
     test_writer_thread_count_invariance();
     test_writer_parallel_chunking();
     test_header_reordered_columns();
