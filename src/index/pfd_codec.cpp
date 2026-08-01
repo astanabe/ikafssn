@@ -10,10 +10,9 @@
 //   x86_64 : sse42 / avx2 / avx512bw / avx512vbmi2
 //   aarch64: neon
 //
-// On aarch64 the ikafssn_pfd_neon library uses SIMDe
-// (https://github.com/simd-everywhere/simde) to translate FastPFor's
-// SSE intrinsics into NEON; SVE / SVE2 capable CPUs route to the same
-// neon tier.
+// On aarch64 the ikafssn_pfd_neon library maps the SSE intrinsics onto
+// native NEON through FastPFor's own headers/fastpfor_neon.h; SVE / SVE2
+// capable CPUs route to the same neon tier.
 
 #include "index/pfd_codec.hpp"
 #include "util/simd_dispatch.hpp"

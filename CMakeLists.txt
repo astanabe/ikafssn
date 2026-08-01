@@ -277,7 +277,7 @@ endif()
 
 # --- FastPFor (per-tier object libraries for runtime dispatch) ---
 #
-# FastPFor 0.4.0 ships with FASTPFOR_SIMD_MODE = "native" by default,
+# FastPFor ships with FASTPFOR_SIMD_MODE = "native" by default,
 # which bakes the build host's -march into the static archive —
 # incompatible with ikafssn's runtime SIMD dispatch policy.  We
 # side-step the upstream build entirely by populating the source tree
@@ -299,11 +299,18 @@ endif()
 # is avoided by remapping the namespace at compile time via
 # `-DFastPForLib=FastPForLib_<tier>`.  pfd_codec.cpp's dispatcher
 # selects the right per-tier entry points at first use.
+#
+# On aarch64, FastPFor's headers/common.h pulls in headers/fastpfor_neon.h,
+# which maps the SSE intrinsics FastPFor uses onto native NEON instructions.
+# No emulation layer is fetched or needed.  SVE / SVE2 capable CPUs are NOT
+# given a separate tier object — that header targets NEON only, so
+# pfd_codec.cpp's dispatcher routes any aarch64 SimdCap >= NEON (including
+# SVE / SVE2) to the single ikafssn_pfd_neon tier object.
 include(FetchContent)
 FetchContent_Declare(
     fastpfor
-    URL      https://github.com/lemire/FastPFor/archive/refs/tags/v0.4.0.tar.gz
-    URL_HASH SHA256=94c15a3e182c4f4ac0551cdd4c1afdb8465d337293a637c12483d0da026d75af
+    URL      https://github.com/fast-pack/FastPFOR/archive/refs/tags/v0.5.0.tar.gz
+    URL_HASH SHA256=d72f61fdef11d5293a4506350eaba3d293b94e955e2b65c7b2558c2cdad8b32c
 )
 FetchContent_GetProperties(fastpfor)
 if(NOT fastpfor_POPULATED)
@@ -314,31 +321,6 @@ endif()
 
 set(FASTPFOR_SRC_DIR "${fastpfor_SOURCE_DIR}")
 set(FASTPFOR_INC_DIR "${FASTPFOR_SRC_DIR}/headers")
-
-# --- SIMDe (AArch64 NEON support for FastPFor) ---
-#
-# FastPFor's headers/common.h has an aarch64 path that requires
-# <simde/x86/sse4.1.h>; SIMDe (https://github.com/simd-everywhere/simde)
-# is the upstream-blessed SSE/AVX → NEON emulation layer.  Populated
-# only on aarch64 builds.  The pinned commit matches the one FastPFor
-# 0.4.0's cmake_modules/simde.cmake uses.
-#
-# SVE / SVE2 capable CPUs are NOT given a separate FastPFor tier object:
-# SIMDe translates SSE intrinsics into NEON only.  pfd_codec.cpp's
-# dispatcher routes any aarch64 SimdCap >= NEON (including SVE / SVE2)
-# to the single ikafssn_pfd_neon tier object.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
-    FetchContent_Declare(
-        simde
-        URL      https://github.com/simd-everywhere/simde/archive/c6ddddc4a5bee9913b60de6757227aa078192663.tar.gz
-        URL_HASH SHA256=8e83d4812476598a77a4a3c633c37f277040a6bbf08fd1a9667f4655b4deff01
-    )
-    FetchContent_GetProperties(simde)
-    if(NOT simde_POPULATED)
-        FetchContent_Populate(simde)
-    endif()
-    set(SIMDE_INC_DIR "${simde_SOURCE_DIR}")
-endif()
 
 # FastPFor TUs we compile per tier.  Only the bitpacker primitives are
 # included — pfd_codec_tier.cpp drives `simdpackwithoutmask` /
@@ -358,7 +340,7 @@ set(IKAFSSN_FASTPFOR_SOURCES
 function(ikafssn_add_pfd_tier_object TIER)
     set(_options)
     set(_one)
-    set(_multi MARCH_FLAGS INCLUDE_DIRS EXTRA_DEFINES)
+    set(_multi MARCH_FLAGS)
     cmake_parse_arguments(ARG "${_options}" "${_one}" "${_multi}" ${ARGN})
 
     set(_target ikafssn_pfd_${TIER})
@@ -370,7 +352,6 @@ function(ikafssn_add_pfd_tier_object TIER)
         ${FASTPFOR_INC_DIR}
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_BINARY_DIR}/generated
-        ${ARG_INCLUDE_DIRS}
     )
     target_compile_options(${_target} PRIVATE
         ${ARG_MARCH_FLAGS}
@@ -388,7 +369,6 @@ function(ikafssn_add_pfd_tier_object TIER)
     target_compile_definitions(${_target} PRIVATE
         FastPForLib=FastPForLib_${TIER}
         IKAFSSN_PFD_TIER_NAME=${TIER}
-        ${ARG_EXTRA_DEFINES}
     )
     set_property(TARGET ${_target} PROPERTY POSITION_INDEPENDENT_CODE ON)
 endfunction()
@@ -416,16 +396,13 @@ else()
 endif()
 
 # AArch64 PForDelta tier.  A single tier object covers NEON / SVE /
-# SVE2 capable CPUs alike — SIMDe's SSE → NEON translation is the only
-# emulation path used here.  The MARCH_FLAGS slot is left empty so the
-# compiler's default ISA (or whatever cmake/aarch64.toolchain.cmake /
-# IKAFSSN_AARCH64_MARCH supplies via CMAKE_CXX_FLAGS_INIT) carries
-# through unchanged.
+# SVE2 capable CPUs alike, since FastPFor's NEON header targets NEON
+# only.  The MARCH_FLAGS slot is left empty so the compiler's default
+# ISA (or whatever cmake/aarch64.toolchain.cmake / IKAFSSN_AARCH64_MARCH
+# supplies via CMAKE_CXX_FLAGS_INIT) carries through unchanged.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
     set(IKAFSSN_HAS_ARM_PFD TRUE)
-    ikafssn_add_pfd_tier_object(neon
-        INCLUDE_DIRS  ${SIMDE_INC_DIR}
-        EXTRA_DEFINES SIMDE_ENABLE_NATIVE_ALIASES)
+    ikafssn_add_pfd_tier_object(neon)
 else()
     set(IKAFSSN_HAS_ARM_PFD FALSE)
 endif()
