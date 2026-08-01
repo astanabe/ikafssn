@@ -8,6 +8,7 @@
 
 #include <charconv>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <string_view>
 
@@ -27,11 +28,14 @@ inline void append_int(std::string& buf, int64_t v) {
 
 // Six significant digits, matching what std::ostream's default precision
 // produces for a double (its num_put always formats in the C locale).
+// This one goes through snprintf rather than std::to_chars because libc++
+// marks the floating-point to_chars unavailable below macOS 13.3; "%.6g" is
+// the conversion to_chars(general, 6) is specified against, and nothing here
+// calls setlocale, so both give the same bytes on every target.
 inline void append_double_g6(std::string& buf, double v) {
     char tmp[32];
-    auto r = std::to_chars(tmp, tmp + sizeof(tmp), v,
-                           std::chars_format::general, 6);
-    buf.append(tmp, static_cast<size_t>(r.ptr - tmp));
+    const int n = std::snprintf(tmp, sizeof(tmp), "%.6g", v);
+    if (n > 0) buf.append(tmp, static_cast<size_t>(n));
 }
 
 inline void append_str(std::string& buf, std::string_view s) {
