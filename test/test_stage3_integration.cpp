@@ -747,6 +747,70 @@ static void test_stage3_trims_query_terminal_gaps() {
     CHECK_EQ(c.send, 300u);
 }
 
+// Two hits of one (qseqid, sseqid, sstrand) group whose context windows make
+// their alignments overlap.  The lower-chainscore hit is clamped to end where
+// the kept one starts, so the surviving intervals meet exactly: the clamp
+// boundary is the kept hit's sstart in the same half-open space the hits use.
+static void test_stage3_overlap_resolution() {
+    std::fprintf(stderr, "-- test_stage3_overlap_resolution\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+    std::string full = db.get_sequence(oid);
+    CHECK(full.size() >= 470);
+    db.close();
+    if (oid == UINT32_MAX || full.size() < 470) return;
+    std::string query = full.substr(100, 200);
+
+    auto make_hit = [&](uint32_t sstart, uint32_t send, uint32_t chainscore) {
+        OutputHit h;
+        h.qseqid = "q";
+        h.sseqid = ACC_FJ;
+        h.sstrand = '+';
+        h.sstart = sstart;
+        h.send = send;
+        h.oid = oid;
+        h.volume = 0;
+        h.qlen = static_cast<uint32_t>(query.size());
+        h.chainscore = chainscore;
+        return h;
+    };
+    // The weaker hit covers the whole query; the stronger one covers its tail.
+    std::vector<OutputHit> hits{make_hit(100, 300, 100), make_hit(250, 450, 200)};
+    std::vector<FastaRecord> queries{{"q", query}};
+
+    Stage3Config cfg;
+    cfg.traceback = true;
+    cfg.gapopen = 10;
+    cfg.gapext = 1;
+    Logger logger(Logger::kError);
+
+    auto out = run_stage3(hits, queries, g_testdb_path, cfg,
+                          /*context_is_ratio=*/false, 0.0, /*context_abs=*/20,
+                          logger);
+    CHECK_EQ(out.size(), 2u);
+    if (out.size() != 2) return;
+    std::sort(out.begin(), out.end(),
+              [](const OutputHit& a, const OutputHit& b) { return a.sstart < b.sstart; });
+
+    CHECK_EQ(out[0].sstart, 100u);
+    CHECK_EQ(out[0].send, 230u);
+    CHECK_EQ(out[0].qstart, 0u);
+    CHECK_EQ(out[0].qend, 130u);
+    CHECK(out[0].cigar == "130=");
+
+    CHECK_EQ(out[1].sstart, 230u);
+    CHECK_EQ(out[1].send, 300u);
+    CHECK_EQ(out[1].qstart, 130u);
+    CHECK_EQ(out[1].qend, 200u);
+    CHECK(out[1].cigar == "70=");
+
+    // Half-open: they meet without overlapping and without leaving a gap.
+    CHECK_EQ(out[0].send, out[1].sstart);
+}
+
 int main() {
     check_ssu_available();
 
@@ -763,6 +827,7 @@ int main() {
     test_stage3_blast_coordinates();
     test_stage3_trims_subject_terminal_gaps();
     test_stage3_trims_query_terminal_gaps();
+    test_stage3_overlap_resolution();
 
     // Cleanup
     std::filesystem::remove_all(g_test_dir);
