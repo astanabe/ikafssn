@@ -25,11 +25,10 @@
 //             10 = partition      — strictly more than freq_threshold_part
 //             11 = reserved
 //
-//         There is no fixed header: the posting list body starts at the
-//         kind map and every count is derived at decode time
-//         (partition_count / short1_count / short2_count from
-//         popcount_kinds, short2_position_count by summing the u8
-//         occ_count[] array).  Layout on disk:
+//         Posting list layout on disk.  No fixed header: the body starts
+//         at the kind map and the counts are derived at decode time
+//         (partition_count / short1_count / short2_count via
+//         popcount_kinds, short2_position_count by summing occ_count[]).
 //           [2-bit kind map: ceil(distinct_count*2/8) bytes]
 //           repeated partition_count times in .kix sid order:
 //             [u32 occ_count]                     — > freq_threshold_part
@@ -47,16 +46,14 @@
 //                if tail_count > 0:
 //                  [u32 tail_min][u8 tail_b][bitpacked body: ceil(tail_count*tail_b/8) B]
 //
-//            Decoding is candidate-set-driven and requires the decoded
-//            .kix distinct seq_id array as input: a selection pass
-//            intersects that array with the (sorted) candidate list and
-//            resolves each match to a (kind, rank) pair, then only the
-//            partition groups and FOR blocks holding a selected rank are
-//            decoded — the rest are walked past through their
-//            self-describing headers.  The result is emitted as a sparse
-//            CSR over the candidates that the posting list actually
-//            contains (see open_stream_kpx_for_candidates and
-//            PosDecodeScratch).
+//            Decoding is candidate-set-driven and needs the decoded .kix
+//            distinct seq_id array: a selection pass intersects it with
+//            the sorted candidate list and resolves each match to a
+//            (kind, rank) pair; only the partition groups and FOR blocks
+//            holding a selected rank are decoded, the rest are walked
+//            past through their self-describing headers.  The result is a
+//            sparse CSR over the candidates the posting list contains
+//            (see open_stream_kpx_for_candidates and PosDecodeScratch).
 
 #include <cstdint>
 #include <cstddef>
@@ -70,9 +67,8 @@ namespace ikafssn::pfd {
 // CompositeCodec<SIMDFastPFor<4>, VariableByte>; per-block element count is 128).
 inline constexpr int kPfdBlockSize = 128;
 
-// Posting list header byte size for .kix.  The fixed-size .kix posting
-// list header is the leading `[u32 distinct_count]`.  .kpx has no fixed
-// header at all, so this constant only describes .kix.
+// .kix posting list header: the leading `[u32 distinct_count]`.
+// .kpx posting lists have no header, so this describes .kix only.
 inline constexpr size_t kPostingListHeaderBytes = 4;
 
 // === posting-list-level encode wrappers ===
@@ -131,8 +127,8 @@ bool open_stream_kix(const uint8_t* posting_list, size_t bytes, StreamCtx& ctx);
 // does no per-call allocation.
 struct PosDecodeScratch {
     // One entry per candidate the posting list contains, in ascending
-    // candidate-index order.  The selection pass fills this before any
-    // stream is touched, and everything downstream is driven by it.
+    // candidate-index order.  Filled by the selection pass before any
+    // stream is touched; everything downstream is driven by it.
     struct Selected {
         uint32_t candidate_idx;  // index into the caller's candidate array
         uint32_t rank;           // rank of the entry within its own kind
@@ -140,18 +136,17 @@ struct PosDecodeScratch {
     };
     std::vector<Selected> selected;
 
-    // Element runs of the FOR stream currently being decoded that the
-    // selection asked for (ascending, disjoint).  Rebuilt per stream.
+    // Element runs the selection asked for in the FOR stream being decoded
+    // (ascending, disjoint).  Rebuilt per stream.
     struct Run {
         uint32_t first;          // first element index in the stream
-        uint32_t count;          // consecutive elements from `first`
+        uint32_t length;         // consecutive elements from `first`
     };
     std::vector<Run> selected_runs;
 
-    // Positions decoded for the selected entries only — entries no
-    // candidate asked for are never materialised.  The two short buffers
-    // are grown to a high-water mark, so their size() overstates the
-    // current call; the assembly walks them in selection order instead.
+    // Positions of the selected entries only.  The two short buffers grow
+    // to a high-water mark, so size() overstates the current call; the
+    // assembly walks them in selection order instead.
     std::vector<uint32_t> selected_partition_positions;
     std::vector<uint32_t> selected_partition_offsets;  // n selected part. + 1
     std::vector<uint32_t> selected_short1_positions;   // one per selected entry
@@ -183,11 +178,9 @@ struct PosDecodeScratch {
 // not listed.  Returns false on corrupt input, in which case the CSR is
 // partially filled and must not be read.
 //
-// Only the range actually read is validated.  Regions the candidate set
-// never asks for are walked past through their self-describing headers or
-// not visited at all, so a corrupt posting list that no candidate hits
-// still returns true.  It cannot yield a wrong result, because nothing
-// from that region reaches the output.
+// Only what is actually read is validated: regions no candidate asks for
+// are walked past or never visited, so a corrupt posting list that no
+// candidate hits still returns true.  Nothing from it reaches the output.
 bool open_stream_kpx_for_candidates(
     const uint8_t* posting_list, size_t bytes,
     const uint32_t* kix_decoded, size_t kix_count,

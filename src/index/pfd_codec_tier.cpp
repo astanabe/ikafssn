@@ -527,9 +527,8 @@ namespace {
 using Run      = ikafssn::pfd::PosDecodeScratch::Run;
 using Selected = ikafssn::pfd::PosDecodeScratch::Selected;
 
-// Below this gap the range popcount is not worth entering: its bulk loop
-// needs 32 entries aligned to a byte boundary before it does any work, so
-// a shorter run only pays the alignment prologue and the call.
+// The range popcount's bulk loop needs 32 byte-aligned entries before it
+// does any work, so a shorter gap only pays its prologue and the call.
 constexpr std::uint32_t kRangePopcountMinGap = 32;
 
 // First index in [from, n) whose value is >= target, located by exponential
@@ -622,8 +621,7 @@ bool skip_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
 // Decode only the elements covered by `runs` out of a FOR stream of `count`
 // elements, writing them to `out` in stream order.  `runs` must be ascending,
 // disjoint and inside [0, count), and `out` must hold their total length.
-// Blocks holding no selected element are walked past through their header;
-// the stream tail counts as one block.
+// Blocks holding no selected element are walked past through their header.
 bool decode_for_stream_selected(const std::uint8_t*& p, const std::uint8_t* end,
                                 std::uint32_t count,
                                 const Run* runs, std::size_t n_runs,
@@ -638,7 +636,7 @@ bool decode_for_stream_selected(const std::uint8_t*& p, const std::uint8_t* end,
 
     // Drop the runs that end before this block starts.
     auto seek_runs = [&](std::uint32_t base) {
-        while (ri < n_runs && runs[ri].first + runs[ri].count <= base) {
+        while (ri < n_runs && runs[ri].first + runs[ri].length <= base) {
             ri++;
             consumed = 0;
         }
@@ -646,7 +644,7 @@ bool decode_for_stream_selected(const std::uint8_t*& p, const std::uint8_t* end,
     // Emit every selected element of the decoded block spanning [base, lim).
     auto emit = [&](std::uint32_t base, std::uint32_t lim) {
         while (ri < n_runs && runs[ri].first < lim) {
-            const std::uint32_t run_end = runs[ri].first + runs[ri].count;
+            const std::uint32_t run_end = runs[ri].first + runs[ri].length;
             const std::uint32_t hi = run_end < lim ? run_end : lim;
             for (std::uint32_t e = runs[ri].first + consumed; e < hi; e++) {
                 *out++ = buf[e - base];
@@ -720,9 +718,6 @@ bool open_stream_kpx_for_candidates(
 
     if (n_candidates == 0) return true;
     if (bytes == 0) return true;
-    // Body starts directly at the 2-bit kind map; per-kind counts are
-    // derived via popcount_kinds, and short2_position_count by summing
-    // the u8 occ_count[] array.
     const std::uint32_t distinct_count = static_cast<std::uint32_t>(kix_count);
     if (distinct_count == 0) return true;
 
@@ -742,9 +737,9 @@ bool open_stream_kpx_for_candidates(
     if (distinct_count != partition_count + short1_count + short2_count) return false;
 
     // Selection pass: galloping intersection of the .kix distinct sid array
-    // with the candidate array.  Both are ascending, so the side that lags
-    // jumps ahead by exponential probing and the kind map is only resolved
-    // one entry at a time where the two actually meet.
+    // with the candidate array.  The lagging side jumps ahead by exponential
+    // probing, so the kind map is resolved one entry at a time only where
+    // the two meet.
     auto& selected = scratch.selected;
     selected.clear();
     std::size_t i = 0, ci = 0;
@@ -777,8 +772,7 @@ bool open_stream_kpx_for_candidates(
     }
     scratch.skipped_kind_entries += distinct_count - prev_i;
 
-    // No candidate is in this posting list: nothing downstream can produce
-    // output, so no stream is touched at all.
+    // Nothing here can produce output, so no stream is touched at all.
     if (selected.empty()) return true;
 
     // Partition groups.  Every group header has to be read to find the next
@@ -818,12 +812,11 @@ bool open_stream_kpx_for_candidates(
     auto& short1_pos = scratch.selected_short1_positions;
     auto& runs = scratch.selected_runs;
     if (short1_count > 0 && n_sel_short1 > 0) {
-        // Grown to a high-water mark and addressed through the selection
-        // counts, so a shorter posting list never re-zeroes the buffer.
+        // High-water mark, so a shorter posting list never re-zeroes it.
         if (short1_pos.size() < n_sel_short1) short1_pos.resize(n_sel_short1);
         if (n_sel_short1 == short1_count) {
-            // Every entry is wanted.  Running whole blocks straight through
-            // beats selecting inside them, and no run list is needed at all.
+            // Everything is wanted: running whole blocks straight through
+            // beats selecting inside them, and needs no run list.
             if (!decode_for_stream(p, end, short1_count, short1_pos.data())) return false;
         } else {
             runs.clear();
@@ -844,10 +837,9 @@ bool open_stream_kpx_for_candidates(
     }
 
     // short_occ_ge2 sub-bucket: u8 occ_count[] then the FOR stream.  The
-    // occ_count[] array is read in full — the run of a selected entry starts
-    // at the prefix sum of every entry before it.  It is also the last
-    // region, so nothing needs it when no candidate selected a short_occ_ge2
-    // entry.
+    // occ_count[] array is read in full because a selected entry's run starts
+    // at the prefix sum of every entry before it.  Being the last region, it
+    // is skipped outright when no candidate selected one of its entries.
     auto& short2_pos = scratch.selected_short2_positions;
     auto& short2_occ = scratch.short2_occ;
     if (n_sel_short2 > 0) {
