@@ -62,8 +62,12 @@ Auxiliary terms that follow from the canonical vocabulary:
 - **dictionary entry** — one offset value in the dictionary array (`offsets[i]`).
 - **posting list header** — the fixed-size metadata at the front of a posting list.
 - **posting list body** — the variable-size encoded content of a posting list after its header.
-- **parent-relative coordinates** — sstart / send expressed as 1-based positions within the **parent**. After Stage 2 dedup, every chain hit is reported in this coordinate space (never in fragment-relative form).
-- **fragment-relative coordinates** — sstart / send expressed as 1-based positions within the **fragment**. Internal to the orchestrator: Stage 2 chains are produced in this space and shifted by `(fragment_start - 1)` at the orchestrator → output / response boundary.
+- **parent-relative coordinates** — sstart / send expressed as positions within the **parent**. Internally 0-based half-open; 1-based inclusive in TSV / JSON output. After Stage 2 dedup, every chain hit is reported in this coordinate space (never in fragment-relative form).
+- **fragment-relative coordinates** — sstart / send expressed as positions within the **fragment**, internally 0-based half-open. Internal to the orchestrator: Stage 2 chains are produced in this space and shifted by `(fragment_start - 1)` at the orchestrator → output / response boundary.
+- **query-strand-relative coordinates** — qstart / qend expressed as positions within the sequence the ext_job actually scanned: the given query on the forward strand, its reverse complement on the reverse strand. **Internal representation only**, 0-based half-open.
+- **query-relative coordinates** — qstart / qend expressed as positions within the query sequence the user supplied, so `qstart` < `qend` always. **What the output carries**, 1-based inclusive.
+
+Output coordinates follow BLAST `-outfmt 6`: all four of qstart / qend / sstart / send are 1-based inclusive, qstart < qend on both strands, and a reverse-strand hit has sstart > send. The internal ↔ output conversion lives only in `src/io/output_coords.hpp` and is applied at the TSV / JSON writer and reader boundary. SAM / BAM is exempt — htslib's POS is 0-based and takes the internal sstart unchanged.
 
 A nucleotide sequence is **not** called a "document". Do not import that word from generic IR literature into this codebase. The term "sequence" stands on its own; **parent** and **fragment** are reserved for the index-side parent-OID / fragment distinction introduced in v10.
 

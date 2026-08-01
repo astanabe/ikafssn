@@ -455,7 +455,7 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
 
 **FASTA defline:** 各レコードは
 `>parent_accession:start-end query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`
-形式で出力されます。`start` / `end` は 1-based 包括の **親相対座標** で、左端のアクセッションは常に親 OID のもの（フラグメント由来の合成名は使われません）。ローカルパスでは `BlastDbReader::get_subsequence(parent_oid, start, end)` 経由でサブシーケンスを取得するため、染色体級の親でも要求された区間だけがデコードされ、OID 全体を読み込むことはありません。
+形式で出力されます。`start` / `end` は 1-based 包括の **親相対座標** で、左端のアクセッションは常に親 OID のもの（フラグメント由来の合成名は使われません）。検索出力の `sstart` / `send` とは異なり、この範囲は常に昇順です。`-` 鎖の行でも範囲は正鎖番号で同じ区間を指し、出力される配列がその逆相補になります。ローカルパスでは `BlastDbReader::get_subsequence(parent_oid, start, end)` 経由でサブシーケンスを取得するため、染色体級の親でも要求された区間だけがデコードされ、OID 全体を読み込むことはありません。
 
 ```
 ikafssnretrieve [options]
@@ -1135,7 +1135,15 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
 
 ## 出力形式
 
-**座標規約:** `sseqid` は **親 OID** のアクセッション (フラグメント由来の合成名は使われない)、`sstart` / `send` は 1-based の親相対位置、`slen` は親 OID の全長です。Stage 2 / Stage 3 の dedup によりフラグメント単位のチェインが畳み戻されるため、出力は `(qseqid, sseqid, sstrand, send, alnscore)` の組ごとに 1 行の正準ヒットのみを含みます。
+**座標規約:** TSV / JSON 出力は BLAST `-outfmt 6` に準拠します。
+
+- `qstart` / `qend` / `sstart` / `send` の 4 つはすべて **1-based 包括**です。
+- `qstart` / `qend` は **クエリ相対座標** (与えたクエリ配列上の位置) なので、どちらの鎖でも `qstart` < `qend` です。
+- `sstart` / `send` は正鎖番号での**親相対座標**ですが、アライメントの進行方向に並ぶため、逆鎖ヒット (`sstrand` が `-`) では **`sstart` > `send`** になります。
+
+`sseqid` は **親 OID** のアクセッション (フラグメント由来の合成名は使われない)、`slen` は親 OID の全長です。Stage 2 / Stage 3 の dedup によりフラグメント単位のチェインが畳み戻されるため、出力は `(qseqid, sseqid, sstrand, send, alnscore)` の組ごとに 1 行の正準ヒットのみを含みます。
+
+SAM / BAM 出力はこの規約に従いません。`POS` は htslib が扱う 0-based の最左座標であり、鎖によって入れ替わることはありません ([SAM/BAM 形式](#sambam-形式) を参照)。
 
 ### Tab 形式 (デフォルト)
 
@@ -1159,7 +1167,7 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
 # qseqid  sseqid  sstrand  qend  qlen  send  slen  coverscore  chainscore  alnscore  volume
 ```
 
-注: トレースバックなしでは正確なアライメント開始位置が得られないため、`qstart` と `sstart` は省略されます。
+注: トレースバックなしでは正確なアライメント開始位置が得られないため、`qstart` と `sstart` は省略されます。逆鎖ではアライメントの終端が subject 座標の小さい側になるため、この形式の `send` は traceback 形式が報告する 2 つの subject 座標のうち小さい方に対応します。
 
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
@@ -1180,10 +1188,10 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
         {
           "sseqid": "NC_001234.5",
           "sstrand": "+",
-          "qstart": 0,
+          "qstart": 1,
           "qend": 150,
           "qlen": 200,
-          "sstart": 1000,
+          "sstart": 1001,
           "send": 1150,
           "slen": 5000,
           "coverscore": 8,
@@ -1255,10 +1263,10 @@ Stage 3 のペアワイズアライメントで使用するスコア行列は `-
         {
           "sseqid": "NC_001234.5",
           "sstrand": "+",
-          "qstart": 0,
+          "qstart": 1,
           "qend": 150,
           "qlen": 200,
-          "sstart": 1000,
+          "sstart": 1001,
           "send": 1150,
           "slen": 5000,
           "coverscore": 8,
@@ -1286,10 +1294,10 @@ SAM レコードの構成:
 - **QNAME**: qseqid
 - **FLAG**: 0 (フォワード) / 16 (リバース)
 - **RNAME**: sseqid
-- **POS**: sstart + 1 (1-based)
+- **POS**: アライメント最左の親相対位置 (1-based)。どちらの鎖でもアライメントの subject 座標の**小さい方**であり、逆鎖で `send` と入れ替わる TSV / JSON の `sstart` とは異なります。
 - **MAPQ**: 255
-- **CIGAR**: 拡張 CIGAR (=/X/I/D 演算子)
-- **SEQ**: ギャップなしクエリ配列
+- **CIGAR**: 拡張 CIGAR (=/X/I/D 演算子)。常にリファレンスの向きです。
+- **SEQ**: ギャップなしクエリ配列。リファレンスの向きで出力されるため、FLAG 0x10 が立つ場合は SAM 仕様どおり与えたクエリの逆相補になります。
 - **QUAL**: * (利用不可)
 - **タグ**: `AS:i` (alnscore), `NM:i` (nnegative), `cs:i` (chainscore), `cv:i` (coverscore)
 

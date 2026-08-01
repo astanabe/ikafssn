@@ -468,7 +468,7 @@ Extract matched subsequences based on search results. Supports local BLAST DB ex
 
 **FASTA defline:** Each retrieved record is emitted as
 `>parent_accession:start-end query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`,
-with `start` / `end` 1-based and inclusive in **parent-relative coordinates** (the parent OID accession on the left, never a fragment-derived synthetic name). On the local path the sequence fetch is routed through `BlastDbReader::get_subsequence(parent_oid, start, end)` so chromosome-scale parents only decode the requested window instead of the whole OID.
+with `start` / `end` 1-based and inclusive in **parent-relative coordinates** (the parent OID accession on the left, never a fragment-derived synthetic name). Unlike the search output's `sstart` / `send`, this range always ascends: on a `-` strand row the range still names the same span in forward numbering and the emitted sequence is its reverse complement. On the local path the sequence fetch is routed through `BlastDbReader::get_subsequence(parent_oid, start, end)` so chromosome-scale parents only decode the requested window instead of the whole OID.
 
 ```
 ikafssnretrieve [options]
@@ -1145,7 +1145,15 @@ Score rules:
 
 ## Output Format
 
-**Coordinate convention:** `sseqid` is the **parent OID's** accession (never a fragment-derived synthetic name), `sstart` / `send` are 1-based parent-relative positions, and `slen` is the parent OID's full length. After Stage 2 / Stage 3 dedup folds per-fragment chains together, every row in the output describes one canonical hit per `(qseqid, sseqid, sstrand, send, alnscore)` tuple.
+**Coordinate convention:** TSV and JSON output follows BLAST `-outfmt 6`.
+
+- All four of `qstart` / `qend` / `sstart` / `send` are **1-based and inclusive**.
+- `qstart` / `qend` are **query-relative** — positions in the query sequence as given — so `qstart` < `qend` on both strands.
+- `sstart` / `send` are **parent-relative** in forward numbering but run in alignment order, so a reverse-strand hit (`sstrand` = `-`) has **`sstart` > `send`**.
+
+`sseqid` is the **parent OID's** accession (never a fragment-derived synthetic name) and `slen` is the parent OID's full length. After Stage 2 / Stage 3 dedup folds per-fragment chains together, every row in the output describes one canonical hit per `(qseqid, sseqid, sstrand, send, alnscore)` tuple.
+
+SAM / BAM output does not use this convention: its `POS` field is a 0-based leftmost coordinate carried by htslib and is never swapped by strand (see [SAM/BAM Format](#sambam-format)).
 
 ### Tab Format (default)
 
@@ -1169,7 +1177,7 @@ Tab-separated columns (the Stage 1 score column is always `coverscore`):
 # qseqid  sseqid  sstrand  qend  qlen  send  slen  coverscore  chainscore  alnscore  volume
 ```
 
-Note: `qstart` and `sstart` are omitted because accurate alignment start positions are unavailable without traceback.
+Note: `qstart` and `sstart` are omitted because accurate alignment start positions are unavailable without traceback. On the reverse strand the alignment's end is the *lower* subject coordinate, so this layout's `send` is the smaller of the two subject positions the traceback layout would report.
 
 **Mode 3, traceback=1** (`-mode 3 -stage3_traceback 1`):
 
@@ -1190,10 +1198,10 @@ Note: `qstart` and `sstart` are omitted because accurate alignment start positio
         {
           "sseqid": "NC_001234.5",
           "sstrand": "+",
-          "qstart": 0,
+          "qstart": 1,
           "qend": 150,
           "qlen": 200,
-          "sstart": 1000,
+          "sstart": 1001,
           "send": 1150,
           "slen": 5000,
           "coverscore": 8,
@@ -1265,10 +1273,10 @@ Note: `qstart` and `sstart` are omitted because accurate alignment start positio
         {
           "sseqid": "NC_001234.5",
           "sstrand": "+",
-          "qstart": 0,
+          "qstart": 1,
           "qend": 150,
           "qlen": 200,
-          "sstart": 1000,
+          "sstart": 1001,
           "send": 1150,
           "slen": 5000,
           "coverscore": 8,
@@ -1296,10 +1304,10 @@ SAM records contain:
 - **QNAME**: qseqid
 - **FLAG**: 0 (forward) or 16 (reverse)
 - **RNAME**: sseqid
-- **POS**: sstart + 1 (1-based)
+- **POS**: leftmost aligned parent-relative position, 1-based. This is the alignment's *lower* subject coordinate on both strands — unlike the TSV / JSON `sstart`, which swaps with `send` on the reverse strand.
 - **MAPQ**: 255
-- **CIGAR**: extended CIGAR with =/X/I/D operators
-- **SEQ**: ungapped query sequence
+- **CIGAR**: extended CIGAR with =/X/I/D operators, always in reference orientation
+- **SEQ**: ungapped query sequence in reference orientation, i.e. the reverse complement of the given query when FLAG 0x10 is set, as the SAM specification requires
 - **QUAL**: * (not available)
 - **Tags**: `AS:i` (alnscore), `NM:i` (nnegative), `cs:i` (chainscore), `cv:i` (coverscore)
 
