@@ -541,9 +541,8 @@ static void test_zero_match_skips_decode() {
 }
 
 // FOR blocks holding no selected element are walked past through their
-// header.  300 short_occ1 entries = 2 full blocks + a 44-element tail; both
-// candidates sit in the first block, so the second block and the tail are
-// skipped.
+// header.  300 short_occ1 entries = 2 full blocks + a 44-element tail, with
+// both candidates in the first block.
 static void test_for_block_skip() {
     int k = 5;
     uint32_t ts = table_size(k);

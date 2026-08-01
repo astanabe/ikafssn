@@ -301,11 +301,10 @@ endif()
 # selects the right per-tier entry points at first use.
 #
 # On aarch64, FastPFor's headers/common.h pulls in headers/fastpfor_neon.h,
-# which maps the SSE intrinsics FastPFor uses onto native NEON instructions.
-# No emulation layer is fetched or needed.  SVE / SVE2 capable CPUs are NOT
-# given a separate tier object — that header targets NEON only, so
-# pfd_codec.cpp's dispatcher routes any aarch64 SimdCap >= NEON (including
-# SVE / SVE2) to the single ikafssn_pfd_neon tier object.
+# which maps the SSE intrinsics it uses onto native NEON.  That header
+# targets NEON only, so SVE / SVE2 capable CPUs get no tier object of their
+# own: pfd_codec.cpp's dispatcher routes any aarch64 SimdCap >= NEON to the
+# single ikafssn_pfd_neon tier object.
 include(FetchContent)
 FetchContent_Declare(
     fastpfor

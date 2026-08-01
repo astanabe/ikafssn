@@ -20,8 +20,8 @@ public:
           bytes_(end && end >= data ? static_cast<std::size_t>(end - data) : 0) {}
 
     // Point at a new posting list without reconstructing the object.  The
-    // ctx_.decoded capacity is left intact so the next open_stream_kix can
-    // resize() in place instead of re-growing from zero.
+    // ctx_.decoded buffer is left intact for the next open_stream_kix to
+    // decode into.
     void reset(const uint8_t* data, const uint8_t* end) {
         data_ = data;
         bytes_ = (end && end >= data)

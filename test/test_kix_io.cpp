@@ -210,11 +210,10 @@ static void test_empty_postings() {
     std::remove(TEST_FILE.c_str());
 }
 
-// Delta reconstruction runs one vector at a time with a scalar tail, so a
-// posting list whose length is just below / at / just above a vector or a
-// block boundary is where a wrong lane count or a mis-seeded running total
-// shows up.  The gaps are deliberately uneven so every element depends on
-// every element before it.
+// The decoder reconstructs deltas a SIMD register at a time and finishes
+// the remainder element by element, so lengths around a register width or
+// a 128-element codec block catch a wrong lane count or a mis-seeded
+// running total.  Uneven gaps make every seq_id depend on all before it.
 static void test_delta_reconstruction_lengths() {
     int k = 7;
     uint8_t kmer_type = 0;
@@ -222,7 +221,6 @@ static void test_delta_reconstruction_lengths() {
 
     const std::vector<uint32_t> lengths = {1, 2, 3, 4, 5, 15, 16, 17,
                                            127, 128, 129, 1000};
-    CHECK(lengths.size() <= ts);
 
     // Distinct, strictly increasing seq_ids with an uneven gap pattern.
     std::vector<std::vector<uint32_t>> postings(ts);

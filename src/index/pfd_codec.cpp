@@ -11,7 +11,7 @@
 //   aarch64: neon
 //
 // On aarch64 the ikafssn_pfd_neon library maps the SSE intrinsics onto
-// native NEON through FastPFor's own headers/fastpfor_neon.h; SVE / SVE2
+// native NEON through FastPFor's headers/fastpfor_neon.h; SVE / SVE2
 // capable CPUs route to the same neon tier.
 
 #include "index/pfd_codec.hpp"

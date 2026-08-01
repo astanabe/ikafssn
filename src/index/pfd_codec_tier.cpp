@@ -470,17 +470,14 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
 
 namespace {
 
-// In-place cumulative sum over `n` u32 values, leaving p[0] as it is.
-//
-// The scan inside one vector is independent of every other vector, so the
-// only value crossing iterations is the running total: the per-element
-// dependency chain of `p[i] += p[i - 1]` is replaced by a fixed number of
-// shift-and-add steps per vector.
+// In-place cumulative sum over `n` u32 values; p[0] is left as it is.
+// The scan inside one SIMD register is self-contained, so the only value
+// crossing iterations is the running total.
 void prefix_sum_u32(std::uint32_t* p, std::uint32_t n) noexcept {
     std::uint32_t i = 0;
 #if defined(__AVX512F__)
-    // dst[j] = v[j - lanes] with zeros below: alignr concatenates
-    // [v : zero] and shifts right by (16 - lanes) dwords.
+    // dst[j] = v[j - lanes], zeros below: alignr concatenates [v : zero]
+    // and shifts right by (16 - lanes) dwords.
     const __m512i zero = _mm512_setzero_si512();
     const __m512i last_lane = _mm512_set1_epi32(15);
     __m512i carry = zero;
@@ -505,7 +502,7 @@ void prefix_sum_u32(std::uint32_t* p, std::uint32_t n) noexcept {
         carry = _mm_shuffle_epi32(v, 0xFF);
     }
 #endif
-    if (i == 0) i = 1;                       // shorter than one vector
+    if (i == 0) i = 1;                       // fewer values than one register
     for (; i < n; i++) p[i] += p[i - 1];
 }
 
@@ -546,9 +543,9 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
         codec_in_ptr = codec_in_scratch.data();
     }
 
-    // `decoded` grows to a high-water mark: its size() is never read — the
-    // valid range is [0, ctx.count) — so a shorter posting list reuses the
-    // buffer as it stands and the decode below overwrites what it needs.
+    // `decoded` grows to a high-water mark; the valid range is [0, ctx.count)
+    // and its size() is never read, so a shorter posting list just decodes
+    // over what is already there.
     if (ctx.decoded.size() < count) ctx.decoded.resize(count);
     std::size_t nvalue = count;
     kix_codec().decodeArray(codec_in_ptr, body_words,
