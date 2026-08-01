@@ -470,7 +470,6 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
 
 bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
                      ikafssn::pfd::StreamCtx& ctx) {
-    ctx.decoded.clear();
     ctx.count = 0;
     if (bytes == 0) return true;
     if (bytes < 4) return false;  // header is just [u32 distinct_count]
@@ -504,8 +503,11 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
         codec_in_ptr = codec_in_scratch.data();
     }
 
-    ctx.decoded.resize(count);
-    std::size_t nvalue = ctx.decoded.size();
+    // `decoded` grows to a high-water mark: its size() is never read — the
+    // valid range is [0, ctx.count) — so a shorter posting list reuses the
+    // buffer as it stands and the decode below overwrites what it needs.
+    if (ctx.decoded.size() < count) ctx.decoded.resize(count);
+    std::size_t nvalue = count;
     kix_codec().decodeArray(codec_in_ptr, body_words,
                             ctx.decoded.data(), nvalue);
     if (nvalue != count) return false;
