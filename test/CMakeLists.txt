@@ -150,6 +150,22 @@ target_compile_definitions(test_resume_validation PRIVATE
 )
 add_test(NAME test_resume_validation COMMAND test_resume_validation)
 
+# Key sets of the two "Timing" lines ikafssnsearch prints.  Spawns the
+# ikafssnindex / ikafssnsearch CLI binaries against the SSU fixture.
+add_executable(test_timing_output test_timing_output.cpp)
+target_link_libraries(test_timing_output PRIVATE
+    ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_timing_output PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_compile_definitions(test_timing_output PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME test_timing_output COMMAND test_timing_output)
+
 # Per-tier popcount_kinds unit test.  Run across every ISA tier via
 # add_ikafssn_simd_test so AVX2 / AVX-512 auto-vectorisation paths get
 # the same coverage as SSE4.2 / NEON.
