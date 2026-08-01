@@ -412,9 +412,9 @@ endif()
 # the ikafssn_dedup_<tier> OBJECT libraries.  The runtime dispatcher
 # in src/index/seq_id_dedup.cpp picks the right tier at first use
 # based on current_simd_cap(), mirroring the .kix/.kpx codec
-# dispatcher.  No FastPFor or SIMDe dependency — the kernel is a
-# self-contained scalar loop that the compiler auto-vectorises under
-# the per-tier -m<arch> flag set.
+# dispatcher.  No FastPFor dependency — the kernel is a self-contained
+# scalar loop that the compiler auto-vectorises under the per-tier
+# -m<arch> flag set.
 function(ikafssn_add_dedup_tier_object TIER)
     set(_options)
     set(_one)
@@ -461,8 +461,8 @@ endif()
 # IKAFSSN_EF_TIER_NAME so the per-tier symbols land in disjoint
 # namespaces (ikafssn_ef_sse42 / ikafssn_ef_avx2 / ...).  The
 # AVX2-and-above builds enable BMI2 (-mbmi2) so the EF select1
-# inner-word loop uses PDEP+TZCNT.  No FastPFor / SIMDe dependency
-# (the codec is self-contained).
+# inner-word loop uses PDEP+TZCNT.  No FastPFor dependency (the codec
+# is self-contained).
 function(ikafssn_add_ef_tier_object TIER)
     set(_options)
     set(_one)

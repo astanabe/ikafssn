@@ -34,8 +34,8 @@ add_library(ikafssn_index STATIC
 )
 # x86_64: four FastPFor tier objects (SSE4.2 / AVX2 / AVX-512BW / VBMI2).
 # aarch64: a single ikafssn_pfd_neon tier object that compiles the same
-# pfd_codec_tier.cpp source with SIMDe translating its SSE intrinsics to
-# NEON.  pfd_codec.cpp's tier dispatcher is `#if`-guarded to match.
+# pfd_codec_tier.cpp source, with FastPFor's NEON header mapping its SSE
+# intrinsics.  pfd_codec.cpp's tier dispatcher is `#if`-guarded to match.
 if(IKAFSSN_HAS_X86_PFD)
     target_sources(ikafssn_index PRIVATE
         $<TARGET_OBJECTS:ikafssn_pfd_sse42>

@@ -23,6 +23,13 @@ static std::vector<uint32_t> decode_id_postings(const uint8_t* data, uint64_t by
                                  decoder.decoded_data() + decoder.decoded_count());
 }
 
+// FNV-1a over a byte range, for the encoded-bytes digest below.
+static uint64_t fnv1a(const uint8_t* p, size_t n) {
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    return h;
+}
+
 static void test_k7_uint16() {
     int k = 7;
     uint8_t kmer_type = 0; // uint16_t
@@ -258,11 +265,97 @@ static void test_delta_reconstruction_lengths() {
     std::remove(TEST_FILE.c_str());
 }
 
+// Stage 1 walks one SeqIdDecoder across the posting lists of many k-mers,
+// and the decode buffer it owns only ever grows.  A shorter posting list
+// decoded after a longer one must therefore expose its own seq_ids alone —
+// the buffer still holds the previous list past that point.
+static void test_decoder_reuse_across_posting_lists() {
+    int k = 7;
+    uint8_t kmer_type = 0;
+    uint32_t ts = table_size(k);
+
+    std::vector<std::vector<uint32_t>> postings(ts);
+    for (uint32_t i = 0; i < 500; i++) postings[0].push_back(i * 3 + 1);  // long
+    postings[1] = {7, 19, 20};                                            // short
+    // k-mer 2 is left empty.
+
+    {
+        KixWriter writer(k, kmer_type);
+        writer.set_num_sequences(2000);
+        for (uint32_t i = 0; i < ts; i++) writer.add_posting_list(i, postings[i]);
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KixReader reader;
+        CHECK(reader.open(TEST_FILE));
+        SeqIdDecoder decoder;
+        for (uint32_t kmer : {0u, 1u, 2u, 0u}) {
+            const uint8_t* p = reader.posting_file() + reader.posting_list_offset(kmer);
+            decoder.reset(p, p + reader.posting_list_byte_length(kmer));
+            decoder.ensure_decoded();
+            CHECK_EQ(decoder.decoded_count(), postings[kmer].size());
+            for (size_t i = 0; i < postings[kmer].size(); i++) {
+                CHECK_EQ(decoder.decoded_data()[i], postings[kmer][i]);
+            }
+        }
+        reader.close();
+    }
+
+    std::remove(TEST_FILE.c_str());
+}
+
+// The encoded bytes are part of the on-disk format that format_version
+// pins, so a codec library update that re-encodes the same input
+// differently would invalidate every existing index while still passing a
+// round-trip test.  The digest is over the posting list bytes of a fixed
+// fixture and does not depend on the ISA tier or the architecture.
+static void test_encoded_bytes_are_stable() {
+    int k = 7;
+    uint8_t kmer_type = 0;
+    uint32_t ts = table_size(k);
+
+    const std::vector<uint32_t> lengths = {1, 5, 128, 1000};
+    std::vector<std::vector<uint32_t>> postings(ts);
+    for (size_t li = 0; li < lengths.size(); li++) {
+        uint32_t sid = static_cast<uint32_t>(li);
+        for (uint32_t i = 0; i < lengths[li]; i++) {
+            postings[li].push_back(sid);
+            sid += 1 + ((i * 37 + li * 11) % 97);
+        }
+    }
+
+    {
+        KixWriter writer(k, kmer_type);
+        writer.set_num_sequences(200000);
+        for (uint32_t i = 0; i < ts; i++) writer.add_posting_list(i, postings[i]);
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KixReader reader;
+        CHECK(reader.open(TEST_FILE));
+        uint64_t h = 1469598103934665603ULL;
+        for (size_t li = 0; li < lengths.size(); li++) {
+            const uint8_t* p = reader.posting_file() + reader.posting_list_offset(li);
+            const uint64_t n = reader.posting_list_byte_length(li);
+            h ^= fnv1a(p, static_cast<size_t>(n));
+            h *= 1099511628211ULL;
+        }
+        CHECK_EQ(h, 0x0860118a34134fa3ULL);
+        reader.close();
+    }
+
+    std::remove(TEST_FILE.c_str());
+}
+
 int main() {
     test_k7_uint16();
     test_k9_uint32();
     test_empty_postings();
     test_delta_reconstruction_lengths();
+    test_decoder_reuse_across_posting_lists();
+    test_encoded_bytes_are_stable();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

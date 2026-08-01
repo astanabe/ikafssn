@@ -11,7 +11,8 @@
 
 using namespace ikafssn;
 
-static const char* TEST_FILE = "/tmp/test_ikafssn.kpx";
+// Per-tier path: the SIMD variants of this test can run concurrently.
+static const std::string TEST_FILE = test_tmpdir("/tmp/test_ikafssn") + ".kpx";
 
 // Decode a .kpx posting list via the candidate-set API.  The writer adds
 // postings only for `candidates`, so the sorted unique candidate list is
@@ -35,6 +36,13 @@ static std::vector<uint32_t> decode_pos_postings(
         return {};
     }
     return scratch.out_positions;
+}
+
+// FNV-1a over a byte range, for the encoded-bytes digest below.
+static uint64_t fnv1a(const uint8_t* p, size_t n) {
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    return h;
 }
 
 static void test_single_seq() {
@@ -79,7 +87,7 @@ static void test_single_seq() {
         reader.close();
     }
 
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // All occ=1 clusters → entire posting list goes through the short_occ1
@@ -119,7 +127,7 @@ static void test_all_occ1() {
         }
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // Mixed occ=1 / occ>=2 (no partition since default threshold = 8 and all
@@ -167,7 +175,7 @@ static void test_mixed_short_buckets() {
         CHECK_EQ(positions[7], 50u);   // sid=11
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // Partition-only case: every cluster exceeds the threshold.  Hits the
@@ -210,7 +218,7 @@ static void test_partition_only() {
         }
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // FOR-block stream tail size sweep: 0, 1, 127 elements in the tail
@@ -250,7 +258,7 @@ static void test_partition_tail_sizes() {
             CHECK_EQ(positions[i], 5000u + i * 7u);
         }
         reader.close();
-        std::remove(TEST_FILE);
+        std::remove(TEST_FILE.c_str());
     };
 
     build_and_check(128);   // 1 full block, tail_count = 0
@@ -298,7 +306,7 @@ static void test_partition_above_255() {
         }
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // 2+ full FOR blocks via the short_occ1 sub-bucket: each distinct sid
@@ -342,7 +350,7 @@ static void test_short1_full_blocks() {
         }
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // distinct_count == 0 empty posting list (no k-mer matched, but writer still
@@ -371,7 +379,7 @@ static void test_empty_posting() {
         CHECK_EQ(positions.size(), 0u);
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // All candidates miss: posting list has data, but caller-supplied candidate
@@ -415,7 +423,7 @@ static void test_all_candidates_miss() {
         CHECK_EQ(scratch.out_positions.size(), 0u);
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // Candidate subset decode: only some of the posting list's distinct sids are
@@ -481,7 +489,7 @@ static void test_candidate_subset_csr() {
         }
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // A posting list no candidate hits must be abandoned right after the
@@ -537,7 +545,7 @@ static void test_zero_match_skips_decode() {
         CHECK_EQ(scratch.out_positions.size(), 0u);
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // FOR blocks holding no selected element are walked past through their
@@ -599,7 +607,7 @@ static void test_for_block_skip() {
         CHECK_EQ(scratch.selected[1].kind, 0u);
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // Partition groups no candidate asked for have their position stream walked
@@ -655,7 +663,7 @@ static void test_partition_group_skip() {
         CHECK_EQ(scratch.selected[0].kind, 2u);
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // A sparse candidate set leaves most of the kind map unvisited: only the
@@ -716,7 +724,7 @@ static void test_kind_entry_skip() {
         }
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // When only short_occ_ge2 entries are selected, the short_occ1 stream that
@@ -768,7 +776,7 @@ static void test_short1_stream_skipped_for_short2() {
         CHECK(scratch.out_positions == want_pos);
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // A selected short_occ_ge2 entry whose positions straddle a FOR block
@@ -822,7 +830,7 @@ static void test_run_across_block_boundary() {
         CHECK(scratch.out_positions == want_pos);
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // A kind map carrying the reserved (11) pattern must be rejected, never
@@ -870,7 +878,7 @@ static void test_reserved_kind_rejected() {
             kix_decoded.data(), kix_decoded.size(), scratch));
         reader.close();
     }
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 static void test_multiple_kmers() {
@@ -926,7 +934,7 @@ static void test_multiple_kmers() {
         reader.close();
     }
 
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 // Partition / short bucket boundary across thresholds.  A 20-occurrence
@@ -972,12 +980,52 @@ static void test_partition_group_threshold() {
         }
 
         reader.close();
-        std::remove(TEST_FILE);
+        std::remove(TEST_FILE.c_str());
     };
 
     run_threshold(8);    // seq_id=10 cluster (20 > 8) → partition
     run_threshold(16);   // seq_id=10 cluster (20 > 16) → partition
     run_threshold(100);  // nothing exceeds 100 → all short
+}
+
+// The encoded bytes are part of the on-disk format that format_version
+// pins, so a codec library update that re-encodes the same input
+// differently would invalidate every existing index while still passing a
+// round-trip test.  The fixture covers all three kinds (short_occ1,
+// short_occ_ge2, partition) and the digest does not depend on the ISA tier
+// or the architecture.
+static void test_encoded_bytes_are_stable() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    std::vector<KpxWriter::PostingEntry> entries;
+    for (uint32_t sid = 0; sid < 60; sid++) {
+        const uint32_t occ = (sid % 3 == 0) ? 1 : (sid % 3 == 1 ? 4 : 12);
+        for (uint32_t j = 0; j < occ; j++) {
+            entries.push_back({sid, 500u + sid * 40u + j});
+        }
+    }
+
+    {
+        KpxWriter writer(k, /*freq_threshold_part=*/8);
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 9) writer.add_posting_list(i, entries);
+            else        writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+        const uint64_t off = reader.pos_offset(9);
+        const uint64_t n = reader.posting_file_size() - off;
+        CHECK_EQ(fnv1a(reader.posting_file() + off, static_cast<size_t>(n)),
+                 0x2846fd3c8d3db3dbULL);
+        reader.close();
+    }
+
+    std::remove(TEST_FILE.c_str());
 }
 
 int main() {
@@ -998,6 +1046,7 @@ int main() {
     test_short1_stream_skipped_for_short2();
     test_run_across_block_boundary();
     test_reserved_kind_rejected();
+    test_encoded_bytes_are_stable();
     test_multiple_kmers();
     test_partition_group_threshold();
     TEST_SUMMARY();

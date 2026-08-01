@@ -1618,10 +1618,14 @@ ikafssnindex -version
 - Drogon (for ikafssnhttpd, optional)
 - libcurl (for HTTP client mode and remote retrieval, optional)
 
+CMake downloads FastPFor (the `.kix` / `.kpx` posting list codec) and, on x86_64,
+x86-simd-sort at configure time, so the build host needs network access unless the
+CMake FetchContent cache is already populated.  Nothing else has to be installed for them.
+
 ### CPU requirements
 
 - **x86_64**: SSE4.2 minimum (Intel Nehalem 2008+, AMD Bulldozer 2011+). The runtime SIMD dispatcher additionally targets AVX2, AVX-512 BW, and AVX-512 VBMI2 when present. CPUs without SSE4.2 are rejected at startup with `exit(2)`.
-- **aarch64**: NEON (ASIMD) minimum (Armv8.0+). Pre-NEON aarch64 CPUs are rejected at startup with `exit(2)`. SVE / SVE2 capable CPUs use the NEON-tier FastPFor codec object (the dispatcher routes any tier ≥ NEON to a single NEON OBJECT library, built on FastPFor's own native NEON header); per-kernel SIMD files (toupper, ncbi2na unpack, k-mer revcomp, degenerate scan, spaced-seed) keep their separate SVE / SVE2 dispatches.
+- **aarch64**: NEON (ASIMD) minimum (Armv8.0+). Pre-NEON aarch64 CPUs are rejected at startup with `exit(2)`. SVE / SVE2 capable CPUs use the NEON-tier FastPFor codec object (the dispatcher routes any tier ≥ NEON to a single NEON OBJECT library, built on FastPFor's native NEON header); per-kernel SIMD files (toupper, ncbi2na unpack, k-mer revcomp, degenerate scan, spaced-seed) keep their separate SVE / SVE2 dispatches.
 
 ### Installing Dependencies
 

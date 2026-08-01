@@ -1598,10 +1598,14 @@ ikafssnindex -version
 - Drogon (ikafssnhttpd 用、オプション)
 - libcurl (HTTP クライアントモードおよびリモート取得用、オプション)
 
+FastPFor (`.kix` / `.kpx` posting list のコーデック) と、x86_64 では x86-simd-sort は
+CMake が configure 時にダウンロードします。CMake の FetchContent キャッシュが未作成の場合は
+ビルドホストにネットワーク接続が必要です。これらを事前にインストールする必要はありません。
+
 ### CPU 要件
 
 - **x86_64**: SSE4.2 必須 (Intel Nehalem 2008 年以降、AMD Bulldozer 2011 年以降)。実行時 SIMD ディスパッチャーは利用可能な場合に AVX2、AVX-512 BW、AVX-512 VBMI2 を選択します。SSE4.2 非対応の CPU では起動時に `exit(2)` で拒否されます。
-- **aarch64**: NEON (ASIMD) 必須 (Armv8.0+)。NEON 非対応の aarch64 CPU は起動時に `exit(2)` で拒否されます。SVE / SVE2 対応 CPU でも FastPFor PForDelta codec は単一の NEON OBJECT library (FastPFor 自身のネイティブ NEON ヘッダを使用) に降格して使用されます (ディスパッチャは tier ≥ NEON を一括して NEON tier object に流す)。各カーネル SIMD ファイル (toupper / ncbi2na unpack / k-mer revcomp / degenerate scan / spaced-seed) は SVE / SVE2 個別のディスパッチを保持します。
+- **aarch64**: NEON (ASIMD) 必須 (Armv8.0+)。NEON 非対応の aarch64 CPU は起動時に `exit(2)` で拒否されます。SVE / SVE2 対応 CPU でも FastPFor PForDelta codec は単一の NEON OBJECT library (FastPFor のネイティブ NEON ヘッダを使用) に降格して使用されます (ディスパッチャは tier ≥ NEON を一括して NEON tier object に流す)。各カーネル SIMD ファイル (toupper / ncbi2na unpack / k-mer revcomp / degenerate scan / spaced-seed) は SVE / SVE2 個別のディスパッチを保持します。
 
 ### 依存パッケージのインストール
 

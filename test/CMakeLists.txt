@@ -82,6 +82,7 @@ target_link_libraries(test_kix_io PRIVATE ikafssn_test_index_writer)
 add_ikafssn_simd_test(test_kix_io)
 add_ikafssn_test(test_kpx_io test_kpx_io.cpp)
 target_link_libraries(test_kpx_io PRIVATE ikafssn_test_index_writer)
+add_ikafssn_simd_test(test_kpx_io)
 add_ikafssn_test(test_khx_io test_khx_io.cpp)
 target_link_libraries(test_khx_io PRIVATE ikafssn_util)
 
