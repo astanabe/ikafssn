@@ -922,6 +922,27 @@ static void test_stage2_in_total_limit() {
         CHECK(keyset(limited) == expected(L));
     }
 
+    // The Stage 1 in-total cap prunes the candidate lists before Stage 2 sees
+    // them, so mode 2 reaches it through a different path than mode 1's cap on
+    // the finished results.  Every surviving chain still comes from a
+    // surviving candidate, so the result stays a subset of the baseline and
+    // grows monotonically with L; a cap above the candidate count is a no-op.
+    {
+        const std::set<Key> base_keys = keyset(baseline);
+        std::set<Key> prev;
+        for (uint32_t L : {1u, 2u, 3u}) {
+            SearchConfig cfg = base;
+            cfg.stage1.max_nhit_in_total = L;
+            std::set<Key> got = keyset(run(cfg));
+            for (const auto& key : got) CHECK(base_keys.count(key) > 0);
+            for (const auto& key : prev) CHECK(got.count(key) > 0);
+            prev = std::move(got);
+        }
+        SearchConfig cfg = base;
+        cfg.stage1.max_nhit_in_total = 100000;
+        CHECK(keyset(run(cfg)) == base_keys);
+    }
+
     for (auto& ksx : ksxs) ksx.close();
 }
 

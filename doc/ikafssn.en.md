@@ -1193,6 +1193,8 @@ Note: `qstart` and `sstart` are omitted because accurate alignment start positio
 
 ### JSON Format
 
+`results` holds one object per `qseqid`, in the order the queries first appear in the input, and each object lists that query's hits in the order the search produced them. Query sequences that share a `qseqid` are searched independently — each gets its own hits — but they share one object here, since the object is keyed by the name.
+
 **Mode 2** (default):
 
 ```json

@@ -878,6 +878,54 @@ static void test_stage3_group_order() {
     CHECK_EQ(out[2].send, 550u);
 }
 
+// A hit whose query_idx does not name a query in `queries` cannot be aligned,
+// so it is dropped and the rest of the batch is unaffected.
+static void test_stage3_drops_unknown_query() {
+    std::fprintf(stderr, "-- test_stage3_drops_unknown_query\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+    std::string full = db.get_sequence(oid);
+    CHECK(full.size() >= 550);
+    db.close();
+    if (oid == UINT32_MAX || full.size() < 550) return;
+
+    const std::string query = full.substr(100, 200);
+    OutputHit good;
+    good.qseqid = "q";
+    good.sseqid = ACC_FJ;
+    good.sstrand = '+';
+    good.sstart = 100;
+    good.send = 300;
+    good.oid = oid;
+    good.volume = 0;
+    good.qlen = static_cast<uint32_t>(query.size());
+    good.chainscore = 100;
+    good.query_idx = 0;
+
+    OutputHit unknown = good;
+    unknown.query_idx = 7;   // only one query is supplied
+    unknown.sstart = 400;
+    unknown.send = 550;
+
+    std::vector<OutputHit> hits{good, unknown};
+    std::vector<FastaRecord> queries{{"q", query}};
+
+    Stage3Config cfg;
+    cfg.traceback = true;
+    Logger logger(Logger::kError);
+
+    auto out = run_stage3(hits, queries, g_testdb_path, cfg,
+                          /*context_is_ratio=*/false, 0.0, /*context_abs=*/0,
+                          logger);
+    CHECK_EQ(out.size(), 1u);
+    if (out.size() != 1) return;
+    CHECK_EQ(out[0].sstart, 100u);
+    CHECK_EQ(out[0].send, 300u);
+}
+
 // Every hit must align against its own query, on its own strand: the profile
 // is picked per (query, strand), and a mixed-up slot would silently align a
 // hit to the other query or the other strand.
@@ -977,6 +1025,7 @@ int main() {
     test_stage3_trims_query_terminal_gaps();
     test_stage3_overlap_resolution();
     test_stage3_group_order();
+    test_stage3_drops_unknown_query();
     test_stage3_profile_slots();
 
     // Cleanup

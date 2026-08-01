@@ -4,8 +4,6 @@
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
 #include "core/spaced_seed.hpp"
-#include <climits>
-#include <cmath>
 #include "io/fasta_reader.hpp"
 #include "io/result_writer.hpp"
 #include "search/oid_filter.hpp"
@@ -18,6 +16,9 @@
 #include "search/width_selection.hpp"
 
 #include <algorithm>
+#include <climits>
+#include <cmath>
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 
