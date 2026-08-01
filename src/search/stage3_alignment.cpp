@@ -17,31 +17,26 @@
 
 namespace ikafssn {
 
-// Walk a parasail CIGAR, dropping the terminal gaps a semi-global alignment
-// carries, and report the aligned region only.
+// Walk a parasail CIGAR and report the aligned region only.
 //
-// parasail materialises the free end gaps: the traceback runs all the way to
-// the origin, and `parasail_cigar_striped_*` appends the tail gap of whichever
-// sequence has not reached its end.  So `cigar->beg_query` / `beg_ref` are
-// always 0 and the CIGAR starts and ends with gap-only runs that describe the
-// context window, not the match.  Everything before the first '=' / 'X' and
-// after the last one is therefore stripped here, which is what makes the
-// reported interval, the CIGAR string, and ppositive describe the alignment
-// the way BLAST does.
-//
-// The ends need no such correction: `result->end_query` / `end_ref` are the
-// traceback's starting cell, so they already sit at the last aligned position.
+// A semi-global CIGAR materialises the free end gaps: the traceback reaches
+// the origin, so `cigar->beg_query` / `beg_ref` are always 0, and the tail gap
+// of whichever sequence has not reached its end is appended.  The run
+// therefore starts and ends with gap-only ops describing the context window
+// rather than the match, and everything outside the first and last '=' / 'X'
+// is stripped.  The ends need no such trim: `result->end_query` / `end_ref`
+// are the traceback's starting cell and already sit on the last aligned base.
 struct CigarStats {
     uint32_t npositive = 0;
     uint32_t nnegative = 0;
-    uint32_t aln_len = 0;    // columns in the aligned region
-    uint32_t lead_query = 0; // query bases before the first aligned column
-    uint32_t lead_ref = 0;   // ref bases before the first aligned column
-    uint32_t lead_cols = 0;  // columns before the first aligned column
-    std::string cigar_str;   // aligned region only
+    uint32_t aln_len = 0;      // columns in the aligned region
+    uint32_t lead_query = 0;   // query bases before the first aligned column
+    uint32_t lead_subject = 0; // subject bases before the first aligned column
+    uint32_t lead_cols = 0;    // columns before the first aligned column
+    std::string cigar_str;     // aligned region only
 };
 
-// 'I' consumes the query only and 'D' the reference only, following SAM.
+// 'I' consumes the query only and 'D' the subject only, following SAM.
 static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
     int first = -1, last = -1;
     for (int i = 0; i < cigar->len; i++) {
@@ -51,8 +46,7 @@ static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
             last = i;
         }
     }
-    // No aligned column at all: nothing to anchor the trim to, so keep the
-    // run as-is rather than invent an empty interval.
+    // No aligned column: nothing to anchor the trim to, so keep the run as is.
     if (first < 0) { first = 0; last = cigar->len - 1; }
 
     CigarStats stats;
@@ -61,7 +55,7 @@ static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
         uint32_t len = parasail_cigar_decode_len(cigar->seq[i]);
         stats.lead_cols += len;
         if (op == 'I') stats.lead_query += len;
-        else if (op == 'D') stats.lead_ref += len;
+        else if (op == 'D') stats.lead_subject += len;
     }
     for (int i = first; i <= last; i++) {
         char op = parasail_cigar_decode_op(cigar->seq[i]);
@@ -75,9 +69,9 @@ static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
     return stats;
 }
 
-// Slice the aligned region out of one parasail traceback string.  The
-// traceback has one character per CIGAR column, so the same offsets apply.
-static std::string aligned_span(const char* row, const CigarStats& cs) {
+// Slice the aligned region out of one parasail traceback row, which holds one
+// character per CIGAR column.
+static std::string aligned_slice(const char* row, const CigarStats& cs) {
     return std::string(row + cs.lead_cols, cs.aln_len);
 }
 
@@ -406,7 +400,7 @@ std::vector<OutputHit> run_stage3(
                 hits[idx].qstart = static_cast<uint32_t>(cigar->beg_query) + cs.lead_query;
                 hits[idx].qend = static_cast<uint32_t>(result->end_query) + 1;
                 hits[idx].sstart = ext_starts[idx] +
-                                   static_cast<uint32_t>(cigar->beg_ref) + cs.lead_ref;
+                                   static_cast<uint32_t>(cigar->beg_ref) + cs.lead_subject;
                 hits[idx].send = ext_starts[idx] +
                                  static_cast<uint32_t>(result->end_ref) + 1;
 
@@ -419,8 +413,8 @@ std::vector<OutputHit> run_stage3(
                     result, pe.seq.c_str(), static_cast<int>(pe.seq.size()),
                     subj, slen, matrix, '|', '*', ' ');
                 if (tb) {
-                    hits[idx].qseq = aligned_span(tb->query, cs);
-                    hits[idx].sseq = aligned_span(tb->ref, cs);
+                    hits[idx].qseq = aligned_slice(tb->query, cs);
+                    hits[idx].sseq = aligned_slice(tb->ref, cs);
                     parasail_traceback_free(tb);
                 }
 
@@ -467,8 +461,7 @@ std::vector<OutputHit> run_stage3(
                             clamp_idx = idx_a;
                         }
 
-                        // Half-open [new_ext_start, new_ext_end), matching the
-                        // hit coordinates the loop derives them from.
+                        // Half-open, like the hit coordinates it derives from.
                         uint32_t new_ext_start, new_ext_end;
                         uint32_t oid = hits[clamp_idx].oid;
                         uint32_t seq_len = hits[clamp_idx].slen;
@@ -552,7 +545,7 @@ std::vector<OutputHit> run_stage3(
                             hits[clamp_idx].qend =
                                 static_cast<uint32_t>(result2->end_query) + 1;
                             hits[clamp_idx].sstart = new_ext_start +
-                                static_cast<uint32_t>(cigar2->beg_ref) + cs2.lead_ref;
+                                static_cast<uint32_t>(cigar2->beg_ref) + cs2.lead_subject;
                             hits[clamp_idx].send = new_ext_start +
                                 static_cast<uint32_t>(result2->end_ref) + 1;
 
@@ -565,8 +558,8 @@ std::vector<OutputHit> run_stage3(
                                 result2, pe2.seq.c_str(), static_cast<int>(pe2.seq.size()),
                                 subj2, slen2, matrix, '|', '*', ' ');
                             if (tb2) {
-                                hits[clamp_idx].qseq = aligned_span(tb2->query, cs2);
-                                hits[clamp_idx].sseq = aligned_span(tb2->ref, cs2);
+                                hits[clamp_idx].qseq = aligned_slice(tb2->query, cs2);
+                                hits[clamp_idx].sseq = aligned_slice(tb2->ref, cs2);
                                 parasail_traceback_free(tb2);
                             }
 

@@ -149,8 +149,8 @@ static void test_sam_reverse_flag_and_pos() {
 }
 
 // Stage 3 reports the aligned region only, so the query bases outside
-// [qstart, qend) are not in SEQ.  They must be declared as hard clips, or the
-// record understates the read length and SEQ no longer matches the CIGAR.
+// [qstart, qend) are not in SEQ.  Declaring them as hard clips is what keeps
+// the read length recoverable and SEQ consistent with the CIGAR.
 static void test_sam_hard_clips() {
     std::fprintf(stderr, "-- test_sam_hard_clips\n");
 

@@ -1,23 +1,18 @@
 #pragma once
 
-// Conversion between ikafssn's internal hit coordinates and the coordinate
-// convention BLAST's `-outfmt 6` uses, which is what the TSV / JSON writers
-// emit and the TSV reader consumes.
+// Conversion between the internal hit coordinates and the BLAST `-outfmt 6`
+// convention, applied by the TSV / JSON writers and the TSV reader.
 //
-// Internal (OutputHit / ResponseHit / ChainResult):
-//   - 0-based half-open, [start, end)
-//   - query positions are query-strand-relative: on the reverse strand they
-//     index the reverse complement of the query, not the query itself
-//   - subject positions are parent-relative and always ascending
+// Internal (OutputHit / ResponseHit / ChainResult) is 0-based half-open.
+// Query positions are query-strand-relative: on the reverse strand they index
+// the reverse complement of the query.  Subject positions are parent-relative
+// and ascending.
 //
-// Output (BLAST `-outfmt 6`):
-//   - 1-based inclusive, [start, end]
-//   - query positions are query-relative, so qstart < qend on both strands
-//   - subject positions are parent-relative in forward numbering but run in
-//     alignment order, so a reverse-strand hit has sstart > send
+// Output is 1-based inclusive.  Query positions are query-relative, so
+// qstart < qend on both strands.  Subject positions keep forward numbering but
+// run in alignment order, so a reverse-strand hit has sstart > send.
 //
-// SAM/BAM output does not go through here: htslib's POS is 0-based and takes
-// the internal sstart directly.
+// SAM/BAM does not use this: htslib's POS is 0-based and takes sstart as is.
 
 #include <cstdint>
 
@@ -36,8 +31,7 @@ inline OutputCoords to_output_coords(uint32_t q_start, uint32_t q_end,
     if (!is_reverse) {
         return OutputCoords{q_start + 1, q_end, s_start + 1, s_end};
     }
-    // Fold the query back into the forward frame, which reverses the interval,
-    // and report the subject in alignment order (descending).
+    // Fold the query into the forward frame and descend the subject.
     return OutputCoords{qlen - q_end + 1, qlen - q_start, s_end, s_start + 1};
 }
 

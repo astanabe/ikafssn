@@ -1022,9 +1022,9 @@ static void test_blast_coordinate_convention() {
     CHECK(f[kColSend] == std::to_string(kCoordQEnd));
 }
 
-// The reverse-strand regression test.  Before the query k-mer positions
-// became query-strand-relative, chaining could not link two reverse-strand
-// hits at all and every reverse chain was dropped by min_score.
+// Reverse-strand hits reach the output only when the query k-mer positions
+// are query-strand-relative: chaining links two hits only if both coordinates
+// increase, and min_score drops any chain left at length 1.
 static void test_reverse_strand_reported() {
     std::fprintf(stderr, "-- test_reverse_strand_reported\n");
 

@@ -157,32 +157,30 @@ QueryKmerData<KmerInt> preprocess_query(
     // 2. Build reverse complement k-mers.
     //
     // Reverse-strand positions are query-strand-relative: they index the
-    // reverse complement of the query, the sequence this strand's k-mers were
-    // actually read from.  Chaining then sees the reverse strand on an
-    // ordinary diagonal (s_pos - q_pos constant) instead of an antidiagonal,
-    // and Stage 3 aligns against the same reverse-complemented query.
+    // reverse complement of the query, which is the sequence this strand's
+    // k-mers are read from and the one Stage 3 builds its profile from.
+    // Chaining needs both coordinates to increase along a chain, and on this
+    // frame the reverse strand lies on an ordinary diagonal.
     std::vector<std::pair<uint32_t, KmerInt>> rc_kmers;
     if (t > 0 && !masks.empty()) {
-        // Spaced seed: scan the RC string with the same templates.  Positions
-        // come out on the RC string already.
+        // Spaced seed: scanning the RC string yields RC positions directly.
         std::string rc_seq = reverse_complement_string(query_seq);
         rc_kmers = extract_kmers_spaced<KmerInt>(rc_seq, k, masks,
                        static_cast<int>(t), &result.has_multi_degen,
                        static_cast<int>(config.max_degen_expand));
     } else if (!fwd_kmers.empty()) {
-        // Contiguous: SIMD batch revcomp via SoA staging buffers.  The k-mer
-        // at forward position p reverse-complements to RC position
-        // (len - p - span), so the run comes out descending and is reversed
-        // back to ascending to match the forward strand's ordering.
+        // Contiguous: SIMD batch revcomp via SoA staging buffers.  Forward
+        // position p maps to RC position (len - p - span), so the run comes
+        // out descending and is written back in ascending order.
         const std::size_t nfwd = fwd_kmers.size();
         std::vector<KmerInt> tmp_in(nfwd), tmp_out(nfwd);
         for (std::size_t i = 0; i < nfwd; i++) tmp_in[i] = fwd_kmers[i].second;
         kmer_revcomp_batch<KmerInt>(tmp_in.data(), tmp_out.data(), nfwd, k);
         rc_kmers.resize(nfwd);
-        const uint32_t last = static_cast<uint32_t>(query_seq.size()) -
-                              static_cast<uint32_t>(span);
+        const uint32_t max_rc_pos = static_cast<uint32_t>(query_seq.size()) -
+                                    static_cast<uint32_t>(span);
         for (std::size_t i = 0; i < nfwd; i++) {
-            rc_kmers[nfwd - 1 - i] = {last - fwd_kmers[i].first, tmp_out[i]};
+            rc_kmers[nfwd - 1 - i] = {max_rc_pos - fwd_kmers[i].first, tmp_out[i]};
         }
     }
 

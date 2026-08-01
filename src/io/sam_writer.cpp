@@ -18,12 +18,8 @@
 namespace ikafssn {
 
 // Parse a parasail-style extended CIGAR string (e.g., "3=2I1X4D14=")
-// into htslib uint32_t array.
-//
-// Stage 3 reports the aligned region only, so the query bases outside
-// [qstart, qend) are absent from both the CIGAR and SEQ.  They are declared as
-// hard clips, which is what SAM uses for bases the record does not carry;
-// soft clips would require SEQ to hold them.
+// into htslib uint32_t array.  The query bases outside the aligned region are
+// hard clips, the SAM operator for bases the record does not carry in SEQ.
 static std::vector<uint32_t> parse_cigar_to_htslib(const std::string& cigar_str,
                                                    uint32_t lead_clip,
                                                    uint32_t trail_clip) {
@@ -146,7 +142,7 @@ static void write_sam_bam_impl(const std::string& output_path,
         int32_t tid = sam_hdr_name2tid(hdr, h.sseqid.c_str());
         hts_pos_t pos = static_cast<hts_pos_t>(h.sstart); // 0-based in htslib
 
-        // qstart / qend are query-strand-relative, i.e. already in the
+        // qstart / qend are query-strand-relative, so already in the
         // reference orientation SEQ and CIGAR are written in.
         const uint32_t trail_clip = (h.qlen > h.qend) ? h.qlen - h.qend : 0;
         auto cigar = parse_cigar_to_htslib(h.cigar, h.qstart, trail_clip);

@@ -497,9 +497,8 @@ static void test_stage3_oversize_group_solo() {
     CHECK(to_keys(unbatched) == to_keys(batched));
 }
 
-// Reverse-strand chains reach Stage 3 only once the query k-mer positions are
-// query-strand-relative, so this covers the alignment of a reverse-complement
-// query against the forward subject end to end.
+// A reverse-complement query aligned against the forward subject, end to end
+// through Stage 1, Stage 2 and Stage 3.
 static void test_stage3_reverse_strand() {
     Stage1Buffer buf;
     std::fprintf(stderr, "-- test_stage3_reverse_strand\n");
@@ -597,14 +596,14 @@ static void test_stage3_reverse_strand() {
 // ---------------------------------------------------------------------------
 // Stage 3 coordinate convention.
 //
-// Stage 2 is bypassed: the chain span is handed to run_stage3 directly so the
-// alignment region is exact and the expected output is a fixed BLAST row.
+// Stage 1 and 2 are bypassed: the chain interval is handed to run_stage3
+// directly, so the alignment region is exact and the expected row is fixed.
 // The query is ACC_FJ's 1-based 101-300, so blastn -outfmt 6 reports
 // qstart=1 qend=200 sstart=101 send=300.
 // ---------------------------------------------------------------------------
 
 // Align `query` against ACC_FJ's [chain_start, chain_end) with `ctx` bases of
-// context and return the single hit.
+// context, and return the single hit.
 static OutputHit align_region(const std::string& query,
                               uint32_t chain_start, uint32_t chain_end,
                               uint32_t ctx, bool& found) {

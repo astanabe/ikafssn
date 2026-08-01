@@ -263,8 +263,7 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
     // For batch: group by accession to avoid duplicate fetches; extract locally from fetched full seq.
     // For individual: fetch only the needed range.
 
-    // ext_start / ext_end are 0-based parent-relative half-open, matching the
-    // convention hit.sstart / hit.send arrive in.
+    // ext_start / ext_end are 0-based parent-relative half-open.
     struct HitRef {
         size_t hit_index;
         uint32_t ext_start;
@@ -299,7 +298,7 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
     std::vector<std::string> individual_accessions;
 
     for (const auto& [acc, info] : acc_info) {
-        // Estimate sequence length from max s_end (which is exclusive)
+        // Estimate sequence length from max s_end, which is exclusive
         uint32_t est_len = info.max_s_end;
         if (est_len > opts.range_threshold) {
             individual_accessions.push_back(acc);
@@ -358,11 +357,10 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                     reverse_complement(subseq);
                 }
 
-                // defline: kafsss-style `parent_acc:start-end`
-                // where coordinates are 1-based inclusive (consistent with
-                // BLAST's seq_start/seq_stop semantics that this code path
-                // already speaks below).  The 0-based exclusive end and the
-                // 1-based inclusive end coincide.
+                // defline: kafsss-style `parent_acc:start-end`, 1-based
+                // inclusive (the seq_start / seq_stop semantics this code path
+                // already speaks below).  A 0-based exclusive end and a
+                // 1-based inclusive end are the same number.
                 std::ostringstream header;
                 header << first_accession_token(hit.sseqid) << ':'
                        << (ext_start + 1) << '-' << ext_end

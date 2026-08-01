@@ -64,9 +64,9 @@ void chain_hits(const std::vector<Hit>& raw_hits,
     std::vector<Hit>& work = scratch.work;
     std::vector<size_t>& chain_indices = scratch.chain_indices;
 
-    // Order by (q_pos, s_pos).  Stage 2A emits one ascending run per seed
-    // template, so detect and merge the runs.  Reversing a run only reorders
-    // hits the dedup collapses.
+    // Order by (q_pos, s_pos).  Stage 2A emits one monotonic run per seed
+    // template, so detect the runs and merge them.  Reversing a descending run
+    // only reorders hits the dedup collapses.
     work.assign(raw_hits.begin(), raw_hits.end());
     {
         const size_t n = work.size();

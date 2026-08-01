@@ -96,15 +96,10 @@ static char field_char(
     return s.empty() ? fallback : s[0];
 }
 
-// Turn the four BLAST-convention coordinates a row carries back into the
-// internal 0-based half-open, query-strand-relative form.  `hit` arrives
-// holding the values exactly as written.
-//
-// Rows that carry only the two end coordinates (mode 3 without traceback)
-// cannot be inverted: on the reverse strand the written `send` is the
-// internal s_start and the written `qend` is the internal q_start, and the
-// other end of each interval was never emitted.  Such rows keep their ends
-// and leave both starts at 0.
+// Turn the BLAST-convention coordinates `hit` holds as written into the
+// internal form.  A row carrying only the two end coordinates (mode 3 without
+// traceback) cannot be inverted — the other end of each interval was never
+// emitted — so it keeps its ends and leaves both starts at 0.
 static void to_internal_hit(OutputHit& hit, bool has_start_coords) {
     if (!has_start_coords) {
         hit.qstart = 0;

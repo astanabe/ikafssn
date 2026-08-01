@@ -126,7 +126,7 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
         // retrieved hit gets a unique leading sseqid token even when one parent
         // accession appears in many rows.
         const std::string parent_acc = first_accession_token(hit.sseqid);
-        // The 0-based exclusive end and the 1-based inclusive end coincide.
+        // A 0-based exclusive end and a 1-based inclusive end are the same.
         const uint32_t one_based_start = ext_start + 1;
         const uint32_t one_based_end   = ext_end;
         out << '>' << parent_acc << ':' << one_based_start << '-' << one_based_end
