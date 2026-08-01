@@ -355,6 +355,51 @@ static void test_select_parent_topn_output() {
     }
 }
 
+// Edge cases of the shared group top-N ranking, exercised through the Stage 3
+// selector: nothing to select, a limit above the group size, an all-tie group,
+// and negative scores.
+static void test_group_topn_edge_cases() {
+    std::fprintf(stderr, "-- test_group_topn_edge_cases\n");
+
+    {
+        std::vector<OutputHit> hits;
+        select_parent_topn_output(hits, 2, 3);
+        CHECK_EQ(hits.size(), 0u);
+    }
+    {   // n above the group size keeps everything, in input order.
+        std::vector<OutputHit> hits{
+            make_output_hit("q", "S", '+', 1, 100, 10),
+            make_output_hit("q", "S", '+', 200, 300, 20),
+        };
+        select_parent_topn_output(hits, 5, 1);
+        CHECK_EQ(hits.size(), 2u);
+        if (hits.size() == 2) CHECK_EQ(hits[0].alnscore, 10);
+    }
+    {   // All tied without tie inclusion: the first two by arrival survive.
+        std::vector<OutputHit> hits{
+            make_output_hit("q", "S", '+', 1, 100, 7),
+            make_output_hit("q", "S", '+', 200, 300, 7),
+            make_output_hit("q", "S", '+', 400, 500, 7),
+        };
+        select_parent_topn_output(hits, 2, 1);
+        CHECK_EQ(hits.size(), 2u);
+        if (hits.size() == 2) {
+            CHECK_EQ(hits[0].sstart, 1u);
+            CHECK_EQ(hits[1].sstart, 200u);
+        }
+    }
+    {   // Negative alnscores rank like any other score, least negative first.
+        std::vector<OutputHit> hits{
+            make_output_hit("q", "S", '+', 1, 100, -50),
+            make_output_hit("q", "S", '+', 200, 300, -10),
+            make_output_hit("q", "S", '+', 400, 500, -30),
+        };
+        select_parent_topn_output(hits, 1, 1);
+        CHECK_EQ(hits.size(), 1u);
+        if (hits.size() == 1) CHECK_EQ(hits[0].alnscore, -10);
+    }
+}
+
 // Stage 3 in-total (L) cap over OutputHit, per qseqid, tie-inclusive.
 static void test_apply_in_total_output() {
     std::fprintf(stderr, "-- test_apply_in_total_output\n");
@@ -397,6 +442,7 @@ int main() {
     test_stage3_collapses_post_align_dups();
     test_stage3_preserves_skip_rows();
     test_select_parent_topn_output();
+    test_group_topn_edge_cases();
     test_apply_in_total_output();
     test_stage2_trivial_inputs();
     TEST_SUMMARY();

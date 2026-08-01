@@ -159,8 +159,9 @@ void stage1_limit_topk(std::vector<Stage1Candidate>& candidates, uint32_t k,
                        bool tie_inclusive);
 
 // Per-parent top-n: parent = parent_index[candidate.id].  Within each parent the
-// top-n by score are kept (tie_inclusive as above).  n == 0 or a null
-// parent_index is a no-op.  Surviving candidates retain their input order.
+// top-n by score are kept, ties broken by arrival order (tie_inclusive as
+// above).  n == 0 or a null parent_index is a no-op.  Surviving candidates
+// retain their input order.
 void stage1_limit_per_parent(std::vector<Stage1Candidate>& candidates, uint32_t n,
                              bool tie_inclusive, const uint32_t* parent_index);
 

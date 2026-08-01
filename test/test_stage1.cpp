@@ -182,6 +182,19 @@ static void test_stage1_limit_per_parent() {
       CHECK(c.size() == 6); }
 }
 
+// Without tie inclusion the selector still has to name exactly which of the
+// tying candidates survive: the ones that arrived first.
+static void test_stage1_limit_per_parent_tie_order() {
+    std::fprintf(stderr, "-- test_stage1_limit_per_parent_tie_order\n");
+    std::vector<uint32_t> parent = {0, 0, 0};
+    std::vector<Stage1Candidate> c{{0, 7}, {1, 7}, {2, 7}};
+    stage1_limit_per_parent(c, 2, false, parent.data());
+    CHECK_EQ(c.size(), 2u);
+    if (c.size() != 2) return;
+    CHECK_EQ(c[0].id, SeqId{0});
+    CHECK_EQ(c[1].id, SeqId{1});
+}
+
 static std::string g_maxfreq_index_dir;
 
 static bool build_maxfreq_index() {
@@ -569,6 +582,7 @@ int main() {
     test_stage1_with_oid_filter();
     test_stage1_limit_topk();
     test_stage1_limit_per_parent();
+    test_stage1_limit_per_parent_tie_order();
     test_stage1_fractional_threshold();
     test_stage1_fractional_with_highfreq();
     test_clear_dirty_bulk_reset();

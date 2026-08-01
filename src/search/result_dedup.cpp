@@ -3,6 +3,7 @@
 #include "index/ksx_reader.hpp"
 #include "io/result_writer.hpp"
 #include "search/parallel_search.hpp"
+#include "search/hit_limits.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -122,56 +123,32 @@ void select_parent_topn(
         };
     }
 
-    // Order indices by group key, breaking ties on original index so each
-    // group's slice stays in arrival order.
-    std::vector<size_t> order(cnt);
-    for (size_t i = 0; i < cnt; ++i) order[i] = i;
-    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        const ParentKey& ka = keys[a];
-        const ParentKey& kb = keys[b];
-        if (ka.query_idx  != kb.query_idx)  return ka.query_idx  < kb.query_idx;
-        if (ka.volume_idx != kb.volume_idx) return ka.volume_idx < kb.volume_idx;
-        if (ka.parent_idx != kb.parent_idx) return ka.parent_idx < kb.parent_idx;
-        if (ka.is_reverse != kb.is_reverse) return ka.is_reverse < kb.is_reverse;
-        return a < b;
-    });
-
-    auto same_group = [&](size_t a, size_t b) {
-        const ParentKey& ka = keys[a];
-        const ParentKey& kb = keys[b];
-        return ka.query_idx  == kb.query_idx
-            && ka.volume_idx == kb.volume_idx
-            && ka.parent_idx == kb.parent_idx
-            && ka.is_reverse == kb.is_reverse;
-    };
-
-    std::vector<bool> survive(cnt, false);
-    size_t run_start = 0;
-    for (size_t i = 0; i <= cnt; ++i) {
-        if (i != cnt && (i == run_start || same_group(order[run_start], order[i])))
-            continue;
-
-        // Process the group order[run_start .. i).
-        std::vector<size_t> grp(order.begin() + run_start, order.begin() + i);
-        std::stable_sort(grp.begin(), grp.end(), [&](size_t a, size_t b) {
-            return hits[a].cr.chainscore > hits[b].cr.chainscore;
-        });
-        if (grp.size() <= n) {
-            for (size_t idx : grp) survive[idx] = true;
-        } else if (!tie_inclusive) {
-            for (uint32_t j = 0; j < n; ++j) survive[grp[j]] = true;
-        } else {
-            const uint32_t s_n = hits[grp[n - 1]].cr.chainscore;
-            for (size_t idx : grp)
-                if (hits[idx].cr.chainscore >= s_n) survive[idx] = true;
-        }
-        run_start = i;
-    }
+    std::vector<char> keep;
+    group_topn_keep(
+        cnt, n, tie_inclusive,
+        [&](uint32_t a, uint32_t b) {
+            const ParentKey& ka = keys[a];
+            const ParentKey& kb = keys[b];
+            if (ka.query_idx  != kb.query_idx)  return ka.query_idx  < kb.query_idx;
+            if (ka.volume_idx != kb.volume_idx) return ka.volume_idx < kb.volume_idx;
+            if (ka.parent_idx != kb.parent_idx) return ka.parent_idx < kb.parent_idx;
+            return ka.is_reverse < kb.is_reverse;
+        },
+        [&](uint32_t a, uint32_t b) {
+            const ParentKey& ka = keys[a];
+            const ParentKey& kb = keys[b];
+            return ka.query_idx  == kb.query_idx
+                && ka.volume_idx == kb.volume_idx
+                && ka.parent_idx == kb.parent_idx
+                && ka.is_reverse == kb.is_reverse;
+        },
+        [&](uint32_t a) { return hits[a].cr.chainscore; },
+        keep);
 
     std::vector<OrchestratorHit> out;
     out.reserve(cnt);
     for (size_t i = 0; i < cnt; ++i)
-        if (survive[i]) out.push_back(std::move(hits[i]));
+        if (keep[i]) out.push_back(std::move(hits[i]));
     hits = std::move(out);
 }
 
@@ -223,53 +200,31 @@ void select_parent_topn_output(std::vector<OutputHit>& hits,
     const bool tie_inclusive = (mode == 3 || mode == 4);
 
     const size_t cnt = hits.size();
-    std::vector<size_t> order(cnt);
-    for (size_t i = 0; i < cnt; ++i) order[i] = i;
-
-    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        const OutputHit& ha = hits[a];
-        const OutputHit& hb = hits[b];
-        if (ha.qseqid != hb.qseqid) return ha.qseqid < hb.qseqid;
-        if (ha.sseqid != hb.sseqid) return ha.sseqid < hb.sseqid;
-        if (strand_split && ha.sstrand != hb.sstrand)
-            return ha.sstrand < hb.sstrand;
-        return a < b;
-    });
-
-    auto same_group = [&](size_t a, size_t b) {
-        const OutputHit& ha = hits[a];
-        const OutputHit& hb = hits[b];
-        return ha.qseqid == hb.qseqid
-            && ha.sseqid == hb.sseqid
-            && (!strand_split || ha.sstrand == hb.sstrand);
-    };
-
-    std::vector<bool> survive(cnt, false);
-    size_t run_start = 0;
-    for (size_t i = 0; i <= cnt; ++i) {
-        if (i != cnt && (i == run_start || same_group(order[run_start], order[i])))
-            continue;
-
-        std::vector<size_t> grp(order.begin() + run_start, order.begin() + i);
-        std::stable_sort(grp.begin(), grp.end(), [&](size_t a, size_t b) {
-            return hits[a].alnscore > hits[b].alnscore;
-        });
-        if (grp.size() <= n) {
-            for (size_t idx : grp) survive[idx] = true;
-        } else if (!tie_inclusive) {
-            for (uint32_t j = 0; j < n; ++j) survive[grp[j]] = true;
-        } else {
-            const int32_t s_n = hits[grp[n - 1]].alnscore;
-            for (size_t idx : grp)
-                if (hits[idx].alnscore >= s_n) survive[idx] = true;
-        }
-        run_start = i;
-    }
+    std::vector<char> keep;
+    group_topn_keep(
+        cnt, n, tie_inclusive,
+        [&](uint32_t a, uint32_t b) {
+            const OutputHit& ha = hits[a];
+            const OutputHit& hb = hits[b];
+            if (ha.qseqid != hb.qseqid) return ha.qseqid < hb.qseqid;
+            if (ha.sseqid != hb.sseqid) return ha.sseqid < hb.sseqid;
+            if (strand_split) return ha.sstrand < hb.sstrand;
+            return false;
+        },
+        [&](uint32_t a, uint32_t b) {
+            const OutputHit& ha = hits[a];
+            const OutputHit& hb = hits[b];
+            return ha.qseqid == hb.qseqid
+                && ha.sseqid == hb.sseqid
+                && (!strand_split || ha.sstrand == hb.sstrand);
+        },
+        [&](uint32_t a) { return hits[a].alnscore; },
+        keep);
 
     std::vector<OutputHit> out;
     out.reserve(cnt);
     for (size_t i = 0; i < cnt; ++i)
-        if (survive[i]) out.push_back(std::move(hits[i]));
+        if (keep[i]) out.push_back(std::move(hits[i]));
     hits = std::move(out);
 }
 

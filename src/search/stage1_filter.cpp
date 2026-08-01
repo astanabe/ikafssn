@@ -2,6 +2,7 @@
 #include "search/stage1_filter_simd.hpp"
 #include "search/oid_filter.hpp"
 #include "search/seq_id_decoder.hpp"
+#include "search/hit_limits.hpp"
 #include "index/kix_reader.hpp"
 #include "core/config.hpp"
 #include "core/varint.hpp"
@@ -346,41 +347,19 @@ void stage1_limit_per_parent(std::vector<Stage1Candidate>& candidates, uint32_t 
     if (n == 0 || parent_index == nullptr || candidates.empty()) return;
 
     const size_t cnt = candidates.size();
-    // Order indices by (parent, score desc) so each parent's run is contiguous
-    // and already sorted by score.
-    std::vector<uint32_t> order(cnt);
-    for (size_t i = 0; i < cnt; ++i) order[i] = static_cast<uint32_t>(i);
-    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
-        uint32_t pa = parent_index[candidates[a].id];
-        uint32_t pb = parent_index[candidates[b].id];
-        if (pa != pb) return pa < pb;
-        return candidates[a].score > candidates[b].score;
-    });
-
-    std::vector<char> keep(cnt, 0);
-    size_t i = 0;
-    while (i < cnt) {
-        uint32_t parent = parent_index[candidates[order[i]].id];
-        size_t j = i;
-        while (j < cnt && parent_index[candidates[order[j]].id] == parent) ++j;
-        // run [i, j) is sorted by score desc.
-        const size_t run = j - i;
-        const size_t nn = static_cast<size_t>(n);
-        if (run <= nn) {
-            for (size_t t = i; t < j; ++t) keep[order[t]] = 1;
-        } else {
-            const uint32_t nth = candidates[order[i + nn - 1]].score;
-            if (tie_inclusive) {
-                for (size_t t = i; t < j; ++t) {
-                    if (candidates[order[t]].score >= nth) keep[order[t]] = 1;
-                    else break;  // sorted desc
-                }
-            } else {
-                for (size_t t = i; t < i + nn; ++t) keep[order[t]] = 1;
-            }
-        }
-        i = j;
-    }
+    // The group key is the parent, kept as a callback so no per-candidate key
+    // array is materialised.
+    std::vector<char> keep;
+    group_topn_keep(
+        cnt, n, tie_inclusive,
+        [&](uint32_t a, uint32_t b) {
+            return parent_index[candidates[a].id] < parent_index[candidates[b].id];
+        },
+        [&](uint32_t a, uint32_t b) {
+            return parent_index[candidates[a].id] == parent_index[candidates[b].id];
+        },
+        [&](uint32_t a) { return candidates[a].score; },
+        keep);
 
     std::vector<Stage1Candidate> out;
     out.reserve(cnt);
