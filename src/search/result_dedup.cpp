@@ -8,10 +8,8 @@
 #include "util/query_order.hpp"
 
 #include <algorithm>
-#include <climits>
 #include <cstdint>
 #include <string>
-#include <unordered_map>
 
 namespace ikafssn {
 
