@@ -36,7 +36,9 @@ struct Stage3Config {
 };
 
 // Run Stage 3 alignment on merged OutputHits.
-// - hits: Stage 2 results (modified in-place with alignment data)
+// - hits: Stage 2 results (modified in-place with alignment data).  Each hit's
+//   query_idx must index `queries`; hits whose query_idx or volume is out of
+//   range are dropped with a warning.
 // - queries: original FASTA query sequences
 // - db_path: BLAST DB path for subject sequence retrieval
 // - context_is_ratio/context_ratio/context_abs: -context_extend option values

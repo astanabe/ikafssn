@@ -1116,6 +1116,7 @@ int main(int argc, char* argv[]) {
         const ParentHit ph = resolve_parent_hit(
             ctxs[0].volumes[oh_in.volume_idx].ksx, cr);
         OutputHit oh;
+        oh.query_idx = static_cast<uint32_t>(oh_in.query_idx);
         oh.qseqid = queries[oh_in.query_idx].id;
         oh.sseqid = std::string(ph.sseqid);
         oh.sstrand = cr.is_reverse ? '-' : '+';

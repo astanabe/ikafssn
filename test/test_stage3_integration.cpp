@@ -831,10 +831,11 @@ static void test_stage3_group_order() {
     const std::string seq_b = full.substr(100, 200);
     const std::string seq_a = full.substr(400, 150);
 
-    auto make_hit = [&](const char* qseqid, uint32_t sstart, uint32_t send,
-                        uint32_t qlen) {
+    auto make_hit = [&](const char* qseqid, uint32_t query_idx, uint32_t sstart,
+                        uint32_t send, uint32_t qlen) {
         OutputHit h;
         h.qseqid = qseqid;
+        h.query_idx = query_idx;
         h.sseqid = ACC_FJ;
         h.sstrand = '+';
         h.sstart = sstart;
@@ -848,9 +849,9 @@ static void test_stage3_group_order() {
     // qB's group appears first and owns two hits sharing an sstart; qA's
     // group appears between them.
     std::vector<OutputHit> hits{
-        make_hit("qB", 100, 300, static_cast<uint32_t>(seq_b.size())),
-        make_hit("qA", 400, 550, static_cast<uint32_t>(seq_a.size())),
-        make_hit("qB", 100, 250, static_cast<uint32_t>(seq_b.size())),
+        make_hit("qB", 1, 100, 300, static_cast<uint32_t>(seq_b.size())),
+        make_hit("qA", 0, 400, 550, static_cast<uint32_t>(seq_a.size())),
+        make_hit("qB", 1, 100, 250, static_cast<uint32_t>(seq_b.size())),
     };
     std::vector<FastaRecord> queries{{"qA", seq_a}, {"qB", seq_b}};
 
@@ -899,10 +900,11 @@ static void test_stage3_profile_slots() {
     const std::string seq_p = region_p;
     const std::string seq_m = reverse_complement_string(region_m);
 
-    auto make_hit = [&](const char* qseqid, char strand, uint32_t sstart,
-                        uint32_t send, uint32_t qlen) {
+    auto make_hit = [&](const char* qseqid, uint32_t query_idx, char strand,
+                        uint32_t sstart, uint32_t send, uint32_t qlen) {
         OutputHit h;
         h.qseqid = qseqid;
+        h.query_idx = query_idx;
         h.sseqid = ACC_FJ;
         h.sstrand = strand;
         h.sstart = sstart;
@@ -916,10 +918,10 @@ static void test_stage3_profile_slots() {
     const uint32_t len_p = static_cast<uint32_t>(seq_p.size());
     const uint32_t len_m = static_cast<uint32_t>(seq_m.size());
     std::vector<OutputHit> hits{
-        make_hit("qP", '+', 100, 300, len_p),
-        make_hit("qM", '-', 400, 550, len_m),
-        make_hit("qP", '-', 100, 300, len_p),
-        make_hit("qM", '+', 400, 550, len_m),
+        make_hit("qP", 0, '+', 100, 300, len_p),
+        make_hit("qM", 1, '-', 400, 550, len_m),
+        make_hit("qP", 0, '-', 100, 300, len_p),
+        make_hit("qM", 1, '+', 400, 550, len_m),
     };
     std::vector<FastaRecord> queries{{"qP", seq_p}, {"qM", seq_m}};
 
