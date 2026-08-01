@@ -638,13 +638,12 @@ inline bool skip_block_for(const std::uint8_t*& p, const std::uint8_t* end) {
 
 // Walk past a whole FOR stream of `count` elements without decoding any of it.
 bool skip_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
-                     std::uint32_t count, std::uint64_t& skipped_blocks) {
+                     std::uint32_t count) {
     const std::uint32_t num_blocks = count / kBlockSize;
     const std::uint32_t tail_count = count % kBlockSize;
 
     for (std::uint32_t b = 0; b < num_blocks; b++) {
         if (!skip_block_for(p, end)) return false;
-        skipped_blocks++;
     }
 
     if (p >= end) return false;
@@ -657,7 +656,6 @@ bool skip_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
     const std::size_t body_bytes = (std::size_t(tail_count) * tail_b + 7) / 8;
     if (std::size_t(end - p) < 5 + body_bytes) return false;
     p += 5 + body_bytes;
-    skipped_blocks++;
     return true;
 }
 
@@ -668,8 +666,7 @@ bool skip_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
 bool decode_for_stream_selected(const std::uint8_t*& p, const std::uint8_t* end,
                                 std::uint32_t count,
                                 const Run* runs, std::size_t n_runs,
-                                std::uint32_t* out,
-                                std::uint64_t& skipped_blocks) {
+                                std::uint32_t* out) {
     const std::uint32_t num_blocks = count / kBlockSize;
     const std::uint32_t tail_count = count % kBlockSize;
 
@@ -707,7 +704,6 @@ bool decode_for_stream_selected(const std::uint8_t*& p, const std::uint8_t* end,
         seek_runs(base);
         if (ri >= n_runs || runs[ri].first >= lim) {
             if (!skip_block_for(p, end)) return false;
-            skipped_blocks++;
             continue;
         }
         if (!decode_block_for(p, end, buf)) return false;
@@ -731,7 +727,6 @@ bool decode_for_stream_selected(const std::uint8_t*& p, const std::uint8_t* end,
     seek_runs(base);
     if (ri >= n_runs || runs[ri].first >= lim) {
         p += 5 + body_bytes;
-        skipped_blocks++;
         return true;
     }
     unpack_bits_lsb(p + 5, tail_count, tail_b, buf);
@@ -755,9 +750,6 @@ bool open_stream_kpx_for_candidates(
     out_cand.clear();
     out_pos.clear();
     out_off.assign(1, 0);
-    scratch.skipped_kind_entries = 0;
-    scratch.skipped_partition_groups = 0;
-    scratch.skipped_for_blocks = 0;
 
     if (n_candidates == 0) return true;
     if (bytes == 0) return true;
@@ -803,7 +795,6 @@ bool open_stream_kpx_for_candidates(
             continue;
         }
         const std::uint32_t idx = static_cast<std::uint32_t>(i);
-        scratch.skipped_kind_entries += idx - prev_i;
         advance_ranks(kind_map, prev_i, idx, r_partition, r_short1, r_short2);
         const std::uint8_t kind = get_kind_bits(kind_map, idx);
         std::uint32_t rank;
@@ -815,7 +806,6 @@ bool open_stream_kpx_for_candidates(
         i++;
         ci++;
     }
-    scratch.skipped_kind_entries += distinct_count - prev_i;
 
     // Nothing here can produce output, so no stream is touched at all.
     if (selected.empty()) return true;
@@ -838,8 +828,7 @@ bool open_stream_kpx_for_candidates(
             p += sizeof(std::uint32_t);
             if (gcnt == 0) return false;
             if (g != next_rank) {
-                if (!skip_for_stream(p, end, gcnt, scratch.skipped_for_blocks)) return false;
-                scratch.skipped_partition_groups++;
+                if (!skip_for_stream(p, end, gcnt)) return false;
                 continue;
             }
             const std::size_t base = part_pos.size();
@@ -870,15 +859,14 @@ bool open_stream_kpx_for_candidates(
             }
             if (!decode_for_stream_selected(p, end, short1_count,
                                             runs.data(), runs.size(),
-                                            short1_pos.data(),
-                                            scratch.skipped_for_blocks)) {
+                                            short1_pos.data())) {
                 return false;
             }
         }
     } else if (short1_count > 0 && n_sel_short2 > 0) {
         // Nothing wanted here, but the stream sits between the partition
         // groups and the short_occ_ge2 sub-bucket.
-        if (!skip_for_stream(p, end, short1_count, scratch.skipped_for_blocks)) return false;
+        if (!skip_for_stream(p, end, short1_count)) return false;
     }
 
     // short_occ_ge2 sub-bucket: u8 occ_count[] then the FOR stream.  The
@@ -911,7 +899,7 @@ bool open_stream_kpx_for_candidates(
         }
         if (short2_pos.size() < sel_positions) short2_pos.resize(sel_positions);
         if (!decode_for_stream_selected(p, end, cum, runs.data(), runs.size(),
-                                        short2_pos.data(), scratch.skipped_for_blocks)) {
+                                        short2_pos.data())) {
             return false;
         }
     }

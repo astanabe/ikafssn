@@ -485,8 +485,9 @@ static void test_candidate_subset_csr() {
 }
 
 // A posting list no candidate hits must be abandoned right after the
-// selection pass: every kind map entry is skipped and neither the partition
-// groups nor the FOR streams are walked at all.
+// selection pass, so nothing past the kind map may be read.  Everything
+// after the kind map is destroyed before the call: a decoder that walks
+// any of it hits a bogus group count or block header and returns false.
 static void test_zero_match_skips_decode() {
     int k = 5;
     uint32_t ts = table_size(k);
@@ -514,21 +515,26 @@ static void test_zero_match_skips_decode() {
         const std::vector<uint32_t> kix_decoded = {1, 3, 7};
         const std::vector<uint32_t> candidates  = {2, 4, 5};
 
-        pfd::PosDecodeScratch scratch;
         const uint64_t off = reader.pos_offset(31);
+        const size_t len = static_cast<size_t>(reader.posting_file_size() - off);
+        std::vector<uint8_t> corrupted(reader.posting_file() + off,
+                                       reader.posting_file() + off + len);
+        const size_t kind_map_bytes = (kix_decoded.size() * 2 + 7) / 8;
+        CHECK(corrupted.size() > kind_map_bytes);
+        for (size_t i = kind_map_bytes; i < corrupted.size(); i++) {
+            corrupted[i] = 0xFF;
+        }
+
+        pfd::PosDecodeScratch scratch;
         CHECK(pfd::open_stream_kpx_for_candidates(
-            reader.posting_file() + off,
-            static_cast<size_t>(reader.posting_file_size() - off),
+            corrupted.data(), corrupted.size(),
             kix_decoded.data(), kix_decoded.size(),
             candidates.data(), candidates.size(),
             scratch));
 
+        CHECK_EQ(scratch.selected.size(), 0u);
         CHECK_EQ(scratch.out_candidate_idx.size(), 0u);
         CHECK_EQ(scratch.out_positions.size(), 0u);
-        CHECK_EQ(scratch.skipped_kind_entries, kix_decoded.size());
-        // Nothing past the kind map was read, so nothing was walked past.
-        CHECK_EQ(scratch.skipped_partition_groups, 0u);
-        CHECK_EQ(scratch.skipped_for_blocks, 0u);
         reader.close();
     }
     std::remove(TEST_FILE);
@@ -583,9 +589,15 @@ static void test_for_block_skip() {
         CHECK_EQ(scratch.out_positions.size(), 2u);
         CHECK_EQ(scratch.out_positions[0], 1000u);
         CHECK_EQ(scratch.out_positions[1], 1015u);
-        // Block 1 and the 44-element tail carry no selected element.
-        CHECK_EQ(scratch.skipped_for_blocks, 2u);
-        CHECK_EQ(scratch.skipped_partition_groups, 0u);
+        // Both candidates are short_occ1 entries at their own sid rank, so
+        // the runs handed to the FOR stream cover block 0 alone.
+        CHECK_EQ(scratch.selected.size(), 2u);
+        CHECK_EQ(scratch.selected[0].candidate_idx, 0u);
+        CHECK_EQ(scratch.selected[0].rank, 0u);
+        CHECK_EQ(scratch.selected[0].kind, 0u);
+        CHECK_EQ(scratch.selected[1].candidate_idx, 1u);
+        CHECK_EQ(scratch.selected[1].rank, 5u);
+        CHECK_EQ(scratch.selected[1].kind, 0u);
         reader.close();
     }
     std::remove(TEST_FILE);
@@ -636,9 +648,12 @@ static void test_partition_group_skip() {
         for (uint32_t j = 0; j < 12; j++) {
             CHECK_EQ(scratch.out_positions[j], 4000u + j);
         }
-        CHECK_EQ(scratch.skipped_partition_groups, 3u);
-        // Each skipped group is a 12-element stream: no full block, one tail.
-        CHECK_EQ(scratch.skipped_for_blocks, 3u);
+        // Only partition rank 1 is asked for; the other 3 groups are found
+        // through their headers alone.
+        CHECK_EQ(scratch.selected.size(), 1u);
+        CHECK_EQ(scratch.selected[0].candidate_idx, 0u);
+        CHECK_EQ(scratch.selected[0].rank, 1u);
+        CHECK_EQ(scratch.selected[0].kind, 2u);
         reader.close();
     }
     std::remove(TEST_FILE);
@@ -692,7 +707,14 @@ static void test_kind_entry_skip() {
         CHECK_EQ(scratch.out_positions[0], 7000u);
         CHECK_EQ(scratch.out_positions[1], 7000u + 100u * 5u);
         CHECK_EQ(scratch.out_positions[2], 7000u + 199u * 5u);
-        CHECK_EQ(scratch.skipped_kind_entries, n - candidates.size());
+        // The ranks recovered in bulk over the jumped-over entries have to
+        // match the entries' own sid ranks.
+        CHECK_EQ(scratch.selected.size(), candidates.size());
+        for (size_t s = 0; s < candidates.size(); s++) {
+            CHECK_EQ(scratch.selected[s].candidate_idx, uint32_t(s));
+            CHECK_EQ(scratch.selected[s].rank, candidates[s]);
+            CHECK_EQ(scratch.selected[s].kind, 0u);
+        }
         reader.close();
     }
     std::remove(TEST_FILE);
@@ -745,8 +767,6 @@ static void test_short1_stream_skipped_for_short2() {
         CHECK(scratch.out_candidate_idx == want_idx);
         CHECK(scratch.out_offsets == want_off);
         CHECK(scratch.out_positions == want_pos);
-        // The 3-element short_occ1 stream is one tail block, walked past.
-        CHECK_EQ(scratch.skipped_for_blocks, 1u);
         reader.close();
     }
     std::remove(TEST_FILE);
@@ -801,8 +821,6 @@ static void test_run_across_block_boundary() {
         const std::vector<uint32_t> want_pos = {5420, 5421, 5422};
         CHECK(scratch.out_offsets == want_off);
         CHECK(scratch.out_positions == want_pos);
-        // Both full blocks carry part of the run; only the tail is skipped.
-        CHECK_EQ(scratch.skipped_for_blocks, 1u);
         reader.close();
     }
     std::remove(TEST_FILE);

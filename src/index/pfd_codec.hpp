@@ -159,15 +159,6 @@ struct PosDecodeScratch {
     std::vector<uint32_t> out_candidate_idx;
     std::vector<uint32_t> out_offsets;           // out_candidate_idx.size() + 1
     std::vector<uint32_t> out_positions;         // concatenated positions
-
-    // How much of the posting list the selection let the decoder walk past,
-    // for the most recent call.  A call that never reaches a stream leaves
-    // that stream's counter at 0 — a posting list no candidate hits is
-    // abandoned right after the selection pass, so both stream counters
-    // stay 0 while skipped_kind_entries reaches distinct_count.
-    uint64_t skipped_kind_entries = 0;      // not resolved one entry at a time
-    uint64_t skipped_partition_groups = 0;  // group stream not decoded
-    uint64_t skipped_for_blocks = 0;        // FOR block not decoded (tail counts as one)
 };
 
 // Decode a .kpx posting list against a sorted candidate seq_id array, using
