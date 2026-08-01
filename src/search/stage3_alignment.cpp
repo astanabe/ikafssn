@@ -664,11 +664,13 @@ std::vector<OutputHit> run_stage3(
         }
 
         // Release decoded subseqs and any aligned strings left on dropped
-        // hits.  std::string::clear() keeps capacity; shrink_to_fit returns
-        // the heap.
+        // hits.  Walks the whole slice, not just the live prefix, so the
+        // hits the overlap resolution dropped hand their heap back here
+        // rather than at the end of the run; swapping in an empty string
+        // returns the buffer, which clear() would keep.
         for (size_t gi : batch.group_idxs) {
             const auto& g = groups[gi];
-            for (uint32_t t = 0; t < g.len; t++) {
+            for (uint32_t t = 0; t < g.orig_len; t++) {
                 size_t idx = group_slots[g.begin + t];
                 std::string().swap(subject_subseqs[idx]);
                 std::string().swap(hits[idx].qseq);
