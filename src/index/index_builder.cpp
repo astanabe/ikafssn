@@ -774,9 +774,12 @@ bool build_postings(BlastDbReader& db,
         // Read the posting file from the temp file (skip header + uint64 offsets)
         FILE* rd = std::fopen(kix_tmp.c_str(), "rb");
         std::fseek(rd, static_cast<long>(kix_posting_start), SEEK_SET);
-        std::vector<uint8_t> posting_blob(kix_data_pos);
-        if (kix_data_pos > 0) {
-            std::fread(posting_blob.data(), 1, kix_data_pos, rd);
+        std::vector<uint8_t> posting_file(kix_data_pos);
+        if (kix_data_pos > 0 &&
+            std::fread(posting_file.data(), 1, kix_data_pos, rd) != kix_data_pos) {
+            logger.error("Failed to read the posting file back from %s", kix_tmp.c_str());
+            std::fclose(rd);
+            return false;
         }
         std::fclose(rd);
 
@@ -813,8 +816,8 @@ bool build_postings(BlastDbReader& db,
             return false;
         }
 
-        if (!posting_blob.empty()) {
-            std::fwrite(posting_blob.data(), 1, posting_blob.size(), wr);
+        if (!posting_file.empty()) {
+            std::fwrite(posting_file.data(), 1, posting_file.size(), wr);
         }
         std::fclose(wr);
     }
@@ -826,9 +829,12 @@ bool build_postings(BlastDbReader& db,
 
         FILE* rd = std::fopen(kpx_tmp.c_str(), "rb");
         std::fseek(rd, static_cast<long>(kpx_posting_start_pos), SEEK_SET);
-        std::vector<uint8_t> posting_blob(kpx_data_pos);
-        if (kpx_data_pos > 0) {
-            std::fread(posting_blob.data(), 1, kpx_data_pos, rd);
+        std::vector<uint8_t> posting_file(kpx_data_pos);
+        if (kpx_data_pos > 0 &&
+            std::fread(posting_file.data(), 1, kpx_data_pos, rd) != kpx_data_pos) {
+            logger.error("Failed to read the posting file back from %s", kpx_tmp.c_str());
+            std::fclose(rd);
+            return false;
         }
         std::fclose(rd);
 
@@ -857,8 +863,8 @@ bool build_postings(BlastDbReader& db,
             return false;
         }
 
-        if (!posting_blob.empty()) {
-            std::fwrite(posting_blob.data(), 1, posting_blob.size(), wr);
+        if (!posting_file.empty()) {
+            std::fwrite(posting_file.data(), 1, posting_file.size(), wr);
         }
         std::fclose(wr);
     }

@@ -71,7 +71,9 @@ void test_random_sizes() {
         std::vector<TempEntry> v;
         v.reserve(n);
         for (std::size_t i = 0; i < n; ++i) {
-            v.push_back({rng() & 0xFFFFFFu, rng() & 0xFFFFu, rng() & 0xFFFFu});
+            v.push_back({static_cast<uint32_t>(rng() & 0xFFFFFFu),
+                         static_cast<uint32_t>(rng() & 0xFFFFu),
+                         static_cast<uint32_t>(rng() & 0xFFFFu)});
         }
         char label[64];
         std::snprintf(label, sizeof(label), "rand_n=%zu", n);
@@ -117,7 +119,9 @@ void test_large_random() {
     std::vector<TempEntry> v;
     v.reserve(1 << 17);  // 128K entries
     for (std::size_t i = 0; i < (1u << 17); ++i) {
-        v.push_back({rng() & 0xFFFFFFu, rng() & 0xFFFFu, rng() & 0xFFFFu});
+        v.push_back({static_cast<uint32_t>(rng() & 0xFFFFFFu),
+                     static_cast<uint32_t>(rng() & 0xFFFFu),
+                     static_cast<uint32_t>(rng() & 0xFFFFu)});
     }
     run(std::move(v), "large_rand_128K");
 }

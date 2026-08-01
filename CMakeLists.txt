@@ -1,4 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
+
+# Give the archives FetchContent downloads the timestamp of their extraction,
+# so a changed URL rebuilds what depends on the contents.  Guarded because the
+# policy only exists from CMake 3.24.
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
 project(ikafssn LANGUAGES C CXX)
 
 set(IKAFSSN_VERSION "0.1.2026.08.02")

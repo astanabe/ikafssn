@@ -363,10 +363,9 @@ static void test_scan_spaced_k8() {
     CHECK_EQ(results.size(), 4u);
     CHECK_EQ(results[0].first, 0u);
     CHECK_EQ(results[3].first, 3u);
-    // k-mer value should fit in 16 bits (k=8 -> 2*8=16 bits)
-    for (const auto& [pos, kmer] : results) {
-        CHECK(kmer < (1u << 16));
-    }
+    // k=8 -> 2*8=16 bits, which the scanner's k-mer type pins on its own.
+    static_assert(sizeof(results[0].second) * 8 == 16,
+                  "k=8 spaced seeds are scanned as uint16_t");
 }
 
 static void test_scan_spaced_k9() {

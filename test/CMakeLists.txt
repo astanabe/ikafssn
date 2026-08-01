@@ -28,6 +28,17 @@ function(add_ikafssn_simd_test TEST_NAME)
     endforeach()
 endfunction()
 
+# Tests whose whole dependency set already comes from
+# ikafssn_test_index_writer.  Going through add_ikafssn_test() would name
+# ikafssn_index / ikafssn_io a second time, which Apple's linker reports as a
+# duplicate library.
+function(add_index_writer_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE})
+    target_link_libraries(${TEST_NAME} PRIVATE ikafssn_test_index_writer)
+    target_include_directories(${TEST_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+endfunction()
+
 add_ikafssn_test(test_varint test_varint.cpp)
 
 # Compressed I/O round-trip + concatenation + magic / extension detection.
@@ -77,11 +88,9 @@ target_include_directories(ikafssn_test_index_writer PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
 
 add_ikafssn_test(test_ksx_io test_ksx_io.cpp)
-add_ikafssn_test(test_kix_io test_kix_io.cpp)
-target_link_libraries(test_kix_io PRIVATE ikafssn_test_index_writer)
+add_index_writer_test(test_kix_io test_kix_io.cpp)
 add_ikafssn_simd_test(test_kix_io)
-add_ikafssn_test(test_kpx_io test_kpx_io.cpp)
-target_link_libraries(test_kpx_io PRIVATE ikafssn_test_index_writer)
+add_index_writer_test(test_kpx_io test_kpx_io.cpp)
 add_ikafssn_simd_test(test_kpx_io)
 add_ikafssn_test(test_khx_io test_khx_io.cpp)
 target_link_libraries(test_khx_io PRIVATE ikafssn_util)
@@ -132,8 +141,7 @@ target_link_libraries(test_v8_rejection PRIVATE ikafssn_util)
 # Structural validation of (.kix, .kpx) volume pairs + bit-flip
 # injection regression.  Exercises validate_volume() against both a
 # clean build and a corrupted kind map.
-add_ikafssn_test(test_index_filter_validate test_index_filter_validate.cpp)
-target_link_libraries(test_index_filter_validate PRIVATE ikafssn_test_index_writer ikafssn_util)
+add_index_writer_test(test_index_filter_validate test_index_filter_validate.cpp)
 
 # ikafssnindex resume / per-volume validation regression.  Spawns the
 # ikafssnindex CLI binary against the SSU fixture.
@@ -263,7 +271,7 @@ add_test(NAME test_oid_filter COMMAND test_oid_filter)
 add_executable(test_stage1 test_stage1.cpp)
 target_link_libraries(test_stage1 PRIVATE
     ikafssn_test_search_helper
-    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_search ikafssn_builder ikafssn_core
 )
 target_include_directories(test_stage1 PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -293,7 +301,7 @@ add_ikafssn_simd_test(test_stage1_simd_kernel)
 add_executable(test_split_index_integration test_split_index_integration.cpp)
 target_link_libraries(test_split_index_integration PRIVATE
     ikafssn_test_search_helper
-    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_search ikafssn_builder ikafssn_core
 )
 target_include_directories(test_split_index_integration PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -309,7 +317,7 @@ add_test(NAME test_split_index_integration COMMAND test_split_index_integration)
 add_executable(test_search_integration test_search_integration.cpp)
 target_link_libraries(test_search_integration PRIVATE
     ikafssn_test_search_helper
-    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_search ikafssn_builder ikafssn_core
 )
 target_include_directories(test_search_integration PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -326,7 +334,7 @@ add_test(NAME test_search_integration COMMAND test_search_integration)
 add_executable(test_multivolume test_multivolume.cpp)
 target_link_libraries(test_multivolume PRIVATE
     ikafssn_test_search_helper
-    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_search ikafssn_builder ikafssn_core
     TBB::tbb
 )
 target_include_directories(test_multivolume PRIVATE
@@ -365,7 +373,7 @@ add_executable(test_server_client test_server_client.cpp)
 target_link_libraries(test_server_client PRIVATE
     ikafssn_test_search_helper
     ikafssn_server_lib ikafssn_client_lib
-    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_search ikafssn_builder ikafssn_core
     TBB::tbb
 )
 target_include_directories(test_server_client PRIVATE
@@ -386,7 +394,7 @@ if(BUILD_HTTPD)
     target_link_libraries(test_httpd PRIVATE
         ikafssn_test_search_helper
         ikafssn_httpd_backend ikafssn_server_lib
-        ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+        ikafssn_search ikafssn_builder ikafssn_core
         TBB::tbb
     )
     target_include_directories(test_httpd PRIVATE
@@ -405,7 +413,7 @@ if(BUILD_HTTPD)
         target_link_libraries(test_httpd_client PRIVATE
             ikafssn_test_search_helper
             ikafssn_client_lib ikafssn_httpd_controller ikafssn_server_lib
-            ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+            ikafssn_search ikafssn_builder ikafssn_core
             TBB::tbb
         )
         target_include_directories(test_httpd_client PRIVATE
@@ -449,7 +457,7 @@ add_executable(test_retrieve_pipeline test_retrieve_pipeline.cpp
 )
 target_link_libraries(test_retrieve_pipeline PRIVATE
     ikafssn_test_search_helper
-    ikafssn_search ikafssn_builder ikafssn_index ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+    ikafssn_search ikafssn_builder ikafssn_core
 )
 target_include_directories(test_retrieve_pipeline PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
