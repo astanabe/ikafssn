@@ -45,14 +45,20 @@ declare -A suite_for_ubuntu=(
   ["26.04"]="resolute"
 )
 
+# One .deb per directory: dpkg-scanpackages writes Filename relative to the
+# working directory when its argument is a directory, but absolutises it when
+# the argument is a file.  APT requires Filename to be relative to the channel
+# root, and each suite must advertise only its own build.
 for ubuntu_ver in 22.04 24.04 26.04; do
   for arch in amd64 arm64; do
     asset="ikafssn_${IKAFSSN_VERSION}_ubuntu-${ubuntu_ver}_${arch}.deb"
+    deb_dir="${pool_dir}/ubuntu-${ubuntu_ver}/${arch}"
+    mkdir -p "${deb_dir}"
     gh release download "${tag}" \
       --repo "${GITHUB_REPOSITORY}" \
       --pattern "${asset}" \
-      --dir "${pool_dir}"
-    if [ ! -f "${pool_dir}/${asset}" ]; then
+      --dir "${deb_dir}"
+    if [ ! -f "${deb_dir}/${asset}" ]; then
       echo "::error::Failed to download ${asset}" >&2
       exit 1
     fi
@@ -65,8 +71,12 @@ for ubuntu_ver in 22.04 24.04 26.04; do
   for arch in amd64 arm64; do
     bin_dir="${suite_dir}/main/binary-${arch}"
     mkdir -p "${bin_dir}"
-    deb_rel="${pool_dir}/ikafssn_${IKAFSSN_VERSION}_ubuntu-${ubuntu_ver}_${arch}.deb"
-    dpkg-scanpackages -m --multiversion "${deb_rel}" > "${bin_dir}/Packages"
+    dpkg-scanpackages -m --multiversion \
+      "${pool_dir}/ubuntu-${ubuntu_ver}/${arch}" > "${bin_dir}/Packages"
+    if grep -q '^Filename: /' "${bin_dir}/Packages"; then
+      echo "::error::${bin_dir}/Packages carries an absolute Filename; APT needs it relative to the channel root" >&2
+      exit 1
+    fi
     gzip -kf9 "${bin_dir}/Packages"
   done
 
