@@ -179,14 +179,25 @@ std::vector<OutputHit> run_stage3(
         query_map[queries[i].id] = i;
     }
 
-    // 3. Validate hit volumes
+    // 3. Resolve each hit's query index once, and reject the hits that cannot
+    //    be aligned: a volume outside `readers` or a query missing from
+    //    `queries`.  Every hit valid from here on has a usable
+    //    `query_of_hit[i]`, so the alignment paths index `queries` directly.
+    std::vector<uint32_t> query_of_hit(hits.size(), UINT32_MAX);
     std::vector<bool> hit_valid(hits.size(), true);
     for (size_t i = 0; i < hits.size(); i++) {
         if (hits[i].volume >= readers.size()) {
             logger.warn("Stage 3: hit volume %u out of range (max %zu), skipping",
                         static_cast<unsigned>(hits[i].volume), readers.size());
             hit_valid[i] = false;
+            continue;
         }
+        auto qit = query_map.find(hits[i].qseqid);
+        if (qit == query_map.end()) {
+            hit_valid[i] = false;
+            continue;
+        }
+        query_of_hit[i] = static_cast<uint32_t>(qit->second);
     }
 
     // 4. Build profiles up front (per unique query_idx x strand).  Profiles
@@ -200,24 +211,27 @@ std::vector<OutputHit> run_stage3(
     struct ProfileEntry {
         parasail_profile_t* profile = nullptr;
         std::string seq; // keep alive for profile lifetime
+        bool built = false;
     };
-    std::unordered_map<std::string, ProfileEntry> profiles; // key: "qidx:strand"
+    // Slot `query_idx * 2 + is_rev`; only the (query, strand) pairs the hits
+    // actually use are built.
+    std::vector<ProfileEntry> profiles(queries.size() * 2);
+    auto profile_slot = [&](size_t hit_idx) {
+        return static_cast<size_t>(query_of_hit[hit_idx]) * 2
+             + (hits[hit_idx].sstrand == '-' ? 1u : 0u);
+    };
 
     for (size_t i = 0; i < hits.size(); i++) {
         if (!hit_valid[i]) continue;
-        auto qit = query_map.find(hits[i].qseqid);
-        if (qit == query_map.end()) continue;
-        size_t qi = qit->second;
-        bool is_rev = (hits[i].sstrand == '-');
-        std::string key = std::to_string(qi) + ":" + (is_rev ? "1" : "0");
-        if (profiles.find(key) == profiles.end()) {
-            ProfileEntry pe;
-            pe.seq = is_rev ? reverse_complement_string(queries[qi].sequence)
-                            : queries[qi].sequence;
-            pe.profile = parasail_profile_create_sat(
-                pe.seq.c_str(), static_cast<int>(pe.seq.size()), matrix);
-            profiles[key] = std::move(pe);
-        }
+        ProfileEntry& pe = profiles[profile_slot(i)];
+        if (pe.built) continue;
+        const size_t qi = query_of_hit[i];
+        pe.seq = (hits[i].sstrand == '-')
+            ? reverse_complement_string(queries[qi].sequence)
+            : queries[qi].sequence;
+        pe.profile = parasail_profile_create_sat(
+            pe.seq.c_str(), static_cast<int>(pe.seq.size()), matrix);
+        pe.built = true;
     }
 
     // 5. Build atomic groups keyed by (qseqid, sseqid, sstrand).
@@ -229,11 +243,6 @@ std::vector<OutputHit> run_stage3(
     groups.reserve(64);
     for (size_t i = 0; i < hits.size(); i++) {
         if (!hit_valid[i]) continue;
-        if (query_map.find(hits[i].qseqid) == query_map.end()) {
-            // Skip hits whose query is missing — they cannot be aligned.
-            hit_valid[i] = false;
-            continue;
-        }
         std::string key = hits[i].qseqid + "\t" + hits[i].sseqid + "\t" + hits[i].sstrand;
         auto it = group_index.find(key);
         if (it == group_index.end()) {
@@ -334,11 +343,8 @@ std::vector<OutputHit> run_stage3(
                     uint16_t vol = hits[hit_idx].volume;
                     uint32_t oid = hits[hit_idx].oid;
 
-                    uint32_t query_len = 0;
-                    auto qit = query_map.find(hits[hit_idx].qseqid);
-                    if (qit != query_map.end()) {
-                        query_len = static_cast<uint32_t>(queries[qit->second].sequence.size());
-                    }
+                    uint32_t query_len = static_cast<uint32_t>(
+                        queries[query_of_hit[hit_idx]].sequence.size());
 
                     uint32_t ctx = context_is_ratio
                         ? static_cast<uint32_t>(query_len * context_ratio)
@@ -373,11 +379,7 @@ std::vector<OutputHit> run_stage3(
         // 8d. Parallel alignment.
         tbb::parallel_for(size_t(0), valid_indices.size(), [&](size_t vi) {
             size_t idx = valid_indices[vi];
-            auto qit = query_map.find(hits[idx].qseqid);
-            size_t qi = qit->second;
-            bool is_rev = (hits[idx].sstrand == '-');
-            std::string key = std::to_string(qi) + ":" + (is_rev ? "1" : "0");
-            const auto& pe = profiles.at(key);
+            const ProfileEntry& pe = profiles[profile_slot(idx)];
 
             const char* subj = subject_subseqs[idx].c_str();
             int slen = static_cast<int>(subject_subseqs[idx].size());
@@ -467,9 +469,8 @@ std::vector<OutputHit> run_stage3(
                         uint32_t seq_len = hits[clamp_idx].slen;
                         if (seq_len == 0) seq_len = 1;
 
-                        auto qit2 = query_map.find(hits[clamp_idx].qseqid);
-                        if (qit2 == query_map.end()) continue;
-                        uint32_t query_len2 = static_cast<uint32_t>(queries[qit2->second].sequence.size());
+                        uint32_t query_len2 = static_cast<uint32_t>(
+                            queries[query_of_hit[clamp_idx]].sequence.size());
                         uint32_t ctx2 = context_is_ratio
                             ? static_cast<uint32_t>(query_len2 * context_ratio)
                             : context_abs;
@@ -514,12 +515,8 @@ std::vector<OutputHit> run_stage3(
                             oid, new_ext_start, new_ext_end - 1);
                         ext_starts[clamp_idx] = new_ext_start;
 
-                        size_t qi2 = qit2->second;
-                        bool is_rev2 = (hits[clamp_idx].sstrand == '-');
-                        std::string pkey = std::to_string(qi2) + ":" + (is_rev2 ? "1" : "0");
-                        auto pit = profiles.find(pkey);
-                        if (pit == profiles.end()) continue;
-                        const auto& pe2 = pit->second;
+                        const ProfileEntry& pe2 = profiles[profile_slot(clamp_idx)];
+                        if (!pe2.profile) continue;
 
                         const char* subj2 = subject_subseqs[clamp_idx].c_str();
                         int slen2 = static_cast<int>(subject_subseqs[clamp_idx].size());
@@ -627,7 +624,7 @@ std::vector<OutputHit> run_stage3(
     }
 
     // 9. Free profiles
-    for (auto& [key, pe] : profiles) {
+    for (auto& pe : profiles) {
         if (pe.profile) parasail_profile_free(pe.profile);
     }
 
