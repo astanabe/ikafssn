@@ -24,9 +24,10 @@ static std::vector<OutputHit> make_test_hits() {
     h1.sseqid = "FJ876973";
     h1.sstrand = '+';
     h1.qstart = 0;
-    h1.qend = 19;
+    h1.qend = 20;
+    h1.qlen = 20;
     h1.sstart = 100;
-    h1.send = 119;
+    h1.send = 120;
     h1.chainscore = 50;
     h1.coverscore = 30;
     h1.volume = 0;
@@ -45,9 +46,10 @@ static std::vector<OutputHit> make_test_hits() {
     h2.sseqid = "GQ912721";
     h2.sstrand = '-';
     h2.qstart = 0;
-    h2.qend = 14;
+    h2.qend = 15;
+    h2.qlen = 15;
     h2.sstart = 200;
-    h2.send = 216;
+    h2.send = 217;
     h2.chainscore = 30;
     h2.coverscore = 20;
     h2.volume = 0;
@@ -146,6 +148,66 @@ static void test_sam_reverse_flag_and_pos() {
     }
 }
 
+// Stage 3 reports the aligned region only, so the query bases outside
+// [qstart, qend) are not in SEQ.  They must be declared as hard clips, or the
+// record understates the read length and SEQ no longer matches the CIGAR.
+static void test_sam_hard_clips() {
+    std::fprintf(stderr, "-- test_sam_hard_clips\n");
+
+    OutputHit h;
+    h.qseqid = "clipped";
+    h.sseqid = "FJ876973";
+    h.sstrand = '+';
+    h.qstart = 20;
+    h.qend = 220;
+    h.qlen = 244;
+    h.sstart = 100;
+    h.send = 300;
+    h.slen = 1800;
+    h.chainscore = 190;
+    h.coverscore = 190;
+    h.alnscore = 1000;
+    h.cigar = "200=";
+    h.npositive = 200;
+    h.nnegative = 0;
+    h.ppositive = 100.0;
+    h.qseq = std::string(200, 'A');
+    h.sseq = std::string(200, 'A');
+    h.volume = 0;
+
+    std::string sam_path = g_test_dir + "/test_clips.sam";
+    write_results_sam(sam_path, {h});
+
+    samFile* fp = sam_open(sam_path.c_str(), "r");
+    CHECK(fp != nullptr);
+    sam_hdr_t* hdr = sam_hdr_read(fp);
+    CHECK(hdr != nullptr);
+
+    bam1_t* b = bam_init1();
+    int rec = 0;
+    while (sam_read1(fp, hdr, b) >= 0) {
+        CHECK_EQ(b->core.pos, static_cast<hts_pos_t>(100));
+        CHECK_EQ(b->core.n_cigar, 3u);
+        if (b->core.n_cigar == 3) {
+            uint32_t* c = bam_get_cigar(b);
+            CHECK(bam_cigar_op(c[0]) == BAM_CHARD_CLIP);
+            CHECK_EQ(bam_cigar_oplen(c[0]), 20u);
+            CHECK(bam_cigar_op(c[1]) == BAM_CEQUAL);
+            CHECK_EQ(bam_cigar_oplen(c[1]), 200u);
+            CHECK(bam_cigar_op(c[2]) == BAM_CHARD_CLIP);
+            CHECK_EQ(bam_cigar_oplen(c[2]), 24u);
+        }
+        // SAM requires |SEQ| to equal the query-consuming, non-clip ops.
+        CHECK_EQ(b->core.l_qseq, 200);
+        rec++;
+    }
+    CHECK_EQ(rec, 1);
+
+    bam_destroy1(b);
+    sam_hdr_destroy(hdr);
+    sam_close(fp);
+}
+
 static void test_bam_roundtrip() {
     std::fprintf(stderr, "-- test_bam_roundtrip\n");
 
@@ -225,6 +287,7 @@ int main() {
 
     test_sam_basic();
     test_sam_reverse_flag_and_pos();
+    test_sam_hard_clips();
     test_bam_roundtrip();
     test_cigar_encoding();
 

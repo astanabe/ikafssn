@@ -107,13 +107,14 @@ struct ContextSubseq {
     std::string seq;        // decoded bases (empty if the OID is empty,
                             // the range is invalid, or decoding failed)
     uint32_t ext_start = 0; // 0-based parent-relative start actually used
-    uint32_t ext_end = 0;   // 0-based parent-relative end actually used (inclusive)
+    uint32_t ext_end = 0;   // 0-based parent-relative end actually used (exclusive)
     uint32_t seq_len = 0;   // parent OID length in bases
 };
 
-// Extract the match region [sstart, send] (0-based parent-relative inclusive)
-// expanded by `ctx` bases on each side, clamped to the parent OID, and decode
-// it via partial ncbi2na unpack.  Shared by Stage 3 alignment and ikafssnretrieve.
+// Extract the match region [sstart, send) (0-based parent-relative half-open,
+// the convention every hit coordinate uses internally) expanded by `ctx` bases
+// on each side, clamped to the parent OID, and decode it via partial ncbi2na
+// unpack.  Shared by Stage 3 alignment and ikafssnretrieve.
 ContextSubseq extract_context_subseq(const BlastDbReader& reader, uint32_t oid,
                                      uint32_t sstart, uint32_t send, uint32_t ctx);
 

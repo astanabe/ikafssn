@@ -125,7 +125,7 @@ static void test_full_pipeline() {
 static void test_context_extension() {
     std::fprintf(stderr, "-- test_context_extension\n");
 
-    // Create hits manually targeting ACC_FJ, hit at [100, 200]
+    // Create hits manually targeting ACC_FJ, hit at [100, 200)
     std::vector<OutputHit> hits;
     hits.push_back({"query1", ACC_FJ, '+', 0, 100, 100, 200, 5, 0});
 
@@ -145,7 +145,7 @@ static void test_context_extension() {
         while (std::getline(iss, sline)) {
             if (!sline.empty() && sline[0] != '>') seq += sline;
         }
-        CHECK_EQ(seq.size(), 101u); // send - sstart + 1 = 200 - 100 + 1 = 101
+        CHECK_EQ(seq.size(), 100u); // send - sstart = 200 - 100 = 100
     }
 
     // Retrieve with context=10
@@ -164,12 +164,12 @@ static void test_context_extension() {
         while (std::getline(iss, sline)) {
             if (!sline.empty() && sline[0] != '>') seq += sline;
         }
-        // Range: [100-10, 200+10] = [90, 210], size = 121
-        CHECK_EQ(seq.size(), 121u);
+        // Range: [100-10, 200+10) = [90, 210), size = 120
+        CHECK_EQ(seq.size(), 120u);
         // defline now embeds the parent accession + the
         // 1-based inclusive extracted range as `acc:start-end` (kafsss
-        // style).  ext_start=90, ext_end=210 (0-based) -> 91-211 (1-based).
-        CHECK(hdr.find(":91-211") != std::string::npos);
+        // style).  ext_start=90, ext_end=210 (0-based half-open) -> 91-210.
+        CHECK(hdr.find(":91-210") != std::string::npos);
     }
 }
 
@@ -178,7 +178,7 @@ static void test_context_ratio() {
 
     // Ratio mode derives the per-hit context from the hit's query length:
     // ctx = round(qlen * ratio).  qlen=100, ratio=0.1 -> ctx=10, so the range
-    // [100, 200] expands to [90, 210] (size 121) — identical to abs context=10,
+    // [100, 200) expands to [90, 210) (size 120) — identical to abs context=10,
     // which confirms the context is computed from qlen rather than ignored.
     OutputHit h{"query1", ACC_FJ, '+', 0, 100, 100, 200, 5, 0};
     h.qlen = 100;
@@ -198,8 +198,8 @@ static void test_context_ratio() {
     while (std::getline(iss, sline)) {
         if (!sline.empty() && sline[0] != '>') seq += sline;
     }
-    CHECK_EQ(seq.size(), 121u);
-    CHECK(hdr.find(":91-211") != std::string::npos);
+    CHECK_EQ(seq.size(), 120u);
+    CHECK(hdr.find(":91-210") != std::string::npos);
 }
 
 static void test_context_clamp_start() {
@@ -247,7 +247,7 @@ static void test_reverse_strand() {
     }
 
     std::vector<OutputHit> hits;
-    hits.push_back({"query1", ACC_GQ, '-', 0, 3, 0, 3, 3, 0});
+    hits.push_back({"query1", ACC_GQ, '-', 0, 4, 0, 4, 3, 0});
 
     RetrieveOptions opts;
     opts.context = 0;

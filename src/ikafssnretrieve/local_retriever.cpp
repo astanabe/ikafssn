@@ -92,7 +92,7 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
         uint32_t oid = it->second.second;
 
         // Per-hit context: ratio mode derives it from the hit's query length.
-        // Coordinates are 0-based parent-relative inclusive (the convention
+        // Coordinates are 0-based parent-relative half-open (the convention
         // Stage 2/3 use for hit.sstart / hit.send).
         uint32_t ctx = opts.is_ratio
             ? static_cast<uint32_t>(hit.qlen * opts.ratio)
@@ -110,7 +110,7 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
         }
         if (cs.seq.empty()) {
             std::fprintf(stderr, "retrieve_local: failed to get subsequence for OID %u "
-                         "[%u, %u]\n", oid, cs.ext_start, cs.ext_end);
+                         "[%u, %u)\n", oid, cs.ext_start, cs.ext_end);
             continue;
         }
         std::string subseq = std::move(cs.seq);
@@ -126,8 +126,9 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
         // retrieved hit gets a unique leading sseqid token even when one parent
         // accession appears in many rows.
         const std::string parent_acc = first_accession_token(hit.sseqid);
+        // The 0-based exclusive end and the 1-based inclusive end coincide.
         const uint32_t one_based_start = ext_start + 1;
-        const uint32_t one_based_end   = ext_end + 1;
+        const uint32_t one_based_end   = ext_end;
         out << '>' << parent_acc << ':' << one_based_start << '-' << one_based_end
             << " query=" << hit.qseqid
             << " strand=" << hit.sstrand

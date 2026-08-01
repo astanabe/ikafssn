@@ -293,12 +293,14 @@ ContextSubseq extract_context_subseq(const BlastDbReader& reader, uint32_t oid,
     if (r.seq_len == 0) return r;
 
     uint32_t ext_start = (sstart >= ctx) ? sstart - ctx : 0;
-    uint32_t ext_end = std::min(send + ctx, r.seq_len - 1);
-    if (ext_start > ext_end) return r;
+    uint32_t ext_end = static_cast<uint32_t>(std::min<uint64_t>(
+        static_cast<uint64_t>(send) + ctx, r.seq_len));
+    if (ext_start >= ext_end) return r;
 
     r.ext_start = ext_start;
     r.ext_end = ext_end;
-    r.seq = reader.get_subsequence(oid, ext_start, ext_end);
+    // get_subsequence takes an inclusive end.
+    r.seq = reader.get_subsequence(oid, ext_start, ext_end - 1);
     return r;
 }
 

@@ -1107,6 +1107,8 @@ Stage 3 pairwise alignment uses a configurable scoring matrix specified by `-sta
 
 **Column naming:** The output columns are `ppositive` (percent positive-scoring), `npositive` (number of positive-scoring positions), and `nnegative` (number of negative-scoring positions). With the DEGMATCH matrix these counts represent positive-scoring positions rather than strictly identical positions. The matching filter options are `-stage3_min_ppositive` and `-stage3_min_npositive`.
 
+**Aligned region only:** Stage 3 aligns the query against a context-extended subject window, so the raw alignment carries terminal gaps that span the rest of that window. Those are stripped before reporting: `qstart` / `qend` / `sstart` / `send`, `cigar`, `qseq` / `sseq` and the `ppositive` denominator all describe the aligned region between the terminal gaps, matching what BLAST reports for the same alignment. `ppositive` is therefore `npositive` over the aligned length, not over the window length.
+
 **DEGMATCH matrix (16x16):**
 
 The full DEGMATCH scoring matrix. Rows and columns correspond to the 16 symbols: A, T, G, C, S (G/C), W (A/T), R (A/G), Y (T/C), K (G/T), M (A/C), B (G/T/C), V (A/G/C), H (A/T/C), D (A/G/T), N (A/T/G/C), and `*` (stop/invalid).
@@ -1306,8 +1308,8 @@ SAM records contain:
 - **RNAME**: sseqid
 - **POS**: leftmost aligned parent-relative position, 1-based. This is the alignment's *lower* subject coordinate on both strands — unlike the TSV / JSON `sstart`, which swaps with `send` on the reverse strand.
 - **MAPQ**: 255
-- **CIGAR**: extended CIGAR with =/X/I/D operators, always in reference orientation
-- **SEQ**: ungapped query sequence in reference orientation, i.e. the reverse complement of the given query when FLAG 0x10 is set, as the SAM specification requires
+- **CIGAR**: extended CIGAR with =/X/I/D operators, always in reference orientation. Query bases outside the aligned region are reported as leading / trailing hard clips (`H`) because SEQ carries the aligned region only.
+- **SEQ**: ungapped aligned query sequence in reference orientation, i.e. the reverse complement of the given query when FLAG 0x10 is set, as the SAM specification requires
 - **QUAL**: * (not available)
 - **Tags**: `AS:i` (alnscore), `NM:i` (nnegative), `cs:i` (chainscore), `cv:i` (coverscore)
 

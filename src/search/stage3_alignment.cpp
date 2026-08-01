@@ -17,31 +17,68 @@
 
 namespace ikafssn {
 
-// Walk a parasail CIGAR to compute npositive, nnegative, and build a CIGAR string.
+// Walk a parasail CIGAR, dropping the terminal gaps a semi-global alignment
+// carries, and report the aligned region only.
+//
+// parasail materialises the free end gaps: the traceback runs all the way to
+// the origin, and `parasail_cigar_striped_*` appends the tail gap of whichever
+// sequence has not reached its end.  So `cigar->beg_query` / `beg_ref` are
+// always 0 and the CIGAR starts and ends with gap-only runs that describe the
+// context window, not the match.  Everything before the first '=' / 'X' and
+// after the last one is therefore stripped here, which is what makes the
+// reported interval, the CIGAR string, and ppositive describe the alignment
+// the way BLAST does.
+//
+// The ends need no such correction: `result->end_query` / `end_ref` are the
+// traceback's starting cell, so they already sit at the last aligned position.
 struct CigarStats {
     uint32_t npositive = 0;
     uint32_t nnegative = 0;
-    uint32_t aln_len = 0;
-    std::string cigar_str;
+    uint32_t aln_len = 0;    // columns in the aligned region
+    uint32_t lead_query = 0; // query bases before the first aligned column
+    uint32_t lead_ref = 0;   // ref bases before the first aligned column
+    uint32_t lead_cols = 0;  // columns before the first aligned column
+    std::string cigar_str;   // aligned region only
 };
 
+// 'I' consumes the query only and 'D' the reference only, following SAM.
 static CigarStats walk_cigar(const parasail_cigar_t* cigar) {
-    CigarStats stats;
+    int first = -1, last = -1;
     for (int i = 0; i < cigar->len; i++) {
+        char op = parasail_cigar_decode_op(cigar->seq[i]);
+        if (op == '=' || op == 'X') {
+            if (first < 0) first = i;
+            last = i;
+        }
+    }
+    // No aligned column at all: nothing to anchor the trim to, so keep the
+    // run as-is rather than invent an empty interval.
+    if (first < 0) { first = 0; last = cigar->len - 1; }
+
+    CigarStats stats;
+    for (int i = 0; i < first; i++) {
+        char op = parasail_cigar_decode_op(cigar->seq[i]);
+        uint32_t len = parasail_cigar_decode_len(cigar->seq[i]);
+        stats.lead_cols += len;
+        if (op == 'I') stats.lead_query += len;
+        else if (op == 'D') stats.lead_ref += len;
+    }
+    for (int i = first; i <= last; i++) {
         char op = parasail_cigar_decode_op(cigar->seq[i]);
         uint32_t len = parasail_cigar_decode_len(cigar->seq[i]);
         stats.aln_len += len;
-        switch (op) {
-            case '=': stats.npositive += len; break;
-            case 'X': stats.nnegative += len; break;
-            case 'I': break; // insertion in query
-            case 'D': break; // deletion in query (insertion in ref)
-            default: break;
-        }
+        if (op == '=') stats.npositive += len;
+        else if (op == 'X') stats.nnegative += len;
         stats.cigar_str += std::to_string(len);
         stats.cigar_str += op;
     }
     return stats;
+}
+
+// Slice the aligned region out of one parasail traceback string.  The
+// traceback has one character per CIGAR column, so the same offsets apply.
+static std::string aligned_span(const char* row, const CigarStats& cs) {
+    return std::string(row + cs.lead_cols, cs.aln_len);
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +101,7 @@ static uint64_t compute_hit_cost(const OutputHit& h,
     uint32_t ctx = ctx_is_ratio
         ? static_cast<uint32_t>(h.qlen * ctx_ratio)
         : ctx_abs;
-    uint64_t subseq = static_cast<uint64_t>(h.send - h.sstart + 1) + 2ull * ctx;
+    uint64_t subseq = static_cast<uint64_t>(h.send - h.sstart) + 2ull * ctx;
     uint64_t tb = cfg.traceback
         ? 2ull * std::max<uint64_t>(h.qlen, subseq)
         : 0ull;
@@ -360,13 +397,19 @@ std::vector<OutputHit> run_stage3(
                 parasail_cigar_t* cigar = parasail_result_get_cigar(
                     result, pe.seq.c_str(), static_cast<int>(pe.seq.size()),
                     subj, slen, matrix);
-
-                hits[idx].qstart = static_cast<uint32_t>(cigar->beg_query);
-                hits[idx].qend = static_cast<uint32_t>(result->end_query);
-                hits[idx].sstart = ext_starts[idx] + static_cast<uint32_t>(cigar->beg_ref);
-                hits[idx].send = ext_starts[idx] + static_cast<uint32_t>(result->end_ref);
+                if (!cigar) {
+                    parasail_result_free(result);
+                    return;
+                }
 
                 CigarStats cs = walk_cigar(cigar);
+                hits[idx].qstart = static_cast<uint32_t>(cigar->beg_query) + cs.lead_query;
+                hits[idx].qend = static_cast<uint32_t>(result->end_query) + 1;
+                hits[idx].sstart = ext_starts[idx] +
+                                   static_cast<uint32_t>(cigar->beg_ref) + cs.lead_ref;
+                hits[idx].send = ext_starts[idx] +
+                                 static_cast<uint32_t>(result->end_ref) + 1;
+
                 hits[idx].npositive = cs.npositive;
                 hits[idx].nnegative = cs.nnegative;
                 hits[idx].cigar = cs.cigar_str;
@@ -376,8 +419,8 @@ std::vector<OutputHit> run_stage3(
                     result, pe.seq.c_str(), static_cast<int>(pe.seq.size()),
                     subj, slen, matrix, '|', '*', ' ');
                 if (tb) {
-                    hits[idx].qseq = tb->query;
-                    hits[idx].sseq = tb->ref;
+                    hits[idx].qseq = aligned_span(tb->query, cs);
+                    hits[idx].sseq = aligned_span(tb->ref, cs);
                     parasail_traceback_free(tb);
                 }
 
@@ -388,8 +431,9 @@ std::vector<OutputHit> run_stage3(
                     pe.profile, subj, slen, config.gapopen, config.gapext);
 
                 hits[idx].alnscore = result->score;
-                hits[idx].qend = static_cast<uint32_t>(result->end_query);
-                hits[idx].send = ext_starts[idx] + static_cast<uint32_t>(result->end_ref);
+                hits[idx].qend = static_cast<uint32_t>(result->end_query) + 1;
+                hits[idx].send = ext_starts[idx] +
+                                 static_cast<uint32_t>(result->end_ref) + 1;
 
                 parasail_result_free(result);
             }
@@ -412,7 +456,7 @@ std::vector<OutputHit> run_stage3(
                         size_t idx_b = group.indices[pi + 1];
 
                         if (!hit_valid[idx_a] || !hit_valid[idx_b]) continue;
-                        if (hits[idx_a].send < hits[idx_b].sstart) continue;
+                        if (hits[idx_a].send <= hits[idx_b].sstart) continue;
 
                         size_t keep_idx, clamp_idx;
                         if (hits[idx_a].chainscore >= hits[idx_b].chainscore) {
@@ -423,6 +467,8 @@ std::vector<OutputHit> run_stage3(
                             clamp_idx = idx_a;
                         }
 
+                        // Half-open [new_ext_start, new_ext_end), matching the
+                        // hit coordinates the loop derives them from.
                         uint32_t new_ext_start, new_ext_end;
                         uint32_t oid = hits[clamp_idx].oid;
                         uint32_t seq_len = hits[clamp_idx].slen;
@@ -436,6 +482,7 @@ std::vector<OutputHit> run_stage3(
                             : context_abs;
 
                         if (hits[clamp_idx].sstart <= hits[keep_idx].sstart) {
+                            // Clamp the left hit to end where the kept one starts.
                             uint32_t boundary = hits[keep_idx].sstart;
                             if (hits[clamp_idx].sstart >= boundary) {
                                 hit_valid[clamp_idx] = false;
@@ -443,16 +490,18 @@ std::vector<OutputHit> run_stage3(
                                 continue;
                             }
                             new_ext_start = ext_starts[clamp_idx];
-                            new_ext_end = (boundary > 0) ? boundary - 1 : 0;
+                            new_ext_end = boundary;
                         } else {
-                            uint32_t boundary = hits[keep_idx].send + 1;
+                            // Clamp the right hit to start where the kept one ends.
+                            uint32_t boundary = hits[keep_idx].send;
                             if (boundary >= hits[clamp_idx].send) {
                                 hit_valid[clamp_idx] = false;
                                 changed = true;
                                 continue;
                             }
                             new_ext_start = boundary;
-                            new_ext_end = std::min(hits[clamp_idx].send + ctx2, seq_len - 1);
+                            new_ext_end = std::min<uint64_t>(
+                                static_cast<uint64_t>(hits[clamp_idx].send) + ctx2, seq_len);
                         }
 
                         if (new_ext_start >= new_ext_end) {
@@ -467,8 +516,9 @@ std::vector<OutputHit> run_stage3(
                             changed = true;
                             continue;
                         }
+                        // get_subsequence takes an inclusive end.
                         subject_subseqs[clamp_idx] = readers[vol].get_subsequence(
-                            oid, new_ext_start, new_ext_end);
+                            oid, new_ext_start, new_ext_end - 1);
                         ext_starts[clamp_idx] = new_ext_start;
 
                         size_t qi2 = qit2->second;
@@ -489,12 +539,23 @@ std::vector<OutputHit> run_stage3(
                             parasail_cigar_t* cigar2 = parasail_result_get_cigar(
                                 result2, pe2.seq.c_str(), static_cast<int>(pe2.seq.size()),
                                 subj2, slen2, matrix);
-                            hits[clamp_idx].qstart = static_cast<uint32_t>(cigar2->beg_query);
-                            hits[clamp_idx].qend = static_cast<uint32_t>(result2->end_query);
-                            hits[clamp_idx].sstart = new_ext_start + static_cast<uint32_t>(cigar2->beg_ref);
-                            hits[clamp_idx].send = new_ext_start + static_cast<uint32_t>(result2->end_ref);
+                            if (!cigar2) {
+                                hit_valid[clamp_idx] = false;
+                                parasail_result_free(result2);
+                                changed = true;
+                                continue;
+                            }
 
                             CigarStats cs2 = walk_cigar(cigar2);
+                            hits[clamp_idx].qstart =
+                                static_cast<uint32_t>(cigar2->beg_query) + cs2.lead_query;
+                            hits[clamp_idx].qend =
+                                static_cast<uint32_t>(result2->end_query) + 1;
+                            hits[clamp_idx].sstart = new_ext_start +
+                                static_cast<uint32_t>(cigar2->beg_ref) + cs2.lead_ref;
+                            hits[clamp_idx].send = new_ext_start +
+                                static_cast<uint32_t>(result2->end_ref) + 1;
+
                             hits[clamp_idx].npositive = cs2.npositive;
                             hits[clamp_idx].nnegative = cs2.nnegative;
                             hits[clamp_idx].cigar = cs2.cigar_str;
@@ -504,8 +565,8 @@ std::vector<OutputHit> run_stage3(
                                 result2, pe2.seq.c_str(), static_cast<int>(pe2.seq.size()),
                                 subj2, slen2, matrix, '|', '*', ' ');
                             if (tb2) {
-                                hits[clamp_idx].qseq = tb2->query;
-                                hits[clamp_idx].sseq = tb2->ref;
+                                hits[clamp_idx].qseq = aligned_span(tb2->query, cs2);
+                                hits[clamp_idx].sseq = aligned_span(tb2->ref, cs2);
                                 parasail_traceback_free(tb2);
                             }
 
@@ -515,8 +576,10 @@ std::vector<OutputHit> run_stage3(
                             parasail_result_t* result2 = parasail_sg_striped_profile_sat(
                                 pe2.profile, subj2, slen2, config.gapopen, config.gapext);
                             hits[clamp_idx].alnscore = result2->score;
-                            hits[clamp_idx].qend = static_cast<uint32_t>(result2->end_query);
-                            hits[clamp_idx].send = new_ext_start + static_cast<uint32_t>(result2->end_ref);
+                            hits[clamp_idx].qend =
+                                static_cast<uint32_t>(result2->end_query) + 1;
+                            hits[clamp_idx].send = new_ext_start +
+                                static_cast<uint32_t>(result2->end_ref) + 1;
                             parasail_result_free(result2);
                         }
 

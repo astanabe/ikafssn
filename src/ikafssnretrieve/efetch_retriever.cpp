@@ -263,6 +263,8 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
     // For batch: group by accession to avoid duplicate fetches; extract locally from fetched full seq.
     // For individual: fetch only the needed range.
 
+    // ext_start / ext_end are 0-based parent-relative half-open, matching the
+    // convention hit.sstart / hit.send arrive in.
     struct HitRef {
         size_t hit_index;
         uint32_t ext_start;
@@ -297,8 +299,8 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
     std::vector<std::string> individual_accessions;
 
     for (const auto& [acc, info] : acc_info) {
-        // Estimate sequence length from max s_end (add margin)
-        uint32_t est_len = info.max_s_end + 1;
+        // Estimate sequence length from max s_end (which is exclusive)
+        uint32_t est_len = info.max_s_end;
         if (est_len > opts.range_threshold) {
             individual_accessions.push_back(acc);
         } else {
@@ -348,10 +350,10 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
             for (const auto& hr : acc_info[acc].hit_refs) {
                 const auto& hit = hits[hr.hit_index];
                 uint32_t ext_start = hr.ext_start;
-                uint32_t ext_end = std::min(hr.ext_end, actual_len > 0 ? actual_len - 1 : 0);
-                if (ext_start > ext_end) continue;
+                uint32_t ext_end = std::min(hr.ext_end, actual_len);
+                if (ext_start >= ext_end) continue;
 
-                std::string subseq = full_seq.substr(ext_start, ext_end - ext_start + 1);
+                std::string subseq = full_seq.substr(ext_start, ext_end - ext_start);
                 if (hit.sstrand == '-') {
                     reverse_complement(subseq);
                 }
@@ -359,11 +361,11 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
                 // defline: kafsss-style `parent_acc:start-end`
                 // where coordinates are 1-based inclusive (consistent with
                 // BLAST's seq_start/seq_stop semantics that this code path
-                // already speaks below).  ext_start / ext_end here are
-                // 0-based parent-relative, so add 1.
+                // already speaks below).  The 0-based exclusive end and the
+                // 1-based inclusive end coincide.
                 std::ostringstream header;
                 header << first_accession_token(hit.sseqid) << ':'
-                       << (ext_start + 1) << '-' << (ext_end + 1)
+                       << (ext_start + 1) << '-' << ext_end
                        << " query=" << hit.qseqid
                        << " strand=" << hit.sstrand
                        << " score=" << hit.chainscore;
@@ -384,7 +386,7 @@ uint32_t retrieve_remote(const std::vector<OutputHit>& hits,
             const auto& hit = hits[hr.hit_index];
             // efetch uses 1-based inclusive coordinates
             uint32_t seq_start = hr.ext_start + 1;
-            uint32_t seq_stop = hr.ext_end + 1;
+            uint32_t seq_stop = hr.ext_end;
 
             std::string url = build_efetch_url_range(acc, seq_start, seq_stop, opts.api_key);
             std::string response;

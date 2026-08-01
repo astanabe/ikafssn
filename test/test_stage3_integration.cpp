@@ -129,7 +129,7 @@ static void test_stage3_pipeline() {
         // Coordinates should be within sequence bounds
         CHECK(h.slen > 0);
         CHECK(h.sstart < h.slen);
-        CHECK(h.send < h.slen);
+        CHECK(h.send <= h.slen);
     }
 
     // The exact match hit (FJ876973.1) should have high ppositive
@@ -594,6 +594,160 @@ static void test_stage3_reverse_strand() {
     CHECK(c.sstart > c.send);
 }
 
+// ---------------------------------------------------------------------------
+// Stage 3 coordinate convention.
+//
+// Stage 2 is bypassed: the chain span is handed to run_stage3 directly so the
+// alignment region is exact and the expected output is a fixed BLAST row.
+// The query is ACC_FJ's 1-based 101-300, so blastn -outfmt 6 reports
+// qstart=1 qend=200 sstart=101 send=300.
+// ---------------------------------------------------------------------------
+
+// Align `query` against ACC_FJ's [chain_start, chain_end) with `ctx` bases of
+// context and return the single hit.
+static OutputHit align_region(const std::string& query,
+                              uint32_t chain_start, uint32_t chain_end,
+                              uint32_t ctx, bool& found) {
+    found = false;
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+    db.close();
+    if (oid == UINT32_MAX) return {};
+
+    OutputHit h;
+    h.qseqid = "q";
+    h.sseqid = ACC_FJ;
+    h.sstrand = '+';
+    h.sstart = chain_start;
+    h.send = chain_end;
+    h.oid = oid;
+    h.volume = 0;
+    h.qlen = static_cast<uint32_t>(query.size());
+    h.chainscore = 190;
+    std::vector<OutputHit> hits{h};
+    std::vector<FastaRecord> queries{{"q", query}};
+
+    Stage3Config cfg;
+    cfg.traceback = true;
+    cfg.gapopen = 10;
+    cfg.gapext = 1;
+    Logger logger(Logger::kError);
+
+    auto out = run_stage3(hits, queries, g_testdb_path, cfg,
+                          /*context_is_ratio=*/false, 0.0, ctx, logger);
+    CHECK_EQ(out.size(), 1u);
+    if (out.size() != 1) return {};
+    found = true;
+    return out.front();
+}
+
+static void test_stage3_blast_coordinates() {
+    std::fprintf(stderr, "-- test_stage3_blast_coordinates\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+    std::string full = db.get_sequence(oid);
+    CHECK(full.size() >= 300);
+    db.close();
+    std::string query = full.substr(100, 200);
+
+    bool found = false;
+    OutputHit r = align_region(query, 100, 300, /*ctx=*/0, found);
+    CHECK(found);
+    if (!found) return;
+
+    CHECK_EQ(r.qstart, 0u);
+    CHECK_EQ(r.qend, 200u);
+    CHECK_EQ(r.sstart, 100u);
+    CHECK_EQ(r.send, 300u);
+    CHECK(r.cigar == "200=");
+    CHECK_EQ(r.npositive, 200u);
+    CHECK_EQ(r.nnegative, 0u);
+    CHECK(r.ppositive > 99.99);
+    CHECK_EQ(r.qseq.size(), 200u);
+    CHECK_EQ(r.sseq.size(), 200u);
+
+    OutputCoords c = to_output_coords(r.qstart, r.qend, r.sstart, r.send,
+                                      r.qlen, false);
+    CHECK_EQ(c.qstart, 1u);
+    CHECK_EQ(c.qend, 200u);
+    CHECK_EQ(c.sstart, 101u);
+    CHECK_EQ(c.send, 300u);
+}
+
+// With context the subject window is wider than the match, so parasail's
+// semi-global CIGAR carries a terminal gap run on the subject side.  It must
+// not reach the reported interval, the CIGAR, ppositive, or qseq / sseq.
+static void test_stage3_trims_subject_terminal_gaps() {
+    std::fprintf(stderr, "-- test_stage3_trims_subject_terminal_gaps\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+    std::string full = db.get_sequence(oid);
+    CHECK(full.size() >= 400);
+    db.close();
+    std::string query = full.substr(100, 200);
+
+    bool found = false;
+    OutputHit r = align_region(query, 100, 300, /*ctx=*/50, found);
+    CHECK(found);
+    if (!found) return;
+
+    CHECK_EQ(r.sstart, 100u);
+    CHECK_EQ(r.send, 300u);
+    CHECK_EQ(r.qstart, 0u);
+    CHECK_EQ(r.qend, 200u);
+    CHECK(r.cigar == "200=");
+    CHECK(r.ppositive > 99.99);
+    CHECK_EQ(r.qseq.size(), 200u);
+    CHECK_EQ(r.sseq.size(), 200u);
+}
+
+// The query carries bases that match nothing on either side, so the terminal
+// gap run is on the query side.  Its length is what moves qstart off zero.
+static void test_stage3_trims_query_terminal_gaps() {
+    std::fprintf(stderr, "-- test_stage3_trims_query_terminal_gaps\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+    std::string full = db.get_sequence(oid);
+    CHECK(full.size() >= 300);
+    db.close();
+
+    const std::string lead = "ACGTACGTACGTACGTACGT";       // 20 bp
+    const std::string trail = "TTTTGGGGCCCCAAAATTTTGGGG";  // 24 bp
+    std::string query = lead + full.substr(100, 200) + trail;
+
+    bool found = false;
+    OutputHit r = align_region(query, 100, 300, /*ctx=*/0, found);
+    CHECK(found);
+    if (!found) return;
+
+    CHECK_EQ(r.qlen, 244u);
+    CHECK_EQ(r.qstart, 20u);
+    CHECK_EQ(r.qend, 220u);
+    CHECK_EQ(r.sstart, 100u);
+    CHECK_EQ(r.send, 300u);
+    CHECK(r.cigar == "200=");
+    CHECK(r.ppositive > 99.99);
+    CHECK_EQ(r.qseq.size(), 200u);
+
+    OutputCoords c = to_output_coords(r.qstart, r.qend, r.sstart, r.send,
+                                      r.qlen, false);
+    CHECK_EQ(c.qstart, 21u);
+    CHECK_EQ(c.qend, 220u);
+    CHECK_EQ(c.sstart, 101u);
+    CHECK_EQ(c.send, 300u);
+}
+
 int main() {
     check_ssu_available();
 
@@ -607,6 +761,9 @@ int main() {
     test_stage3_batching_equivalence();
     test_stage3_oversize_group_solo();
     test_stage3_reverse_strand();
+    test_stage3_blast_coordinates();
+    test_stage3_trims_subject_terminal_gaps();
+    test_stage3_trims_query_terminal_gaps();
 
     // Cleanup
     std::filesystem::remove_all(g_test_dir);
