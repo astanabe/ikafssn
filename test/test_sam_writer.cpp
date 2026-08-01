@@ -93,8 +93,11 @@ static void test_sam_basic() {
     CHECK(record_count == 2);
 }
 
-static void test_sam_reverse_flag() {
-    std::fprintf(stderr, "-- test_sam_reverse_flag\n");
+// SAM does not follow the BLAST -outfmt 6 convention: POS is htslib's own
+// 0-based leftmost coordinate, so it takes the internal sstart unchanged on
+// both strands and never swaps with send.
+static void test_sam_reverse_flag_and_pos() {
+    std::fprintf(stderr, "-- test_sam_reverse_flag_and_pos\n");
 
     auto hits = make_test_hits();
     std::string sam_path = g_test_dir + "/test_reverse.sam";
@@ -114,9 +117,11 @@ static void test_sam_reverse_flag() {
         if (rec == 0) {
             // First hit is forward
             CHECK((b->core.flag & BAM_FREVERSE) == 0);
+            CHECK_EQ(b->core.pos, static_cast<hts_pos_t>(hits[0].sstart));
         } else if (rec == 1) {
             // Second hit is reverse
             CHECK((b->core.flag & BAM_FREVERSE) != 0);
+            CHECK_EQ(b->core.pos, static_cast<hts_pos_t>(hits[1].sstart));
         }
         rec++;
     }
@@ -125,6 +130,20 @@ static void test_sam_reverse_flag() {
     bam_destroy1(b);
     sam_hdr_destroy(hdr);
     sam_close(fp);
+
+    // The text columns the records render to: FLAG then the 1-based POS.
+    std::ifstream in(sam_path);
+    CHECK(in.is_open());
+    std::string line;
+    std::vector<std::string> records;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line[0] != '@') records.push_back(line);
+    }
+    CHECK_EQ(records.size(), 2u);
+    if (records.size() == 2) {
+        CHECK(records[0].find("\t0\tFJ876973\t101\t") != std::string::npos);
+        CHECK(records[1].find("\t16\tGQ912721\t201\t") != std::string::npos);
+    }
 }
 
 static void test_bam_roundtrip() {
@@ -205,7 +224,7 @@ int main() {
     std::filesystem::create_directories(g_test_dir);
 
     test_sam_basic();
-    test_sam_reverse_flag();
+    test_sam_reverse_flag_and_pos();
     test_bam_roundtrip();
     test_cigar_encoding();
 

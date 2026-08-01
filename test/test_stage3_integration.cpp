@@ -11,9 +11,11 @@
 #include "search/oid_filter.hpp"
 #include "io/blastdb_reader.hpp"
 #include "io/fasta_reader.hpp"
+#include "io/output_coords.hpp"
 #include "io/result_writer.hpp"
 #include "core/config.hpp"
 #include "core/kmer_encoding.hpp"
+#include "core/spaced_seed.hpp"
 #include "util/logger.hpp"
 
 #include <algorithm>
@@ -495,6 +497,103 @@ static void test_stage3_oversize_group_solo() {
     CHECK(to_keys(unbatched) == to_keys(batched));
 }
 
+// Reverse-strand chains reach Stage 3 only once the query k-mer positions are
+// query-strand-relative, so this covers the alignment of a reverse-complement
+// query against the forward subject end to end.
+static void test_stage3_reverse_strand() {
+    Stage1Buffer buf;
+    std::fprintf(stderr, "-- test_stage3_reverse_strand\n");
+
+    std::string prefix = g_test_dir + "/s3test.00.07mer";
+    KixReader kix;
+    KpxReader kpx;
+    KsxReader ksx;
+    CHECK(kix.open(prefix + ".kix"));
+    CHECK(kpx.open(prefix + ".kpx"));
+    CHECK(ksx.open(prefix + ".ksx"));
+
+    OidFilter filter;
+    SearchConfig config;
+    config.stage1.min_stage1_score = 1;
+    config.stage2.max_gap = 100;
+    config.stage2.min_nhit_diag = 1;
+    config.stage2.min_score = 2;
+    config.mode = 2;
+
+    Logger logger(Logger::kError);
+    Stage3Config s3config;
+    s3config.traceback = true;
+    s3config.gapopen = 10;
+    s3config.gapext = 1;
+
+    // Align one query and return its ACC_FJ hit.  `found` distinguishes a
+    // missing hit from a default-constructed one.
+    auto align_one = [&](const std::string& query, char want_strand,
+                         bool& found) -> OutputHit {
+        found = false;
+        auto qdata = preprocess_query<uint16_t>(query, 7, nullptr, config);
+        auto result = search_volume<uint16_t>(
+            "q", qdata, 7, kix, kpx, ksx, filter, config, buf);
+
+        std::vector<OutputHit> hits;
+        for (const auto& cr : result.hits) {
+            if (std::string(ksx.accession(cr.seq_id)) != ACC_FJ) continue;
+            if ((cr.is_reverse ? '-' : '+') != want_strand) continue;
+            OutputHit oh;
+            oh.qseqid = "q";
+            oh.sseqid = ACC_FJ;
+            oh.sstrand = want_strand;
+            oh.qstart = cr.q_start;
+            oh.qend = cr.q_end;
+            oh.sstart = cr.s_start;
+            oh.send = cr.s_end;
+            oh.chainscore = cr.chainscore;
+            oh.coverscore = cr.stage1_score;
+            oh.volume = 0;
+            oh.oid = cr.seq_id;
+            oh.qlen = static_cast<uint32_t>(query.size());
+            hits.push_back(std::move(oh));
+        }
+        if (hits.empty()) return {};
+
+        std::vector<FastaRecord> queries{{"q", query}};
+        auto filtered = run_stage3(hits, queries, g_testdb_path, s3config,
+                                   false, 0.0, 0, logger);
+        if (filtered.empty()) return {};
+        found = true;
+        return filtered.front();
+    };
+
+    bool found_fwd = false, found_rev = false;
+    OutputHit fwd = align_one(g_query_seq, '+', found_fwd);
+    OutputHit rev = align_one(reverse_complement_string(g_query_seq), '-',
+                              found_rev);
+
+    CHECK(found_fwd);
+    CHECK(found_rev);
+    if (!found_fwd || !found_rev) return;
+
+    // The reverse-complement query is aligned against the same forward
+    // subject, so the alignment itself is identical.
+    CHECK(rev.ppositive > 90.0);
+    CHECK(rev.npositive > 0);
+    CHECK(!rev.cigar.empty());
+    CHECK(rev.cigar == fwd.cigar);
+    CHECK(rev.qseq == fwd.qseq);
+    CHECK(rev.sseq == fwd.sseq);
+    CHECK_EQ(rev.sstart, fwd.sstart);
+    CHECK_EQ(rev.send, fwd.send);
+    CHECK(rev.sstart < rev.slen);
+    CHECK(rev.send <= rev.slen);
+
+    // On output the reverse hit keeps ascending query coordinates and its
+    // subject coordinates descend.
+    OutputCoords c = to_output_coords(rev.qstart, rev.qend, rev.sstart,
+                                      rev.send, rev.qlen, true);
+    CHECK(c.qstart <= c.qend);
+    CHECK(c.sstart > c.send);
+}
+
 int main() {
     check_ssu_available();
 
@@ -507,6 +606,7 @@ int main() {
     test_stage3_context();
     test_stage3_batching_equivalence();
     test_stage3_oversize_group_solo();
+    test_stage3_reverse_strand();
 
     // Cleanup
     std::filesystem::remove_all(g_test_dir);

@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "io/output_coords.hpp"
 #include "io/result_reader.hpp"
 #include "io/result_writer.hpp"
 
@@ -16,14 +17,17 @@ static void write_file(const std::string& path, const std::string& content) {
     f << content;
 }
 
+// Rows carry the BLAST `-outfmt 6` convention (1-based inclusive,
+// query-relative, sstart > send on the reverse strand); the reader hands
+// back the internal 0-based half-open, query-strand-relative form.
 static void test_basic_parse() {
     std::fprintf(stderr, "-- test_basic_parse\n");
 
     std::string path = g_test_dir + "/basic.tsv";
     write_file(path,
         "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\tcoverscore\tchainscore\tvolume\n"
-        "query1\tACC001\t+\t0\t49\t500\t100\t149\t2000\t5\t15\t0\n"
-        "query1\tACC002\t-\t10\t39\t500\t200\t229\t3000\t3\t10\t1\n"
+        "query1\tACC001\t+\t1\t49\t500\t101\t149\t2000\t5\t15\t0\n"
+        "query1\tACC002\t-\t11\t40\t500\t229\t201\t3000\t3\t10\t1\n"
     );
 
     auto results = read_results_tsv(path);
@@ -45,8 +49,10 @@ static void test_basic_parse() {
     CHECK(results[1].qseqid == "query1");
     CHECK(results[1].sseqid == "ACC002");
     CHECK_EQ(results[1].sstrand, '-');
-    CHECK_EQ(results[1].qstart, 10u);
-    CHECK_EQ(results[1].qend, 39u);
+    // Query interval [11, 40] of a 500 bp query folds to [460, 490) on the
+    // reverse complement; the subject interval un-swaps to [200, 229).
+    CHECK_EQ(results[1].qstart, 460u);
+    CHECK_EQ(results[1].qend, 490u);
     CHECK_EQ(results[1].qlen, 500u);
     CHECK_EQ(results[1].sstart, 200u);
     CHECK_EQ(results[1].send, 229u);
@@ -64,7 +70,7 @@ static void test_skip_header_and_blank() {
         "# comment line\n"
         "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\tcoverscore\tchainscore\tvolume\n"
         "\n"
-        "query1\tACC001\t+\t0\t49\t500\t100\t149\t2000\t5\t15\t0\n"
+        "query1\tACC001\t+\t1\t49\t500\t101\t149\t2000\t5\t15\t0\n"
         "\n"
     );
 
@@ -79,11 +85,11 @@ static void test_invalid_lines() {
     std::string path = g_test_dir + "/invalid.tsv";
     write_file(path,
         "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\tcoverscore\tchainscore\tvolume\n"
-        "query1\tACC001\t+\t0\t49\t500\t100\t149\t2000\t5\t15\t0\n"
+        "query1\tACC001\t+\t1\t49\t500\t101\t149\t2000\t5\t15\t0\n"
         "too_few_fields\tACC002\n"
-        "query2\tACC003\tX\t0\t49\t500\t100\t149\t2000\t5\t15\t0\n"   // bad strand
-        "query3\tACC004\t+\tabc\t49\t500\t100\t149\t2000\t5\t15\t0\n"  // bad number
-        "query4\tACC005\t-\t5\t55\t500\t300\t350\t2000\t8\t20\t2\n"
+        "query2\tACC003\tX\t1\t49\t500\t101\t149\t2000\t5\t15\t0\n"   // bad strand
+        "query3\tACC004\t+\tabc\t49\t500\t101\t149\t2000\t5\t15\t0\n"  // bad number
+        "query4\tACC005\t-\t6\t55\t500\t350\t301\t2000\t8\t20\t2\n"
     );
 
     auto results = read_results_tsv(path);
@@ -119,8 +125,8 @@ static void test_stream_interface() {
 
     std::istringstream iss(
         "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\tcoverscore\tchainscore\tvolume\n"
-        "q1\tA1\t+\t0\t10\t100\t20\t30\t200\t3\t5\t0\n"
-        "q2\tA2\t-\t5\t15\t100\t25\t35\t200\t4\t8\t1\n"
+        "q1\tA1\t+\t1\t10\t100\t21\t30\t200\t3\t5\t0\n"
+        "q2\tA2\t-\t6\t15\t100\t35\t26\t200\t4\t8\t1\n"
     );
 
     auto results = read_results_tsv(iss);
@@ -280,8 +286,8 @@ static void test_numeric_field_formatting() {
         h.qseqid = "q";
         h.sseqid = "s";
         h.sstrand = '+';
-        h.qstart = 1; h.qend = 2; h.qlen = 3;
-        h.sstart = 4; h.send = 5; h.slen = 6;
+        h.qstart = 0; h.qend = 2; h.qlen = 3;
+        h.sstart = 3; h.send = 5; h.slen = 6;
         h.coverscore = 7; h.chainscore = 8;
         h.alnscore = c.alnscore;
         h.ppositive = c.ppositive;
@@ -489,10 +495,11 @@ static void test_header_reordered_columns() {
 static void test_no_header_fallback() {
     std::fprintf(stderr, "-- test_no_header_fallback\n");
 
-    // No valid header line — should fall back to the field-count parser
+    // No valid header line — should fall back to the field-count parser,
+    // which applies the same BLAST-convention inverse as the mapped path.
     std::istringstream iss(
-        "q1\tA1\t+\t0\t10\t100\t20\t30\t200\t3\t5\t0\n"
-        "q2\tA2\t-\t5\t15\t100\t25\t35\t200\t4\t8\t1\n"
+        "q1\tA1\t+\t1\t10\t100\t21\t30\t200\t3\t5\t0\n"
+        "q2\tA2\t-\t6\t15\t100\t35\t26\t200\t4\t8\t1\n"
     );
 
     auto results = read_results_tsv(iss);
@@ -500,9 +507,98 @@ static void test_no_header_fallback() {
     CHECK(results[0].qseqid == "q1");
     CHECK_EQ(results[0].qstart, 0u);
     CHECK_EQ(results[0].qend, 10u);
+    CHECK_EQ(results[0].sstart, 20u);
+    CHECK_EQ(results[0].send, 30u);
     CHECK(results[1].qseqid == "q2");
-    CHECK_EQ(results[1].qstart, 5u);
-    CHECK_EQ(results[1].qend, 15u);
+    CHECK_EQ(results[1].qstart, 85u);
+    CHECK_EQ(results[1].qend, 95u);
+    CHECK_EQ(results[1].sstart, 25u);
+    CHECK_EQ(results[1].send, 35u);
+}
+
+static void test_output_coords_roundtrip() {
+    std::fprintf(stderr, "-- test_output_coords_roundtrip\n");
+
+    struct Case { uint32_t q_start, q_end, s_start, s_end, qlen; };
+    const Case cases[] = {
+        {  0, 200,   0, 300, 200},   // both intervals start at the origin
+        { 10, 200,  55, 300, 200},   // q_end == qlen
+        {  0,  17,   0,  17,  17},   // whole query, whole subject prefix
+        { 41,  73, 900, 932, 512},
+        {  0,   1,   0,   1,   1},   // single-base query
+    };
+
+    for (const auto& c : cases) {
+        for (bool is_reverse : {false, true}) {
+            OutputCoords o = to_output_coords(c.q_start, c.q_end,
+                                              c.s_start, c.s_end,
+                                              c.qlen, is_reverse);
+            // BLAST always reports ascending query coordinates.
+            CHECK(o.qstart <= o.qend);
+            CHECK(o.qstart >= 1);
+            CHECK(o.sstart >= 1 && o.send >= 1);
+            // The subject runs in alignment order.
+            if (is_reverse) CHECK(o.sstart >= o.send);
+            else            CHECK(o.sstart <= o.send);
+
+            uint32_t q_start = 0, q_end = 0, s_start = 0, s_end = 0;
+            to_internal_coords(o.qstart, o.qend, o.sstart, o.send,
+                               c.qlen, is_reverse,
+                               q_start, q_end, s_start, s_end);
+            CHECK_EQ(q_start, c.q_start);
+            CHECK_EQ(q_end, c.q_end);
+            CHECK_EQ(s_start, c.s_start);
+            CHECK_EQ(s_end, c.s_end);
+        }
+    }
+}
+
+static void test_result_reader_blast_coords() {
+    std::fprintf(stderr, "-- test_result_reader_blast_coords\n");
+
+    std::vector<OutputHit> hits;
+    OutputHit fwd;
+    fwd.qseqid = "qF"; fwd.sseqid = "ACC_F"; fwd.sstrand = '+';
+    fwd.qstart = 0; fwd.qend = 200; fwd.qlen = 200;
+    fwd.sstart = 100; fwd.send = 300; fwd.slen = 1725;
+    fwd.coverscore = 190; fwd.chainscore = 190; fwd.volume = 0;
+    hits.push_back(fwd);
+
+    OutputHit rev = fwd;
+    rev.qseqid = "qR"; rev.sstrand = '-';
+    hits.push_back(rev);
+
+    std::ostringstream tsv;
+    write_results_tsv(tsv, hits);
+
+    // The exact BLAST-convention rows, matching what blastn -outfmt 6 emits
+    // for the same alignment.
+    CHECK(tsv.str().find("qF\tACC_F\t+\t1\t200\t200\t101\t300\t1725\t") !=
+          std::string::npos);
+    CHECK(tsv.str().find("qR\tACC_F\t-\t1\t200\t200\t300\t101\t1725\t") !=
+          std::string::npos);
+
+    // JSON carries the same coordinates.  There is no JSON reader, so the
+    // written text is what gets checked.
+    std::ostringstream json;
+    write_results_json(json, hits);
+    CHECK(json.str().find("\"sstart\": 101") != std::string::npos);
+    CHECK(json.str().find("\"send\": 300") != std::string::npos);
+    CHECK(json.str().find("\"sstart\": 300") != std::string::npos);
+    CHECK(json.str().find("\"send\": 101") != std::string::npos);
+    CHECK(json.str().find("\"qstart\": 1") != std::string::npos);
+    CHECK(json.str().find("\"qend\": 200") != std::string::npos);
+
+    std::istringstream iss(tsv.str());
+    auto read_back = read_results_tsv(iss);
+    CHECK_EQ(read_back.size(), 2u);
+    for (size_t i = 0; i < read_back.size() && i < hits.size(); i++) {
+        CHECK_EQ(read_back[i].sstrand, hits[i].sstrand);
+        CHECK_EQ(read_back[i].qstart, hits[i].qstart);
+        CHECK_EQ(read_back[i].qend, hits[i].qend);
+        CHECK_EQ(read_back[i].sstart, hits[i].sstart);
+        CHECK_EQ(read_back[i].send, hits[i].send);
+    }
 }
 
 static void test_windows_line_endings() {
@@ -511,7 +607,7 @@ static void test_windows_line_endings() {
     std::string path = g_test_dir + "/crlf.tsv";
     write_file(path,
         "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen\tcoverscore\tchainscore\tvolume\r\n"
-        "q1\tA1\t+\t0\t10\t100\t20\t30\t200\t3\t5\t0\r\n"
+        "q1\tA1\t+\t1\t10\t100\t21\t30\t200\t3\t5\t0\r\n"
     );
 
     auto results = read_results_tsv(path);
@@ -539,6 +635,8 @@ int main() {
     test_writer_parallel_chunking();
     test_header_reordered_columns();
     test_no_header_fallback();
+    test_output_coords_roundtrip();
+    test_result_reader_blast_coords();
     test_windows_line_endings();
 
     std::filesystem::remove_all(g_test_dir);

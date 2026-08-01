@@ -36,6 +36,7 @@ static std::string g_test_dir;
 
 // Runtime-extracted data
 static std::string g_query_seq;   // 100bp from FJ876973.1
+static std::string g_coord_query; // 200bp from FJ876973.1, 1-based 101-300
 static uint32_t g_fj_oid = UINT32_MAX;
 
 static void test_build_and_search() {
@@ -915,6 +916,152 @@ static void test_stage2b_out_reuse() {
     CHECK_EQ(out.empty(), true);
 }
 
+// ---------------------------------------------------------------------------
+// BLAST -outfmt 6 coordinate convention.
+//
+// The queries are exact slices of a known parent, so the expected TSV row is
+// fixed: 1-based inclusive on all four coordinates, qstart < qend on both
+// strands, and sstart > send on the reverse strand.
+// ---------------------------------------------------------------------------
+
+// 1-based inclusive slice of ACC_FJ used as the query for the coordinate
+// tests.  Long enough that the correct chain outscores background k=11
+// matches by a wide margin.
+static constexpr uint32_t kCoordQStart = 101;
+static constexpr uint32_t kCoordQEnd   = 300;
+
+static std::string g_coord_prefix;
+
+// Run one query against the k=11 index and return the TSV fields of the row
+// for ACC_FJ, or an empty vector if that subject was not hit.
+static std::vector<std::string> coord_row(const std::string& query_seq) {
+    Stage1Buffer buf;
+
+    KixReader kix;
+    KpxReader kpx;
+    KsxReader ksx;
+    CHECK(kix.open(g_coord_prefix + ".kix"));
+    CHECK(kpx.open(g_coord_prefix + ".kpx"));
+    CHECK(ksx.open(g_coord_prefix + ".ksx"));
+
+    OidFilter filter;
+    SearchConfig config;
+    config.stage1.min_stage1_score = 1;
+    config.stage2.max_gap = 100;
+    config.stage2.min_nhit_diag = 1;
+    config.stage2.min_score = 2;
+
+    auto qdata = preprocess_query<uint32_t>(query_seq, 11, nullptr, config);
+    auto result = search_volume<uint32_t>(
+        "q", qdata, 11, kix, kpx, ksx, filter, config, buf);
+
+    // The index is unsplit, so a fragment seq_id is its own parent and no
+    // fragment_start shift applies.
+    std::vector<OutputHit> hits;
+    for (const auto& cr : result.hits) {
+        if (std::string(ksx.accession(cr.seq_id)) != ACC_FJ) continue;
+        OutputHit oh;
+        oh.qseqid = "q";
+        oh.sseqid = ACC_FJ;
+        oh.sstrand = cr.is_reverse ? '-' : '+';
+        oh.qstart = cr.q_start;
+        oh.qend = cr.q_end;
+        oh.sstart = cr.s_start;
+        oh.send = cr.s_end;
+        oh.chainscore = cr.chainscore;
+        oh.coverscore = cr.stage1_score;
+        oh.qlen = static_cast<uint32_t>(query_seq.size());
+        oh.slen = ksx.seq_length(cr.seq_id);
+        oh.volume = 0;
+        hits.push_back(std::move(oh));
+    }
+
+    kix.close();
+    kpx.close();
+    ksx.close();
+
+    if (hits.empty()) return {};
+
+    std::ostringstream oss;
+    write_results_tsv(oss, hits);
+
+    std::string line;
+    std::istringstream iss(oss.str());
+    while (std::getline(iss, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::string> fields;
+        std::string::size_type start = 0;
+        for (;;) {
+            auto pos = line.find('\t', start);
+            if (pos == std::string::npos) { fields.push_back(line.substr(start)); break; }
+            fields.push_back(line.substr(start, pos - start));
+            start = pos + 1;
+        }
+        return fields;
+    }
+    return {};
+}
+
+// Column indices of the mode 2 TSV.
+enum : size_t {
+    kColSstrand = 2, kColQstart = 3, kColQend = 4, kColQlen = 5,
+    kColSstart = 6, kColSend = 7, kColChainscore = 10,
+};
+
+static void test_blast_coordinate_convention() {
+    std::fprintf(stderr, "-- test_blast_coordinate_convention\n");
+
+    auto f = coord_row(g_coord_query);
+    CHECK_EQ(f.size(), 12u);
+    if (f.size() != 12) return;
+    CHECK(f[kColSstrand] == "+");
+    CHECK(f[kColQstart] == "1");
+    CHECK(f[kColQend] == "200");
+    CHECK(f[kColQlen] == "200");
+    CHECK(f[kColSstart] == std::to_string(kCoordQStart));
+    CHECK(f[kColSend] == std::to_string(kCoordQEnd));
+}
+
+// The reverse-strand regression test.  Before the query k-mer positions
+// became query-strand-relative, chaining could not link two reverse-strand
+// hits at all and every reverse chain was dropped by min_score.
+static void test_reverse_strand_reported() {
+    std::fprintf(stderr, "-- test_reverse_strand_reported\n");
+
+    auto f = coord_row(reverse_complement_string(g_coord_query));
+    CHECK_EQ(f.size(), 12u);
+    if (f.size() != 12) return;
+    CHECK(f[kColSstrand] == "-");
+    CHECK(f[kColQstart] == "1");
+    CHECK(f[kColQend] == "200");
+    CHECK(f[kColQlen] == "200");
+    // Subject runs in alignment order, so it descends.
+    CHECK(f[kColSstart] == std::to_string(kCoordQEnd));
+    CHECK(f[kColSend] == std::to_string(kCoordQStart));
+}
+
+static void test_strand_roundtrip_equivalence() {
+    std::fprintf(stderr, "-- test_strand_roundtrip_equivalence\n");
+
+    auto fwd = coord_row(g_coord_query);
+    auto rev = coord_row(reverse_complement_string(g_coord_query));
+    CHECK_EQ(fwd.size(), 12u);
+    CHECK_EQ(rev.size(), 12u);
+    if (fwd.size() != 12 || rev.size() != 12) return;
+
+    auto lo = [](const std::vector<std::string>& f) {
+        return std::min(std::stoul(f[kColSstart]), std::stoul(f[kColSend]));
+    };
+    auto hi = [](const std::vector<std::string>& f) {
+        return std::max(std::stoul(f[kColSstart]), std::stoul(f[kColSend]));
+    };
+    CHECK_EQ(lo(fwd), lo(rev));
+    CHECK_EQ(hi(fwd), hi(rev));
+    CHECK(fwd[kColChainscore] == rev[kColChainscore]);
+    CHECK(fwd[kColQstart] == rev[kColQstart]);
+    CHECK(fwd[kColQend] == rev[kColQend]);
+}
+
 int main() {
     check_ssu_available();
 
@@ -929,8 +1076,21 @@ int main() {
         g_fj_oid = find_oid_by_accession(db, ACC_FJ);
         CHECK(g_fj_oid != UINT32_MAX);
         std::string full_seq = db.get_sequence(g_fj_oid);
-        CHECK(full_seq.size() >= 200);
+        CHECK(full_seq.size() >= 300);
         g_query_seq = full_seq.substr(100, 100);
+        g_coord_query = full_seq.substr(kCoordQStart - 1,
+                                        kCoordQEnd - kCoordQStart + 1);
+    }
+
+    // k=11 index for the coordinate-convention tests.
+    {
+        BlastDbReader db;
+        CHECK(db.open(g_testdb_path));
+        Logger logger(Logger::kError);
+        IndexBuilderConfig bconfig;
+        bconfig.k = 11;
+        g_coord_prefix = g_test_dir + "/test.00.11mer";
+        CHECK(build_index<uint32_t>(db, bconfig, g_coord_prefix, 0, 1, "test", logger));
     }
 
     test_fasta_reader();
@@ -950,6 +1110,9 @@ int main() {
     test_stage2a_hit_list_sizing();
     test_stage2b_out_reuse();
     test_min_query_length_skip();
+    test_blast_coordinate_convention();
+    test_reverse_strand_reported();
+    test_strand_roundtrip_equivalence();
 
     std::filesystem::remove_all(g_test_dir);
 
