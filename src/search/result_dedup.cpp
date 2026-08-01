@@ -4,6 +4,7 @@
 #include "io/result_writer.hpp"
 #include "search/parallel_search.hpp"
 #include "search/hit_limits.hpp"
+#include "util/query_order.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -231,24 +232,22 @@ void select_parent_topn_output(std::vector<OutputHit>& hits,
 void apply_in_total_output(std::vector<OutputHit>& hits, uint32_t L) {
     if (L == 0 || hits.empty()) return;
 
-    // Per-qseqid threshold = the L-th highest alnscore (INT32_MIN keeps all
-    // when a query has at most L hits), then keep every hit at or above it.
-    std::unordered_map<std::string, std::vector<int32_t>> by_q;
-    for (const auto& h : hits) by_q[h.qseqid].push_back(h.alnscore);
-    std::unordered_map<std::string, int32_t> thr;
-    thr.reserve(by_q.size());
-    for (auto& kv : by_q) {
-        std::vector<int32_t>& v = kv.second;
-        if (v.size() <= L) { thr[kv.first] = INT32_MIN; continue; }
-        std::nth_element(v.begin(), v.begin() + (L - 1), v.end(),
-                         std::greater<int32_t>());
-        thr[kv.first] = v[L - 1];
+    // Per-qseqid threshold = the L-th highest alnscore, then keep every hit at
+    // or above it.  A query with at most L hits gets INT32_MIN and keeps all.
+    QueryOrder qorder;
+    std::vector<uint32_t> groups(hits.size());
+    std::vector<int32_t> scores(hits.size());
+    for (size_t i = 0; i < hits.size(); ++i) {
+        groups[i] = qorder.id_of(hits[i].qseqid);
+        scores[i] = hits[i].alnscore;
     }
+    const auto thr = in_total_thresholds(groups, scores,
+                                         qorder.qseqids().size(), L);
 
     std::vector<OutputHit> out;
     out.reserve(hits.size());
-    for (auto& h : hits) {
-        if (h.alnscore >= thr[h.qseqid]) out.push_back(std::move(h));
+    for (size_t i = 0; i < hits.size(); ++i) {
+        if (hits[i].alnscore >= thr[groups[i]]) out.push_back(std::move(hits[i]));
     }
     hits = std::move(out);
 }

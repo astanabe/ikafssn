@@ -302,24 +302,14 @@ std::vector<Stage1Candidate> stage1_filter_finish(
 
 // --- Stage 1 candidate-count limits ---------------------------------------
 
-namespace {
-// k-th highest score among `scores` (scores is consumed/reordered).  Returns 0
-// when there are fewer than k values.
-uint32_t kth_highest(std::vector<uint32_t>& scores, uint32_t k) {
-    if (k == 0 || scores.size() < k) return 0;
-    std::nth_element(scores.begin(), scores.begin() + (k - 1), scores.end(),
-                     std::greater<uint32_t>());
-    return scores[k - 1];
-}
-}  // namespace
-
 void stage1_limit_topk(std::vector<Stage1Candidate>& candidates, uint32_t k,
                        bool tie_inclusive) {
     if (k == 0 || candidates.size() <= k) return;
+    // One group, so the scores go straight into the single-group selection.
     std::vector<uint32_t> scores;
     scores.reserve(candidates.size());
     for (const auto& c : candidates) scores.push_back(c.score);
-    const uint32_t kth = kth_highest(scores, k);
+    const uint32_t kth = in_total_threshold(scores, k);
 
     std::vector<Stage1Candidate> out;
     out.reserve(k);

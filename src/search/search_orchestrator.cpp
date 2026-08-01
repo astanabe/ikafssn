@@ -6,6 +6,7 @@
 #include "search/parallel_search.hpp"
 #include "search/oid_filter.hpp"
 #include "search/query_preprocessor.hpp"
+#include "search/hit_limits.hpp"
 #include "search/result_dedup.hpp"
 #include "search/stage1_filter.hpp"
 #include "util/common_init.hpp"
@@ -74,28 +75,33 @@ std::vector<ExtJob> build_ext_jobs(const RunSearchInputs<KmerInt>& in,
     return ext_jobs;
 }
 
-// L-th highest value in `v` (0 if fewer than L); reorders v.
-uint32_t lth_highest(std::vector<uint32_t>& v, uint32_t L) {
-    if (L == 0 || v.size() < L) return 0;
-    std::nth_element(v.begin(), v.begin() + (L - 1), v.end(),
-                     std::greater<uint32_t>());
-    return v[L - 1];
+// Per-query thresholds for an in-total (L) limit over orchestrator hits,
+// scored by `score_of`.
+template <typename ScoreOf>
+std::vector<uint32_t> query_in_total_thresholds(
+    const std::vector<OrchestratorHit>& hits, uint32_t L, ScoreOf score_of) {
+    std::vector<uint32_t> groups(hits.size());
+    std::vector<uint32_t> scores(hits.size());
+    size_t nqueries = 0;
+    for (size_t i = 0; i < hits.size(); ++i) {
+        groups[i] = static_cast<uint32_t>(hits[i].query_idx);
+        scores[i] = score_of(hits[i]);
+        nqueries = std::max(nqueries, hits[i].query_idx + 1);
+    }
+    return in_total_thresholds(groups, scores, nqueries, L);
 }
 
 // In-total (L) limit for mode 1: keep, per query, the top-L mode1 results plus
 // every result tying the L-th Stage 1 score (coverscore == cr.stage1_score).
 void apply_in_total_mode1(std::vector<OrchestratorHit>& hits, uint32_t L) {
     if (L == 0 || hits.empty()) return;
-    std::unordered_map<size_t, std::vector<uint32_t>> by_q;
-    for (const auto& h : hits) by_q[h.query_idx].push_back(h.cr.stage1_score);
-    std::unordered_map<size_t, uint32_t> thr;
-    for (auto& kv : by_q) thr[kv.first] = lth_highest(kv.second, L);
+    const auto thr = query_in_total_thresholds(
+        hits, L, [](const OrchestratorHit& h) { return h.cr.stage1_score; });
 
     std::vector<OrchestratorHit> out;
     out.reserve(hits.size());
     for (auto& h : hits) {
-        uint32_t t = thr[h.query_idx];
-        if (t == 0 || h.cr.stage1_score >= t) out.push_back(std::move(h));
+        if (h.cr.stage1_score >= thr[h.query_idx]) out.push_back(std::move(h));
     }
     hits = std::move(out);
 }
@@ -106,38 +112,38 @@ void apply_in_total_mode1(std::vector<OrchestratorHit>& hits, uint32_t L) {
 // the chains, so it also bounds the alignment work in mode 3.
 void apply_in_total_stage2(std::vector<OrchestratorHit>& hits, uint32_t L) {
     if (L == 0 || hits.empty()) return;
-    std::unordered_map<size_t, std::vector<uint32_t>> by_q;
-    for (const auto& h : hits) by_q[h.query_idx].push_back(h.cr.chainscore);
-    std::unordered_map<size_t, uint32_t> thr;
-    for (auto& kv : by_q) thr[kv.first] = lth_highest(kv.second, L);
+    const auto thr = query_in_total_thresholds(
+        hits, L, [](const OrchestratorHit& h) { return h.cr.chainscore; });
 
     std::vector<OrchestratorHit> out;
     out.reserve(hits.size());
     for (auto& h : hits) {
-        uint32_t t = thr[h.query_idx];
-        if (t == 0 || h.cr.chainscore >= t) out.push_back(std::move(h));
+        if (h.cr.chainscore >= thr[h.query_idx]) out.push_back(std::move(h));
     }
     hits = std::move(out);
 }
 
-// In-total (L) limit for modes 2/3: keep, per query (across all volumes and
-// strands), the top-L Stage 1 candidates plus every candidate tying the L-th
-// coverscore, by pruning each ext_job's candidate list.  The prune is
-// order-preserving, so the candidates stay ordered by ascending SeqId as
-// Stage 2A requires.
-void apply_in_total_stage1(std::vector<JobState>& states,
-                           const std::vector<ExtJob>& ext_jobs, uint32_t L) {
+}  // namespace
+
+void limit_candidates_in_total(std::vector<JobState>& states,
+                               const std::vector<ExtJob>& ext_jobs, uint32_t L) {
     if (L == 0) return;
-    size_t max_qi = 0;
-    for (const auto& ej : ext_jobs) max_qi = std::max(max_qi, ej.qi);
-    std::vector<std::vector<uint32_t>> scores_by_q(max_qi + 1);
+    size_t nqueries = 0;
+    size_t total = 0;
+    for (const auto& ej : ext_jobs) nqueries = std::max(nqueries, ej.qi + 1);
+    for (const auto& st : states) total += st.candidates.size();
+
+    std::vector<uint32_t> groups;
+    std::vector<uint32_t> scores;
+    groups.reserve(total);
+    scores.reserve(total);
     for (size_t ji = 0; ji < ext_jobs.size(); ++ji) {
-        for (const auto& c : states[ji].candidates)
-            scores_by_q[ext_jobs[ji].qi].push_back(c.score);
+        for (const auto& c : states[ji].candidates) {
+            groups.push_back(static_cast<uint32_t>(ext_jobs[ji].qi));
+            scores.push_back(c.score);
+        }
     }
-    std::vector<uint32_t> thr(max_qi + 1, 0);
-    for (size_t qi = 0; qi <= max_qi; ++qi)
-        thr[qi] = lth_highest(scores_by_q[qi], L);
+    const auto thr = in_total_thresholds(groups, scores, nqueries, L);
 
     for (size_t ji = 0; ji < ext_jobs.size(); ++ji) {
         uint32_t t = thr[ext_jobs[ji].qi];
@@ -153,8 +159,6 @@ void apply_in_total_stage1(std::vector<JobState>& states,
         st.candidates = std::move(kept);
     }
 }
-
-}  // namespace
 
 template <typename KmerInt>
 std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
@@ -411,7 +415,7 @@ std::vector<OrchestratorHit> run_search(const RunSearchInputs<KmerInt>& in) {
     // Stage 1 in-total (L) limit: prune each query's candidate set across all
     // volumes / strands before Stage 2 consumes it.
     sw.reset();
-    apply_in_total_stage1(states, ext_jobs, in.config.stage1.max_nhit_in_total);
+    limit_candidates_in_total(states, ext_jobs, in.config.stage1.max_nhit_in_total);
     t_s1_intotal += sw.lap();
 
     // ----------------------------------------------------------------

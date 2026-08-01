@@ -1,6 +1,8 @@
 #include "test_util.hpp"
 #include "ssu_test_fixture.hpp"
 #include "search/stage1_filter.hpp"
+#include "search/hit_limits.hpp"
+#include "search/parallel_search.hpp"
 #include "volume_search_helper.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/oid_filter.hpp"
@@ -193,6 +195,73 @@ static void test_stage1_limit_per_parent_tie_order() {
     if (c.size() != 2) return;
     CHECK_EQ(c[0].id, SeqId{0});
     CHECK_EQ(c[1].id, SeqId{1});
+}
+
+// Stage 1 in-total (L) limit.  The threshold is per query, so it aggregates
+// over every ext_job of that query (both strands, every volume), and the prune
+// must leave each job's candidate list in ascending SeqId order — the .kpx
+// candidate-set decoder in Stage 2A depends on it.
+static void test_limit_candidates_in_total() {
+    std::fprintf(stderr, "-- test_limit_candidates_in_total\n");
+
+    // Two ext_jobs for query 0 (one per strand) and one for query 1.
+    const std::vector<ExtJob> ext_jobs = {
+        {/*qi=*/0, /*vi=*/0, /*strand_idx=*/0},
+        {/*qi=*/0, /*vi=*/0, /*strand_idx=*/1},
+        {/*qi=*/1, /*vi=*/0, /*strand_idx=*/0},
+    };
+    auto make_states = []() {
+        std::vector<JobState> st(3);
+        st[0].candidates = {{10, 5}, {20, 3}, {30, 7}};
+        st[1].candidates = {{5, 9}, {40, 1}};
+        st[2].candidates = {{1, 4}, {2, 4}};
+        return st;
+    };
+
+    // L == 0 is a no-op.
+    {
+        auto st = make_states();
+        limit_candidates_in_total(st, ext_jobs, 0);
+        CHECK_EQ(st[0].candidates.size(), 3u);
+        CHECK_EQ(st[1].candidates.size(), 2u);
+        CHECK_EQ(st[2].candidates.size(), 2u);
+    }
+    // L above a query's candidate count keeps that query untouched.
+    {
+        auto st = make_states();
+        limit_candidates_in_total(st, ext_jobs, 100);
+        CHECK_EQ(st[0].candidates.size(), 3u);
+        CHECK_EQ(st[1].candidates.size(), 2u);
+        CHECK_EQ(st[2].candidates.size(), 2u);
+    }
+    // L == 3 over query 0's five candidates (9,7,5,3,1): the threshold is 5,
+    // so the first job keeps 7 and 5 and the second keeps 9.  Query 1 has
+    // fewer than three candidates and is left alone.
+    {
+        auto st = make_states();
+        limit_candidates_in_total(st, ext_jobs, 3);
+        CHECK_EQ(st[0].candidates.size(), 2u);
+        if (st[0].candidates.size() == 2) {
+            // Ascending SeqId, as Stage 2A requires.
+            CHECK_EQ(st[0].candidates[0].id, SeqId{10});
+            CHECK_EQ(st[0].candidates[1].id, SeqId{30});
+        }
+        CHECK_EQ(st[1].candidates.size(), 1u);
+        if (st[1].candidates.size() == 1)
+            CHECK_EQ(st[1].candidates[0].id, SeqId{5});
+        CHECK_EQ(st[2].candidates.size(), 2u);
+    }
+    // L == 1 is tie-inclusive: query 1's two tying candidates both survive,
+    // while query 0 keeps only its single best.
+    {
+        auto st = make_states();
+        limit_candidates_in_total(st, ext_jobs, 1);
+        CHECK_EQ(st[0].candidates.size(), 0u);
+        CHECK_EQ(st[1].candidates.size(), 1u);
+        if (st[1].candidates.size() == 1)
+            CHECK_EQ(st[1].candidates[0].id, SeqId{5});
+        CHECK_EQ(st[2].candidates.size(), 2u);
+    }
 }
 
 static std::string g_maxfreq_index_dir;
@@ -583,6 +652,7 @@ int main() {
     test_stage1_limit_topk();
     test_stage1_limit_per_parent();
     test_stage1_limit_per_parent_tie_order();
+    test_limit_candidates_in_total();
     test_stage1_fractional_threshold();
     test_stage1_fractional_with_highfreq();
     test_clear_dirty_bulk_reset();
