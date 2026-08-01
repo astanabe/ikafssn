@@ -1,5 +1,6 @@
 #include "io/result_writer.hpp"
 #include "io/compressed_stream.hpp"
+#include "io/output_coords.hpp"
 #include "io/text_format.hpp"
 #include "protocol/messages.hpp"
 
@@ -100,6 +101,11 @@ void write_items(std::ostream& out, std::size_t begin, std::size_t end,
 // Every TSV row costs the same share of the wave budget.
 inline std::size_t one_row(std::size_t) { return 1; }
 
+inline OutputCoords blast_coords(const OutputHit& h) {
+    return to_output_coords(h.qstart, h.qend, h.sstart, h.send,
+                            h.qlen, h.sstrand == '-');
+}
+
 } // namespace
 
 void write_results_tsv(std::ostream& out,
@@ -161,14 +167,15 @@ void write_results_tsv(std::ostream& out,
                     buf.append("\t0\t0\t0\t0\t0\t0\t0\t0\t0\t*\t*\t*\t0\n");
                     return;
                 }
+                const OutputCoords c = blast_coords(h);
                 append_str(buf, h.qseqid);           buf.push_back('\t');
                 append_str(buf, h.sseqid);           buf.push_back('\t');
                 buf.push_back(h.sstrand);            buf.push_back('\t');
-                append_uint(buf, h.qstart);          buf.push_back('\t');
-                append_uint(buf, h.qend);            buf.push_back('\t');
+                append_uint(buf, c.qstart);          buf.push_back('\t');
+                append_uint(buf, c.qend);            buf.push_back('\t');
                 append_uint(buf, h.qlen);            buf.push_back('\t');
-                append_uint(buf, h.sstart);          buf.push_back('\t');
-                append_uint(buf, h.send);            buf.push_back('\t');
+                append_uint(buf, c.sstart);          buf.push_back('\t');
+                append_uint(buf, c.send);            buf.push_back('\t');
                 append_uint(buf, h.slen);            buf.push_back('\t');
                 append_uint(buf, h.coverscore);      buf.push_back('\t');
                 append_uint(buf, h.chainscore);      buf.push_back('\t');
@@ -193,12 +200,13 @@ void write_results_tsv(std::ostream& out,
                     buf.append("\t0\t0\t0\t0\t0\t0\n");
                     return;
                 }
+                const OutputCoords c = blast_coords(h);
                 append_str(buf, h.qseqid);        buf.push_back('\t');
                 append_str(buf, h.sseqid);        buf.push_back('\t');
                 buf.push_back(h.sstrand);         buf.push_back('\t');
-                append_uint(buf, h.qend);         buf.push_back('\t');
+                append_uint(buf, c.qend);         buf.push_back('\t');
                 append_uint(buf, h.qlen);         buf.push_back('\t');
-                append_uint(buf, h.send);         buf.push_back('\t');
+                append_uint(buf, c.send);         buf.push_back('\t');
                 append_uint(buf, h.slen);         buf.push_back('\t');
                 append_uint(buf, h.coverscore);   buf.push_back('\t');
                 append_uint(buf, h.chainscore);   buf.push_back('\t');
@@ -217,14 +225,15 @@ void write_results_tsv(std::ostream& out,
                     buf.append("\t0\t0\t0\t0\t0\t0\n");
                     return;
                 }
+                const OutputCoords c = blast_coords(h);
                 append_str(buf, h.qseqid);        buf.push_back('\t');
                 append_str(buf, h.sseqid);        buf.push_back('\t');
                 buf.push_back(h.sstrand);         buf.push_back('\t');
-                append_uint(buf, h.qstart);       buf.push_back('\t');
-                append_uint(buf, h.qend);         buf.push_back('\t');
+                append_uint(buf, c.qstart);       buf.push_back('\t');
+                append_uint(buf, c.qend);         buf.push_back('\t');
                 append_uint(buf, h.qlen);         buf.push_back('\t');
-                append_uint(buf, h.sstart);       buf.push_back('\t');
-                append_uint(buf, h.send);         buf.push_back('\t');
+                append_uint(buf, c.sstart);       buf.push_back('\t');
+                append_uint(buf, c.send);         buf.push_back('\t');
                 append_uint(buf, h.slen);         buf.push_back('\t');
                 append_uint(buf, h.coverscore);   buf.push_back('\t');
                 append_uint(buf, h.chainscore);   buf.push_back('\t');
@@ -303,6 +312,7 @@ static void write_results_json_inner(std::ostream& out,
         buf.append(",\n      \"hits\": [\n");
         for (size_t hi = 0; hi < qhits.size(); hi++) {
             const auto* h = qhits[hi];
+            const OutputCoords c = blast_coords(*h);
             buf.append("        {\n");
             buf.append("          \"sseqid\": ");
             json_escape_into(buf, h->sseqid);
@@ -312,13 +322,13 @@ static void write_results_json_inner(std::ostream& out,
             buf.append("\",\n");
             if (mode == 2 || (mode == 3 && stage3_traceback)) {
                 buf.append("          \"qstart\": ");
-                append_uint(buf, h->qstart);
+                append_uint(buf, c.qstart);
                 buf.append(",\n          \"qend\": ");
-                append_uint(buf, h->qend);
+                append_uint(buf, c.qend);
                 buf.append(",\n");
             } else if (mode == 3) {
                 buf.append("          \"qend\": ");
-                append_uint(buf, h->qend);
+                append_uint(buf, c.qend);
                 buf.append(",\n");
             }
             buf.append("          \"qlen\": ");
@@ -326,13 +336,13 @@ static void write_results_json_inner(std::ostream& out,
             buf.append(",\n");
             if (mode == 2 || (mode == 3 && stage3_traceback)) {
                 buf.append("          \"sstart\": ");
-                append_uint(buf, h->sstart);
+                append_uint(buf, c.sstart);
                 buf.append(",\n          \"send\": ");
-                append_uint(buf, h->send);
+                append_uint(buf, c.send);
                 buf.append(",\n");
             } else if (mode == 3) {
                 buf.append("          \"send\": ");
-                append_uint(buf, h->send);
+                append_uint(buf, c.send);
                 buf.append(",\n");
             }
             buf.append("          \"slen\": ");

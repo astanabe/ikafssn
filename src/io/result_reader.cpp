@@ -1,6 +1,8 @@
 #include "io/result_reader.hpp"
 #include "io/compressed_stream.hpp"
+#include "io/output_coords.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -94,6 +96,30 @@ static char field_char(
     return s.empty() ? fallback : s[0];
 }
 
+// Turn the four BLAST-convention coordinates a row carries back into the
+// internal 0-based half-open, query-strand-relative form.  `hit` arrives
+// holding the values exactly as written.
+//
+// Rows that carry only the two end coordinates (mode 3 without traceback)
+// cannot be inverted: on the reverse strand the written `send` is the
+// internal s_start and the written `qend` is the internal q_start, and the
+// other end of each interval was never emitted.  Such rows keep their ends
+// and leave both starts at 0.
+static void to_internal_hit(OutputHit& hit, bool has_start_coords) {
+    if (!has_start_coords) {
+        hit.qstart = 0;
+        hit.sstart = 0;
+        return;
+    }
+    // Clamp so a malformed row cannot underflow past zero.
+    const uint32_t qstart = std::max(hit.qstart, 1u);
+    const uint32_t sstart = std::max(hit.sstart, 1u);
+    const uint32_t send   = std::max(hit.send, 1u);
+    to_internal_coords(qstart, hit.qend, sstart, send,
+                       hit.qlen, hit.sstrand == '-',
+                       hit.qstart, hit.qend, hit.sstart, hit.send);
+}
+
 // Returns true if the sseqid is a skip-marker sentinel emitted by
 // result_writer for queries that were not searched.  Two prefixes
 // exist: "*SKIPPED:" (server-produced) and "*FAILED:" (client-produced
@@ -157,6 +183,8 @@ static bool parse_line_with_map(
         hit.sseq = field_str(fields, cmap, "sseq", empty);
 
         hit.volume = field_u16(fields, cmap, "volume");
+
+        to_internal_hit(hit, cmap.count("qstart") != 0 && cmap.count("sstart") != 0);
     } catch (...) {
         return false;
     }
@@ -178,6 +206,7 @@ static bool parse_line_no_header(const std::string& line, OutputHit& hit) {
         return false;
     hit.sstrand = fields[2][0];
 
+    bool has_start_coords = true;
     try {
         if (fields.size() >= 20) {
             hit.qstart = static_cast<uint32_t>(std::stoul(fields[3]));
@@ -227,7 +256,9 @@ static bool parse_line_no_header(const std::string& line, OutputHit& hit) {
             hit.coverscore = static_cast<uint32_t>(std::stoul(fields[5]));
             hit.chainscore = 0;
             hit.volume = static_cast<uint16_t>(std::stoul(fields[6]));
+            has_start_coords = false;
         }
+        to_internal_hit(hit, has_start_coords);
     } catch (...) {
         return false;
     }
