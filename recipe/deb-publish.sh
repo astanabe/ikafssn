@@ -3,7 +3,7 @@
 #
 # Regenerates the channel from a single release: drops the existing pool/
 # and dists/ trees (preserving CNAME, README.md, and the public keyring),
-# downloads the four .deb release assets, then rebuilds the Packages
+# downloads the six .deb release assets, then rebuilds the Packages
 # indices and a clearsigned InRelease + detached Release.gpg per suite.
 #
 # Required environment:
@@ -42,9 +42,10 @@ mkdir -p "${pool_dir}"
 declare -A suite_for_ubuntu=(
   ["22.04"]="jammy"
   ["24.04"]="noble"
+  ["26.04"]="resolute"
 )
 
-for ubuntu_ver in 22.04 24.04; do
+for ubuntu_ver in 22.04 24.04 26.04; do
   for arch in amd64 arm64; do
     asset="ikafssn_${IKAFSSN_VERSION}_ubuntu-${ubuntu_ver}_${arch}.deb"
     gh release download "${tag}" \
@@ -58,7 +59,7 @@ for ubuntu_ver in 22.04 24.04; do
   done
 done
 
-for ubuntu_ver in 22.04 24.04; do
+for ubuntu_ver in 22.04 24.04 26.04; do
   suite=${suite_for_ubuntu[${ubuntu_ver}]}
   suite_dir="dists/${suite}"
   for arch in amd64 arm64; do

@@ -34,6 +34,14 @@ jobs:
             os: ubuntu-24.04-arm
             ubuntu_ver: "24.04"
             pkg_type: deb
+          - target: x86_64-linux-gnu-26.04
+            os: ubuntu-26.04
+            ubuntu_ver: "26.04"
+            pkg_type: deb
+          - target: aarch64-linux-gnu-26.04
+            os: ubuntu-26.04-arm
+            ubuntu_ver: "26.04"
+            pkg_type: deb
           - target: aarch64-apple-darwin-tahoe
             os: macos-26
             ubuntu_ver: ""
@@ -91,8 +99,8 @@ jobs:
 
       # ---- System dependencies ----
 
-      - name: Install system dependencies (Linux 24.04)
-        if: runner.os == 'Linux' && matrix.ubuntu_ver == '24.04'
+      - name: Install system dependencies (Linux 24.04 / 26.04)
+        if: runner.os == 'Linux' && (matrix.ubuntu_ver == '24.04' || matrix.ubuntu_ver == '26.04')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -780,13 +788,13 @@ jobs:
         id: version
         run: echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify release has all four .deb assets
+      - name: Verify release has all six .deb assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="v${{ steps.version.outputs.version }}"
           missing=()
-          for ubuntu_ver in 22.04 24.04; do
+          for ubuntu_ver in 22.04 24.04 26.04; do
             for arch in amd64 arm64; do
               asset="ikafssn_${{ steps.version.outputs.version }}_ubuntu-${ubuntu_ver}_${arch}.deb"
               if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
