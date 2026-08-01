@@ -522,6 +522,186 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
 
 // ===== open_stream_kpx_for_candidates: candidate-set-driven decode =====
 
+namespace {
+
+using Run      = ikafssn::pfd::PosDecodeScratch::Run;
+using Selected = ikafssn::pfd::PosDecodeScratch::Selected;
+
+// Below this gap the range popcount is not worth entering: its bulk loop
+// needs 32 entries aligned to a byte boundary before it does any work, so
+// a shorter run only pays the alignment prologue and the call.
+constexpr std::uint32_t kRangePopcountMinGap = 32;
+
+// First index in [from, n) whose value is >= target, located by exponential
+// probing followed by a binary search over the bracketed range.  Returns n
+// when every remaining value is below target.
+inline std::size_t gallop_lower_bound(const std::uint32_t* a, std::size_t from,
+                                      std::size_t n, std::uint32_t target) {
+    if (from >= n) return n;
+    if (a[from] >= target) return from;
+    std::size_t lo = from;          // invariant: a[lo] < target
+    std::size_t step = 1;
+    while (lo + step < n && a[lo + step] < target) {
+        lo += step;
+        step <<= 1;
+    }
+    const std::size_t hi = std::min(lo + step + 1, n);
+    return std::size_t(std::lower_bound(a + lo + 1, a + hi, target) - a);
+}
+
+// Bring the per-kind ranks up to date over the kind map entries [first, last)
+// without visiting them one at a time.
+inline void advance_ranks(const std::uint8_t* km,
+                          std::uint32_t first, std::uint32_t last,
+                          std::uint32_t& r_partition,
+                          std::uint32_t& r_short1,
+                          std::uint32_t& r_short2) {
+    std::uint32_t k = first;
+    if (last - first >= kRangePopcountMinGap) {
+        for (; k < last && (k & 3) != 0; k++) {
+            switch (get_kind_bits(km, k)) {
+                case 0: r_short1++;    break;
+                case 1: r_short2++;    break;
+                case 2: r_partition++; break;
+                default: break;
+            }
+        }
+        std::uint32_t np, n1, n2;
+        popcount_kinds(km + (k >> 2), last - k, &np, &n1, &n2);
+        r_partition += np;
+        r_short1    += n1;
+        r_short2    += n2;
+        return;
+    }
+    for (; k < last; k++) {
+        switch (get_kind_bits(km, k)) {
+            case 0: r_short1++;    break;
+            case 1: r_short2++;    break;
+            case 2: r_partition++; break;
+            default: break;
+        }
+    }
+}
+
+// Walk past one FOR block through its self-describing header.
+inline bool skip_block_for(const std::uint8_t*& p, const std::uint8_t* end) {
+    if (std::size_t(end - p) < 8) return false;
+    const std::uint8_t b = p[4];
+    if (b > 32) return false;
+    const std::size_t body_bytes = std::size_t(16) * b;
+    if (std::size_t(end - p) < 8 + body_bytes) return false;
+    p += 8 + body_bytes;
+    return true;
+}
+
+// Walk past a whole FOR stream of `count` elements without decoding any of it.
+bool skip_for_stream(const std::uint8_t*& p, const std::uint8_t* end,
+                     std::uint32_t count, std::uint64_t& skipped_blocks) {
+    const std::uint32_t num_blocks = count / kBlockSize;
+    const std::uint32_t tail_count = count % kBlockSize;
+
+    for (std::uint32_t b = 0; b < num_blocks; b++) {
+        if (!skip_block_for(p, end)) return false;
+        skipped_blocks++;
+    }
+
+    if (p >= end) return false;
+    if (*p++ != tail_count) return false;
+    if (tail_count == 0) return true;
+
+    if (std::size_t(end - p) < 5) return false;
+    const std::uint8_t tail_b = p[4];
+    if (tail_b > 32) return false;
+    const std::size_t body_bytes = (std::size_t(tail_count) * tail_b + 7) / 8;
+    if (std::size_t(end - p) < 5 + body_bytes) return false;
+    p += 5 + body_bytes;
+    skipped_blocks++;
+    return true;
+}
+
+// Decode only the elements covered by `runs` out of a FOR stream of `count`
+// elements, writing them to `out` in stream order.  `runs` must be ascending,
+// disjoint and inside [0, count), and `out` must hold their total length.
+// Blocks holding no selected element are walked past through their header;
+// the stream tail counts as one block.
+bool decode_for_stream_selected(const std::uint8_t*& p, const std::uint8_t* end,
+                                std::uint32_t count,
+                                const Run* runs, std::size_t n_runs,
+                                std::uint32_t* out,
+                                std::uint64_t& skipped_blocks) {
+    const std::uint32_t num_blocks = count / kBlockSize;
+    const std::uint32_t tail_count = count % kBlockSize;
+
+    std::size_t ri = 0;             // run under consideration
+    std::uint32_t consumed = 0;     // elements of runs[ri] already emitted
+    alignas(kBlockAlign) std::uint32_t buf[kBlockSize];
+
+    // Drop the runs that end before this block starts.
+    auto seek_runs = [&](std::uint32_t base) {
+        while (ri < n_runs && runs[ri].first + runs[ri].count <= base) {
+            ri++;
+            consumed = 0;
+        }
+    };
+    // Emit every selected element of the decoded block spanning [base, lim).
+    auto emit = [&](std::uint32_t base, std::uint32_t lim) {
+        while (ri < n_runs && runs[ri].first < lim) {
+            const std::uint32_t run_end = runs[ri].first + runs[ri].count;
+            const std::uint32_t hi = run_end < lim ? run_end : lim;
+            for (std::uint32_t e = runs[ri].first + consumed; e < hi; e++) {
+                *out++ = buf[e - base];
+            }
+            if (run_end > lim) {          // continues into the next block
+                consumed = lim - runs[ri].first;
+                return;
+            }
+            ri++;
+            consumed = 0;
+        }
+    };
+
+    for (std::uint32_t b = 0; b < num_blocks; b++) {
+        const std::uint32_t base = b * kBlockSize;
+        const std::uint32_t lim  = base + kBlockSize;
+        seek_runs(base);
+        if (ri >= n_runs || runs[ri].first >= lim) {
+            if (!skip_block_for(p, end)) return false;
+            skipped_blocks++;
+            continue;
+        }
+        if (!decode_block_for(p, end, buf)) return false;
+        emit(base, lim);
+    }
+
+    if (p >= end) return false;
+    if (*p++ != tail_count) return false;
+    if (tail_count == 0) return true;
+
+    if (std::size_t(end - p) < 5) return false;
+    std::uint32_t tail_min;
+    std::memcpy(&tail_min, p, sizeof(std::uint32_t));
+    const std::uint8_t tail_b = p[4];
+    if (tail_b > 32) return false;
+    const std::size_t body_bytes = (std::size_t(tail_count) * tail_b + 7) / 8;
+    if (std::size_t(end - p) < 5 + body_bytes) return false;
+
+    const std::uint32_t base = num_blocks * kBlockSize;
+    const std::uint32_t lim  = base + tail_count;
+    seek_runs(base);
+    if (ri >= n_runs || runs[ri].first >= lim) {
+        p += 5 + body_bytes;
+        skipped_blocks++;
+        return true;
+    }
+    unpack_bits_lsb(p + 5, tail_count, tail_b, buf);
+    for (std::uint32_t i = 0; i < tail_count; i++) buf[i] += tail_min;
+    p += 5 + body_bytes;
+    emit(base, lim);
+    return true;
+}
+
+} // anonymous namespace (selection-pass helpers)
+
 bool open_stream_kpx_for_candidates(
         const std::uint8_t* posting_list, std::size_t bytes,
         const std::uint32_t* kix_decoded, std::size_t kix_count,
@@ -534,6 +714,9 @@ bool open_stream_kpx_for_candidates(
     out_cand.clear();
     out_pos.clear();
     out_off.assign(1, 0);
+    scratch.skipped_kind_entries = 0;
+    scratch.skipped_partition_groups = 0;
+    scratch.skipped_for_blocks = 0;
 
     if (n_candidates == 0) return true;
     if (bytes == 0) return true;
@@ -544,115 +727,183 @@ bool open_stream_kpx_for_candidates(
     if (distinct_count == 0) return true;
 
     const std::uint8_t* p = posting_list;
-    const std::uint8_t* end = posting_list + bytes;
+    const std::uint8_t* const end = posting_list + bytes;
 
     const std::size_t kind_map_bytes = (std::size_t(distinct_count) * 2 + 7) / 8;
     if (std::size_t(end - p) < kind_map_bytes) return false;
-    const std::uint8_t* kind_map = p;
+    const std::uint8_t* const kind_map = p;
     p += kind_map_bytes;
 
     std::uint32_t partition_count, short1_count, short2_count;
     popcount_kinds(kind_map, distinct_count,
                    &partition_count, &short1_count, &short2_count);
+    // A reserved (11) entry is counted into none of the three, so this one
+    // comparison stands in for a per-entry validity check.
     if (distinct_count != partition_count + short1_count + short2_count) return false;
 
-    // Decode partition groups into scratch.partition_positions, building
-    // partition_offsets[] alongside.
-    auto& part_pos = scratch.partition_positions;
-    auto& part_off = scratch.partition_offsets;
+    // Selection pass: galloping intersection of the .kix distinct sid array
+    // with the candidate array.  Both are ascending, so the side that lags
+    // jumps ahead by exponential probing and the kind map is only resolved
+    // one entry at a time where the two actually meet.
+    auto& selected = scratch.selected;
+    selected.clear();
+    std::size_t i = 0, ci = 0;
+    std::uint32_t prev_i = 0;   // ranks are up to date over [0, prev_i)
+    std::uint32_t r_partition = 0, r_short1 = 0, r_short2 = 0;
+    std::uint32_t n_sel_short1 = 0, n_sel_short2 = 0;
+    while (i < distinct_count && ci < n_candidates) {
+        const std::uint32_t sid  = kix_decoded[i];
+        const std::uint32_t cand = candidates[ci];
+        if (sid < cand) {
+            i = gallop_lower_bound(kix_decoded, i + 1, distinct_count, cand);
+            continue;
+        }
+        if (cand < sid) {
+            ci = gallop_lower_bound(candidates, ci + 1, n_candidates, sid);
+            continue;
+        }
+        const std::uint32_t idx = static_cast<std::uint32_t>(i);
+        scratch.skipped_kind_entries += idx - prev_i;
+        advance_ranks(kind_map, prev_i, idx, r_partition, r_short1, r_short2);
+        const std::uint8_t kind = get_kind_bits(kind_map, idx);
+        std::uint32_t rank;
+        if (kind == 2)      { rank = r_partition++; }
+        else if (kind == 0) { rank = r_short1++; n_sel_short1++; }
+        else                { rank = r_short2++; n_sel_short2++; }
+        selected.push_back(Selected{static_cast<std::uint32_t>(ci), rank, kind});
+        prev_i = idx + 1;
+        i++;
+        ci++;
+    }
+    scratch.skipped_kind_entries += distinct_count - prev_i;
+
+    // No candidate is in this posting list: nothing downstream can produce
+    // output, so no stream is touched at all.
+    if (selected.empty()) return true;
+
+    // Partition groups.  Every group header has to be read to find the next
+    // one, but a group no candidate asked for has its FOR stream walked past.
+    auto& part_pos = scratch.selected_partition_positions;
+    auto& part_off = scratch.selected_partition_offsets;
     part_pos.clear();
-    part_off.assign(std::size_t(partition_count) + 1, 0);
-    for (std::uint32_t g = 0; g < partition_count; g++) {
-        if (std::size_t(end - p) < sizeof(std::uint32_t)) return false;
-        std::uint32_t gcnt;
-        std::memcpy(&gcnt, p, sizeof(std::uint32_t));
-        p += sizeof(std::uint32_t);
-        if (gcnt == 0) return false;
-        part_off[g] = static_cast<std::uint32_t>(part_pos.size());
-        const std::size_t base = part_pos.size();
-        part_pos.resize(base + gcnt);
-        if (!decode_for_stream(p, end, gcnt, part_pos.data() + base)) return false;
+    part_off.assign(1, 0);
+    if (partition_count > 0) {
+        std::size_t si = 0;
+        while (si < selected.size() && selected[si].kind != 2) si++;
+        std::uint32_t next_rank =
+            (si < selected.size()) ? selected[si].rank : UINT32_MAX;
+        for (std::uint32_t g = 0; g < partition_count; g++) {
+            if (std::size_t(end - p) < sizeof(std::uint32_t)) return false;
+            std::uint32_t gcnt;
+            std::memcpy(&gcnt, p, sizeof(std::uint32_t));
+            p += sizeof(std::uint32_t);
+            if (gcnt == 0) return false;
+            if (g != next_rank) {
+                if (!skip_for_stream(p, end, gcnt, scratch.skipped_for_blocks)) return false;
+                scratch.skipped_partition_groups++;
+                continue;
+            }
+            const std::size_t base = part_pos.size();
+            part_pos.resize(base + gcnt);
+            if (!decode_for_stream(p, end, gcnt, part_pos.data() + base)) return false;
+            part_off.push_back(static_cast<std::uint32_t>(part_pos.size()));
+            si++;
+            while (si < selected.size() && selected[si].kind != 2) si++;
+            next_rank = (si < selected.size()) ? selected[si].rank : UINT32_MAX;
+        }
     }
-    part_off[partition_count] = static_cast<std::uint32_t>(part_pos.size());
 
-    // Decode short_occ1 sub-bucket.
-    auto& short1_pos = scratch.short1_positions;
-    short1_pos.assign(short1_count, 0);
-    if (short1_count > 0) {
-        if (!decode_for_stream(p, end, short1_count, short1_pos.data())) return false;
+    // short_occ1 sub-bucket: one position per entry, so a selected rank is
+    // its own single-element run.
+    auto& short1_pos = scratch.selected_short1_positions;
+    auto& runs = scratch.selected_runs;
+    if (short1_count > 0 && n_sel_short1 > 0) {
+        // Grown to a high-water mark and addressed through the selection
+        // counts, so a shorter posting list never re-zeroes the buffer.
+        if (short1_pos.size() < n_sel_short1) short1_pos.resize(n_sel_short1);
+        if (n_sel_short1 == short1_count) {
+            // Every entry is wanted.  Running whole blocks straight through
+            // beats selecting inside them, and no run list is needed at all.
+            if (!decode_for_stream(p, end, short1_count, short1_pos.data())) return false;
+        } else {
+            runs.clear();
+            for (const auto& s : selected) {
+                if (s.kind == 0) runs.push_back(Run{s.rank, 1});
+            }
+            if (!decode_for_stream_selected(p, end, short1_count,
+                                            runs.data(), runs.size(),
+                                            short1_pos.data(),
+                                            scratch.skipped_for_blocks)) {
+                return false;
+            }
+        }
+    } else if (short1_count > 0 && n_sel_short2 > 0) {
+        // Nothing wanted here, but the stream sits between the partition
+        // groups and the short_occ_ge2 sub-bucket.
+        if (!skip_for_stream(p, end, short1_count, scratch.skipped_for_blocks)) return false;
     }
 
-    // Decode short_occ_ge2 sub-bucket: u8 occ_count[] then FOR stream.
-    // short2_position_count is derived as a horizontal sum of the u8
-    // occ_count[] array.
+    // short_occ_ge2 sub-bucket: u8 occ_count[] then the FOR stream.  The
+    // occ_count[] array is read in full — the run of a selected entry starts
+    // at the prefix sum of every entry before it.  It is also the last
+    // region, so nothing needs it when no candidate selected a short_occ_ge2
+    // entry.
+    auto& short2_pos = scratch.selected_short2_positions;
     auto& short2_occ = scratch.short2_occ;
-    auto& short2_off = scratch.short2_offsets;
-    auto& short2_pos = scratch.short2_positions;
-    short2_occ.assign(short2_count, 0);
-    short2_off.assign(std::size_t(short2_count) + 1, 0);
-    std::uint32_t short2_position_count = 0;
-    if (short2_count > 0) {
+    if (n_sel_short2 > 0) {
         if (std::size_t(end - p) < short2_count) return false;
+        short2_occ.resize(short2_count);
         std::memcpy(short2_occ.data(), p, short2_count);
         p += short2_count;
+
+        runs.clear();
+        std::size_t si = 0;
+        while (si < selected.size() && selected[si].kind != 1) si++;
         std::uint32_t cum = 0;
-        for (std::uint32_t i = 0; i < short2_count; i++) {
-            if (short2_occ[i] < 2) return false;
-            short2_off[i] = cum;
-            cum += short2_occ[i];
+        std::uint32_t sel_positions = 0;
+        for (std::uint32_t r = 0; r < short2_count; r++) {
+            const std::uint8_t occ = short2_occ[r];
+            if (occ < 2) return false;
+            if (si < selected.size() && selected[si].rank == r) {
+                runs.push_back(Run{cum, occ});
+                sel_positions += occ;
+                si++;
+                while (si < selected.size() && selected[si].kind != 1) si++;
+            }
+            cum += occ;
         }
-        short2_off[short2_count] = cum;
-        short2_position_count = cum;
-    }
-    short2_pos.assign(short2_position_count, 0);
-    if (short2_position_count > 0) {
-        if (!decode_for_stream(p, end, short2_position_count, short2_pos.data())) {
+        if (short2_pos.size() < sel_positions) short2_pos.resize(sel_positions);
+        if (!decode_for_stream_selected(p, end, cum, runs.data(), runs.size(),
+                                        short2_pos.data(), scratch.skipped_for_blocks)) {
             return false;
         }
     }
 
-    // 2-pointer merge walk over kix_decoded × candidates, ranking each
-    // distinct sid by its kind to pull positions out of the per-kind decoded
-    // buffers.  `ci` never decreases and each candidate matches at most one
-    // distinct sid, so appending the matches builds the CSR in one pass.
-    std::size_t ci = 0;
-    std::uint32_t r_part = 0, r_short1 = 0, r_short2 = 0;
-    for (std::uint32_t i = 0; i < distinct_count; i++) {
-        const std::uint8_t kind = get_kind_bits(kind_map, i);
-        if (kind == 3) return false;  // reserved
-        const std::uint32_t sid = kix_decoded[i];
-        while (ci < n_candidates && candidates[ci] < sid) ci++;
-        const bool match = (ci < n_candidates && candidates[ci] == sid);
-        if (kind == 2) {
-            if (match) {
-                const std::uint32_t lo = part_off[r_part];
-                const std::uint32_t hi = part_off[r_part + 1];
-                out_pos.insert(out_pos.end(),
-                               part_pos.begin() + lo, part_pos.begin() + hi);
-            }
-            r_part++;
-        } else if (kind == 0) {
-            if (match) {
-                out_pos.push_back(short1_pos[r_short1]);
-            }
-            r_short1++;
-        } else { // kind == 1
-            if (match) {
-                const std::uint32_t lo = short2_off[r_short2];
-                const std::uint32_t hi = short2_off[r_short2 + 1];
-                out_pos.insert(out_pos.end(),
-                               short2_pos.begin() + lo, short2_pos.begin() + hi);
-            }
-            r_short2++;
+    // Assemble the sparse CSR.  Each kind's selected positions landed in
+    // selection order, so one cursor per kind walks them in step with the
+    // ascending candidate-index order of `selected`.
+    out_cand.reserve(selected.size());
+    out_off.reserve(selected.size() + 1);
+    std::size_t c_partition = 0, c_short1 = 0, c_short2 = 0;
+    for (const auto& s : selected) {
+        out_cand.push_back(s.candidate_idx);
+        if (s.kind == 2) {
+            const std::uint32_t lo = part_off[c_partition];
+            const std::uint32_t hi = part_off[c_partition + 1];
+            out_pos.insert(out_pos.end(),
+                           part_pos.begin() + lo, part_pos.begin() + hi);
+            c_partition++;
+        } else if (s.kind == 0) {
+            out_pos.push_back(short1_pos[c_short1++]);
+        } else {
+            const std::uint32_t occ = short2_occ[s.rank];
+            out_pos.insert(out_pos.end(),
+                           short2_pos.begin() + c_short2,
+                           short2_pos.begin() + c_short2 + occ);
+            c_short2 += occ;
         }
-        if (match) {
-            out_cand.push_back(static_cast<std::uint32_t>(ci));
-            out_off.push_back(static_cast<std::uint32_t>(out_pos.size()));
-        }
+        out_off.push_back(static_cast<std::uint32_t>(out_pos.size()));
     }
-    if (r_part   != partition_count) return false;
-    if (r_short1 != short1_count)    return false;
-    if (r_short2 != short2_count)    return false;
     return true;
 }
 

@@ -484,6 +484,220 @@ static void test_candidate_subset_csr() {
     std::remove(TEST_FILE);
 }
 
+// A posting list no candidate hits must be abandoned right after the
+// selection pass: every kind map entry is skipped and neither the partition
+// groups nor the FOR streams are walked at all.
+static void test_zero_match_skips_decode() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    // sid 1 -> short_occ1, sid 3 -> short_occ_ge2, sid 7 -> partition.
+    std::vector<KpxWriter::PostingEntry> entries = {
+        {1, 10},
+        {3, 20}, {3, 21}, {3, 22},
+    };
+    for (uint32_t j = 0; j < 12; j++) entries.push_back({7, 40 + j});  // 12 > 8
+
+    {
+        KpxWriter writer(k, /*freq_threshold_part=*/8);
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 31) writer.add_posting_list(i, entries);
+            else         writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+
+        const std::vector<uint32_t> kix_decoded = {1, 3, 7};
+        const std::vector<uint32_t> candidates  = {2, 4, 5};
+
+        pfd::PosDecodeScratch scratch;
+        const uint64_t off = reader.pos_offset(31);
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            reader.posting_file() + off,
+            static_cast<size_t>(reader.posting_file_size() - off),
+            kix_decoded.data(), kix_decoded.size(),
+            candidates.data(), candidates.size(),
+            scratch));
+
+        CHECK_EQ(scratch.out_candidate_idx.size(), 0u);
+        CHECK_EQ(scratch.out_positions.size(), 0u);
+        CHECK_EQ(scratch.skipped_kind_entries, kix_decoded.size());
+        // Nothing past the kind map was read, so nothing was walked past.
+        CHECK_EQ(scratch.skipped_partition_groups, 0u);
+        CHECK_EQ(scratch.skipped_for_blocks, 0u);
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
+// FOR blocks holding no selected element are walked past through their
+// header.  300 short_occ1 entries = 2 full blocks + a 44-element tail; both
+// candidates sit in the first block, so the second block and the tail are
+// skipped.
+static void test_for_block_skip() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    const uint32_t n = 300;
+    std::vector<KpxWriter::PostingEntry> entries;
+    std::vector<uint32_t> kix_decoded;
+    entries.reserve(n);
+    kix_decoded.reserve(n);
+    for (uint32_t sid = 0; sid < n; sid++) {
+        entries.push_back({sid, 1000u + sid * 3u});
+        kix_decoded.push_back(sid);
+    }
+
+    {
+        KpxWriter writer(k);
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 13) writer.add_posting_list(i, entries);
+            else         writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+
+        const std::vector<uint32_t> candidates = {0, 5};  // both in block 0
+
+        pfd::PosDecodeScratch scratch;
+        const uint64_t off = reader.pos_offset(13);
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            reader.posting_file() + off,
+            static_cast<size_t>(reader.posting_file_size() - off),
+            kix_decoded.data(), kix_decoded.size(),
+            candidates.data(), candidates.size(),
+            scratch));
+
+        const std::vector<uint32_t> want_idx = {0, 1};
+        const std::vector<uint32_t> want_off = {0, 1, 2};
+        CHECK(scratch.out_candidate_idx == want_idx);
+        CHECK(scratch.out_offsets == want_off);
+        CHECK_EQ(scratch.out_positions.size(), 2u);
+        CHECK_EQ(scratch.out_positions[0], 1000u);
+        CHECK_EQ(scratch.out_positions[1], 1015u);
+        // Block 1 and the 44-element tail carry no selected element.
+        CHECK_EQ(scratch.skipped_for_blocks, 2u);
+        CHECK_EQ(scratch.skipped_partition_groups, 0u);
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
+// Partition groups no candidate asked for have their position stream walked
+// past; only the group header is read to find the next one.
+static void test_partition_group_skip() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    const std::vector<uint32_t> sids = {2, 4, 6, 8};
+    std::vector<KpxWriter::PostingEntry> entries;
+    for (uint32_t sid : sids) {
+        for (uint32_t j = 0; j < 12; j++) {   // 12 > 8 -> partition
+            entries.push_back({sid, sid * 1000u + j});
+        }
+    }
+
+    {
+        KpxWriter writer(k, /*freq_threshold_part=*/8);
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 27) writer.add_posting_list(i, entries);
+            else         writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+
+        const std::vector<uint32_t> candidates = {4};  // partition rank 1 only
+
+        pfd::PosDecodeScratch scratch;
+        const uint64_t off = reader.pos_offset(27);
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            reader.posting_file() + off,
+            static_cast<size_t>(reader.posting_file_size() - off),
+            sids.data(), sids.size(),
+            candidates.data(), candidates.size(),
+            scratch));
+
+        const std::vector<uint32_t> want_idx = {0};
+        const std::vector<uint32_t> want_off = {0, 12};
+        CHECK(scratch.out_candidate_idx == want_idx);
+        CHECK(scratch.out_offsets == want_off);
+        for (uint32_t j = 0; j < 12; j++) {
+            CHECK_EQ(scratch.out_positions[j], 4000u + j);
+        }
+        CHECK_EQ(scratch.skipped_partition_groups, 3u);
+        // Each skipped group is a 12-element stream: no full block, one tail.
+        CHECK_EQ(scratch.skipped_for_blocks, 3u);
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
+// A sparse candidate set leaves most of the kind map unvisited: only the
+// entries the two arrays actually meet at are resolved one at a time, the
+// rest are jumped over and their ranks recovered in bulk.
+static void test_kind_entry_skip() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    const uint32_t n = 200;
+    std::vector<KpxWriter::PostingEntry> entries;
+    std::vector<uint32_t> kix_decoded;
+    entries.reserve(n);
+    kix_decoded.reserve(n);
+    for (uint32_t sid = 0; sid < n; sid++) {
+        entries.push_back({sid, 7000u + sid * 5u});
+        kix_decoded.push_back(sid);
+    }
+
+    {
+        KpxWriter writer(k);
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 41) writer.add_posting_list(i, entries);
+            else         writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+
+        const std::vector<uint32_t> candidates = {0, 100, 199};
+
+        pfd::PosDecodeScratch scratch;
+        const uint64_t off = reader.pos_offset(41);
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            reader.posting_file() + off,
+            static_cast<size_t>(reader.posting_file_size() - off),
+            kix_decoded.data(), kix_decoded.size(),
+            candidates.data(), candidates.size(),
+            scratch));
+
+        const std::vector<uint32_t> want_idx = {0, 1, 2};
+        const std::vector<uint32_t> want_off = {0, 1, 2, 3};
+        CHECK(scratch.out_candidate_idx == want_idx);
+        CHECK(scratch.out_offsets == want_off);
+        CHECK_EQ(scratch.out_positions[0], 7000u);
+        CHECK_EQ(scratch.out_positions[1], 7000u + 100u * 5u);
+        CHECK_EQ(scratch.out_positions[2], 7000u + 199u * 5u);
+        CHECK_EQ(scratch.skipped_kind_entries, n - candidates.size());
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
 static void test_multiple_kmers() {
     int k = 5;
     uint32_t ts = table_size(k);
@@ -602,6 +816,10 @@ int main() {
     test_empty_posting();
     test_all_candidates_miss();
     test_candidate_subset_csr();
+    test_zero_match_skips_decode();
+    test_for_block_skip();
+    test_partition_group_skip();
+    test_kind_entry_skip();
     test_multiple_kmers();
     test_partition_group_threshold();
     TEST_SUMMARY();
