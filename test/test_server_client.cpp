@@ -260,6 +260,183 @@ static void test_server_client_search() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Request processing without a socket: process_search_request() is where the
+// orchestrator hits are turned into response hits and routed back to their
+// QueryResult, so these drive it directly.
+// ---------------------------------------------------------------------------
+
+// Two query sequences of different lengths, so a hit's qlen identifies the
+// query it was aligned against.
+struct TwoQueries {
+    std::string a;   // 200 bp of ACC_FJ
+    std::string b;   // 150 bp of ACC_GQ
+};
+
+static TwoQueries make_two_queries() {
+    TwoQueries q;
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t fj = find_oid_by_accession(db, ACC_FJ);
+    uint32_t gq = find_oid_by_accession(db, ACC_GQ);
+    CHECK(fj != UINT32_MAX);
+    CHECK(gq != UINT32_MAX);
+    if (fj == UINT32_MAX || gq == UINT32_MAX) return q;
+    std::string fj_seq = db.get_sequence(fj);
+    std::string gq_seq = db.get_sequence(gq);
+    CHECK(fj_seq.size() >= 400);
+    CHECK(gq_seq.size() >= 400);
+    db.close();
+    q.a = fj_seq.substr(100, 200);
+    q.b = gq_seq.substr(100, 150);
+    return q;
+}
+
+// Load the test index with a BLAST DB attached, so mode 3 is available.
+static bool load_server_with_db(Server& server, ServerConfig& cfg,
+                                std::string& dbname) {
+    std::string ix_prefix = build_test_index(7);
+    CHECK(!ix_prefix.empty());
+    if (ix_prefix.empty()) return false;
+    cfg.search_config.stage2.min_score = 1;
+    cfg.stage3_config.traceback = true;
+    cfg.context_is_ratio = false;
+    cfg.context_abs = 0;
+    Logger logger(Logger::kError);
+    if (!server.load_database(ix_prefix, g_testdb_path, cfg, logger)) return false;
+    dbname = db_from_prefix(ix_prefix);
+    return true;
+}
+
+static SearchRequest make_request(const std::string& dbname, uint8_t mode) {
+    SearchRequest req;
+    req.k = 7;
+    req.db = dbname;
+    req.min_seq_length = 64;
+    req.mode = mode;
+    req.stage3_traceback = 1;
+    return req;
+}
+
+// Every hit must reach the QueryResult of the query it was searched with; the
+// per-hit qlen is the query's own length, so it names that query.
+static void check_hits_routed(const SearchResponse& resp) {
+    for (const auto& qr : resp.results) {
+        for (const auto& h : qr.hits) CHECK_EQ(h.qlen, qr.qlen);
+    }
+}
+
+static void test_server_mode3_roundtrip() {
+    std::fprintf(stderr, "-- test_server_mode3_roundtrip\n");
+
+    Server server;
+    ServerConfig cfg;
+    std::string dbname;
+    if (!load_server_with_db(server, cfg, dbname)) { CHECK(false); return; }
+    const DatabaseEntry* entry = server.find_database(dbname);
+    CHECK(entry != nullptr);
+    if (!entry) return;
+
+    TwoQueries q = make_two_queries();
+    SearchRequest req = make_request(dbname, 3);
+    req.queries.push_back({"qa", q.a});
+    req.queries.push_back({"qb", q.b});
+
+    tbb::task_arena arena(1);
+    SearchResponse resp = process_search_request(req, *entry, server, arena);
+
+    CHECK_EQ(resp.status, uint8_t{0});
+    CHECK_EQ(resp.results.size(), 2u);
+    if (resp.results.size() != 2) return;
+    CHECK(resp.results[0].qseqid == "qa");
+    CHECK(resp.results[1].qseqid == "qb");
+    check_hits_routed(resp);
+
+    for (const auto& qr : resp.results) {
+        CHECK(!qr.hits.empty());
+        for (const auto& h : qr.hits) {
+            // Stage 3 ran: every hit carries an alignment.
+            CHECK(h.alnscore != 0);
+            CHECK(!h.cigar.empty());
+        }
+    }
+}
+
+// Two queries may share a qseqid; each still gets its own results, so a
+// name-keyed route back would drop one of them entirely.
+static void test_server_mode3_duplicate_qseqid() {
+    std::fprintf(stderr, "-- test_server_mode3_duplicate_qseqid\n");
+
+    Server server;
+    ServerConfig cfg;
+    std::string dbname;
+    if (!load_server_with_db(server, cfg, dbname)) { CHECK(false); return; }
+    const DatabaseEntry* entry = server.find_database(dbname);
+    CHECK(entry != nullptr);
+    if (!entry) return;
+
+    TwoQueries q = make_two_queries();
+    SearchRequest req = make_request(dbname, 3);
+    req.queries.push_back({"dup", q.a});
+    req.queries.push_back({"dup", q.b});
+
+    tbb::task_arena arena(1);
+    SearchResponse resp = process_search_request(req, *entry, server, arena);
+
+    CHECK_EQ(resp.status, uint8_t{0});
+    CHECK_EQ(resp.results.size(), 2u);
+    if (resp.results.size() != 2) return;
+    CHECK(resp.results[0].qseqid == "dup");
+    CHECK(resp.results[1].qseqid == "dup");
+    CHECK(!resp.results[0].hits.empty());
+    CHECK(!resp.results[1].hits.empty());
+    check_hits_routed(resp);
+}
+
+// The mode 2 hits of one query arrive in the order the Stage 2 dedup left
+// them: one contiguous run per subject, ascending (strand, sstart) inside it.
+static void test_server_mode2_hit_order() {
+    std::fprintf(stderr, "-- test_server_mode2_hit_order\n");
+
+    Server server;
+    ServerConfig cfg;
+    std::string dbname;
+    if (!load_server_with_db(server, cfg, dbname)) { CHECK(false); return; }
+    const DatabaseEntry* entry = server.find_database(dbname);
+    CHECK(entry != nullptr);
+    if (!entry) return;
+
+    TwoQueries q = make_two_queries();
+    SearchRequest req = make_request(dbname, 2);
+    req.queries.push_back({"qa", q.a});
+    req.queries.push_back({"qb", q.b});
+
+    tbb::task_arena arena(1);
+    SearchResponse resp = process_search_request(req, *entry, server, arena);
+
+    CHECK_EQ(resp.status, uint8_t{0});
+    CHECK_EQ(resp.results.size(), 2u);
+    if (resp.results.size() != 2) return;
+    check_hits_routed(resp);
+
+    for (const auto& qr : resp.results) {
+        CHECK(!qr.hits.empty());
+        std::vector<std::string> seen;
+        for (size_t i = 0; i < qr.hits.size(); ++i) {
+            const auto& h = qr.hits[i];
+            if (i == 0 || h.sseqid != qr.hits[i - 1].sseqid) {
+                // A subject must not come back after another one intervened.
+                CHECK(std::find(seen.begin(), seen.end(), h.sseqid) == seen.end());
+                seen.push_back(h.sseqid);
+                continue;
+            }
+            const auto& prev = qr.hits[i - 1];
+            CHECK(prev.sstrand <= h.sstrand);
+            if (prev.sstrand == h.sstrand) CHECK(prev.sstart <= h.sstart);
+        }
+    }
+}
+
 // Test: health check
 static void test_health_check() {
     std::fprintf(stderr, "-- test_health_check\n");
@@ -388,6 +565,9 @@ int main() {
     std::filesystem::create_directories(g_test_dir);
 
     test_server_client_search();
+    test_server_mode3_roundtrip();
+    test_server_mode3_duplicate_qseqid();
+    test_server_mode2_hit_order();
     test_health_check();
     test_seqidlist_filter_via_server();
 

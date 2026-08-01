@@ -50,6 +50,11 @@ struct OutputHit {
     uint32_t chainscore = 0;
     uint16_t volume;
     uint32_t oid = 0;        // internal: BLAST DB OID (not written to output)
+    // Index into the query list handed to run_stage3, carried through Stage 3
+    // so callers can route a hit back to its query without a name lookup.
+    // Internal: never written to output, and the TSV / JSON readers cannot
+    // restore it, so the output writers must not use it.
+    uint32_t query_idx = 0;
 
     // Stage 3 fields (populated only when mode == 3)
     int32_t alnscore = 0;

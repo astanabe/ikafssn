@@ -531,36 +531,54 @@ SearchResponse process_search_request(
     if (group.kmer_type == 0) orch_hits = run_orchestrated(uint16_t{});
     else                      orch_hits = run_orchestrated(uint32_t{});
 
-    // Convert OrchestratorHit -> ResponseHit at the boundary, fanning out
-    // into the corresponding QueryResult slot.
+    // Queries reach Stage 3 as the accepted_queries list, so a hit's
+    // query_idx is its position there; that also names the QueryResult slot
+    // the hit belongs to, without going back through the qseqid.
+    std::vector<size_t> query_to_accepted(req.queries.size(), SIZE_MAX);
+    for (size_t ai = 0; ai < accepted_queries.size(); ++ai)
+        query_to_accepted[accepted_queries[ai].query_idx] = ai;
+    std::vector<FastaRecord> accepted_records;
+    accepted_records.reserve(accepted_queries.size());
+    for (const auto& aq : accepted_queries) {
+        accepted_records.push_back({
+            req.queries[aq.query_idx].qseqid,
+            req.queries[aq.query_idx].sequence
+        });
+    }
+
+    // Convert OrchestratorHit -> OutputHit at the boundary.
     //
     // Stage 2 chains live in fragment-relative coordinates.
     // Re-map them to parent-OID-relative coordinates so wire output carries
     // the parent accession, parent slen, and parent-relative sstart/send.
+    std::vector<OutputHit> output_hits;
+    output_hits.reserve(orch_hits.size());
     for (const auto& oh_in : orch_hits) {
         const auto& cr = oh_in.cr;
-        size_t result_idx = query_to_result[oh_in.query_idx];
-        if (result_idx == SIZE_MAX) continue;  // defensive; should not happen
+        size_t accepted_idx = query_to_accepted[oh_in.query_idx];
+        if (accepted_idx == SIZE_MAX) continue;  // defensive; should not happen
         const auto& vol = is_both_mode
             ? group_cod->volumes[oh_in.volume_idx]
             : group.volumes[oh_in.volume_idx];
         const ParentHit ph = resolve_parent_hit(vol.ksx, cr);
-        ResponseHit rh;
-        rh.sseqid = std::string(ph.sseqid);
-        rh.sstrand = cr.is_reverse ? 1 : 0;
-        rh.qstart = cr.q_start;
-        rh.qend = cr.q_end;
-        rh.sstart = ph.sstart;
-        rh.send   = ph.send;
-        rh.chainscore = static_cast<uint16_t>(cr.chainscore);
-        rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
-        rh.volume = vol.volume_index;
+        OutputHit oh;
+        oh.query_idx = static_cast<uint32_t>(accepted_idx);
+        oh.qseqid = accepted_records[accepted_idx].id;
+        oh.sseqid = std::string(ph.sseqid);
+        oh.sstrand = cr.is_reverse ? '-' : '+';
+        oh.qstart = cr.q_start;
+        oh.qend = cr.q_end;
+        oh.sstart = ph.sstart;
+        oh.send   = ph.send;
+        oh.chainscore = cr.chainscore;
+        oh.coverscore = cr.stage1_score;
+        oh.volume = vol.volume_index;
         // Stage 3 keys BlastDbReader by parent BLAST DB OID, so propagate
         // the parent's BLAST OID rather than the internal fragment seq_id.
-        rh.oid = ph.oid;
-        rh.qlen = static_cast<uint32_t>(req.queries[oh_in.query_idx].sequence.size());
-        rh.slen = ph.slen;
-        resp.results[result_idx].hits.push_back(std::move(rh));
+        oh.oid = ph.oid;
+        oh.qlen = static_cast<uint32_t>(accepted_records[accepted_idx].sequence.size());
+        oh.slen = ph.slen;
+        output_hits.push_back(std::move(oh));
     }
 
     // Stage 3 alignment (mode 3 only)
@@ -571,40 +589,9 @@ SearchResponse process_search_request(
             return resp;
         }
 
-        // Build FastaRecord vector from accepted queries
-        std::vector<FastaRecord> fasta_queries;
-        for (const auto& aq : accepted_queries) {
-            fasta_queries.push_back({
-                req.queries[aq.query_idx].qseqid,
-                req.queries[aq.query_idx].sequence
-            });
-        }
-
-        // Flatten all hits into OutputHit vector for run_stage3
-        std::vector<OutputHit> output_hits;
-        for (auto& qr : resp.results) {
-            for (auto& hit : qr.hits) {
-                OutputHit oh;
-                oh.qseqid = qr.qseqid;
-                oh.sseqid = hit.sseqid;
-                oh.sstrand = (hit.sstrand == 0) ? '+' : '-';
-                oh.qstart = hit.qstart;
-                oh.qend = hit.qend;
-                oh.sstart = hit.sstart;
-                oh.send = hit.send;
-                oh.chainscore = hit.chainscore;
-                oh.coverscore = hit.coverscore;
-                oh.volume = hit.volume;
-                oh.oid = hit.oid;
-                oh.qlen = hit.qlen;
-                oh.slen = hit.slen;
-                output_hits.push_back(std::move(oh));
-            }
-        }
-
         Logger logger(Logger::kInfo);
         stage3_config.posting_budget = posting_budget;
-        output_hits = run_stage3(output_hits, fasta_queries, db.db_path,
+        output_hits = run_stage3(output_hits, accepted_records, db.db_path,
                                  stage3_config, ctx_is_ratio, ctx_ratio, ctx_abs, logger);
         // Stage 3 dedup over parent-relative (send, alnscore).
         // Mirrors the ikafssnsearch dedup so server responses look identical
@@ -618,37 +605,34 @@ SearchResponse process_search_request(
                                   stage3_config.max_nhit_per_subject_mode);
         apply_in_total_output(output_hits, stage3_config.max_nhit_in_total);
 
-        // Write back to ResponseHit
-        for (auto& qr : resp.results) qr.hits.clear();
-        std::unordered_map<std::string, size_t> qid_to_ridx;
-        for (size_t i = 0; i < resp.results.size(); i++)
-            qid_to_ridx[resp.results[i].qseqid] = i;
-        for (const auto& oh : output_hits) {
-            auto qit = qid_to_ridx.find(oh.qseqid);
-            if (qit == qid_to_ridx.end()) continue;
-            ResponseHit rh;
-            rh.sseqid = oh.sseqid;
-            rh.sstrand = (oh.sstrand == '+') ? 0 : 1;
-            rh.qstart = oh.qstart;
-            rh.qend = oh.qend;
-            rh.sstart = oh.sstart;
-            rh.send = oh.send;
-            rh.chainscore = static_cast<uint16_t>(oh.chainscore);
-            rh.coverscore = static_cast<uint16_t>(oh.coverscore);
-            rh.volume = oh.volume;
-            rh.qlen = oh.qlen;
-            rh.slen = oh.slen;
-            rh.alnscore = oh.alnscore;
-            rh.npositive = oh.npositive;
-            rh.nnegative = oh.nnegative;
-            rh.ppositive_x100 = static_cast<uint16_t>(oh.ppositive * 100.0);
-            rh.cigar = oh.cigar;
-            rh.qseq = oh.qseq;
-            rh.sseq = oh.sseq;
-            resp.results[qit->second].hits.push_back(std::move(rh));
-        }
-
         resp.stage3_traceback = stage3_config.traceback ? 1 : 0;
+    }
+
+    // Convert OutputHit -> ResponseHit, fanning out into the QueryResult slot
+    // the hit's query owns.
+    for (auto& oh : output_hits) {
+        const size_t result_idx = accepted_queries[oh.query_idx].result_idx;
+        ResponseHit rh;
+        rh.sseqid = std::move(oh.sseqid);
+        rh.sstrand = (oh.sstrand == '+') ? 0 : 1;
+        rh.qstart = oh.qstart;
+        rh.qend = oh.qend;
+        rh.sstart = oh.sstart;
+        rh.send = oh.send;
+        rh.chainscore = static_cast<uint16_t>(oh.chainscore);
+        rh.coverscore = static_cast<uint16_t>(oh.coverscore);
+        rh.volume = oh.volume;
+        rh.oid = oh.oid;
+        rh.qlen = oh.qlen;
+        rh.slen = oh.slen;
+        rh.alnscore = oh.alnscore;
+        rh.npositive = oh.npositive;
+        rh.nnegative = oh.nnegative;
+        rh.ppositive_x100 = static_cast<uint16_t>(oh.ppositive * 100.0);
+        rh.cigar = std::move(oh.cigar);
+        rh.qseq = std::move(oh.qseq);
+        rh.sseq = std::move(oh.sseq);
+        resp.results[result_idx].hits.push_back(std::move(rh));
     }
 
     // Release permits
