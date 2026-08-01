@@ -2,8 +2,9 @@
 
 #include "index/ksx_reader.hpp"
 #include "io/result_writer.hpp"
-#include "search/parallel_search.hpp"
 #include "search/hit_limits.hpp"
+#include "search/parallel_search.hpp"
+#include "search/parent_hit.hpp"
 #include "util/query_order.hpp"
 
 #include <algorithm>
@@ -31,7 +32,7 @@ inline StageTwoKey make_stage2_key(
     const std::vector<const KsxReader*>& ksx_per_volume) {
     const auto* ksx = ksx_per_volume[h.volume_idx];
     const uint32_t parent_idx = ksx->parent_index(h.cr.seq_id);
-    const uint32_t shift      = ksx->fragment_start(h.cr.seq_id) - 1u;
+    const uint32_t shift      = fragment_shift(*ksx, h.cr.seq_id);
     return StageTwoKey{
         h.query_idx,
         h.volume_idx,

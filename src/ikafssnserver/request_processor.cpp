@@ -10,6 +10,7 @@
 #include "io/result_writer.hpp"
 #include "search/oid_filter.hpp"
 #include "search/parallel_search.hpp"
+#include "search/parent_hit.hpp"
 #include "search/preprocess_runner.hpp"
 #include "search/query_preprocessor.hpp"
 #include "search/result_dedup.hpp"
@@ -543,24 +544,22 @@ SearchResponse process_search_request(
         const auto& vol = is_both_mode
             ? group_cod->volumes[oh_in.volume_idx]
             : group.volumes[oh_in.volume_idx];
-        const uint32_t parent_idx = vol.ksx.parent_index(cr.seq_id);
-        const uint32_t frag_start = vol.ksx.fragment_start(cr.seq_id);
-        const uint32_t shift      = frag_start - 1u;
+        const ParentHit ph = resolve_parent_hit(vol.ksx, cr);
         ResponseHit rh;
-        rh.sseqid = std::string(vol.ksx.parent_accession(parent_idx));
+        rh.sseqid = std::string(ph.sseqid);
         rh.sstrand = cr.is_reverse ? 1 : 0;
         rh.qstart = cr.q_start;
         rh.qend = cr.q_end;
-        rh.sstart = cr.s_start + shift;
-        rh.send   = cr.s_end   + shift;
+        rh.sstart = ph.sstart;
+        rh.send   = ph.send;
         rh.chainscore = static_cast<uint16_t>(cr.chainscore);
         rh.coverscore = static_cast<uint16_t>(cr.stage1_score);
         rh.volume = vol.volume_index;
         // Stage 3 keys BlastDbReader by parent BLAST DB OID, so propagate
         // the parent's BLAST OID rather than the internal fragment seq_id.
-        rh.oid = vol.ksx.blast_oid(parent_idx);
+        rh.oid = ph.oid;
         rh.qlen = static_cast<uint32_t>(req.queries[oh_in.query_idx].sequence.size());
-        rh.slen = vol.ksx.parent_length(parent_idx);
+        rh.slen = ph.slen;
         resp.results[result_idx].hits.push_back(std::move(rh));
     }
 

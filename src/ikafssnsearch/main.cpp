@@ -13,6 +13,7 @@
 #include "search/result_dedup.hpp"
 #include "search/search_config.hpp"
 #include "search/parallel_search.hpp"
+#include "search/parent_hit.hpp"
 #include "search/search_orchestrator.hpp"
 #include "search/preprocess_runner.hpp"
 #include "search/query_preprocessor.hpp"
@@ -1112,27 +1113,25 @@ int main(int argc, char* argv[]) {
     all_hits.reserve(orch_hits.size());
     for (const auto& oh_in : orch_hits) {
         const auto& cr = oh_in.cr;
-        const auto& ksx_primary = ctxs[0].volumes[oh_in.volume_idx].ksx;
-        const uint32_t parent_idx = ksx_primary.parent_index(cr.seq_id);
-        const uint32_t frag_start = ksx_primary.fragment_start(cr.seq_id);
-        const uint32_t shift      = frag_start - 1u;
+        const ParentHit ph = resolve_parent_hit(
+            ctxs[0].volumes[oh_in.volume_idx].ksx, cr);
         OutputHit oh;
         oh.qseqid = queries[oh_in.query_idx].id;
-        oh.sseqid = std::string(ksx_primary.parent_accession(parent_idx));
+        oh.sseqid = std::string(ph.sseqid);
         oh.sstrand = cr.is_reverse ? '-' : '+';
         oh.qstart = cr.q_start;
         oh.qend = cr.q_end;
-        oh.sstart = cr.s_start + shift;
-        oh.send   = cr.s_end   + shift;
+        oh.sstart = ph.sstart;
+        oh.send   = ph.send;
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = oh_in.volume_index;
         // Stage 3 fetches the subject sequence via BlastDbReader keyed by
         // BLAST DB volume-local OID, so the parent's BLAST OID is what
         // belongs in oh.oid (not the internal fragment seq_id).
-        oh.oid = ksx_primary.blast_oid(parent_idx);
+        oh.oid = ph.oid;
         oh.qlen = static_cast<uint32_t>(queries[oh_in.query_idx].sequence.size());
-        oh.slen = ksx_primary.parent_length(parent_idx);
+        oh.slen = ph.slen;
         all_hits.push_back(std::move(oh));
     }
     t_convert += sw.lap();

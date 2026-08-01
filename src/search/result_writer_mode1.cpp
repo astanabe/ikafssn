@@ -13,6 +13,7 @@
 #include "index/ksx_reader.hpp"
 #include "protocol/messages.hpp"
 #include "search/parallel_search.hpp"
+#include "search/parent_hit.hpp"
 
 #include <algorithm>
 #include <string>
@@ -82,13 +83,12 @@ void write_results_tsv_mode1_parallel(std::ostream& out,
                             const std::string& qid = queries[oh.query_idx].id;
                             // Report parent accession + parent length so
                             // mode-1 output is fragment-agnostic.
-                            const uint32_t parent_idx =
-                                ksx->parent_index(cr.seq_id);
-                            std::string_view sseqid =
-                                ksx->parent_accession(parent_idx);
+                            const ParentName pn =
+                                resolve_parent_name(*ksx, cr.seq_id);
+                            std::string_view sseqid = pn.sseqid;
                             uint32_t qlen = static_cast<uint32_t>(
                                 queries[oh.query_idx].sequence.size());
-                            uint32_t slen = ksx->parent_length(parent_idx);
+                            uint32_t slen = pn.slen;
 
                             append_str(buf, qid);          buf.push_back('\t');
                             append_str(buf, sseqid);       buf.push_back('\t');
@@ -200,9 +200,9 @@ void write_results_json_mode1_parallel(std::ostream& out,
             const auto* ksx = in.ksx_per_volume[oh.volume_idx];
             // Report parent accession + parent length so mode-1 JSON
             // output mirrors the TSV (fragment-agnostic).
-            const uint32_t parent_idx = ksx->parent_index(cr.seq_id);
-            std::string_view sseqid = ksx->parent_accession(parent_idx);
-            uint32_t slen = ksx->parent_length(parent_idx);
+            const ParentName pn = resolve_parent_name(*ksx, cr.seq_id);
+            std::string_view sseqid = pn.sseqid;
+            uint32_t slen = pn.slen;
 
             buf.append("        {\n          \"sseqid\": ");
             json_escape_into(buf, sseqid);
