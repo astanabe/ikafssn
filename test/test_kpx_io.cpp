@@ -698,6 +698,164 @@ static void test_kind_entry_skip() {
     std::remove(TEST_FILE);
 }
 
+// When only short_occ_ge2 entries are selected, the short_occ1 stream that
+// sits between the partition groups and the u8 occ_count[] array still has
+// to be walked past — without decoding it — for the reader to land on the
+// right byte.  The selected entry is also not the first one, so its run
+// starts at a non-zero prefix sum of the occ_count[] array.
+static void test_short1_stream_skipped_for_short2() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    std::vector<KpxWriter::PostingEntry> entries = {
+        {1, 100}, {2, 200}, {3, 300},                 // occ=1 -> short_occ1
+        {10, 1000}, {10, 1001}, {10, 1002},           // occ=3 -> short_occ_ge2
+        {11, 1100}, {11, 1101}, {11, 1102},
+        {12, 1200}, {12, 1201}, {12, 1202},
+    };
+
+    {
+        KpxWriter writer(k, /*freq_threshold_part=*/8);
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 55) writer.add_posting_list(i, entries);
+            else         writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+
+        const std::vector<uint32_t> kix_decoded = {1, 2, 3, 10, 11, 12};
+        const std::vector<uint32_t> candidates  = {11};  // short2 rank 1
+
+        pfd::PosDecodeScratch scratch;
+        const uint64_t off = reader.pos_offset(55);
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            reader.posting_file() + off,
+            static_cast<size_t>(reader.posting_file_size() - off),
+            kix_decoded.data(), kix_decoded.size(),
+            candidates.data(), candidates.size(),
+            scratch));
+
+        const std::vector<uint32_t> want_idx = {0};
+        const std::vector<uint32_t> want_off = {0, 3};
+        const std::vector<uint32_t> want_pos = {1100, 1101, 1102};
+        CHECK(scratch.out_candidate_idx == want_idx);
+        CHECK(scratch.out_offsets == want_off);
+        CHECK(scratch.out_positions == want_pos);
+        // The 3-element short_occ1 stream is one tail block, walked past.
+        CHECK_EQ(scratch.skipped_for_blocks, 1u);
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
+// A selected short_occ_ge2 entry whose positions straddle a FOR block
+// boundary: the run has to resume in the next block at the element it got
+// to, not at its own start.  87 entries of occ=3 make a 261-element stream
+// (2 full blocks + a 5-element tail); entry 42 covers elements 126..128 and
+// so spans the block 0 / block 1 boundary.
+static void test_run_across_block_boundary() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    const uint32_t n = 87;
+    std::vector<KpxWriter::PostingEntry> entries;
+    std::vector<uint32_t> kix_decoded;
+    entries.reserve(n * 3);
+    kix_decoded.reserve(n);
+    for (uint32_t sid = 0; sid < n; sid++) {
+        for (uint32_t j = 0; j < 3; j++) {
+            entries.push_back({sid, 5000u + sid * 10u + j});
+        }
+        kix_decoded.push_back(sid);
+    }
+
+    {
+        KpxWriter writer(k, /*freq_threshold_part=*/8);  // occ=3 -> short_occ_ge2
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 63) writer.add_posting_list(i, entries);
+            else         writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+
+        const std::vector<uint32_t> candidates = {42};
+
+        pfd::PosDecodeScratch scratch;
+        const uint64_t off = reader.pos_offset(63);
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            reader.posting_file() + off,
+            static_cast<size_t>(reader.posting_file_size() - off),
+            kix_decoded.data(), kix_decoded.size(),
+            candidates.data(), candidates.size(),
+            scratch));
+
+        const std::vector<uint32_t> want_off = {0, 3};
+        const std::vector<uint32_t> want_pos = {5420, 5421, 5422};
+        CHECK(scratch.out_offsets == want_off);
+        CHECK(scratch.out_positions == want_pos);
+        // Both full blocks carry part of the run; only the tail is skipped.
+        CHECK_EQ(scratch.skipped_for_blocks, 1u);
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
+// A kind map carrying the reserved (11) pattern must be rejected, never
+// mis-decoded.  Several guards reject it jointly — the per-kind counts stop
+// adding up to distinct_count, and the shifted counts then disagree with the
+// stream layout — so this pins the behaviour rather than any single check.
+static void test_reserved_kind_rejected() {
+    int k = 5;
+    uint32_t ts = table_size(k);
+
+    std::vector<KpxWriter::PostingEntry> entries;
+    std::vector<uint32_t> kix_decoded;
+    for (uint32_t sid = 0; sid < 8; sid++) {
+        entries.push_back({sid, 700u + sid});   // occ=1 -> short_occ1 (kind 00)
+        kix_decoded.push_back(sid);
+    }
+
+    {
+        KpxWriter writer(k);
+        for (uint32_t i = 0; i < ts; i++) {
+            if (i == 71) writer.add_posting_list(i, entries);
+            else         writer.add_posting_list(i, {});
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KpxReader reader;
+        CHECK(reader.open(TEST_FILE));
+        const uint64_t off = reader.pos_offset(71);
+        const uint8_t* start = reader.posting_file() + off;
+        const size_t bytes = static_cast<size_t>(reader.posting_file_size() - off);
+
+        pfd::PosDecodeScratch scratch;
+        CHECK(pfd::open_stream_kpx_for_candidates(
+            start, bytes, kix_decoded.data(), kix_decoded.size(),
+            kix_decoded.data(), kix_decoded.size(), scratch));
+
+        // Turn the first kind map entry into the reserved pattern.
+        std::vector<uint8_t> corrupt(start, start + bytes);
+        corrupt[0] |= 0x03;
+        CHECK(!pfd::open_stream_kpx_for_candidates(
+            corrupt.data(), corrupt.size(),
+            kix_decoded.data(), kix_decoded.size(),
+            kix_decoded.data(), kix_decoded.size(), scratch));
+        reader.close();
+    }
+    std::remove(TEST_FILE);
+}
+
 static void test_multiple_kmers() {
     int k = 5;
     uint32_t ts = table_size(k);
@@ -820,6 +978,9 @@ int main() {
     test_for_block_skip();
     test_partition_group_skip();
     test_kind_entry_skip();
+    test_short1_stream_skipped_for_short2();
+    test_run_across_block_boundary();
+    test_reserved_kind_rejected();
     test_multiple_kmers();
     test_partition_group_threshold();
     TEST_SUMMARY();

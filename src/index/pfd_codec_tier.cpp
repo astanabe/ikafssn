@@ -733,7 +733,9 @@ bool open_stream_kpx_for_candidates(
     popcount_kinds(kind_map, distinct_count,
                    &partition_count, &short1_count, &short2_count);
     // A reserved (11) entry is counted into none of the three, so this one
-    // comparison stands in for a per-entry validity check.
+    // comparison stands in for a per-entry validity check.  It is what lets
+    // the selection pass below treat "neither partition nor short_occ1" as
+    // short_occ_ge2 without re-testing every entry.
     if (distinct_count != partition_count + short1_count + short2_count) return false;
 
     // Selection pass: galloping intersection of the .kix distinct sid array

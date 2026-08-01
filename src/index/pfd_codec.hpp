@@ -58,7 +58,6 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
-#include <memory>
 #include <vector>
 
 namespace ikafssn::pfd {

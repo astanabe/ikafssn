@@ -1451,7 +1451,8 @@ filtering never touches `.kpx`, maximizing page cache efficiency.
 
 - **`.kix` / `.kpx` magic** is `KIX11` / `KPX11`; the fragment-indexing parameters that used to live in the headers (`min_seq_length`, `min_length_split`, `overlap_length`, plus the resolved `max_freq_build` / `max_degen_expand`) are now encoded in the file name and parsed once at volume discovery time.
 - **`.ksx` two-stage layout:** the sequence-metadata file records each parent OID's `(parent_length, blast_oid, accession)` in a parent table, followed by a fragment table that maps every internal SeqId to `(parent_idx, fragment_start, fragment_end)`. Convenience accessors (`KsxReader::seq_length` / `accession`) take a SeqId and resolve to the matching parent. Magic is `KMSX`.
-- **`.kix` / `.kpx` body:** Elias-Fano dictionary, 2-bit kind map, FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` body.
+- **`.kix` body:** Elias-Fano dictionary; each posting list is `[u32 distinct_count]` followed by a FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` body over the distinct seq_id delta stream.
+- **`.kpx` body:** Elias-Fano dictionary; each posting list starts directly at a 2-bit kind map (no per-list header) and continues with the partition / short_occ1 / short_occ_ge2 sub-buckets, all bit-packed as frame-of-reference blocks. The decoder is driven by the candidate set, so only the blocks holding a wanted position are unpacked.
 - **`.kvx`:** manifest text format with a `FORMAT_VERSION` line set to 11.
 
 The fragment splitter is a port of kafssstore's `split_long_sequence_positions` (ncbi4na==0xF cuts, calcsegment2 formula). When `-min_length_split 0`, every parent is registered as a single fragment that spans the whole parent — i.e. one fragment per OID, and the file name carries no `minsplit` / `ovllen` suffix.
@@ -1459,7 +1460,7 @@ The fragment splitter is a port of kafssstore's `split_long_sequence_positions` 
 Indexes whose `format_version` does not match are rejected at open with a message such as:
 
 ```
-KixReader: index format version mismatch (got 9, expected 10). Please rebuild with the current ikafssnindex.
+KixReader: index format version mismatch (got 10, expected 11). Please rebuild with the current ikafssnindex.
 ```
 
 (and analogous messages for `.kpx` / `.ksx` / `.khx` / `.kvx`). Rebuild with the current `ikafssnindex`:
