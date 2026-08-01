@@ -79,6 +79,7 @@ target_include_directories(ikafssn_test_index_writer PUBLIC
 add_ikafssn_test(test_ksx_io test_ksx_io.cpp)
 add_ikafssn_test(test_kix_io test_kix_io.cpp)
 target_link_libraries(test_kix_io PRIVATE ikafssn_test_index_writer)
+add_ikafssn_simd_test(test_kix_io)
 add_ikafssn_test(test_kpx_io test_kpx_io.cpp)
 target_link_libraries(test_kpx_io PRIVATE ikafssn_test_index_writer)
 add_ikafssn_test(test_khx_io test_khx_io.cpp)

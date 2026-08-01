@@ -12,7 +12,8 @@
 
 using namespace ikafssn;
 
-static const char* TEST_FILE = "/tmp/test_ikafssn.kix";
+// Per-tier path: the SIMD variants of this test can run concurrently.
+static const std::string TEST_FILE = test_tmpdir("/tmp/test_ikafssn") + ".kix";
 
 // Collect a whole .kix posting list into a vector.
 static std::vector<uint32_t> decode_id_postings(const uint8_t* data, uint64_t byte_len) {
@@ -118,7 +119,7 @@ static void test_k7_uint16() {
         reader.close();
     }
 
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 static void test_k9_uint32() {
@@ -178,7 +179,7 @@ static void test_k9_uint32() {
         reader.close();
     }
 
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
 }
 
 static void test_empty_postings() {
@@ -206,13 +207,64 @@ static void test_empty_postings() {
         reader.close();
     }
 
-    std::remove(TEST_FILE);
+    std::remove(TEST_FILE.c_str());
+}
+
+// Delta reconstruction runs one vector at a time with a scalar tail, so a
+// posting list whose length is just below / at / just above a vector or a
+// block boundary is where a wrong lane count or a mis-seeded running total
+// shows up.  The gaps are deliberately uneven so every element depends on
+// every element before it.
+static void test_delta_reconstruction_lengths() {
+    int k = 7;
+    uint8_t kmer_type = 0;
+    uint32_t ts = table_size(k);
+
+    const std::vector<uint32_t> lengths = {1, 2, 3, 4, 5, 15, 16, 17,
+                                           127, 128, 129, 1000};
+    CHECK(lengths.size() <= ts);
+
+    // Distinct, strictly increasing seq_ids with an uneven gap pattern.
+    std::vector<std::vector<uint32_t>> postings(ts);
+    for (size_t li = 0; li < lengths.size(); li++) {
+        std::vector<uint32_t>& ids = postings[li];
+        uint32_t sid = static_cast<uint32_t>(li);
+        for (uint32_t i = 0; i < lengths[li]; i++) {
+            ids.push_back(sid);
+            sid += 1 + ((i * 37 + li * 11) % 97);
+        }
+    }
+
+    {
+        KixWriter writer(k, kmer_type);
+        writer.set_num_sequences(200000);
+        for (uint32_t i = 0; i < ts; i++) {
+            writer.add_posting_list(i, postings[i]);
+        }
+        CHECK(writer.write(TEST_FILE));
+    }
+
+    {
+        KixReader reader;
+        CHECK(reader.open(TEST_FILE));
+        for (size_t li = 0; li < lengths.size(); li++) {
+            auto decoded = decode_id_postings(
+                reader.posting_file() + reader.posting_list_offset(li),
+                reader.posting_list_byte_length(li));
+            CHECK_EQ(decoded.size(), size_t(lengths[li]));
+            CHECK(decoded == postings[li]);
+        }
+        reader.close();
+    }
+
+    std::remove(TEST_FILE.c_str());
 }
 
 int main() {
     test_k7_uint16();
     test_k9_uint32();
     test_empty_postings();
+    test_delta_reconstruction_lengths();
     TEST_SUMMARY();
     return g_fail_count > 0 ? 1 : 0;
 }

@@ -468,6 +468,49 @@ std::size_t encode_posting_kpx(const std::uint32_t* /*distinct_sid*/,
 
 // ===== open_stream_kix: decode the entire .kix posting list into the StreamCtx =====
 
+namespace {
+
+// In-place cumulative sum over `n` u32 values, leaving p[0] as it is.
+//
+// The scan inside one vector is independent of every other vector, so the
+// only value crossing iterations is the running total: the per-element
+// dependency chain of `p[i] += p[i - 1]` is replaced by a fixed number of
+// shift-and-add steps per vector.
+void prefix_sum_u32(std::uint32_t* p, std::uint32_t n) noexcept {
+    std::uint32_t i = 0;
+#if defined(__AVX512F__)
+    // dst[j] = v[j - lanes] with zeros below: alignr concatenates
+    // [v : zero] and shifts right by (16 - lanes) dwords.
+    const __m512i zero = _mm512_setzero_si512();
+    const __m512i last_lane = _mm512_set1_epi32(15);
+    __m512i carry = zero;
+    for (; i + 16 <= n; i += 16) {
+        __m512i v = _mm512_loadu_si512(static_cast<const void*>(p + i));
+        v = _mm512_add_epi32(v, _mm512_alignr_epi32(v, zero, 15));
+        v = _mm512_add_epi32(v, _mm512_alignr_epi32(v, zero, 14));
+        v = _mm512_add_epi32(v, _mm512_alignr_epi32(v, zero, 12));
+        v = _mm512_add_epi32(v, _mm512_alignr_epi32(v, zero, 8));
+        v = _mm512_add_epi32(v, carry);
+        _mm512_storeu_si512(static_cast<void*>(p + i), v);
+        carry = _mm512_permutexvar_epi32(last_lane, v);
+    }
+#else
+    __m128i carry = _mm_setzero_si128();
+    for (; i + 4 <= n; i += 4) {
+        __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p + i));
+        v = _mm_add_epi32(v, _mm_slli_si128(v, 4));
+        v = _mm_add_epi32(v, _mm_slli_si128(v, 8));
+        v = _mm_add_epi32(v, carry);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(p + i), v);
+        carry = _mm_shuffle_epi32(v, 0xFF);
+    }
+#endif
+    if (i == 0) i = 1;                       // shorter than one vector
+    for (; i < n; i++) p[i] += p[i - 1];
+}
+
+} // anonymous namespace (delta reconstruction)
+
 bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
                      ikafssn::pfd::StreamCtx& ctx) {
     ctx.count = 0;
@@ -514,9 +557,7 @@ bool open_stream_kix(const std::uint8_t* posting_list, std::size_t bytes,
 
     // Encoder writes [abs_first, d1, d2, ...] over the **distinct**
     // seq_id stream; cumulative sum reconstructs absolute distinct seq_ids.
-    for (std::uint32_t i = 1; i < count; i++) {
-        ctx.decoded[i] += ctx.decoded[i - 1];
-    }
+    prefix_sum_u32(ctx.decoded.data(), count);
 
     ctx.count = count;
     return true;
