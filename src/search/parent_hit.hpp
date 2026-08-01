@@ -17,14 +17,14 @@ namespace ikafssn {
 
 struct ParentHit {
     std::string_view sseqid;  // parent accession
-    uint32_t sstart;          // parent-relative, in the chain's own space
-    uint32_t send;
+    uint32_t sstart;          // parent-relative chain start
+    uint32_t send;            // parent-relative chain end
     uint32_t slen;            // parent length
     uint32_t oid;             // parent BLAST DB OID
 };
 
-// Parent accession and parent length of the parent the fragment belongs to.
-struct ParentName {
+// Accession and length of the parent a fragment belongs to.
+struct ParentInfo {
     std::string_view sseqid;
     uint32_t slen;
 };
@@ -34,9 +34,9 @@ inline uint32_t fragment_shift(const KsxReader& ksx, SeqId seq_id) {
     return ksx.fragment_start(seq_id) - 1u;
 }
 
-inline ParentName resolve_parent_name(const KsxReader& ksx, SeqId seq_id) {
+inline ParentInfo resolve_parent_info(const KsxReader& ksx, SeqId seq_id) {
     const uint32_t parent_idx = ksx.parent_index(seq_id);
-    return ParentName{ksx.parent_accession(parent_idx),
+    return ParentInfo{ksx.parent_accession(parent_idx),
                       ksx.parent_length(parent_idx)};
 }
 

@@ -1102,12 +1102,8 @@ int main(int argc, char* argv[]) {
         return has_skipped ? 2 : 0;
     }
 
-    // Convert OrchestratorHit -> OutputHit at the boundary.
-    //
-    // Stage 2 chains live in fragment-relative coordinates.
-    // Re-map them to parent-relative coordinates for output: sseqid
-    // becomes the parent accession, slen becomes the parent length, and
-    // sstart/send shift by (fragment_start - 1).
+    // Convert OrchestratorHit -> OutputHit at the boundary, re-expressing
+    // each chain against its parent OID.
     std::vector<OutputHit> all_hits;
     sw.reset();
     all_hits.reserve(orch_hits.size());
@@ -1127,9 +1123,6 @@ int main(int argc, char* argv[]) {
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = oh_in.volume_index;
-        // Stage 3 fetches the subject sequence via BlastDbReader keyed by
-        // BLAST DB volume-local OID, so the parent's BLAST OID is what
-        // belongs in oh.oid (not the internal fragment seq_id).
         oh.oid = ph.oid;
         oh.qlen = static_cast<uint32_t>(queries[oh_in.query_idx].sequence.size());
         oh.slen = ph.slen;

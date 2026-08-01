@@ -362,8 +362,8 @@ static void test_server_mode3_roundtrip() {
     }
 }
 
-// Two queries may share a qseqid; each still gets its own results, so a
-// name-keyed route back would drop one of them entirely.
+// Two queries may share a qseqid and still be separate queries: each gets its
+// own QueryResult, and its own hits.
 static void test_server_mode3_duplicate_qseqid() {
     std::fprintf(stderr, "-- test_server_mode3_duplicate_qseqid\n");
 

@@ -545,11 +545,8 @@ SearchResponse process_search_request(
         });
     }
 
-    // Convert OrchestratorHit -> OutputHit at the boundary.
-    //
-    // Stage 2 chains live in fragment-relative coordinates.
-    // Re-map them to parent-OID-relative coordinates so wire output carries
-    // the parent accession, parent slen, and parent-relative sstart/send.
+    // Convert OrchestratorHit -> OutputHit at the boundary, re-expressing
+    // each chain against its parent OID.
     std::vector<OutputHit> output_hits;
     output_hits.reserve(orch_hits.size());
     for (const auto& oh_in : orch_hits) {
@@ -572,8 +569,6 @@ SearchResponse process_search_request(
         oh.chainscore = cr.chainscore;
         oh.coverscore = cr.stage1_score;
         oh.volume = vol.volume_index;
-        // Stage 3 keys BlastDbReader by parent BLAST DB OID, so propagate
-        // the parent's BLAST OID rather than the internal fragment seq_id.
         oh.oid = ph.oid;
         oh.qlen = static_cast<uint32_t>(accepted_records[accepted_idx].sequence.size());
         oh.slen = ph.slen;

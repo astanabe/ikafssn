@@ -305,7 +305,7 @@ std::vector<Stage1Candidate> stage1_filter_finish(
 void stage1_limit_topk(std::vector<Stage1Candidate>& candidates, uint32_t k,
                        bool tie_inclusive) {
     if (k == 0 || candidates.size() <= k) return;
-    // One group, so the scores go straight into the single-group selection.
+    // A single group: the threshold comes from the whole candidate list.
     std::vector<uint32_t> scores;
     scores.reserve(candidates.size());
     for (const auto& c : candidates) scores.push_back(c.score);

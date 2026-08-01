@@ -100,12 +100,12 @@ static uint64_t compute_hit_cost(const OutputHit& h,
     return subseq + tb + 256; // const overhead: OutputHit + std::string headers + pad
 }
 
-// One atomic group, stored as a slice of the flat `group_slots` buffer that
+// One atomic group, stored as a slice of the flat `group_hits` buffer that
 // holds the hit indices of every group back to back.
 struct Stage3Group {
-    uint32_t begin = 0;     // offset into group_slots
-    uint32_t len = 0;       // live hits, shrunk by the overlap resolution
-    uint32_t orig_len = 0;  // slots the group owns, including dropped hits
+    uint32_t begin = 0;      // offset into group_hits
+    uint32_t len = 0;        // live hits, shrunk by the overlap resolution
+    uint32_t owned_len = 0;  // hits the group owns, dropped ones included
     uint64_t cost = 0;
 };
 
@@ -160,7 +160,7 @@ std::vector<OutputHit> run_stage3(
 {
     if (hits.empty()) return {};
 
-    // 1. Open BLAST DB volumes
+    // Open BLAST DB volumes
     auto vol_paths = BlastDbReader::find_volume_paths(db_path);
     if (vol_paths.empty()) {
         logger.error("Stage 3: no BLAST DB volumes found at '%s'", db_path.c_str());
@@ -175,9 +175,9 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 2. Reject the hits that cannot be aligned: a volume outside `readers`
-    //    or a query_idx outside `queries`.  Every hit valid from here on
-    //    indexes `queries` directly through its query_idx.
+    // Reject the hits that cannot be aligned: a volume outside `readers` or a
+    // query_idx outside `queries`.  Every hit valid from here on indexes
+    // `queries` directly through its query_idx.
     std::vector<bool> hit_valid(hits.size(), true);
     for (size_t i = 0; i < hits.size(); i++) {
         if (hits[i].volume >= readers.size()) {
@@ -193,8 +193,8 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 3. Build profiles up front (per unique query_idx x strand).  Profiles
-    //    are small and shared across all batches.
+    // Build profiles up front (per unique query_idx x strand).  Profiles are
+    // small and shared across all batches.
     const parasail_matrix_t* matrix = parasail_matrix_lookup(config.score_matrix.c_str());
     if (!matrix) {
         logger.error("Stage 3: unknown score matrix '%s'", config.score_matrix.c_str());
@@ -227,44 +227,41 @@ std::vector<OutputHit> run_stage3(
         pe.built = true;
     }
 
-    // 4. Build atomic groups keyed by (query index, sseqid, sstrand).  The
-    //    overlap-resolution loop assumes each group is visible whole, so
-    //    groups are the unit of batching.  Every group's hit indices live in
-    //    one flat buffer, each group owning the slice [begin, begin + len).
+    // Build atomic groups keyed by (query index, sseqid, sstrand).  The
+    // overlap-resolution loop assumes each group is visible whole, so groups
+    // are the unit of batching; every group's hit indices live in one flat
+    // buffer, each group owning the slice [begin, begin + len).
     //
-    //    Sorting by the group key gives contiguous runs; walking the valid
-    //    hits in ascending index order then relabels those runs into
-    //    first-appearance order and fills each slice in ascending hit-index
-    //    order, so both the group order and each group's initial order are
-    //    the order the hits arrive in.
+    // Sorting by the group key gives contiguous runs, and relabelling those
+    // runs while walking the hits in ascending index order puts the groups in
+    // first-appearance order with each slice in arrival order.
     std::vector<uint32_t> valid_hits;
     valid_hits.reserve(hits.size());
     for (size_t i = 0; i < hits.size(); i++)
         if (hit_valid[i]) valid_hits.push_back(static_cast<uint32_t>(i));
 
-    auto same_key = [&](uint32_t a, uint32_t b) {
-        return hits[a].query_idx == hits[b].query_idx
-            && hits[a].sstrand == hits[b].sstrand
-            && hits[a].sseqid  == hits[b].sseqid;
-    };
-
-    std::vector<uint32_t> by_key = valid_hits;
-    std::sort(by_key.begin(), by_key.end(), [&](uint32_t a, uint32_t b) {
-        if (hits[a].query_idx != hits[b].query_idx)
-            return hits[a].query_idx < hits[b].query_idx;
-        if (hits[a].sstrand != hits[b].sstrand)
-            return hits[a].sstrand < hits[b].sstrand;
-        return hits[a].sseqid < hits[b].sseqid;
-    });
-
     std::vector<uint32_t> run_of(hits.size(), 0);
     uint32_t nruns = 0;
-    for (size_t i = 0; i < by_key.size(); i++) {
-        if (i != 0 && !same_key(by_key[i - 1], by_key[i])) ++nruns;
-        run_of[by_key[i]] = nruns;
+    {
+        auto same_key = [&](uint32_t a, uint32_t b) {
+            return hits[a].query_idx == hits[b].query_idx
+                && hits[a].sstrand == hits[b].sstrand
+                && hits[a].sseqid  == hits[b].sseqid;
+        };
+        std::vector<uint32_t> by_key = valid_hits;
+        std::sort(by_key.begin(), by_key.end(), [&](uint32_t a, uint32_t b) {
+            if (hits[a].query_idx != hits[b].query_idx)
+                return hits[a].query_idx < hits[b].query_idx;
+            if (hits[a].sstrand != hits[b].sstrand)
+                return hits[a].sstrand < hits[b].sstrand;
+            return hits[a].sseqid < hits[b].sseqid;
+        });
+        for (size_t i = 0; i < by_key.size(); i++) {
+            if (i != 0 && !same_key(by_key[i - 1], by_key[i])) ++nruns;
+            run_of[by_key[i]] = nruns;
+        }
+        if (!by_key.empty()) ++nruns;
     }
-    if (!by_key.empty()) ++nruns;
-    std::vector<uint32_t>().swap(by_key);
 
     std::vector<uint32_t> group_of_run(nruns, UINT32_MAX);
     std::vector<Stage3Group> groups;
@@ -274,32 +271,31 @@ std::vector<OutputHit> run_stage3(
             g = static_cast<uint32_t>(groups.size());
             groups.push_back(Stage3Group{});
         }
-        ++groups[g].orig_len;
+        ++groups[g].owned_len;
     }
-    uint32_t slot_acc = 0;
+    uint32_t acc = 0;
     for (auto& g : groups) {
-        g.begin = slot_acc;
-        slot_acc += g.orig_len;
+        g.begin = acc;
+        acc += g.owned_len;
     }
-    std::vector<uint32_t> group_slots(valid_hits.size());
+    std::vector<uint32_t> group_hits(valid_hits.size());
     for (uint32_t h : valid_hits) {
         Stage3Group& g = groups[group_of_run[run_of[h]]];
-        group_slots[g.begin + g.len++] = h;
+        group_hits[g.begin + g.len++] = h;
     }
-    std::vector<uint32_t>().swap(valid_hits);
 
     for (auto& g : groups) {
         // Sort by sstart for the overlap-resolution loop's invariant.
-        auto slice = group_slots.begin() + g.begin;
+        auto slice = group_hits.begin() + g.begin;
         std::sort(slice, slice + g.len,
             [&hits](uint32_t a, uint32_t b) { return hits[a].sstart < hits[b].sstart; });
         for (uint32_t t = 0; t < g.len; t++) {
-            g.cost += compute_hit_cost(hits[group_slots[g.begin + t]], config,
+            g.cost += compute_hit_cost(hits[group_hits[g.begin + t]], config,
                                        context_is_ratio, context_ratio, context_abs);
         }
     }
 
-    // 5. Plan batches.
+    // Plan the batches.
     auto batches = plan_stage3_batches(groups, config.posting_budget);
 
     {
@@ -312,9 +308,9 @@ std::vector<OutputHit> run_stage3(
                     oversize_count);
     }
 
-    // 6. Per-hit scratch storage.  Sized to hits.size() so we can index by
-    //    the original hit index, but each batch only fills entries for its
-    //    own hits and clears them when the batch ends.
+    // Per-hit scratch storage.  Sized to hits.size() so we can index by the
+    // hit index, but each batch only fills entries for its own hits and
+    // clears them when the batch ends.
     std::vector<std::string> subject_subseqs(hits.size());
     std::vector<uint32_t> ext_starts(hits.size(), 0);
 
@@ -323,18 +319,18 @@ std::vector<OutputHit> run_stage3(
 
     bool has_context = context_is_ratio ? (context_ratio > 0) : (context_abs > 0);
 
-    // 7. Per-batch loop.
+    // Per-batch loop.
     for (size_t bi = 0; bi < batches.size(); bi++) {
         const auto& batch = batches[bi];
 
-        // 7a. Collect this batch's hit indices grouped by volume for
-        //     sequential mmap access.
+        // Collect this batch's hit indices grouped by volume for
+        // sequential mmap access.
         std::vector<std::vector<size_t>> hits_by_reader(readers.size());
         size_t batch_hit_count = 0;
         for (size_t gi : batch.group_idxs) {
             const auto& g = groups[gi];
             for (uint32_t t = 0; t < g.len; t++) {
-                size_t hidx = group_slots[g.begin + t];
+                size_t hidx = group_hits[g.begin + t];
                 if (!hit_valid[hidx]) continue;
                 hits_by_reader[hits[hidx].volume].push_back(hidx);
                 ++batch_hit_count;
@@ -358,7 +354,7 @@ std::vector<OutputHit> run_stage3(
                         static_cast<unsigned long long>(config.posting_budget));
         }
 
-        // 7b. Fetch subseqs in (volume, OID) order via a single hit-parallel
+        // Fetch subseqs in (volume, OID) order via a single hit-parallel
         // parallel_for (default arena = -nthread), preserving sequential mmap
         // locality within each task.  `get_subsequence` is lock-free (no
         // CSeqDBAtlas lock; mmap arithmetic + ncbi2na/ambig decode only), so
@@ -402,20 +398,20 @@ std::vector<OutputHit> run_stage3(
             readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
         }
 
-        // 7c. Collect valid hit indices for parallel alignment.
+        // Collect valid hit indices for parallel alignment.
         std::vector<size_t> valid_indices;
         valid_indices.reserve(batch_hit_count);
         for (size_t gi : batch.group_idxs) {
             const auto& g = groups[gi];
             for (uint32_t t = 0; t < g.len; t++) {
-                size_t hidx = group_slots[g.begin + t];
+                size_t hidx = group_hits[g.begin + t];
                 if (hit_valid[hidx] && !subject_subseqs[hidx].empty()) {
                     valid_indices.push_back(hidx);
                 }
             }
         }
 
-        // 7d. Parallel alignment.
+        // Align this batch in parallel.
         tbb::parallel_for(size_t(0), valid_indices.size(), [&](size_t vi) {
             size_t idx = valid_indices[vi];
             const ProfileEntry& pe = profiles[profile_slot(idx)];
@@ -474,9 +470,9 @@ std::vector<OutputHit> run_stage3(
             }
         });
 
-        // 7e. Overlap resolution for multi-chain hits in this batch's groups
-        //     (context > 0 only).  Groups in different batches share no
-        //     state, so the loop is naturally batch-local.
+        // Overlap resolution for multi-chain hits in this batch's groups
+        // (context > 0 only).  Groups in different batches share no state,
+        // so the loop is naturally batch-local.
         if (has_context) {
             for (size_t gi : batch.group_idxs) {
                 auto& group = groups[gi];
@@ -487,8 +483,8 @@ std::vector<OutputHit> run_stage3(
                     changed = false;
 
                     for (uint32_t pi = 0; pi + 1 < group.len; pi++) {
-                        size_t idx_a = group_slots[group.begin + pi];
-                        size_t idx_b = group_slots[group.begin + pi + 1];
+                        size_t idx_a = group_hits[group.begin + pi];
+                        size_t idx_b = group_hits[group.begin + pi + 1];
 
                         if (!hit_valid[idx_a] || !hit_valid[idx_b]) continue;
                         if (hits[idx_a].send <= hits[idx_b].sstart) continue;
@@ -555,7 +551,6 @@ std::vector<OutputHit> run_stage3(
                         ext_starts[clamp_idx] = new_ext_start;
 
                         const ProfileEntry& pe2 = profiles[profile_slot(clamp_idx)];
-                        if (!pe2.profile) continue;
 
                         const char* subj2 = subject_subseqs[clamp_idx].c_str();
                         int slen2 = static_cast<int>(subject_subseqs[clamp_idx].size());
@@ -619,7 +614,7 @@ std::vector<OutputHit> run_stage3(
                         // Partition rather than erase: the dropped hits stay
                         // in the slice's tail so the batch's release loop
                         // still sees them.
-                        auto slice = group_slots.begin() + group.begin;
+                        auto slice = group_hits.begin() + group.begin;
                         auto live_end = std::stable_partition(
                             slice, slice + group.len,
                             [&hit_valid](uint32_t i) { return hit_valid[i]; });
@@ -633,12 +628,11 @@ std::vector<OutputHit> run_stage3(
             }
         }
 
-        // 7f. Filter survivors into `filtered` and release this batch's
-        //     batch-local heap.
+        // Filter the survivors into `filtered`.
         for (size_t gi : batch.group_idxs) {
             const auto& g = groups[gi];
             for (uint32_t t = 0; t < g.len; t++) {
-                size_t idx = group_slots[g.begin + t];
+                size_t idx = group_hits[g.begin + t];
                 if (!hit_valid[idx] || subject_subseqs[idx].empty()) continue;
 
                 bool keep = true;
@@ -652,15 +646,14 @@ std::vector<OutputHit> run_stage3(
             }
         }
 
-        // Release decoded subseqs and any aligned strings left on dropped
-        // hits.  Walks the whole slice, not just the live prefix, so the
-        // hits the overlap resolution dropped hand their heap back here
-        // rather than at the end of the run; swapping in an empty string
-        // returns the buffer, which clear() would keep.
+        // Release this batch's decoded subseqs and aligned strings.  Walks
+        // the whole slice so the hits the overlap resolution dropped hand
+        // their heap back too; swapping in an empty string returns the
+        // buffer, which clear() would keep.
         for (size_t gi : batch.group_idxs) {
             const auto& g = groups[gi];
-            for (uint32_t t = 0; t < g.orig_len; t++) {
-                size_t idx = group_slots[g.begin + t];
+            for (uint32_t t = 0; t < g.owned_len; t++) {
+                size_t idx = group_hits[g.begin + t];
                 std::string().swap(subject_subseqs[idx]);
                 std::string().swap(hits[idx].qseq);
                 std::string().swap(hits[idx].sseq);
@@ -668,7 +661,7 @@ std::vector<OutputHit> run_stage3(
         }
     }
 
-    // 8. Free profiles
+    // Free the profiles.
     for (auto& pe : profiles) {
         if (pe.profile) parasail_profile_free(pe.profile);
     }
