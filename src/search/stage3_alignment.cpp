@@ -102,8 +102,12 @@ static uint64_t compute_hit_cost(const OutputHit& h,
     return subseq + tb + 256; // const overhead: OutputHit + std::string headers + pad
 }
 
+// One atomic group, stored as a slice of the flat `group_slots` buffer that
+// holds the hit indices of every group back to back.
 struct Stage3Group {
-    std::vector<size_t> indices;
+    uint32_t begin = 0;     // offset into group_slots
+    uint32_t len = 0;       // live hits, shrunk by the overlap resolution
+    uint32_t orig_len = 0;  // slots the group owns, including dropped hits
     uint64_t cost = 0;
 };
 
@@ -234,32 +238,74 @@ std::vector<OutputHit> run_stage3(
         pe.built = true;
     }
 
-    // 5. Build atomic groups keyed by (qseqid, sseqid, sstrand).
-    //    The overlap-resolution loop assumes each group is visible whole, so
-    //    groups are the unit of batching.  Groups are stored in a parallel
-    //    vector so plan_stage3_batches can index them.
-    std::unordered_map<std::string, size_t> group_index;
-    std::vector<Stage3Group> groups;
-    groups.reserve(64);
-    for (size_t i = 0; i < hits.size(); i++) {
-        if (!hit_valid[i]) continue;
-        std::string key = hits[i].qseqid + "\t" + hits[i].sseqid + "\t" + hits[i].sstrand;
-        auto it = group_index.find(key);
-        if (it == group_index.end()) {
-            group_index[key] = groups.size();
-            groups.push_back(Stage3Group{});
-            groups.back().indices.push_back(i);
-        } else {
-            groups[it->second].indices.push_back(i);
-        }
+    // 5. Build atomic groups keyed by (query index, sseqid, sstrand).  The
+    //    overlap-resolution loop assumes each group is visible whole, so
+    //    groups are the unit of batching.  Every group's hit indices live in
+    //    one flat buffer, each group owning the slice [begin, begin + len).
+    //
+    //    Sorting by the group key gives contiguous runs; walking the valid
+    //    hits in ascending index order then relabels those runs into
+    //    first-appearance order and fills each slice in ascending hit-index
+    //    order, so both the group order and each group's initial order are
+    //    the order the hits arrive in.
+    std::vector<uint32_t> valid_hits;
+    valid_hits.reserve(hits.size());
+    for (size_t i = 0; i < hits.size(); i++)
+        if (hit_valid[i]) valid_hits.push_back(static_cast<uint32_t>(i));
+
+    auto same_key = [&](uint32_t a, uint32_t b) {
+        return query_of_hit[a] == query_of_hit[b]
+            && hits[a].sstrand == hits[b].sstrand
+            && hits[a].sseqid  == hits[b].sseqid;
+    };
+
+    std::vector<uint32_t> by_key = valid_hits;
+    std::sort(by_key.begin(), by_key.end(), [&](uint32_t a, uint32_t b) {
+        if (query_of_hit[a] != query_of_hit[b])
+            return query_of_hit[a] < query_of_hit[b];
+        if (hits[a].sstrand != hits[b].sstrand)
+            return hits[a].sstrand < hits[b].sstrand;
+        return hits[a].sseqid < hits[b].sseqid;
+    });
+
+    std::vector<uint32_t> run_of(hits.size(), 0);
+    uint32_t nruns = 0;
+    for (size_t i = 0; i < by_key.size(); i++) {
+        if (i != 0 && !same_key(by_key[i - 1], by_key[i])) ++nruns;
+        run_of[by_key[i]] = nruns;
     }
+    if (!by_key.empty()) ++nruns;
+    std::vector<uint32_t>().swap(by_key);
+
+    std::vector<uint32_t> group_of_run(nruns, UINT32_MAX);
+    std::vector<Stage3Group> groups;
+    for (uint32_t h : valid_hits) {
+        uint32_t& g = group_of_run[run_of[h]];
+        if (g == UINT32_MAX) {
+            g = static_cast<uint32_t>(groups.size());
+            groups.push_back(Stage3Group{});
+        }
+        ++groups[g].orig_len;
+    }
+    uint32_t slot_acc = 0;
+    for (auto& g : groups) {
+        g.begin = slot_acc;
+        slot_acc += g.orig_len;
+    }
+    std::vector<uint32_t> group_slots(valid_hits.size());
+    for (uint32_t h : valid_hits) {
+        Stage3Group& g = groups[group_of_run[run_of[h]]];
+        group_slots[g.begin + g.len++] = h;
+    }
+    std::vector<uint32_t>().swap(valid_hits);
 
     for (auto& g : groups) {
         // Sort by sstart for the overlap-resolution loop's invariant.
-        std::sort(g.indices.begin(), g.indices.end(),
-            [&hits](size_t a, size_t b) { return hits[a].sstart < hits[b].sstart; });
-        for (size_t idx : g.indices) {
-            g.cost += compute_hit_cost(hits[idx], config,
+        auto slice = group_slots.begin() + g.begin;
+        std::sort(slice, slice + g.len,
+            [&hits](uint32_t a, uint32_t b) { return hits[a].sstart < hits[b].sstart; });
+        for (uint32_t t = 0; t < g.len; t++) {
+            g.cost += compute_hit_cost(hits[group_slots[g.begin + t]], config,
                                        context_is_ratio, context_ratio, context_abs);
         }
     }
@@ -297,7 +343,9 @@ std::vector<OutputHit> run_stage3(
         std::vector<std::vector<size_t>> hits_by_reader(readers.size());
         size_t batch_hit_count = 0;
         for (size_t gi : batch.group_idxs) {
-            for (size_t hidx : groups[gi].indices) {
+            const auto& g = groups[gi];
+            for (uint32_t t = 0; t < g.len; t++) {
+                size_t hidx = group_slots[g.begin + t];
                 if (!hit_valid[hidx]) continue;
                 hits_by_reader[hits[hidx].volume].push_back(hidx);
                 ++batch_hit_count;
@@ -369,7 +417,9 @@ std::vector<OutputHit> run_stage3(
         std::vector<size_t> valid_indices;
         valid_indices.reserve(batch_hit_count);
         for (size_t gi : batch.group_idxs) {
-            for (size_t hidx : groups[gi].indices) {
+            const auto& g = groups[gi];
+            for (uint32_t t = 0; t < g.len; t++) {
+                size_t hidx = group_slots[g.begin + t];
                 if (hit_valid[hidx] && !subject_subseqs[hidx].empty()) {
                     valid_indices.push_back(hidx);
                 }
@@ -441,15 +491,15 @@ std::vector<OutputHit> run_stage3(
         if (has_context) {
             for (size_t gi : batch.group_idxs) {
                 auto& group = groups[gi];
-                if (group.indices.size() < 2) continue;
+                if (group.len < 2) continue;
 
                 bool changed = true;
                 while (changed) {
                     changed = false;
 
-                    for (size_t pi = 0; pi + 1 < group.indices.size(); pi++) {
-                        size_t idx_a = group.indices[pi];
-                        size_t idx_b = group.indices[pi + 1];
+                    for (uint32_t pi = 0; pi + 1 < group.len; pi++) {
+                        size_t idx_a = group_slots[group.begin + pi];
+                        size_t idx_b = group_slots[group.begin + pi + 1];
 
                         if (!hit_valid[idx_a] || !hit_valid[idx_b]) continue;
                         if (hits[idx_a].send <= hits[idx_b].sstart) continue;
@@ -577,12 +627,16 @@ std::vector<OutputHit> run_stage3(
                     }
 
                     if (changed) {
-                        group.indices.erase(
-                            std::remove_if(group.indices.begin(), group.indices.end(),
-                                [&hit_valid](size_t i) { return !hit_valid[i]; }),
-                            group.indices.end());
-                        std::sort(group.indices.begin(), group.indices.end(),
-                            [&hits](size_t a, size_t b) {
+                        // Partition rather than erase: the dropped hits stay
+                        // in the slice's tail so the batch's release loop
+                        // still sees them.
+                        auto slice = group_slots.begin() + group.begin;
+                        auto live_end = std::stable_partition(
+                            slice, slice + group.len,
+                            [&hit_valid](uint32_t i) { return hit_valid[i]; });
+                        group.len = static_cast<uint32_t>(live_end - slice);
+                        std::sort(slice, slice + group.len,
+                            [&hits](uint32_t a, uint32_t b) {
                                 return hits[a].sstart < hits[b].sstart;
                             });
                     }
@@ -593,7 +647,9 @@ std::vector<OutputHit> run_stage3(
         // 8f. Filter survivors into `filtered` and release this batch's
         //     batch-local heap.
         for (size_t gi : batch.group_idxs) {
-            for (size_t idx : groups[gi].indices) {
+            const auto& g = groups[gi];
+            for (uint32_t t = 0; t < g.len; t++) {
+                size_t idx = group_slots[g.begin + t];
                 if (!hit_valid[idx] || subject_subseqs[idx].empty()) continue;
 
                 bool keep = true;
@@ -611,14 +667,12 @@ std::vector<OutputHit> run_stage3(
         // hits.  std::string::clear() keeps capacity; shrink_to_fit returns
         // the heap.
         for (size_t gi : batch.group_idxs) {
-            for (size_t idx : groups[gi].indices) {
-                if (idx < subject_subseqs.size()) {
-                    std::string().swap(subject_subseqs[idx]);
-                }
-                if (idx < hits.size()) {
-                    std::string().swap(hits[idx].qseq);
-                    std::string().swap(hits[idx].sseq);
-                }
+            const auto& g = groups[gi];
+            for (uint32_t t = 0; t < g.len; t++) {
+                size_t idx = group_slots[g.begin + t];
+                std::string().swap(subject_subseqs[idx]);
+                std::string().swap(hits[idx].qseq);
+                std::string().swap(hits[idx].sseq);
             }
         }
     }
