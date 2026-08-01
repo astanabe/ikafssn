@@ -154,29 +154,35 @@ QueryKmerData<KmerInt> preprocess_query(
                         static_cast<int>(config.max_degen_expand));
     }
 
-    // 2. Build reverse complement k-mers
+    // 2. Build reverse complement k-mers.
+    //
+    // Reverse-strand positions are query-strand-relative: they index the
+    // reverse complement of the query, the sequence this strand's k-mers were
+    // actually read from.  Chaining then sees the reverse strand on an
+    // ordinary diagonal (s_pos - q_pos constant) instead of an antidiagonal,
+    // and Stage 3 aligns against the same reverse-complemented query.
     std::vector<std::pair<uint32_t, KmerInt>> rc_kmers;
     if (t > 0 && !masks.empty()) {
-        // Spaced seed: scan RC string with same templates, remap positions
+        // Spaced seed: scan the RC string with the same templates.  Positions
+        // come out on the RC string already.
         std::string rc_seq = reverse_complement_string(query_seq);
-        auto rc_raw = extract_kmers_spaced<KmerInt>(rc_seq, k, masks,
-                          static_cast<int>(t), &result.has_multi_degen,
-                          static_cast<int>(config.max_degen_expand));
-        rc_kmers.reserve(rc_raw.size());
-        for (const auto& [pos, kmer] : rc_raw) {
-            // Remap position: rc position p corresponds to fwd position (len - p - span)
-            uint32_t fwd_pos = static_cast<uint32_t>(query_seq.size()) - pos - static_cast<uint32_t>(span);
-            rc_kmers.emplace_back(fwd_pos, kmer);
-        }
+        rc_kmers = extract_kmers_spaced<KmerInt>(rc_seq, k, masks,
+                       static_cast<int>(t), &result.has_multi_degen,
+                       static_cast<int>(config.max_degen_expand));
     } else if (!fwd_kmers.empty()) {
-        // Contiguous: SIMD batch revcomp via SoA staging buffers.
+        // Contiguous: SIMD batch revcomp via SoA staging buffers.  The k-mer
+        // at forward position p reverse-complements to RC position
+        // (len - p - span), so the run comes out descending and is reversed
+        // back to ascending to match the forward strand's ordering.
         const std::size_t nfwd = fwd_kmers.size();
         std::vector<KmerInt> tmp_in(nfwd), tmp_out(nfwd);
         for (std::size_t i = 0; i < nfwd; i++) tmp_in[i] = fwd_kmers[i].second;
         kmer_revcomp_batch<KmerInt>(tmp_in.data(), tmp_out.data(), nfwd, k);
         rc_kmers.resize(nfwd);
+        const uint32_t last = static_cast<uint32_t>(query_seq.size()) -
+                              static_cast<uint32_t>(span);
         for (std::size_t i = 0; i < nfwd; i++) {
-            rc_kmers[i] = {fwd_kmers[i].first, tmp_out[i]};
+            rc_kmers[nfwd - 1 - i] = {last - fwd_kmers[i].first, tmp_out[i]};
         }
     }
 
@@ -210,8 +216,8 @@ QueryKmerData<KmerInt> preprocess_query(
 
     if (config.min_stage1_score_frac > 0) {
         // Count distinct emitted positions and ANY-excluded positions for each
-        // strand. The rc remap leaves the per-position grouping intact (same
-        // positions, just relabeled to fwd-coords), so the same logic works.
+        // strand.  Both strands emit one contiguous cluster per position, so
+        // the same linear scan works on either.
         auto compute_nhighfreq = [&](const std::vector<std::pair<uint32_t, KmerInt>>& kmers) -> uint32_t {
             // Sort-merge by position to detect ANY-excluded per cluster.
             // Inputs from extract_kmers_* are already grouped by emission order
