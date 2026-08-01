@@ -792,9 +792,9 @@ static void test_stage3_overlap_resolution() {
                           logger);
     CHECK_EQ(out.size(), 2u);
     if (out.size() != 2) return;
-    std::sort(out.begin(), out.end(),
-              [](const OutputHit& a, const OutputHit& b) { return a.sstart < b.sstart; });
 
+    // Emission order, not a sorted copy: the group is re-sorted by sstart
+    // after every clamp, so the clamped hit stays ahead of the kept one.
     CHECK_EQ(out[0].sstart, 100u);
     CHECK_EQ(out[0].send, 230u);
     CHECK_EQ(out[0].qstart, 0u);
@@ -809,6 +809,152 @@ static void test_stage3_overlap_resolution() {
 
     // Half-open: they meet without overlapping and without leaving a gap.
     CHECK_EQ(out[0].send, out[1].sstart);
+}
+
+// run_stage3 groups hits by (query, sseqid, sstrand) and emits the groups in
+// the order they first appear, each group ordered by sstart with equal sstart
+// left in arrival order.  Downstream the Stage 3 dedup and the per-subject
+// top-N selector break ties by that order, so it is pinned here against an
+// input whose groups appear in reverse lexicographic order.
+static void test_stage3_group_order() {
+    std::fprintf(stderr, "-- test_stage3_group_order\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+    std::string full = db.get_sequence(oid);
+    CHECK(full.size() >= 550);
+    db.close();
+    if (oid == UINT32_MAX || full.size() < 550) return;
+
+    const std::string seq_b = full.substr(100, 200);
+    const std::string seq_a = full.substr(400, 150);
+
+    auto make_hit = [&](const char* qseqid, uint32_t sstart, uint32_t send,
+                        uint32_t qlen) {
+        OutputHit h;
+        h.qseqid = qseqid;
+        h.sseqid = ACC_FJ;
+        h.sstrand = '+';
+        h.sstart = sstart;
+        h.send = send;
+        h.oid = oid;
+        h.volume = 0;
+        h.qlen = qlen;
+        h.chainscore = 100;
+        return h;
+    };
+    // qB's group appears first and owns two hits sharing an sstart; qA's
+    // group appears between them.
+    std::vector<OutputHit> hits{
+        make_hit("qB", 100, 300, static_cast<uint32_t>(seq_b.size())),
+        make_hit("qA", 400, 550, static_cast<uint32_t>(seq_a.size())),
+        make_hit("qB", 100, 250, static_cast<uint32_t>(seq_b.size())),
+    };
+    std::vector<FastaRecord> queries{{"qA", seq_a}, {"qB", seq_b}};
+
+    Stage3Config cfg;
+    cfg.traceback = true;
+    Logger logger(Logger::kError);
+
+    // context_abs = 0 keeps the overlap resolution out of the picture, so the
+    // emitted order is the grouping order alone.
+    auto out = run_stage3(hits, queries, g_testdb_path, cfg,
+                          /*context_is_ratio=*/false, 0.0, /*context_abs=*/0,
+                          logger);
+    CHECK_EQ(out.size(), 3u);
+    if (out.size() != 3) return;
+
+    CHECK(out[0].qseqid == "qB");
+    CHECK_EQ(out[0].sstart, 100u);
+    CHECK_EQ(out[0].send, 300u);
+    CHECK(out[1].qseqid == "qB");
+    CHECK_EQ(out[1].sstart, 100u);
+    CHECK_EQ(out[1].send, 250u);
+    CHECK(out[2].qseqid == "qA");
+    CHECK_EQ(out[2].sstart, 400u);
+    CHECK_EQ(out[2].send, 550u);
+}
+
+// Every hit must align against its own query, on its own strand: the profile
+// is picked per (query, strand), and a mixed-up slot would silently align a
+// hit to the other query or the other strand.
+static void test_stage3_profile_slots() {
+    std::fprintf(stderr, "-- test_stage3_profile_slots\n");
+
+    BlastDbReader db;
+    CHECK(db.open(g_testdb_path));
+    uint32_t oid = find_oid_by_accession(db, ACC_FJ);
+    CHECK(oid != UINT32_MAX);
+    std::string full = db.get_sequence(oid);
+    CHECK(full.size() >= 550);
+    db.close();
+    if (oid == UINT32_MAX || full.size() < 550) return;
+
+    // qP matches [100, 300) as given; qM matches [400, 550) once reverse
+    // complemented, so each query has exactly one strand that aligns cleanly.
+    const std::string region_p = full.substr(100, 200);
+    const std::string region_m = full.substr(400, 150);
+    const std::string seq_p = region_p;
+    const std::string seq_m = reverse_complement_string(region_m);
+
+    auto make_hit = [&](const char* qseqid, char strand, uint32_t sstart,
+                        uint32_t send, uint32_t qlen) {
+        OutputHit h;
+        h.qseqid = qseqid;
+        h.sseqid = ACC_FJ;
+        h.sstrand = strand;
+        h.sstart = sstart;
+        h.send = send;
+        h.oid = oid;
+        h.volume = 0;
+        h.qlen = qlen;
+        h.chainscore = 100;
+        return h;
+    };
+    const uint32_t len_p = static_cast<uint32_t>(seq_p.size());
+    const uint32_t len_m = static_cast<uint32_t>(seq_m.size());
+    std::vector<OutputHit> hits{
+        make_hit("qP", '+', 100, 300, len_p),
+        make_hit("qM", '-', 400, 550, len_m),
+        make_hit("qP", '-', 100, 300, len_p),
+        make_hit("qM", '+', 400, 550, len_m),
+    };
+    std::vector<FastaRecord> queries{{"qP", seq_p}, {"qM", seq_m}};
+
+    Stage3Config cfg;
+    cfg.traceback = true;
+    Logger logger(Logger::kError);
+
+    auto out = run_stage3(hits, queries, g_testdb_path, cfg,
+                          /*context_is_ratio=*/false, 0.0, /*context_abs=*/0,
+                          logger);
+    CHECK_EQ(out.size(), 4u);
+    if (out.size() != 4) return;
+
+    int32_t score_pp = 0, score_pm = 0, score_mm = 0, score_mp = 0;
+    for (const auto& h : out) {
+        if (h.qseqid == "qP" && h.sstrand == '+') {
+            score_pp = h.alnscore;
+            CHECK(h.cigar == "200=");
+            CHECK(h.qseq == seq_p);
+            CHECK(h.sseq == region_p);
+        } else if (h.qseqid == "qP") {
+            score_pm = h.alnscore;
+        } else if (h.qseqid == "qM" && h.sstrand == '-') {
+            score_mm = h.alnscore;
+            CHECK(h.cigar == "150=");
+            CHECK(h.qseq == region_m);
+            CHECK(h.sseq == region_m);
+        } else {
+            score_mp = h.alnscore;
+        }
+    }
+    // The matching strand must beat the reverse-complemented one; equal scores
+    // would mean both hits used the same profile.
+    CHECK(score_pp > score_pm);
+    CHECK(score_mm > score_mp);
 }
 
 int main() {
@@ -828,6 +974,8 @@ int main() {
     test_stage3_trims_subject_terminal_gaps();
     test_stage3_trims_query_terminal_gaps();
     test_stage3_overlap_resolution();
+    test_stage3_group_order();
+    test_stage3_profile_slots();
 
     // Cleanup
     std::filesystem::remove_all(g_test_dir);
