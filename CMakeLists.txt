@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.16)
+# 3.20 is what the conda recipe already requires, and it is the floor for
+# FetchContent_MakeAvailable() honouring SOURCE_SUBDIR (see FastPFor below).
+cmake_minimum_required(VERSION 3.20)
 
 # Give the archives FetchContent downloads the timestamp of their extraction,
 # so a changed URL rebuilds what depends on the contents.  Guarded because the
@@ -177,7 +179,14 @@ find_package(OpenSSL REQUIRED)
 option(ENABLE_CLIENT_HTTP "Enable HTTP mode in ikafssnclient (requires libcurl)" ON)
 if(ENABLE_CLIENT_HTTP)
     find_package(CURL REQUIRED)
-    find_package(jsoncpp REQUIRED)
+    # jsoncpp ships a config package on every platform we build for.  The
+    # module-mode fallback is Drogon's FindJsoncpp.cmake, which find_package
+    # (Drogon) puts on the module path; asking for it under the name its file
+    # actually uses keeps CMake from matching a module whose case differs.
+    find_package(jsoncpp CONFIG QUIET)
+    if(NOT jsoncpp_FOUND)
+        find_package(Jsoncpp MODULE REQUIRED)
+    endif()
     # Determine the correct jsoncpp imported target.
     # - Ubuntu's libjsoncpp-dev provides jsoncpp_lib + JsonCpp::JsonCpp.
     # - Drogon's bundled Findjsoncpp.cmake only sets JSONCPP_INCLUDE_DIRS /
@@ -318,13 +327,13 @@ FetchContent_Declare(
     fastpfor
     URL      https://github.com/fast-pack/FastPFOR/archive/refs/tags/v0.5.0.tar.gz
     URL_HASH SHA256=d72f61fdef11d5293a4506350eaba3d293b94e955e2b65c7b2558c2cdad8b32c
+    # SOURCE_SUBDIR names a directory the archive does not contain, so
+    # FetchContent_MakeAvailable() downloads and extracts without calling
+    # add_subdirectory(): FastPFor's own CMakeLists would build a "native"
+    # libFastPFOR archive we can't use.
+    SOURCE_SUBDIR ikafssn-no-add-subdirectory
 )
-FetchContent_GetProperties(fastpfor)
-if(NOT fastpfor_POPULATED)
-    # Populate sources but do not run FastPFor's own CMakeLists (which
-    # would build a "native" libFastPFOR archive we can't use).
-    FetchContent_Populate(fastpfor)
-endif()
+FetchContent_MakeAvailable(fastpfor)
 
 set(FASTPFOR_SRC_DIR "${fastpfor_SOURCE_DIR}")
 set(FASTPFOR_INC_DIR "${FASTPFOR_SRC_DIR}/headers")
