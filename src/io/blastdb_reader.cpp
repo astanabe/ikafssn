@@ -267,6 +267,25 @@ bool BlastDbReader::get_accession(uint32_t oid, std::string& out) const {
     }
 }
 
+bool BlastDbReader::accession_to_oids(const std::string& accession,
+                                      std::vector<uint32_t>& oids) const {
+    oids.clear();
+    if (!impl_->db) return false;
+
+    try {
+        std::vector<int> found;
+        impl_->db->AccessionToOids(accession, found);
+        oids.reserve(found.size());
+        for (int oid : found) {
+            if (oid >= 0) oids.push_back(static_cast<uint32_t>(oid));
+        }
+        return true;
+    } catch (const std::exception&) {
+        oids.clear();
+        return false;
+    }
+}
+
 std::string BlastDbReader::get_title() const {
     if (!impl_->db) return {};
     return impl_->db->GetTitle();

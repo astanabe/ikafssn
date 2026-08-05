@@ -95,6 +95,14 @@ public:
     // could not read.  `out` is cleared on failure.
     bool get_accession(uint32_t oid, std::string& out) const;
 
+    // Reverse of get_accession(): collect the OIDs of this volume that carry
+    // `accession`.  Needs a database that can be searched by accession — a
+    // BLAST v5 LMDB, or a v4 string ISAM built with `makeblastdb
+    // -parse_seqids`.  Returns false when the lookup itself failed; an
+    // accession that is simply absent yields true with an empty `oids`.
+    bool accession_to_oids(const std::string& accession,
+                           std::vector<uint32_t>& oids) const;
+
     // Get DB title.
     std::string get_title() const;
 

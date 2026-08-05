@@ -8,7 +8,8 @@
 // raw '\x01'-joined form so downstream consumers can split on '\x01'
 // themselves; this header only provides the split helper used by
 // internal call sites that need to walk individual tokens (e.g. the
-// OID filter's reverse map and local_retriever's accession→OID map).
+// OID filter's reverse map, and the leading token ikafssnretrieve looks
+// an accession up by and puts in its FASTA deflines).
 
 #include <string_view>
 #include <vector>

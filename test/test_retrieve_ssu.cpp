@@ -49,7 +49,7 @@ static AccInfo g_acc_info[NUM_TARGETS];
 // ---- Helpers ----
 
 // Parse FASTA from a string into accession -> sequence map.
-// defline: `>ACCESSION:start-end query=... strand=... score=...`
+// defline: `>ACCESSION:start-end sseqid=... query=... strand=... score=...`
 // (kafsss style).  We strip the `:start-end` suffix so the map is keyed by
 // the bare parent accession that callers compare against TARGET_ACC.
 static std::unordered_map<std::string, std::string>
@@ -182,7 +182,19 @@ static void test_local_retrieval() {
     uint32_t retrieved = retrieve_local(hits, g_db_prefix, opts, out);
     CHECK_EQ(retrieved, static_cast<uint32_t>(NUM_TARGETS));
 
-    auto seqs = parse_fasta_output(out.str());
+    const std::string fasta = out.str();
+    auto seqs = parse_fasta_output(fasta);
+
+    // The '\x01'-joined accession form lives in `sseqid=`, which every
+    // record carries — single-accession ones included.
+    {
+        size_t n = 0;
+        for (size_t p = fasta.find(" sseqid="); p != std::string::npos;
+             p = fasta.find(" sseqid=", p + 1)) {
+            n++;
+        }
+        CHECK_EQ(n, static_cast<size_t>(NUM_TARGETS));
+    }
 
     for (int i = 0; i < NUM_TARGETS; i++) {
         auto it = seqs.find(TARGET_ACC[i]);

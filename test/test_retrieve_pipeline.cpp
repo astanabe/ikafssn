@@ -91,8 +91,12 @@ static void test_full_pipeline() {
     std::ostringstream oss;
     write_results_tsv(oss, hits);
     std::istringstream iss(oss.str());
-    auto parsed_hits = read_results_tsv(iss);
+    bool has_volume_column = false;
+    auto parsed_hits = read_results_tsv(iss, &has_volume_column);
     CHECK_EQ(parsed_hits.size(), hits.size());
+    // Local retrieval routes each hit by its volume, so the column the
+    // writers emit must survive the round trip.
+    CHECK(has_volume_column);
 
     // Step 4: Retrieve subsequences from local BLAST DB
     RetrieveOptions ropts;
@@ -107,6 +111,8 @@ static void test_full_pipeline() {
     // Verify the output is valid FASTA
     CHECK(fasta_str[0] == '>');
     CHECK(fasta_str.find("query=query1") != std::string::npos);
+    // The joined accession form is carried in `sseqid=`, never in the ID.
+    CHECK(fasta_str.find(" sseqid=") != std::string::npos);
 
     // Verify extracted sequence contains only valid IUPAC nucleotide codes.
     // retrieve_local returns the DB bytes verbatim, so subjects carrying

@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -118,12 +119,24 @@ int main(int argc, char* argv[]) {
     logger.info("Reading search results from %s",
                 tsv_path == "-" ? "stdin" : tsv_path.c_str());
 
-    auto hits = read_results_tsv(tsv_path);
+    bool has_volume_column = false;
+    auto hits = read_results_tsv(tsv_path, &has_volume_column);
     if (hits.empty()) {
         std::fprintf(stderr, "Error: no valid search results found\n");
         return 1;
     }
     logger.info("Read %zu hit(s)", hits.size());
+
+    // Local retrieval reads only the volume each hit names, so a results file
+    // without the column would silently send every hit to volume 0.  Every
+    // format ikafssn writes carries it.
+    if (has_db && !has_volume_column) {
+        std::fprintf(stderr,
+            "Error: the search results carry no 'volume' column, which -db "
+            "retrieval needs to locate each hit's BLAST DB volume.  Re-run "
+            "the search and keep the column, or use -remote.\n");
+        return 1;
+    }
 
     // Open output
     std::string output_path = cli.get_string("-o");
@@ -158,6 +171,16 @@ int main(int argc, char* argv[]) {
         opts.is_ratio = ctx_param.is_ratio;
         opts.ratio    = ctx_param.ratio;
         opts.context  = ctx_param.abs;
+        // Stage the records next to the output, so the scratch file lands on
+        // the filesystem the user already chose to have room for them; with
+        // no -o it goes to the current directory.
+        {
+            std::filesystem::path op(output_path);
+            opts.temp_dir = (output_path.empty() || output_path == "-" ||
+                             !op.has_parent_path())
+                ? std::string(".")
+                : op.parent_path().string();
+        }
         if (ctx_param.is_ratio) {
             logger.info("Retrieving from local BLAST DB: %s (context ratio=%.4f)",
                         db_path.c_str(), ctx_param.ratio);

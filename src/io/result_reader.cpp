@@ -261,8 +261,10 @@ static bool parse_line_no_header(const std::string& line, OutputHit& hit) {
     return true;
 }
 
-std::vector<OutputHit> read_results_tsv(std::istream& in) {
+std::vector<OutputHit> read_results_tsv(std::istream& in,
+                                        bool* has_volume_column) {
     std::vector<OutputHit> results;
+    if (has_volume_column) *has_volume_column = false;
     std::string line;
     int line_num = 0;
 
@@ -322,17 +324,26 @@ std::vector<OutputHit> read_results_tsv(std::istream& in) {
         }
     }
 
+    // The header names its columns; the field-count fallback recognises no
+    // layout without a volume field, so any row it accepted carried one.
+    if (has_volume_column) {
+        *has_volume_column = use_header ? (cmap.count("volume") != 0)
+                                        : !results.empty();
+    }
+
     return results;
 }
 
-std::vector<OutputHit> read_results_tsv(const std::string& path) {
+std::vector<OutputHit> read_results_tsv(const std::string& path,
+                                        bool* has_volume_column) {
+    if (has_volume_column) *has_volume_column = false;
     std::string err;
     auto in = open_input_compressed(path, err);
     if (!in) {
         std::fprintf(stderr, "result_reader: %s\n", err.c_str());
         return {};
     }
-    return read_results_tsv(*in.stream);
+    return read_results_tsv(*in.stream, has_volume_column);
 }
 
 } // namespace ikafssn

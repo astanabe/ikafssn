@@ -18,11 +18,24 @@ struct RetrieveOptions {
     uint32_t context = 0;        // absolute context (ratio == false)
     bool     is_ratio = false;
     double   ratio = 0.0;        // per-hit ctx = round(hit.qlen * ratio)
+    // Directory holding the scratch file the records are staged in while the
+    // volumes are walked.  It needs room for the uncompressed output.  TMPDIR
+    // is deliberately not consulted: it is a tmpfs on many systems, which
+    // would put the staged records back in the memory this staging exists to
+    // save.
+    std::string temp_dir = ".";
 };
 
 // Retrieve matched subsequences from a local BLAST DB.
-// Writes FASTA records to the output stream.
+// Writes FASTA records to the output stream in the order the hits arrive.
 // Returns the number of successfully retrieved sequences.
+//
+// Each hit's `volume` selects the BLAST DB volume to read, and its `sseqid`
+// is resolved to an OID within that volume, so the database must be
+// searchable by accession (a BLAST v5 LMDB, or a v4 string ISAM built with
+// `makeblastdb -parse_seqids`).  Volumes are opened one at a time, and the
+// records are staged in a scratch file under `opts.temp_dir` so the output
+// order does not depend on the order the volumes are walked in.
 uint32_t retrieve_local(const std::vector<OutputHit>& hits,
                         const std::string& db_path,
                         const RetrieveOptions& opts,
