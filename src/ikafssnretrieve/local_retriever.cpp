@@ -260,7 +260,7 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
                 : opts.context;
 
             // Pull only the requested range from the parent OID via partial
-            // decode; a full get_sequence() decode would defeat the fragment
+            // decode; decoding the whole OID would defeat the fragment
             // index's benefit on chromosome-scale parents.
             ContextSubseq cs = extract_context_subseq(
                 reader, r.oid, hit.sstart, hit.send, ctx);

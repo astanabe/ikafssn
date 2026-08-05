@@ -43,7 +43,7 @@ static void test_stage3_pipeline() {
     // Extract query: 100bp from FJ876973.1
     uint32_t fj_oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(fj_oid != UINT32_MAX);
-    std::string fj_seq = db.get_sequence(fj_oid);
+    std::string fj_seq = db.get_subsequence(fj_oid, 0, db.seq_length(fj_oid) - 1);
     CHECK(fj_seq.size() >= 200);
     g_query_seq = fj_seq.substr(50, 100);
     db.close();
@@ -154,7 +154,7 @@ static void test_stage3_score_only() {
     CHECK(db.open(g_testdb_path));
     uint32_t fj_oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(fj_oid != UINT32_MAX);
-    std::string fj_seq = db.get_sequence(fj_oid);
+    std::string fj_seq = db.get_subsequence(fj_oid, 0, db.seq_length(fj_oid) - 1);
     std::string query = fj_seq.substr(50, 100);
     db.close();
 
@@ -232,7 +232,7 @@ static void test_stage3_context() {
     CHECK(db.open(g_testdb_path));
     uint32_t fj_oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(fj_oid != UINT32_MAX);
-    std::string fj_seq = db.get_sequence(fj_oid);
+    std::string fj_seq = db.get_subsequence(fj_oid, 0, db.seq_length(fj_oid) - 1);
     std::string query = fj_seq.substr(100, 50);
     db.close();
 
@@ -317,7 +317,7 @@ static void build_hits_for_batching(std::vector<OutputHit>& all_hits,
     CHECK(db.open(g_testdb_path));
     uint32_t fj_oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(fj_oid != UINT32_MAX);
-    std::string fj_seq = db.get_sequence(fj_oid);
+    std::string fj_seq = db.get_subsequence(fj_oid, 0, db.seq_length(fj_oid) - 1);
     CHECK(fj_seq.size() >= 200);
     query_str = fj_seq.substr(50, 100);
     db.close();
@@ -649,7 +649,7 @@ static void test_stage3_blast_coordinates() {
     CHECK(db.open(g_testdb_path));
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
-    std::string full = db.get_sequence(oid);
+    std::string full = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(full.size() >= 300);
     db.close();
     std::string query = full.substr(100, 200);
@@ -688,7 +688,7 @@ static void test_stage3_trims_subject_terminal_gaps() {
     CHECK(db.open(g_testdb_path));
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
-    std::string full = db.get_sequence(oid);
+    std::string full = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(full.size() >= 400);
     db.close();
     std::string query = full.substr(100, 200);
@@ -717,7 +717,7 @@ static void test_stage3_trims_query_terminal_gaps() {
     CHECK(db.open(g_testdb_path));
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
-    std::string full = db.get_sequence(oid);
+    std::string full = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(full.size() >= 300);
     db.close();
 
@@ -758,7 +758,7 @@ static void test_stage3_overlap_resolution() {
     CHECK(db.open(g_testdb_path));
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
-    std::string full = db.get_sequence(oid);
+    std::string full = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(full.size() >= 470);
     db.close();
     if (oid == UINT32_MAX || full.size() < 470) return;
@@ -823,7 +823,7 @@ static void test_stage3_group_order() {
     CHECK(db.open(g_testdb_path));
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
-    std::string full = db.get_sequence(oid);
+    std::string full = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(full.size() >= 550);
     db.close();
     if (oid == UINT32_MAX || full.size() < 550) return;
@@ -887,7 +887,7 @@ static void test_stage3_drops_unknown_query() {
     CHECK(db.open(g_testdb_path));
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
-    std::string full = db.get_sequence(oid);
+    std::string full = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(full.size() >= 550);
     db.close();
     if (oid == UINT32_MAX || full.size() < 550) return;
@@ -936,7 +936,7 @@ static void test_stage3_profile_slots() {
     CHECK(db.open(g_testdb_path));
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
-    std::string full = db.get_sequence(oid);
+    std::string full = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(full.size() >= 550);
     db.close();
     if (oid == UINT32_MAX || full.size() < 550) return;

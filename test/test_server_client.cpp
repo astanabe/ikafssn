@@ -282,8 +282,8 @@ static TwoQueries make_two_queries() {
     CHECK(fj != UINT32_MAX);
     CHECK(gq != UINT32_MAX);
     if (fj == UINT32_MAX || gq == UINT32_MAX) return q;
-    std::string fj_seq = db.get_sequence(fj);
-    std::string gq_seq = db.get_sequence(gq);
+    std::string fj_seq = db.get_subsequence(fj, 0, db.seq_length(fj) - 1);
+    std::string gq_seq = db.get_subsequence(gq, 0, db.seq_length(gq) - 1);
     CHECK(fj_seq.size() >= 400);
     CHECK(gq_seq.size() >= 400);
     db.close();

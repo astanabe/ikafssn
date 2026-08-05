@@ -214,7 +214,7 @@ static void test_split_vs_nosplit_canonical_hit() {
 
     uint32_t oid = find_oid_by_accession(db, "LONGCHR_1");
     CHECK(oid != UINT32_MAX);
-    std::string parent_seq = db.get_sequence(oid);
+    std::string parent_seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(parent_seq.size() >= 300);
 
     // 100bp query at parent positions [201, 300] (1-based, inclusive),
@@ -270,7 +270,7 @@ static void test_boundary_query_dedups_to_one() {
     CHECK(db.open(long_db_prefix()));
     uint32_t oid = find_oid_by_accession(db, "LONGCHR_1");
     CHECK(oid != UINT32_MAX);
-    std::string parent_seq = db.get_sequence(oid);
+    std::string parent_seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(parent_seq.size() >= 1791);
 
     // Query [1601, 1700] of the parent — entirely inside the overlap
@@ -362,7 +362,7 @@ static void test_query_too_long_for_overlap() {
     CHECK(db.open(long_db_prefix()));
     uint32_t oid = find_oid_by_accession(db, "LONGCHR_1");
     CHECK(oid != UINT32_MAX);
-    std::string parent_seq = db.get_sequence(oid);
+    std::string parent_seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
 
     // 100bp query (well above the artificially small 50bp overlap).
     std::string query = parent_seq.substr(200, 100);

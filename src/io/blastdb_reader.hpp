@@ -60,12 +60,8 @@ public:
     // Sequence length in bases for given OID.
     uint32_t seq_length(uint32_t oid) const;
 
-    // Get sequence as ACGTN string. N replaces all ambiguous bases.
-    // Returns empty string on error.
-    std::string get_sequence(uint32_t oid) const;
-
-    // Get subsequence [start, end] (0-based inclusive) with partial decoding.
-    // Only decodes the requested range from ncbi2na, avoiding full-sequence decode.
+    // Get subsequence [start, end] (0-based inclusive) as an IUPAC string,
+    // decoding only the requested range from ncbi2na.
     // end is clamped to seq_length-1 if out of range.
     // Returns empty string if start > end (after clamping) or on error.
     std::string get_subsequence(uint32_t oid, uint32_t start, uint32_t end) const;

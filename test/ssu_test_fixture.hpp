@@ -120,7 +120,7 @@ inline std::string extract_subsequence(ikafssn::BlastDbReader& db,
                                        uint32_t start, uint32_t end) {
     uint32_t oid = find_oid_by_accession(db, acc);
     if (oid == UINT32_MAX) return {};
-    std::string full_seq = db.get_sequence(oid);
+    std::string full_seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     if (end > full_seq.size()) end = static_cast<uint32_t>(full_seq.size());
     if (start >= end) return {};
     return full_seq.substr(start, end - start);

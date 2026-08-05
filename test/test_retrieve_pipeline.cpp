@@ -236,7 +236,7 @@ static void test_reverse_strand() {
     CHECK(db.open(g_testdb_path));
     uint32_t oid = find_oid_by_accession(db, ACC_GQ);
     CHECK(oid != UINT32_MAX);
-    std::string full_seq = db.get_sequence(oid);
+    std::string full_seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(full_seq.size() >= 4);
     std::string first4 = full_seq.substr(0, 4);
 
@@ -301,7 +301,7 @@ int main() {
         CHECK(db.open(g_testdb_path));
         g_fj_oid = find_oid_by_accession(db, ACC_FJ);
         CHECK(g_fj_oid != UINT32_MAX);
-        std::string full_seq = db.get_sequence(g_fj_oid);
+        std::string full_seq = db.get_subsequence(g_fj_oid, 0, db.seq_length(g_fj_oid) - 1);
         CHECK(full_seq.size() >= 200);
         g_query_seq = full_seq.substr(100, 100);
     }

@@ -1237,7 +1237,7 @@ int main() {
         CHECK(db_a.open(g_multivol_a_path));
         uint32_t oid_fj = find_oid_by_accession(db_a, ACC_FJ);
         CHECK(oid_fj != UINT32_MAX);
-        std::string seq = db_a.get_sequence(oid_fj);
+        std::string seq = db_a.get_subsequence(oid_fj, 0, db_a.seq_length(oid_fj) - 1);
         CHECK(seq.size() >= 200);
         g_query_fj = seq.substr(100, 100);
     }
@@ -1246,7 +1246,7 @@ int main() {
         CHECK(db_b.open(g_multivol_b_path));
         uint32_t oid_gq = find_oid_by_accession(db_b, ACC_GQ);
         CHECK(oid_gq != UINT32_MAX);
-        std::string seq = db_b.get_sequence(oid_gq);
+        std::string seq = db_b.get_subsequence(oid_gq, 0, db_b.seq_length(oid_gq) - 1);
         CHECK(seq.size() >= 200);
         g_query_gq = seq.substr(50, 100);
     }

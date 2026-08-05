@@ -124,39 +124,6 @@ void BlastDbReader::ret_raw_sequence(const RawSequence& raw) const {
     }
 }
 
-std::string BlastDbReader::get_sequence(uint32_t oid) const {
-    if (!impl_->db) return {};
-
-    RawSequence raw = get_raw_sequence(oid);
-    if (!raw.ncbi2na_data || raw.seq_length == 0) {
-        if (raw.ncbi2na_data) ret_raw_sequence(raw);
-        return {};
-    }
-
-    // Decode ncbi2na packed data to ASCII
-    std::string result(raw.seq_length, '\0');
-    for (uint32_t i = 0; i < raw.seq_length; i++) {
-        uint8_t byte = static_cast<uint8_t>(raw.ncbi2na_data[i >> 2]);
-        uint8_t code = (byte >> (6 - 2 * (i & 3))) & 0x03;
-        result[i] = ncbi2na_to_char[code];
-    }
-
-    // Apply ambiguity data to overwrite positions with IUPAC chars
-    auto ambig_entries = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
-    for (const auto& entry : ambig_entries) {
-        char iupac = ncbi4na_to_iupac[entry.ncbi4na];
-        for (uint32_t j = 0; j < entry.run_length; j++) {
-            uint32_t pos = entry.position + j;
-            if (pos < raw.seq_length) {
-                result[pos] = iupac;
-            }
-        }
-    }
-
-    ret_raw_sequence(raw);
-    return result;
-}
-
 std::string BlastDbReader::get_subsequence(uint32_t oid, uint32_t start, uint32_t end) const {
     if (!impl_->db) return {};
 

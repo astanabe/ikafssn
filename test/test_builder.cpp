@@ -248,7 +248,7 @@ static void test_known_kmer_in_index() {
     uint32_t target_oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(target_oid != UINT32_MAX);
 
-    std::string full_seq = db.get_sequence(target_oid);
+    std::string full_seq = db.get_subsequence(target_oid, 0, db.seq_length(target_oid) - 1);
     CHECK(full_seq.size() >= 7);
     std::string first7 = full_seq.substr(0, 7);
 

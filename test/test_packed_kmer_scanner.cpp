@@ -555,8 +555,8 @@ static void test_blastdb_raw_sequence() {
         CHECK(code < 4);
     }
 
-    // Verify get_sequence returns valid bases
-    std::string seq = db.get_sequence(oid);
+    // Verify the decoded sequence has valid bases
+    std::string seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK_EQ(seq.size(), static_cast<size_t>(raw.seq_length));
     for (char c : seq) {
         CHECK(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
@@ -583,8 +583,8 @@ static void test_blastdb_raw_sequence_with_ambig() {
     auto ambig = AmbiguityParser::parse(raw.ambig_data, raw.ambig_bytes);
     CHECK(ambig.size() > 0);
 
-    // Verify get_sequence shows R at position 100
-    std::string seq = db.get_sequence(oid);
+    // Verify the decoded sequence shows R at position 100
+    std::string seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(seq.size() > 100);
     CHECK(seq[100] == 'R');
 
@@ -602,7 +602,7 @@ static void test_packed_scanner_matches_kmer_scanner_on_blastdb() {
     // Compare on the first 20 non-ambiguous sequences to keep runtime bounded
     uint32_t limit = std::min(db.num_sequences(), uint32_t(20));
     for (uint32_t oid = 0; oid < limit; oid++) {
-        std::string seq = db.get_sequence(oid);
+        std::string seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
         bool has_ambig = false;
         for (char c : seq) {
             if (c != 'A' && c != 'C' && c != 'G' && c != 'T') {
@@ -682,7 +682,7 @@ static void test_ambig_expansion_in_index() {
     CHECK(oid != UINT32_MAX);
 
     // Read the sequence to get the bases around position 100
-    std::string seq = db.get_sequence(oid);
+    std::string seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     CHECK(seq.size() > 104);
     CHECK(seq[100] == 'R');
 
@@ -739,7 +739,7 @@ static void test_ssu_db_kmer_check() {
     uint32_t target_oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(target_oid != UINT32_MAX);
 
-    std::string full_seq = db.get_sequence(target_oid);
+    std::string full_seq = db.get_subsequence(target_oid, 0, db.seq_length(target_oid) - 1);
     CHECK(full_seq.size() >= 7);
     std::string first7 = full_seq.substr(0, 7);
 
@@ -785,7 +785,7 @@ static void test_get_subsequence() {
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
 
-    std::string full_seq = db.get_sequence(oid);
+    std::string full_seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     uint32_t seq_len = static_cast<uint32_t>(full_seq.size());
     CHECK(seq_len > 200);
 
@@ -847,7 +847,7 @@ static void test_get_subsequence_with_ambig() {
     uint32_t oid = find_oid_by_accession(db, ACC_FJ);
     CHECK(oid != UINT32_MAX);
 
-    std::string full_seq = db.get_sequence(oid);
+    std::string full_seq = db.get_subsequence(oid, 0, db.seq_length(oid) - 1);
     uint32_t seq_len = static_cast<uint32_t>(full_seq.size());
     CHECK(seq_len > 200);
 
