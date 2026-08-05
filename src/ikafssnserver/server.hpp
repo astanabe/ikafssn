@@ -11,6 +11,7 @@
 
 #include "ikafssnserver/budget_pool.hpp"
 #include "ikafssnserver/request_processor.hpp"
+#include "io/blastdb_reader.hpp"
 #include "search/stage3_alignment.hpp"
 #include "search/search_config.hpp"
 #include "util/logger.hpp"
@@ -22,6 +23,12 @@ struct DatabaseEntry {
     std::string name;                       // DB name (basename of ix_prefix)
     std::string ix_prefix;                  // original (for logging)
     std::string db_path;                    // BLAST DB path (empty = max_mode 2)
+    // One open reader per BLAST DB volume of db_path, indexed by volume
+    // index, empty when db_path is.  They stay open for the server's
+    // lifetime: mode 3 touches several volumes per request and the requests
+    // overlap, so re-opening per request pays the CSeqDB setup every time
+    // without ever returning a descriptor.
+    std::vector<BlastDbReader> blast_readers;
     std::vector<KmerGroup> kmer_groups;
     int default_k = 0;                      // largest k for this DB
     uint8_t default_t = 0;

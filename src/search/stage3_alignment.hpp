@@ -10,6 +10,8 @@
 
 namespace ikafssn {
 
+class BlastDbReader;
+
 struct Stage3Config {
     int gapopen = 10;
     int gapext = 1;
@@ -40,9 +42,22 @@ struct Stage3Config {
 //   query_idx must index `queries`; hits whose query_idx or volume is out of
 //   range are dropped with a warning.
 // - queries: original FASTA query sequences
-// - db_path: BLAST DB path for subject sequence retrieval
+// - readers: one open BLAST DB reader per volume, indexed by hit.volume.
+//   Owned by the caller, which lets a long-lived process keep the volumes
+//   open across calls instead of re-opening them every time.
 // - context_is_ratio/context_ratio/context_abs: -context_extend option values
 // Returns filtered hits (min_ppositive/min_npositive applied).
+std::vector<OutputHit> run_stage3(
+    std::vector<OutputHit>& hits,
+    const std::vector<FastaRecord>& queries,
+    const std::vector<BlastDbReader>& readers,
+    const Stage3Config& config,
+    bool context_is_ratio,
+    double context_ratio,
+    uint32_t context_abs,
+    const Logger& logger);
+
+// Same, opening every volume of `db_path` for the duration of the call.
 std::vector<OutputHit> run_stage3(
     std::vector<OutputHit>& hits,
     const std::vector<FastaRecord>& queries,

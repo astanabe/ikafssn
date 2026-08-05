@@ -161,7 +161,6 @@ std::vector<OutputHit> run_stage3(
 {
     if (hits.empty()) return {};
 
-    // Open BLAST DB volumes
     auto vol_paths = BlastDbReader::find_volume_paths(db_path);
     if (vol_paths.empty()) {
         logger.error("Stage 3: no BLAST DB volumes found at '%s'", db_path.c_str());
@@ -174,6 +173,27 @@ std::vector<OutputHit> run_stage3(
             logger.error("Stage 3: cannot open volume '%s'", vol_paths[vi].c_str());
             return {};
         }
+    }
+
+    return run_stage3(hits, queries, readers, config,
+                      context_is_ratio, context_ratio, context_abs, logger);
+}
+
+std::vector<OutputHit> run_stage3(
+    std::vector<OutputHit>& hits,
+    const std::vector<FastaRecord>& queries,
+    const std::vector<BlastDbReader>& readers,
+    const Stage3Config& config,
+    bool context_is_ratio,
+    double context_ratio,
+    uint32_t context_abs,
+    const Logger& logger)
+{
+    if (hits.empty()) return {};
+
+    if (readers.empty()) {
+        logger.error("Stage 3: no BLAST DB volumes are open");
+        return {};
     }
 
     // Reject the hits that cannot be aligned: a volume outside `readers` or a

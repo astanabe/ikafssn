@@ -586,7 +586,7 @@ SearchResponse process_search_request(
 
         Logger logger(Logger::kInfo);
         stage3_config.posting_budget = posting_budget;
-        output_hits = run_stage3(output_hits, accepted_records, db.db_path,
+        output_hits = run_stage3(output_hits, accepted_records, db.blast_readers,
                                  stage3_config, ctx_is_ratio, ctx_ratio, ctx_abs, logger);
         // Stage 3 dedup over parent-relative (send, alnscore).
         // Mirrors the ikafssnsearch dedup so server responses look identical

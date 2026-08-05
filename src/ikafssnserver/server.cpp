@@ -183,6 +183,25 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
         entry.default_template_type = (has_cod && has_opt) ? 3 : max_k_it->template_type;
     }
 
+    // Open every BLAST DB volume mode 3 may need and keep it open.
+    if (!db_path.empty()) {
+        auto vol_paths = BlastDbReader::find_volume_paths(db_path);
+        if (vol_paths.empty()) {
+            logger.error("No BLAST DB volumes found at '%s'", db_path.c_str());
+            return false;
+        }
+        entry.blast_readers.resize(vol_paths.size());
+        for (size_t vi = 0; vi < vol_paths.size(); vi++) {
+            if (!entry.blast_readers[vi].open(vol_paths[vi])) {
+                logger.error("Cannot open BLAST DB volume '%s'",
+                             vol_paths[vi].c_str());
+                return false;
+            }
+        }
+        logger.info("DB '%s': %zu BLAST DB volume(s) open for mode 3",
+                    db_name.c_str(), vol_paths.size());
+    }
+
     // resolved_search_config holds the per-DB defaults.  min_query_length /
     // max_query_length are re-derived per request from the selected variant's
     // min_seq_length / overlap_length, since variants may differ.
