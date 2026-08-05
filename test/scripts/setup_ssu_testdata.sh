@@ -6,6 +6,10 @@
 #   ssu_ambigdb.*     - BLAST DB with injected ambiguous bases
 #   ssu_multivol_a.*  - BLAST DB subset (FJ876973.1 + 4 others)
 #   ssu_multivol_b.*  - BLAST DB subset (GQ912721.1 + DQ235612.1 + 3 others)
+#   ssu_manyvol.*     - the whole SSU DB split into ~20 BLAST DB volumes
+#                       (-max_file_sz 200000), so a command that opened
+#                       every volume at once would need far more file
+#                       descriptors than one that opens them one at a time.
 #   ssu_longdb.*      - BLAST DB with two artificially long parents (each
 #                       ~5000bp) used by the fragment-split integration
 #                       tests.  Each LONGCHR_X record is the concatenation
@@ -128,6 +132,19 @@ if [ ! -f "${OUTDIR}/ssu_multivol_b.nsq" ]; then
     echo "  ssu_multivol_b created."
 else
     echo "  ssu_multivol_b already exists, skipping."
+fi
+
+# ---- 2b. Many-volume DB (for the file-descriptor pressure test) ----
+if [ ! -f "${OUTDIR}/ssu_manyvol.nal" ]; then
+    echo "--- Building ssu_manyvol ---"
+    blastdbcmd -db "${SSU_PREFIX}" -dbtype nucl -entry all \
+        -out "${OUTDIR}/ssu_manyvol.fasta"
+    makeblastdb -in "${OUTDIR}/ssu_manyvol.fasta" -dbtype nucl \
+        -out "${OUTDIR}/ssu_manyvol" -parse_seqids -max_file_sz 200000
+    rm -f "${OUTDIR}/ssu_manyvol.fasta"
+    echo "  ssu_manyvol created ($(ls "${OUTDIR}"/ssu_manyvol.*.nsq | wc -l) volumes)."
+else
+    echo "  ssu_manyvol already exists, skipping."
 fi
 
 # ---- 3. Long-parent DB (for the fragment-split integration tests) ----

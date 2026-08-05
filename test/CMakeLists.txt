@@ -491,6 +491,26 @@ if(ENABLE_REMOTE_RETRIEVE)
 endif()
 add_test(NAME test_retrieve_ssu COMMAND test_retrieve_ssu)
 
+# ikafssnindex / ikafssnretrieve under a tight RLIMIT_NOFILE, against the
+# many-volume DB setup_ssu_testdata.sh builds.  Runs the real binaries in
+# capped child processes, so it depends on them rather than linking them.
+add_executable(test_fd_exhaustion test_fd_exhaustion.cpp)
+target_link_libraries(test_fd_exhaustion PRIVATE
+    ikafssn_blastdb ikafssn_io ikafssn_util ikafssn_core
+)
+target_include_directories(test_fd_exhaustion PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${NCBI_TOOLKIT_INCLUDE}"
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_compile_definitions(test_fd_exhaustion PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    IKAFSSN_INDEX_BIN="$<TARGET_FILE:ikafssnindex>"
+    IKAFSSN_RETRIEVE_BIN="$<TARGET_FILE:ikafssnretrieve>"
+)
+add_dependencies(test_fd_exhaustion ikafssnindex ikafssnretrieve)
+add_test(NAME test_fd_exhaustion COMMAND test_fd_exhaustion)
+
 # --- Stage 3 tests ---
 
 # Stage 3 alignment unit test (Parasail only, no BLAST DB)

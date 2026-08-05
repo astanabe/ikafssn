@@ -37,6 +37,12 @@ inline std::string multivol_b_prefix() {
     return std::string(DERIVED_DIR) + "/ssu_multivol_b";
 }
 
+// The whole SSU DB split into ~20 BLAST DB volumes.  Run
+// setup_ssu_testdata.sh to populate.
+inline std::string manyvol_prefix() {
+    return std::string(DERIVED_DIR) + "/ssu_manyvol";
+}
+
 // long-parent DB for fragment-split integration tests.
 // Two LONGCHR_X parents, each the concatenation of three SSU sequences
 // (~5000bp).  Run setup_ssu_testdata.sh to populate.
