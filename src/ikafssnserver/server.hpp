@@ -26,8 +26,8 @@ struct DatabaseEntry {
     // One open reader per BLAST DB volume of db_path, indexed by volume
     // index, empty when db_path is.  They stay open for the server's
     // lifetime: mode 3 touches several volumes per request and the requests
-    // overlap, so re-opening per request pays the CSeqDB setup every time
-    // without ever returning a descriptor.
+    // overlap, so the concurrent atlas would not return a descriptor even if
+    // each request closed what it opened.
     std::vector<BlastDbReader> blast_readers;
     std::vector<KmerGroup> kmer_groups;
     int default_k = 0;                      // largest k for this DB
@@ -200,8 +200,8 @@ private:
 
     std::vector<DatabaseEntry> databases_;
     std::unordered_map<std::string, size_t> db_index_;
-    // BLAST DB volumes held open across every loaded database; drives the
-    // descriptor reservation, which has to cover all of them at once.
+    // BLAST DB volumes held open across every loaded database, which is what
+    // the descriptor reservation has to cover.
     size_t blast_volume_total_ = 0;
     std::atomic<bool> shutdown_requested_{false};
     std::vector<int> listen_fds_;

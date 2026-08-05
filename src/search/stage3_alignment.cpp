@@ -385,8 +385,7 @@ std::vector<OutputHit> run_stage3(
         for (size_t ri = 0; ri < readers.size(); ri++) {
             for (size_t h : hits_by_reader[ri]) ordered_hits.push_back(h);
         }
-        // One call covers every volume the atlas has mapped, so it is made
-        // once rather than per reader.
+        // The hint is process-wide, so one call covers every open volume.
         readers.front().set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, ordered_hits.size(), 16),

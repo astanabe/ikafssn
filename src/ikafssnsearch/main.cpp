@@ -476,11 +476,9 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         // Stage 3 keeps every volume open at once so hits can be fetched in
-        // parallel, and CSeqDB holds .nin + .nsq mapped (and their
-        // descriptors) for as long as the volume is open.  Reserve them now
-        // rather than failing partway through the search.  Modes 1 and 2 do
-        // not touch the BLAST DB, and MmapFile closes the descriptor right
-        // after mmap, so .kix / .ksx cost nothing here.
+        // parallel, and each open volume holds .nin + .nsq mapped along with
+        // their descriptors.  Reserve them now rather than failing partway
+        // through the search.  Modes 1 and 2 never open the BLAST DB.
         std::string err;
         if (!ensure_fd_limit(vol_paths.size() * 2 + 64, err)) {
             std::fprintf(stderr,

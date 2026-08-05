@@ -171,13 +171,13 @@ int main(int argc, char* argv[]) {
         opts.is_ratio = ctx_param.is_ratio;
         opts.ratio    = ctx_param.ratio;
         opts.context  = ctx_param.abs;
-        // Stage the records next to the output, so the scratch file lands on
-        // the filesystem the user already chose to have room for them; with
-        // no -o it goes to the current directory.
+        // Stage the records next to the output, on the filesystem the user
+        // already chose to have room for them; with no -o, the current
+        // directory.
         {
             std::filesystem::path op(output_path);
-            opts.temp_dir = (output_path.empty() || output_path == "-" ||
-                             !op.has_parent_path())
+            opts.scratch_dir = (output_path.empty() || output_path == "-" ||
+                                !op.has_parent_path())
                 ? std::string(".")
                 : op.parent_path().string();
         }

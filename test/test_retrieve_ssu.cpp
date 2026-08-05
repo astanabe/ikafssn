@@ -69,10 +69,9 @@ parse_fasta_output(const std::string& fasta_str) {
             size_t e = s;
             while (e < line.size() && !std::isspace(static_cast<unsigned char>(line[e]))) e++;
             std::string tok = line.substr(s, e - s);
-            // Strip the trailing `:start-end`retriever
-            // defline) so the map key remains the bare parent accession.
-            // GenBank accessions never contain ':' so a single ':' is
-            // unambiguous for this slicing.
+            // Strip the trailing `:start-end` so the map key is the bare
+            // parent accession.  GenBank accessions never contain ':', so
+            // slicing at the first one is unambiguous.
             auto colon = tok.find(':');
             if (colon != std::string::npos) tok.resize(colon);
             cur_acc = std::move(tok);

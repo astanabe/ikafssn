@@ -53,9 +53,8 @@ static inline int log2_ceil(int n) {
     return bits;
 }
 
-// stdio wrappers that report what the unchecked calls would swallow: a
-// short `fwrite` and a failing `fclose` (the final flush) are how a full
-// disk or a write error surfaces, and neither is visible in the data.
+// A short `fwrite` and a failing `fclose` (the final flush) are how a full
+// disk shows up; neither is visible unless the return value is inspected.
 static bool write_checked(const void* data, size_t size, size_t count,
                           FILE* fp, const std::string& path,
                           const Logger& logger) {
@@ -168,11 +167,10 @@ bool build_metadata(BlastDbReader& db,
         }
         std::string acc;
         if (!db.get_accession(blast_oid, acc)) {
-            logger.error("Cannot read the accession of BLAST DB OID %u from "
-                         "this volume.  A common cause is running out of file "
-                         "descriptors (see `ulimit -n`); the volume may also "
-                         "be truncated or unreadable.",
-                         blast_oid);
+            logger.error("Cannot read the accession of BLAST DB OID %u.  A "
+                         "common cause is running out of file descriptors "
+                         "(see `ulimit -n`); the volume may also be "
+                         "truncated or unreadable.", blast_oid);
             std::remove(ksx_tmp.c_str());
             return false;
         }

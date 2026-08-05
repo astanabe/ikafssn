@@ -41,8 +41,7 @@ std::string first_accession_token(const std::string& sseqid) {
 }
 
 // A scratch file the kernel reclaims however the process ends: it is
-// unlinked the moment it exists, so only the descriptor keeps it alive and
-// a crash or a signal leaves nothing behind.
+// unlinked the moment it exists, so only the descriptor keeps it alive.
 class ScratchFile {
 public:
     ~ScratchFile() { if (fd_ >= 0) ::close(fd_); }
@@ -131,7 +130,7 @@ struct StagedRecord {
     uint64_t length;
 };
 
-const char* const kLookupHint =
+const char* const kAccessionLookupRequirement =
     "The BLAST DB must be searchable by accession: a BLAST v5 database "
     "(LMDB), or a v4 database built with `makeblastdb -parse_seqids`.  A "
     "database other than the one the index was built from will also fail to "
@@ -166,19 +165,19 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
     }
 
     ScratchFile scratch;
-    if (!scratch.open(opts.temp_dir)) return 0;
+    if (!scratch.open(opts.scratch_dir)) return 0;
 
     std::vector<StagedRecord> staged;
     staged.reserve(hits.size());
-    bool hinted = false;
+    bool requirement_shown = false;
 
     for (size_t vi = 0; vi < vol_paths.size(); vi++) {
         if (hits_by_volume[vi].empty()) continue;
 
-        // Exactly one volume is open at a time: CSeqDB holds a descriptor per
-        // mapped volume file for the lifetime of the mapping, and the atlas
-        // that owns them is a process-wide singleton, so the descriptors only
-        // come back once the reader is destroyed.
+        // Exactly one volume open at a time: CSeqDB holds a descriptor per
+        // mapped volume file, and the atlas owning the mappings is a
+        // process-wide singleton, so descriptors return only once the last
+        // reader is destroyed.
         BlastDbReader reader;
         if (!reader.open(vol_paths[vi])) {
             std::fprintf(stderr, "retrieve_local: cannot open volume '%s'\n",
@@ -203,9 +202,10 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
                 std::fprintf(stderr,
                     "retrieve_local: accession lookup failed for '%s' in "
                     "volume '%s'\n", acc.c_str(), vol_paths[vi].c_str());
-                if (!hinted) {
-                    std::fprintf(stderr, "retrieve_local: %s\n", kLookupHint);
-                    hinted = true;
+                if (!requirement_shown) {
+                    std::fprintf(stderr, "retrieve_local: %s\n",
+                                 kAccessionLookupRequirement);
+                    requirement_shown = true;
                 }
                 continue;
             }
@@ -213,9 +213,10 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
                 std::fprintf(stderr,
                     "retrieve_local: accession '%s' not found in volume '%s'\n",
                     acc.c_str(), vol_paths[vi].c_str());
-                if (!hinted) {
-                    std::fprintf(stderr, "retrieve_local: %s\n", kLookupHint);
-                    hinted = true;
+                if (!requirement_shown) {
+                    std::fprintf(stderr, "retrieve_local: %s\n",
+                                 kAccessionLookupRequirement);
+                    requirement_shown = true;
                 }
                 continue;
             }
@@ -277,20 +278,17 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
             }
             std::string subseq = std::move(cs.seq);
 
-            // Apply reverse complement for minus strand
             if (hit.sstrand == '-') {
                 reverse_complement(subseq);
             }
 
-            // Defline: `parent_acc:start-end` (1-based inclusive) as the ID,
-            // so every retrieved record has a unique leading token even when
-            // one parent accession appears in many rows.  The '\x01'-joined
-            // form stays in the `sseqid=` field, which is always written: an
-            // ID carrying '\x01' would collide with the split-on-'\x01'
-            // contract in io/accession_utils.hpp, and a FASTA parser taking
-            // the ID as everything up to the first space would swallow the
-            // whole joined string.
+            // Defline ID: `parent_acc:start-end`, 1-based inclusive, unique
+            // per record even when one parent accession appears in many rows.
             // A 0-based exclusive end and a 1-based inclusive end are equal.
+            // The '\x01'-joined form goes in `sseqid=` instead, since in the
+            // ID it would break both the split-on-'\x01' contract in
+            // io/accession_utils.hpp and any parser that reads the ID as
+            // everything up to the first space.
             record.clear();
             record += '>';
             record += first_accession_token(hit.sseqid);

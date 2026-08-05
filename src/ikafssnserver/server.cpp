@@ -194,11 +194,10 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
             entry.db_path.clear();
             if (entry.max_mode > 2) entry.max_mode = 2;
         } else {
-            // Reserve the descriptors the volumes will hold before opening
-            // any of them.  Each open volume costs two (.nin + .nsq) for as
-            // long as it stays open; the margin covers the listening sockets,
-            // the accepted connections and the server's own I/O.  The count
-            // accumulates across databases because they are all held at once.
+            // Reserve the descriptors before opening any volume.  Each open
+            // volume costs two (.nin + .nsq); the margin covers the listening
+            // sockets, the accepted connections and the server's own I/O.
+            // The count accumulates because every database is held at once.
             blast_volume_total_ += vol_paths.size();
             std::string err;
             if (!ensure_fd_limit(blast_volume_total_ * 2 + 256, err)) {

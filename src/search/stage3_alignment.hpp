@@ -42,9 +42,9 @@ struct Stage3Config {
 //   query_idx must index `queries`; hits whose query_idx or volume is out of
 //   range are dropped with a warning.
 // - queries: original FASTA query sequences
-// - readers: one open BLAST DB reader per volume, indexed by hit.volume.
-//   Owned by the caller, which lets a long-lived process keep the volumes
-//   open across calls instead of re-opening them every time.
+// - readers: one open BLAST DB reader per volume, indexed by hit.volume,
+//   owned by the caller so a long-lived process can hold the volumes open
+//   across calls.
 // - context_is_ratio/context_ratio/context_abs: -context_extend option values
 // Returns filtered hits (min_ppositive/min_npositive applied).
 std::vector<OutputHit> run_stage3(

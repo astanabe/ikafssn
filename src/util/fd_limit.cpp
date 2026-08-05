@@ -61,8 +61,8 @@ bool ensure_fd_limit(uint64_t required, std::string& error_msg) {
     }
 
     // Raise the soft limit to exactly what is needed.  Handing the hard
-    // limit straight through instead would fail on macOS, where it is
-    // commonly RLIM_INFINITY while the kernel still refuses anything above
+    // limit through instead fails on macOS, where it is commonly
+    // RLIM_INFINITY while the kernel refuses anything above
     // kern.maxfilesperproc.
     struct rlimit want = rl;
     want.rlim_cur = static_cast<rlim_t>(required);

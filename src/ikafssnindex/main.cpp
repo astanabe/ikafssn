@@ -735,11 +735,10 @@ static int run_index(int argc, char* argv[]) {
             if (state[vi] == VolumeState::kNone) {
                 logger.info("Metadata volume %u/%u: %s",
                             vi + 1, total_volumes, vol_paths[vi].c_str());
-                // Exactly one volume is open at a time.  CSeqDB holds one
-                // file descriptor per mapped volume file for the lifetime
-                // of the mapping, and the atlas owning those mappings is a
-                // process-wide singleton, so the descriptors only come back
-                // once the last reader in the process is destroyed.
+                // Exactly one volume open at a time: CSeqDB holds a
+                // descriptor per mapped volume file, and the atlas owning
+                // the mappings is a process-wide singleton, so descriptors
+                // return only once the last reader is destroyed.
                 BlastDbReader db;
                 if (!db.open(vol_paths[vi])) {
                     std::fprintf(stderr, "Error: cannot open volume '%s'\n",
@@ -841,7 +840,7 @@ static int run_index(int argc, char* argv[]) {
                 state[vi] != VolumeState::kMetadataTmp) continue;
             logger.info("Postings volume %u/%u: %s",
                         vi + 1, total_volumes, vol_paths[vi].c_str());
-            // As in the metadata pass, only this volume is open right now.
+            // Exactly one volume open at a time, as in the metadata pass.
             BlastDbReader db;
             if (!db.open(vol_paths[vi])) {
                 std::fprintf(stderr, "Error: cannot open volume '%s'\n",
@@ -976,10 +975,9 @@ static int run_index(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
-    // CSeqDB reports every I/O problem by throwing, including from inside
-    // the TBB parallel regions of the metadata and postings passes.  Without
-    // this guard an escaped exception would reach std::terminate and abort
-    // instead of reporting what went wrong.
+    // CSeqDB reports I/O problems by throwing, including from inside the
+    // TBB parallel regions of the metadata and postings passes; an escaped
+    // exception would otherwise reach std::terminate.
     try {
         return run_index(argc, argv);
     } catch (const std::exception& e) {

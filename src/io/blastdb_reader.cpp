@@ -235,11 +235,11 @@ bool BlastDbReader::get_accession(uint32_t oid, std::string& out) const {
 
         // Multi-defline support: a single OID may carry multiple Seq_ids
         // (NCBI native `\x01`-separated deflines registered via
-        // `makeblastdb -parse_seqids`).  Return *all* accessions joined
-        // by '\x01' (BLAST's native separator) so downstream consumers
-        // can present every label registered for the sequence.  The
-        // separator is preserved on disk in `.ksx` and translated to
-        // a display form at output time (see io/accession_utils.hpp).
+        // `makeblastdb -parse_seqids`).  Collect *all* of them, joined by
+        // '\x01' (BLAST's native separator), so downstream consumers see
+        // every label registered for the sequence.  The joined form is what
+        // `.ksx` stores and what the writers emit; consumers split on the
+        // separator themselves (see io/accession_utils.hpp).
         out.reserve(64);
         for (const auto& id : ids) {
             std::string token;

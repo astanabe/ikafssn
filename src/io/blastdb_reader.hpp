@@ -38,11 +38,9 @@ public:
     uint64_t total_length() const;
 
     // Memory-map access pattern hint passed through to the kernel
-    // (CSeqDB::SetMMapStrategy under the hood).  It is NOT scoped to this
-    // reader's volume: CSeqDBAtlas is a process-wide singleton and applies
-    // the hint to every file it currently has mapped, so one call covers
-    // all open volumes and calling it per volume only repeats the work
-    // under the atlas lock.
+    // (CSeqDB::SetMMapStrategy under the hood).  NOT scoped to this reader's
+    // volume: CSeqDBAtlas is a process-wide singleton and applies the hint
+    // to every file it has mapped, so one call covers all open volumes.
     //   kNormal     — OS default; readahead enabled.
     //   kRandom     — disable readahead (sparse OID lookups).
     //   kSequential — aggressive readahead (whole-volume scans).
@@ -94,16 +92,15 @@ public:
     // is preserved in `.ksx` and emitted as-is in the `sseqid` output
     // field; consumers split on '\x01' (see io/accession_utils.hpp's
     // `split_accessions`).
-    // Returns false when the lookup itself failed, so a caller can tell a
-    // genuinely unlabelled OID (true with an empty `out`) from a volume it
-    // could not read.  `out` is cleared on failure.
+    // Returns false when the lookup failed, distinguishing an unreadable
+    // volume from an unlabelled OID (true with an empty `out`).
     bool get_accession(uint32_t oid, std::string& out) const;
 
-    // Reverse of get_accession(): collect the OIDs of this volume that carry
-    // `accession`.  Needs a database that can be searched by accession — a
-    // BLAST v5 LMDB, or a v4 string ISAM built with `makeblastdb
-    // -parse_seqids`.  Returns false when the lookup itself failed; an
-    // accession that is simply absent yields true with an empty `oids`.
+    // Reverse of get_accession(): collect the OIDs of this volume carrying
+    // `accession`.  Needs a database searchable by accession — a BLAST v5
+    // LMDB, or a v4 string ISAM built with `makeblastdb -parse_seqids`.
+    // Returns false when the lookup failed; an absent accession yields true
+    // with an empty `oids`.
     bool accession_to_oids(const std::string& accession,
                            std::vector<uint32_t>& oids) const;
 
