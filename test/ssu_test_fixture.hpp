@@ -99,8 +99,9 @@ inline void check_long_db_ready() {
 inline uint32_t find_oid_by_accession(ikafssn::BlastDbReader& db,
                                       const std::string& acc) {
     uint32_t n = db.num_sequences();
+    std::string a;
     for (uint32_t oid = 0; oid < n; oid++) {
-        std::string a = db.get_accession(oid);
+        if (!db.get_accession(oid, a)) return UINT32_MAX;
         if (a == acc) return oid;
     }
     return UINT32_MAX;

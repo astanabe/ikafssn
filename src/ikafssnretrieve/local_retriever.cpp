@@ -58,8 +58,14 @@ uint32_t retrieve_local(const std::vector<OutputHit>& hits,
             return 0;
         }
         uint32_t nseqs = readers[vi].num_sequences();
+        std::string acc;
         for (uint32_t oid = 0; oid < nseqs; oid++) {
-            std::string acc = readers[vi].get_accession(oid);
+            if (!readers[vi].get_accession(oid, acc)) {
+                std::fprintf(stderr,
+                    "retrieve_local: cannot read the accession of OID %u in "
+                    "volume '%s'\n", oid, vol_paths[vi].c_str());
+                return 0;
+            }
             if (acc.empty()) continue;
             // Multi-defline OIDs register every individual accession so
             // a hit row's sseqid (which may be any one of the joined

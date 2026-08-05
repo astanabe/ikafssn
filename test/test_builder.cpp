@@ -658,7 +658,9 @@ static void test_degenerate_fragment_layout() {
         // Parent length matches BLAST DB.
         CHECK_EQ(ksx.parent_length(pidx), db.seq_length(blast_oid));
         // Accession matches.
-        CHECK(ksx.parent_accession(pidx) == db.get_accession(blast_oid));
+        std::string acc;
+        CHECK(db.get_accession(blast_oid, acc));
+        CHECK(ksx.parent_accession(pidx) == acc);
     }
     ksx.close();
 }

@@ -225,8 +225,9 @@ std::string BlastDbReader::get_subsequence(uint32_t oid, uint32_t start, uint32_
     return result;
 }
 
-std::string BlastDbReader::get_accession(uint32_t oid) const {
-    if (!impl_->db) return {};
+bool BlastDbReader::get_accession(uint32_t oid, std::string& out) const {
+    out.clear();
+    if (!impl_->db) return false;
 
     try {
         std::list<ncbi::CRef<ncbi::objects::CSeq_id>> ids =
@@ -239,7 +240,6 @@ std::string BlastDbReader::get_accession(uint32_t oid) const {
         // can present every label registered for the sequence.  The
         // separator is preserved on disk in `.ksx` and translated to
         // a display form at output time (see io/accession_utils.hpp).
-        std::string out;
         out.reserve(64);
         for (const auto& id : ids) {
             std::string token;
@@ -260,13 +260,11 @@ std::string BlastDbReader::get_accession(uint32_t oid) const {
             if (!out.empty()) out.push_back('\x01');
             out.append(token);
         }
-        return out;
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "BlastDbReader: get_accession(%u) failed: %s\n",
-                     oid, e.what());
+        return true;
+    } catch (const std::exception&) {
+        out.clear();
+        return false;
     }
-
-    return {};
 }
 
 std::string BlastDbReader::get_title() const {

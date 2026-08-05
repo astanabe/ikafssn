@@ -141,8 +141,9 @@ static bool setup_database() {
         if (!reader.open(vpath)) continue;
 
         uint32_t nseqs = reader.num_sequences();
+        std::string acc;
         for (uint32_t oid = 0; oid < nseqs; oid++) {
-            std::string acc = reader.get_accession(oid);
+            if (!reader.get_accession(oid, acc)) return false;
             for (int i = 0; i < NUM_TARGETS; i++) {
                 if (acc == TARGET_ACC[i]) {
                     g_acc_info[i].seq_length = reader.seq_length(oid);

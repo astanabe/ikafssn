@@ -2,10 +2,29 @@
 #include "index/ksx_format.hpp"
 #include "core/config.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 
 namespace ikafssn {
+
+namespace {
+
+// A short `fwrite` and a failing `fclose` (the final flush) are how a full
+// disk shows up; neither is visible unless the return value is inspected.
+bool write_checked(const void* data, size_t size, size_t count, FILE* fp,
+                   const std::string& path) {
+    if (size == 0 || count == 0) return true;
+    if (std::fwrite(data, size, count, fp) != count) {
+        std::fprintf(stderr, "KsxWriter: failed to write %lu byte(s) to '%s': %s\n",
+                     static_cast<unsigned long>(size * count),
+                     path.c_str(), std::strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+} // namespace
 
 uint32_t KsxWriter::add_parent(uint32_t blast_oid,
                                uint32_t parent_length,
@@ -66,31 +85,43 @@ bool KsxWriter::write(const std::string& path) const {
     }
     acc_offsets[num_parents] = static_cast<uint32_t>(offset);
 
+    auto fail = [&]() {
+        std::fclose(fp);
+        std::remove(path.c_str());
+        return false;
+    };
+
     // Header
     KsxHeader hdr{};
     std::memcpy(hdr.magic, KSX_MAGIC, sizeof(KSX_MAGIC));
     hdr.format_version   = KSX_FORMAT_VERSION;
     hdr.num_sequences    = num_seq;
     hdr.num_parents      = num_parents;
-    std::fwrite(&hdr, sizeof(hdr), 1, fp);
+    if (!write_checked(&hdr, sizeof(hdr), 1, fp, path)) return fail();
 
     // Parent table
-    std::fwrite(parent_lengths_.data(),    sizeof(uint32_t), num_parents,     fp);
-    std::fwrite(parent_blast_oids_.data(), sizeof(uint32_t), num_parents,     fp);
-    std::fwrite(acc_offsets.data(),        sizeof(uint32_t), num_parents + 1, fp);
+    if (!write_checked(parent_lengths_.data(),    sizeof(uint32_t), num_parents,     fp, path) ||
+        !write_checked(parent_blast_oids_.data(), sizeof(uint32_t), num_parents,     fp, path) ||
+        !write_checked(acc_offsets.data(),        sizeof(uint32_t), num_parents + 1, fp, path))
+        return fail();
     for (uint32_t i = 0; i < num_parents; i++) {
-        if (!parent_accessions_[i].empty()) {
-            std::fwrite(parent_accessions_[i].data(), 1,
-                        parent_accessions_[i].size(), fp);
-        }
+        if (!write_checked(parent_accessions_[i].data(), 1,
+                           parent_accessions_[i].size(), fp, path))
+            return fail();
     }
 
     // Fragment table
-    std::fwrite(fragment_parent_idx_.data(), sizeof(uint32_t), num_seq, fp);
-    std::fwrite(fragment_start_.data(),      sizeof(uint32_t), num_seq, fp);
-    std::fwrite(fragment_end_.data(),        sizeof(uint32_t), num_seq, fp);
+    if (!write_checked(fragment_parent_idx_.data(), sizeof(uint32_t), num_seq, fp, path) ||
+        !write_checked(fragment_start_.data(),      sizeof(uint32_t), num_seq, fp, path) ||
+        !write_checked(fragment_end_.data(),        sizeof(uint32_t), num_seq, fp, path))
+        return fail();
 
-    std::fclose(fp);
+    if (std::fclose(fp) != 0) {
+        std::fprintf(stderr, "KsxWriter: failed to close '%s': %s\n",
+                     path.c_str(), std::strerror(errno));
+        std::remove(path.c_str());
+        return false;
+    }
     return true;
 }
 

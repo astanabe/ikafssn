@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <set>
 #include <string>
 #include <vector>
@@ -125,7 +126,7 @@ static void print_usage(const char* prog, const std::string& default_mem) {
         prog, MIN_K, MAX_K, default_mem.c_str());
 }
 
-int main(int argc, char* argv[]) {
+static int run_index(int argc, char* argv[]) {
     CliParser cli(argc, argv);
 
     // Compute default memory limit string for help display
@@ -703,26 +704,6 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Open BLAST DB volumes once; shared by metadata and postings.
-        std::vector<BlastDbReader> dbs(total_volumes);
-        bool need_dbs = false;
-        for (uint16_t vi = 0; vi < total_volumes; vi++) {
-            if (state[vi] == VolumeState::kNone ||
-                state[vi] == VolumeState::kMetadataTmp) {
-                need_dbs = true;
-                break;
-            }
-        }
-        if (need_dbs) {
-            for (uint16_t vi = 0; vi < total_volumes; vi++) {
-                if (!dbs[vi].open(vol_paths[vi])) {
-                    std::fprintf(stderr, "Error: cannot open volume '%s'\n",
-                                 vol_paths[vi].c_str());
-                    return 1;
-                }
-            }
-        }
-
         // Metadata pass.  kNone: run build_metadata (writes .ksx.tmp).
         // kMetadataTmp: reuse existing .ksx.tmp.  kPostingsTmp /
         // kComplete: fetch num_sequences only, and only when
@@ -754,10 +735,20 @@ int main(int argc, char* argv[]) {
             if (state[vi] == VolumeState::kNone) {
                 logger.info("Metadata volume %u/%u: %s",
                             vi + 1, total_volumes, vol_paths[vi].c_str());
-                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
-                bool ok = build_metadata(dbs[vi], config, vol_prefixes_tmp[vi],
+                // Exactly one volume is open at a time.  CSeqDB holds one
+                // file descriptor per mapped volume file for the lifetime
+                // of the mapping, and the atlas owning those mappings is a
+                // process-wide singleton, so the descriptors only come back
+                // once the last reader in the process is destroyed.
+                BlastDbReader db;
+                if (!db.open(vol_paths[vi])) {
+                    std::fprintf(stderr, "Error: cannot open volume '%s'\n",
+                                 vol_paths[vi].c_str());
+                    return 1;
+                }
+                db.set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
+                bool ok = build_metadata(db, config, vol_prefixes_tmp[vi],
                                          volume_meta[vi], logger);
-                dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
                 if (!ok) {
                     std::fprintf(stderr,
                         "Error: metadata build failed for volume %u\n",
@@ -850,18 +841,24 @@ int main(int argc, char* argv[]) {
                 state[vi] != VolumeState::kMetadataTmp) continue;
             logger.info("Postings volume %u/%u: %s",
                         vi + 1, total_volumes, vol_paths[vi].c_str());
-            dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
+            // As in the metadata pass, only this volume is open right now.
+            BlastDbReader db;
+            if (!db.open(vol_paths[vi])) {
+                std::fprintf(stderr, "Error: cannot open volume '%s'\n",
+                             vol_paths[vi].c_str());
+                return 1;
+            }
+            db.set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
             bool ok;
             if (kmer_type_for(k, spaced_t) == 0) {
-                ok = build_postings<uint16_t>(dbs[vi], config,
+                ok = build_postings<uint16_t>(db, config,
                     vol_prefixes_tmp[vi], volume_meta[vi],
                     vi, total_volumes, db_base, logger);
             } else {
-                ok = build_postings<uint32_t>(dbs[vi], config,
+                ok = build_postings<uint32_t>(db, config,
                     vol_prefixes_tmp[vi], volume_meta[vi],
                     vi, total_volumes, db_base, logger);
             }
-            dbs[vi].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
             if (!ok) {
                 std::fprintf(stderr,
                     "Error: postings build failed for volume %u\n",
@@ -976,4 +973,17 @@ int main(int argc, char* argv[]) {
 
     logger.info("All volumes completed successfully.");
     return 0;
+}
+
+int main(int argc, char* argv[]) {
+    // CSeqDB reports every I/O problem by throwing, including from inside
+    // the TBB parallel regions of the metadata and postings passes.  Without
+    // this guard an escaped exception would reach std::terminate and abort
+    // instead of reporting what went wrong.
+    try {
+        return run_index(argc, argv);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "Error: %s\n", e.what());
+        return 1;
+    }
 }

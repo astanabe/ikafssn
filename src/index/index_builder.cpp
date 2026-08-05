@@ -18,6 +18,7 @@
 #include "util/progress.hpp"
 
 #include <cassert>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
@@ -50,6 +51,31 @@ static inline int log2_ceil(int n) {
     int v = n - 1;
     while (v > 0) { v >>= 1; bits++; }
     return bits;
+}
+
+// stdio wrappers that report what the unchecked calls would swallow: a
+// short `fwrite` and a failing `fclose` (the final flush) are how a full
+// disk or a write error surfaces, and neither is visible in the data.
+static bool write_checked(const void* data, size_t size, size_t count,
+                          FILE* fp, const std::string& path,
+                          const Logger& logger) {
+    if (size == 0 || count == 0) return true;
+    if (std::fwrite(data, size, count, fp) != count) {
+        logger.error("Failed to write %lu byte(s) to %s: %s",
+                     static_cast<unsigned long>(size * count),
+                     path.c_str(), std::strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+static bool close_checked(FILE* fp, const std::string& path,
+                          const Logger& logger) {
+    if (std::fclose(fp) != 0) {
+        logger.error("Failed to close %s: %s", path.c_str(), std::strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 bool build_metadata(BlastDbReader& db,
@@ -140,7 +166,16 @@ bool build_metadata(BlastDbReader& db,
             skipped++;
             continue;
         }
-        std::string acc = db.get_accession(blast_oid);
+        std::string acc;
+        if (!db.get_accession(blast_oid, acc)) {
+            logger.error("Cannot read the accession of BLAST DB OID %u from "
+                         "this volume.  A common cause is running out of file "
+                         "descriptors (see `ulimit -n`); the volume may also "
+                         "be truncated or unreadable.",
+                         blast_oid);
+            std::remove(ksx_tmp.c_str());
+            return false;
+        }
         uint32_t parent_idx = ksx.add_parent(blast_oid, po.slen, acc);
         for (const auto& f : po.frags) {
             if (out.seq_id_to_blast_oid.size() >= UINT32_MAX) {
@@ -406,14 +441,27 @@ bool build_postings(BlastDbReader& db,
         }
     }
 
+    // Close whatever is still open and drop the partial .tmp files.
+    auto abort_postings = [&]() {
+        if (kix_fp) { std::fclose(kix_fp); kix_fp = nullptr; }
+        if (kpx_fp) { std::fclose(kpx_fp); kpx_fp = nullptr; }
+        std::remove(ksx_tmp.c_str());
+        std::remove(kix_tmp.c_str());
+        if (!config.skip_kpx) std::remove(kpx_tmp.c_str());
+        return false;
+    };
+
     // Write kix header placeholder (will be overwritten at finalize)
     KixHeader kix_hdr{};
-    std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
+    if (!write_checked(&kix_hdr, sizeof(kix_hdr), 1, kix_fp, kix_tmp, logger))
+        return abort_postings();
 
     // Reserve the dictionary (u64 offsets here; the filter rewrites it as Elias-Fano)
     const uint64_t kix_offsets_pos = sizeof(KixHeader);
     std::vector<uint64_t> kix_offsets(tbl_size + 1, 0);
-    std::fwrite(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1, kix_fp);
+    if (!write_checked(kix_offsets.data(), sizeof(uint64_t), tbl_size + 1,
+                       kix_fp, kix_tmp, logger))
+        return abort_postings();
 
     // posting file starts here
     const uint64_t kix_posting_start = kix_offsets_pos + sizeof(uint64_t) * (tbl_size + 1);
@@ -422,11 +470,14 @@ bool build_postings(BlastDbReader& db,
     KpxHeader kpx_hdr{};
     std::vector<uint64_t> kpx_offsets;
     if (!config.skip_kpx) {
-        std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
+        if (!write_checked(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp, kpx_tmp, logger))
+            return abort_postings();
 
         // Reserve the .kpx dictionary (pos_offsets)
         kpx_offsets.resize(tbl_size, 0);
-        std::fwrite(kpx_offsets.data(), sizeof(uint64_t), tbl_size, kpx_fp);
+        if (!write_checked(kpx_offsets.data(), sizeof(uint64_t), tbl_size,
+                           kpx_fp, kpx_tmp, logger))
+            return abort_postings();
     }
 
     // Current write positions in the posting file (relative to posting file start)
@@ -621,12 +672,7 @@ bool build_postings(BlastDbReader& db,
                                  "force more partitions, or split the BLAST DB "
                                  "into smaller volumes.",
                                  cur_kmer, j - i);
-                    std::fclose(kix_fp);
-                    if (kpx_fp) std::fclose(kpx_fp);
-                    std::remove(ksx_tmp.c_str());
-                    std::remove(kix_tmp.c_str());
-                    if (!config.skip_kpx) std::remove(kpx_tmp.c_str());
-                    return false;
+                    return abort_postings();
                 }
                 runs.push_back({cur_kmer, i, j});
                 i = j;
@@ -710,12 +756,16 @@ bool build_postings(BlastDbReader& db,
             total_distinct_postings += out.distinct_count;
             total_position_count    += out.position_count;
 
-            std::fwrite(out.kix_blob.data(), 1, out.kix_blob.size(), kix_fp);
+            if (!write_checked(out.kix_blob.data(), 1, out.kix_blob.size(),
+                               kix_fp, kix_tmp, logger))
+                return abort_postings();
             kix_data_pos += out.kix_blob.size();
             std::vector<uint8_t>().swap(out.kix_blob);
 
             if (!config.skip_kpx) {
-                std::fwrite(out.kpx_blob.data(), 1, out.kpx_blob.size(), kpx_fp);
+                if (!write_checked(out.kpx_blob.data(), 1, out.kpx_blob.size(),
+                                   kpx_fp, kpx_tmp, logger))
+                    return abort_postings();
                 kpx_data_pos += out.kpx_blob.size();
                 std::vector<uint8_t>().swap(out.kpx_blob);
             }
@@ -766,25 +816,48 @@ bool build_postings(BlastDbReader& db,
     // with the EF dictionary.  Both must be flushed before we reopen
     // them for read, otherwise stdio's userspace write buffer can
     // shadow the just-written tail bytes of the last few k-mers.
-    std::fclose(kix_fp);
-    if (kpx_fp) std::fclose(kpx_fp);
+    {
+        FILE* fp = kix_fp;
+        kix_fp = nullptr;
+        if (!close_checked(fp, kix_tmp, logger)) return abort_postings();
+    }
+    if (kpx_fp) {
+        FILE* fp = kpx_fp;
+        kpx_fp = nullptr;
+        if (!close_checked(fp, kpx_tmp, logger)) return abort_postings();
+    }
 
     // Rewrite .kix with correct offset width
     {
         // Read the posting file from the temp file (skip header + uint64 offsets)
         FILE* rd = std::fopen(kix_tmp.c_str(), "rb");
-        std::fseek(rd, static_cast<long>(kix_posting_start), SEEK_SET);
+        if (!rd) {
+            logger.error("Cannot open %s for reading: %s",
+                         kix_tmp.c_str(), std::strerror(errno));
+            return abort_postings();
+        }
+        if (std::fseek(rd, static_cast<long>(kix_posting_start), SEEK_SET) != 0) {
+            logger.error("Cannot seek to the posting file in %s: %s",
+                         kix_tmp.c_str(), std::strerror(errno));
+            std::fclose(rd);
+            return abort_postings();
+        }
         std::vector<uint8_t> posting_file(kix_data_pos);
         if (kix_data_pos > 0 &&
             std::fread(posting_file.data(), 1, kix_data_pos, rd) != kix_data_pos) {
             logger.error("Failed to read the posting file back from %s", kix_tmp.c_str());
             std::fclose(rd);
-            return false;
+            return abort_postings();
         }
         std::fclose(rd);
 
         // Write the final kix file
         FILE* wr = std::fopen(kix_tmp.c_str(), "wb");
+        if (!wr) {
+            logger.error("Cannot open %s for writing: %s",
+                         kix_tmp.c_str(), std::strerror(errno));
+            return abort_postings();
+        }
 
         std::memcpy(kix_hdr.magic, KIX_MAGIC, sizeof(KIX_MAGIC));
         kix_hdr.format_version = KIX_FORMAT_VERSION;
@@ -807,19 +880,24 @@ bool build_postings(BlastDbReader& db,
         kix_hdr.block_size            = 0;
         kix_hdr.tail_codec            = 0;
         kix_hdr.exception_codec_flags = 0;
-        std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, wr);
+        if (!write_checked(&kix_hdr, sizeof(kix_hdr), 1, wr, kix_tmp, logger)) {
+            std::fclose(wr);
+            return abort_postings();
+        }
 
         if (!write_kix_dictionary_ef(wr, kix_offsets.data(), tbl_size,
                                      kix_data_pos)) {
             logger.error("Failed to write EF dictionary to %s", kix_tmp.c_str());
             std::fclose(wr);
-            return false;
+            return abort_postings();
         }
 
-        if (!posting_file.empty()) {
-            std::fwrite(posting_file.data(), 1, posting_file.size(), wr);
+        if (!write_checked(posting_file.data(), 1, posting_file.size(),
+                           wr, kix_tmp, logger)) {
+            std::fclose(wr);
+            return abort_postings();
         }
-        std::fclose(wr);
+        if (!close_checked(wr, kix_tmp, logger)) return abort_postings();
     }
 
     // Rewrite .kpx with correct offset width (skip if mode 1)
@@ -828,17 +906,32 @@ bool build_postings(BlastDbReader& db,
         const uint64_t kpx_posting_start_pos = sizeof(KpxHeader) + sizeof(uint64_t) * tbl_size;
 
         FILE* rd = std::fopen(kpx_tmp.c_str(), "rb");
-        std::fseek(rd, static_cast<long>(kpx_posting_start_pos), SEEK_SET);
+        if (!rd) {
+            logger.error("Cannot open %s for reading: %s",
+                         kpx_tmp.c_str(), std::strerror(errno));
+            return abort_postings();
+        }
+        if (std::fseek(rd, static_cast<long>(kpx_posting_start_pos), SEEK_SET) != 0) {
+            logger.error("Cannot seek to the posting file in %s: %s",
+                         kpx_tmp.c_str(), std::strerror(errno));
+            std::fclose(rd);
+            return abort_postings();
+        }
         std::vector<uint8_t> posting_file(kpx_data_pos);
         if (kpx_data_pos > 0 &&
             std::fread(posting_file.data(), 1, kpx_data_pos, rd) != kpx_data_pos) {
             logger.error("Failed to read the posting file back from %s", kpx_tmp.c_str());
             std::fclose(rd);
-            return false;
+            return abort_postings();
         }
         std::fclose(rd);
 
         FILE* wr = std::fopen(kpx_tmp.c_str(), "wb");
+        if (!wr) {
+            logger.error("Cannot open %s for writing: %s",
+                         kpx_tmp.c_str(), std::strerror(errno));
+            return abort_postings();
+        }
 
         std::memcpy(kpx_hdr.magic, KPX_MAGIC, sizeof(KPX_MAGIC));
         kpx_hdr.format_version = KPX_FORMAT_VERSION;
@@ -854,19 +947,24 @@ bool build_postings(BlastDbReader& db,
         kpx_hdr.codec_version = 0;
         kpx_hdr.block_size    = 0;
         kpx_hdr.tail_codec    = 0;
-        std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, wr);
+        if (!write_checked(&kpx_hdr, sizeof(kpx_hdr), 1, wr, kpx_tmp, logger)) {
+            std::fclose(wr);
+            return abort_postings();
+        }
 
         if (!write_kpx_dictionary_ef(wr, kpx_offsets.data(), tbl_size,
                                      kpx_data_pos)) {
             logger.error("Failed to write EF dictionary to %s", kpx_tmp.c_str());
             std::fclose(wr);
-            return false;
+            return abort_postings();
         }
 
-        if (!posting_file.empty()) {
-            std::fwrite(posting_file.data(), 1, posting_file.size(), wr);
+        if (!write_checked(posting_file.data(), 1, posting_file.size(),
+                           wr, kpx_tmp, logger)) {
+            std::fclose(wr);
+            return abort_postings();
         }
-        std::fclose(wr);
+        if (!close_checked(wr, kpx_tmp, logger)) return abort_postings();
     }
 
     logger.info("Postings built: %s (.kix.tmp%s, .ksx.tmp)", output_prefix.c_str(),

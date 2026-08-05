@@ -85,11 +85,15 @@ public:
     // Release raw sequence buffer obtained from get_raw_sequence().
     void ret_raw_sequence(const RawSequence& raw) const;
 
-    // Get all accessions for the given OID, joined by '\x01' (BLAST's
-    // multi-defline separator).  The joined form is preserved in `.ksx`
-    // and emitted as-is in the `sseqid` output field; consumers split on
-    // '\x01' (see io/accession_utils.hpp's `split_accessions`).
-    std::string get_accession(uint32_t oid) const;
+    // Collect every accession registered for the given OID into `out`,
+    // joined by '\x01' (BLAST's multi-defline separator).  The joined form
+    // is preserved in `.ksx` and emitted as-is in the `sseqid` output
+    // field; consumers split on '\x01' (see io/accession_utils.hpp's
+    // `split_accessions`).
+    // Returns false when the lookup itself failed, so a caller can tell a
+    // genuinely unlabelled OID (true with an empty `out`) from a volume it
+    // could not read.  `out` is cleared on failure.
+    bool get_accession(uint32_t oid, std::string& out) const;
 
     // Get DB title.
     std::string get_title() const;
