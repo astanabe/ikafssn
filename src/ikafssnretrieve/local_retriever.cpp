@@ -131,10 +131,10 @@ struct StagedRecord {
 };
 
 const char* const kAccessionLookupRequirement =
-    "The BLAST DB must be searchable by accession: a BLAST v5 database "
-    "(LMDB), or a v4 database built with `makeblastdb -parse_seqids`.  A "
-    "database other than the one the index was built from will also fail to "
-    "resolve.";
+    "The BLAST DB must be built with `makeblastdb -parse_seqids`, which is "
+    "what indexes the accessions for reverse lookup (v5: `.nos` beside the "
+    "LMDB; v4: the `.nsi` / `.nsd` string ISAM).  A database other than the "
+    "one the index was built from will also fail to resolve.";
 
 } // namespace
 

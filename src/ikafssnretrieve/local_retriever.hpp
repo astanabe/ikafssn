@@ -30,11 +30,10 @@ struct RetrieveOptions {
 // Returns the number of successfully retrieved sequences.
 //
 // Each hit's `volume` selects the BLAST DB volume to read and its `sseqid`
-// is resolved to an OID within that volume, so the database must be
-// searchable by accession (a BLAST v5 LMDB, or a v4 string ISAM built with
-// `makeblastdb -parse_seqids`).  Volumes are opened one at a time and the
-// records staged under `opts.scratch_dir`, which is what keeps the output
-// independent of the order the volumes are walked in.
+// is resolved to an OID within that volume, so the database must carry the
+// accession index `makeblastdb -parse_seqids` builds.  Volumes are opened
+// one at a time and the records staged under `opts.scratch_dir`, which is
+// what keeps the output independent of the order the volumes are walked in.
 uint32_t retrieve_local(const std::vector<OutputHit>& hits,
                         const std::string& db_path,
                         const RetrieveOptions& opts,

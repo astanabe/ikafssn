@@ -93,10 +93,10 @@ public:
     bool get_accession(uint32_t oid, std::string& out) const;
 
     // Reverse of get_accession(): collect the OIDs of this volume carrying
-    // `accession`.  Needs a database searchable by accession — a BLAST v5
-    // LMDB, or a v4 string ISAM built with `makeblastdb -parse_seqids`.
-    // Returns false when the lookup failed; an absent accession yields true
-    // with an empty `oids`.
+    // `accession`.  Needs the accession index `makeblastdb -parse_seqids`
+    // builds (v5: `.nos` beside the LMDB; v4: the `.nsi` / `.nsd` string
+    // ISAM).  Returns false when the lookup failed; an absent accession
+    // yields true with an empty `oids`.
     bool accession_to_oids(const std::string& accession,
                            std::vector<uint32_t>& oids) const;
 

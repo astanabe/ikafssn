@@ -475,7 +475,7 @@ with `start` / `end` 1-based and inclusive in **parent-relative coordinates** (t
 **Requirements of the local (`-db`) path:**
 
 - The results file must carry a `volume` column: it tells `ikafssnretrieve` which BLAST DB volume holds each hit, so only the volumes that carry a hit are opened, one at a time. Every TSV and JSON layout ikafssn writes includes it. A results file without the column is rejected.
-- The BLAST DB must be searchable by accession — a BLAST v5 database (which carries an LMDB), or a v4 database built with `makeblastdb -parse_seqids`. It must also be the database the index was built from; a different one will not resolve the accessions.
+- The BLAST DB must have been built with `makeblastdb -parse_seqids`, which is what indexes the accessions for reverse lookup (v5 stores it as `.nos` beside the LMDB, v4 as the `.nsi` / `.nsd` string ISAM). This holds for the databases NCBI distributes. A database built without it carries `BL_ORD_ID:<n>` placeholders instead of accessions, so its search output has nothing to resolve either way. It must also be the database the index was built from; a different one will not resolve the accessions.
 - Records are staged in a scratch file so the output keeps the input hit order regardless of the order the volumes are walked in. It is created in the directory of `-o`, or in the current directory when writing to standard output, and needs room for the uncompressed output. `TMPDIR` is deliberately not used, since it is a memory-backed tmpfs on many systems. The file is unlinked as soon as it is created, so nothing is left behind even if the process is killed.
 - File descriptor use is a small constant, well under ten, no matter how many volumes the database has.
 
