@@ -67,6 +67,23 @@ sudo systemctl status ikafssnhttpd@nt
 journalctl -u ikafssnserver@nt -f
 ```
 
+## Resource Limits
+
+Both unit files set `LimitNOFILE=65536`. `ulimit` and `/etc/security/limits.d/` do not apply to systemd units, so this is the only place the limit can be raised for a service.
+
+`ikafssnserver` opens every volume of the BLAST DB named by `-db` (via `EXTRA_OPTS`) at startup and keeps them open, at two file descriptors per volume. 65536 covers roughly 32,000 volumes, which is ample for NCBI `nt`. If a database needs more, raise the value with a drop-in:
+
+```bash
+sudo systemctl edit ikafssnserver@nt
+```
+
+```ini
+[Service]
+LimitNOFILE=131072
+```
+
+A limit that is too low makes the server report the shortfall and exit at startup. See "OS settings for large databases" in `doc/ikafssn.en.md`.
+
 ## Multiple Databases
 
 Use different instance names for each database:

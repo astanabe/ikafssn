@@ -516,6 +516,57 @@ static void test_no_header_fallback() {
     CHECK_EQ(results[1].send, 35u);
 }
 
+// A missing volume column reads back as volume 0, so `has_volume_column` is
+// the only way ikafssnretrieve can tell the two apart.
+static void test_has_volume_column() {
+    std::fprintf(stderr, "-- test_has_volume_column\n");
+
+    const char* const kHeader =
+        "# qseqid\tsseqid\tsstrand\tqstart\tqend\tqlen\tsstart\tsend\tslen"
+        "\tcoverscore\tchainscore";
+
+    {
+        std::istringstream iss(
+            std::string(kHeader) + "\tvolume\n"
+            "q1\tA1\t+\t1\t10\t100\t21\t30\t200\t3\t5\t7\n");
+        bool has_volume = false;
+        auto results = read_results_tsv(iss, &has_volume);
+        CHECK_EQ(results.size(), 1u);
+        CHECK(has_volume);
+        CHECK_EQ(results[0].volume, 7u);
+    }
+
+    {
+        std::istringstream iss(
+            std::string(kHeader) + "\n"
+            "q1\tA1\t+\t1\t10\t100\t21\t30\t200\t3\t5\n");
+        bool has_volume = true;
+        auto results = read_results_tsv(iss, &has_volume);
+        CHECK_EQ(results.size(), 1u);
+        CHECK(!has_volume);
+        CHECK_EQ(results[0].volume, 0u);
+    }
+
+    // The field-count fallback recognises no layout without a volume field.
+    {
+        std::istringstream iss("q1\tA1\t+\t1\t10\t100\t21\t30\t200\t3\t5\t7\n");
+        bool has_volume = false;
+        auto results = read_results_tsv(iss, &has_volume);
+        CHECK_EQ(results.size(), 1u);
+        CHECK(has_volume);
+        CHECK_EQ(results[0].volume, 7u);
+    }
+
+    // Nothing parsed leaves it false.
+    {
+        std::istringstream iss("");
+        bool has_volume = true;
+        auto results = read_results_tsv(iss, &has_volume);
+        CHECK_EQ(results.size(), 0u);
+        CHECK(!has_volume);
+    }
+}
+
 static void test_output_coords_roundtrip() {
     std::fprintf(stderr, "-- test_output_coords_roundtrip\n");
 
@@ -739,6 +790,7 @@ int main() {
     test_writer_parallel_chunking();
     test_header_reordered_columns();
     test_no_header_fallback();
+    test_has_volume_column();
     test_output_coords_roundtrip();
     test_result_reader_blast_coords();
     test_windows_line_endings();

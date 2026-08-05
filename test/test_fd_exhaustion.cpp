@@ -78,12 +78,16 @@ static void test_index_under_fd_limit() {
 }
 
 // Write one hit per volume, taking the first OID of each, so retrieval has to
-// visit every volume of the database.
-static bool write_hits_tsv(const std::string& path) {
+// visit every volume of the database.  The rows go out in descending volume
+// order — the opposite of the order the volumes are walked in — so the output
+// can only match `expected` if the records were staged and put back in input
+// order.
+static bool write_hits_tsv(const std::string& path,
+                           std::vector<std::string>& expected) {
     auto vol_paths = BlastDbReader::find_volume_paths(g_db_prefix);
     std::vector<OutputHit> hits;
 
-    for (size_t vi = 0; vi < vol_paths.size(); vi++) {
+    for (size_t vi = vol_paths.size(); vi-- > 0; ) {
         BlastDbReader reader;
         if (!reader.open(vol_paths[vi])) return false;
         if (reader.num_sequences() == 0) continue;
@@ -105,6 +109,7 @@ static bool write_hits_tsv(const std::string& path) {
         h.slen = slen;
         h.chainscore = 1;
         h.volume = static_cast<uint16_t>(vi);
+        expected.push_back(acc);
         hits.push_back(std::move(h));
     }
 
@@ -116,12 +121,43 @@ static bool write_hits_tsv(const std::string& path) {
     return static_cast<bool>(ofs);
 }
 
+// Copy `src` to `dst` with the last tab-separated field of every line removed.
+// `volume` is the last column of every TSV layout ikafssn writes.
+static bool strip_last_column(const std::string& src, const std::string& dst) {
+    std::ifstream in(src);
+    std::ofstream out(dst);
+    if (!in || !out) return false;
+    std::string line;
+    while (std::getline(in, line)) {
+        auto tab = line.rfind('\t');
+        if (tab == std::string::npos) return false;
+        out << line.substr(0, tab) << '\n';
+    }
+    return static_cast<bool>(out);
+}
+
+// Leading token of each FASTA defline, with the `:start-end` suffix removed.
+static std::vector<std::string> defline_accessions(const std::string& fasta) {
+    std::vector<std::string> out;
+    std::ifstream ifs(fasta);
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (line.empty() || line[0] != '>') continue;
+        std::string tok = line.substr(1, line.find(' ') - 1);
+        auto colon = tok.rfind(':');
+        if (colon != std::string::npos) tok.resize(colon);
+        out.push_back(std::move(tok));
+    }
+    return out;
+}
+
 static void test_retrieve_under_fd_limit() {
     std::fprintf(stderr, "-- test_retrieve_under_fd_limit\n");
 
     const std::string tsv = g_test_dir + "/hits.tsv";
     const std::string fasta = g_test_dir + "/hits.fasta";
-    if (!write_hits_tsv(tsv)) {
+    std::vector<std::string> expected;
+    if (!write_hits_tsv(tsv, expected)) {
         std::fprintf(stderr, "  cannot build the hit list\n");
         CHECK(false);
         return;
@@ -131,20 +167,38 @@ static void test_retrieve_under_fd_limit() {
                          "-tsv", tsv, "-o", fasta, "-context_extend", "0"});
     CHECK_EQ(rc, 0);
 
-    // One record per volume, in the order the hits were listed.
-    size_t records = 0;
-    std::ifstream ifs(fasta);
-    std::string line;
-    while (std::getline(ifs, line)) {
-        if (!line.empty() && line[0] == '>') records++;
-    }
-    CHECK_EQ(records, g_num_volumes);
+    // One record per volume, in input order rather than volume order.
+    auto got = defline_accessions(fasta);
+    CHECK_EQ(got.size(), g_num_volumes);
+    CHECK(got == expected);
 
     // The scratch file is unlinked as soon as it is created, so the output
-    // directory holds nothing but the FASTA.
+    // directory holds nothing but the inputs and the FASTA.
     for (const auto& e : std::filesystem::directory_iterator(g_test_dir)) {
         CHECK(e.path().filename().string().rfind("ikafssnretrieve.", 0) != 0);
     }
+}
+
+// Without a volume column there is no way to tell which BLAST DB volume a hit
+// belongs to, so -db retrieval refuses the file rather than sending every hit
+// to volume 0.
+static void test_retrieve_rejects_missing_volume_column() {
+    std::fprintf(stderr, "-- test_retrieve_rejects_missing_volume_column\n");
+
+    const std::string tsv = g_test_dir + "/hits.tsv";
+    const std::string stripped = g_test_dir + "/hits_novolume.tsv";
+    const std::string fasta = g_test_dir + "/novolume.fasta";
+    if (!strip_last_column(tsv, stripped)) {
+        std::fprintf(stderr, "  cannot strip the volume column\n");
+        CHECK(false);
+        return;
+    }
+
+    int rc = run_capped({IKAFSSN_RETRIEVE_BIN, "-db", g_db_prefix,
+                         "-tsv", stripped, "-o", fasta});
+    CHECK_EQ(rc, 1);
+    CHECK(!std::filesystem::exists(fasta) ||
+          std::filesystem::file_size(fasta) == 0);
 }
 
 int main() {
@@ -164,6 +218,7 @@ int main() {
 
     test_index_under_fd_limit();
     test_retrieve_under_fd_limit();
+    test_retrieve_rejects_missing_volume_column();
 
     std::filesystem::remove_all(g_test_dir);
 
