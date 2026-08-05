@@ -817,13 +817,8 @@ int main(int argc, char* argv[]) {
             std::printf("DB title:          %s\n", title.c_str());
             std::printf("DB sequences:      %u\n", db_nseqs);
 
-            // Compute total bases
-            uint64_t total_bases = 0;
-            for (uint32_t oid = 0; oid < db_nseqs; oid++) {
-                total_bases += db.seq_length(oid);
-            }
             std::printf("DB total bases:    %lu\n",
-                        static_cast<unsigned long>(total_bases));
+                        static_cast<unsigned long>(db.total_length()));
 
             if (verbose && !vol_paths.empty()) {
                 std::printf("\n  DB volume paths:\n");

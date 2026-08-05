@@ -38,7 +38,11 @@ public:
     uint64_t total_length() const;
 
     // Memory-map access pattern hint passed through to the kernel
-    // (CSeqDB::SetMMapStrategy under the hood).
+    // (CSeqDB::SetMMapStrategy under the hood).  It is NOT scoped to this
+    // reader's volume: CSeqDBAtlas is a process-wide singleton and applies
+    // the hint to every file it currently has mapped, so one call covers
+    // all open volumes and calling it per volume only repeats the work
+    // under the atlas lock.
     //   kNormal     — OS default; readahead enabled.
     //   kRandom     — disable readahead (sparse OID lookups).
     //   kSequential — aggressive readahead (whole-volume scans).

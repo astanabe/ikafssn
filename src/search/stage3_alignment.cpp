@@ -385,10 +385,9 @@ std::vector<OutputHit> run_stage3(
         for (size_t ri = 0; ri < readers.size(); ri++) {
             for (size_t h : hits_by_reader[ri]) ordered_hits.push_back(h);
         }
-        for (size_t ri = 0; ri < readers.size(); ri++) {
-            if (hits_by_reader[ri].empty()) continue;
-            readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
-        }
+        // One call covers every volume the atlas has mapped, so it is made
+        // once rather than per reader.
+        readers.front().set_mmap_strategy(BlastDbReader::MMapStrategy::kNormal);
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, ordered_hits.size(), 16),
             [&](const tbb::blocked_range<size_t>& r) {
@@ -414,10 +413,7 @@ std::vector<OutputHit> run_stage3(
         // Subseqs are now in `subject_subseqs` (heap-owned strings); the
         // alignment step does not touch the mmap further this batch, so
         // release the cached pages before the next batch's fetch.
-        for (size_t ri = 0; ri < readers.size(); ri++) {
-            if (hits_by_reader[ri].empty()) continue;
-            readers[ri].set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
-        }
+        readers.front().set_mmap_strategy(BlastDbReader::MMapStrategy::kDontNeed);
 
         // Collect valid hit indices for parallel alignment.
         std::vector<size_t> valid_indices;
