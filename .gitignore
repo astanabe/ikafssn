@@ -61,3 +61,7 @@ db/ix/
 ikafssntest/
 Testing/
 .antigravitycli/
+
+# Local hardware repro tool (working note, not part of the repo)
+memscatter.c
+memscatter
