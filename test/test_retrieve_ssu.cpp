@@ -98,7 +98,10 @@ static std::string normalize_seq(const std::string& seq) {
     return result;
 }
 
-// Build OutputHit entries for the target accessions (full sequence, forward strand).
+// Build OutputHit entries for the target accessions (full sequence, forward
+// strand).  qstart / qend and sstart / send are 0-based half-open, so the
+// whole sequence is [0, seq_length) and both retrievers hand back exactly
+// seq_length bases.
 static std::vector<OutputHit> make_hits() {
     std::vector<OutputHit> hits;
     for (int i = 0; i < NUM_TARGETS; i++) {
@@ -108,9 +111,11 @@ static std::vector<OutputHit> make_hits() {
         h.sseqid = TARGET_ACC[i];
         h.sstrand = '+';
         h.qstart = 0;
-        h.qend = g_acc_info[i].seq_length - 1;
+        h.qend = g_acc_info[i].seq_length;
+        h.qlen = g_acc_info[i].seq_length;
         h.sstart = 0;
-        h.send = g_acc_info[i].seq_length - 1;
+        h.send = g_acc_info[i].seq_length;
+        h.slen = g_acc_info[i].seq_length;
         h.chainscore = 100;
         h.volume = 0;
         hits.push_back(h);
@@ -219,7 +224,10 @@ static void test_local_retrieval() {
 // Saved for comparison in test 3
 static std::string g_remote_fasta;
 
-static void test_remote_retrieval() {
+// Returns false when efetch produced nothing at all, which is what an
+// unreachable NCBI looks like; the caller then skips this test and the
+// comparison that consumes its output.
+static bool test_remote_retrieval() {
     std::fprintf(stderr, "-- test_remote_retrieval\n");
 
     auto hits = make_hits();
@@ -240,6 +248,11 @@ static void test_remote_retrieval() {
     uint32_t retrieved = retrieve_remote(hits, opts, out);
     g_remote_fasta = out.str();
 
+    if (retrieved == 0) {
+        std::fprintf(stderr,
+            "SKIPPED: efetch returned nothing (no network access?)\n");
+        return false;
+    }
     CHECK_EQ(retrieved, static_cast<uint32_t>(NUM_TARGETS));
 
     auto seqs = parse_fasta_output(g_remote_fasta);
@@ -253,6 +266,7 @@ static void test_remote_retrieval() {
                          TARGET_ACC[i], it->second.size());
         }
     }
+    return true;
 }
 
 // ---- Test 3: Local vs remote comparison ----
@@ -329,8 +343,12 @@ int main() {
     test_local_retrieval();
 
 #ifdef IKAFSSN_ENABLE_REMOTE
-    test_remote_retrieval();
-    test_local_vs_remote();
+    if (test_remote_retrieval()) {
+        test_local_vs_remote();
+    } else {
+        std::fprintf(stderr,
+            "SKIPPED: local vs remote comparison (no remote output)\n");
+    }
 #else
     std::fprintf(stderr,
         "SKIPPED: remote and comparison tests (built without ENABLE_REMOTE_RETRIEVE)\n");

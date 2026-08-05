@@ -485,6 +485,9 @@ target_include_directories(test_retrieve_ssu PRIVATE
     "${NCBI_TOOLKIT_INCLUDE}"
     "${CMAKE_SOURCE_DIR}/src"
 )
+target_compile_definitions(test_retrieve_ssu PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
 if(ENABLE_REMOTE_RETRIEVE)
     target_link_libraries(test_retrieve_ssu PRIVATE CURL::libcurl)
     target_compile_definitions(test_retrieve_ssu PRIVATE IKAFSSN_ENABLE_REMOTE)
