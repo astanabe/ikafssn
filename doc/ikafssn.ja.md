@@ -341,6 +341,8 @@ both ペアの場合、coding と optimal は `template_type` 以外の全識別
 
 後段ステージでのみ有効なオプションを、それより前の `-mode` とともに指定した場合は、黙って無視せずエラー (非ゼロ終了) になります。Stage 2 オプション (`-stage2_min_score`、`-stage2_max_gap`、`-stage2_max_lookback`、`-stage2_min_nhit_diag`、`-stage2_max_nhit_per_subject`、`-stage2_max_nhit_per_subject_mode`、`-stage2_max_nhit_in_total`) は `-mode 2` 以上を、Stage 3 オプション (`-stage3_traceback`、`-stage3_gapopen`、`-stage3_gapext`、`-stage3_min_ppositive`、`-stage3_min_npositive`、`-stage3_score_matrix`、`-stage3_max_nhit_per_subject`、`-stage3_max_nhit_per_subject_mode`、`-stage3_max_nhit_in_total`、`-context_extend`、`-db`) は `-mode 3` を必要とします。同じ規則は `ikafssnclient` (CLI) と `ikafssnhttpd` (JSON リクエストボディ) でも適用されます。
 
+**モード 3 のファイルディスクリプタ.** Stage 3 はヒットを並列取得するため BLAST DB の全ボリュームを同時に開き、開いたボリューム 1 本につき 2 個のファイルディスクリプタを NCBI Toolkit がマッピングの寿命いっぱい保持します。`ikafssnsearch` は Stage 3 の実行前に自身の `RLIMIT_NOFILE` ソフトリミットを `2 × ボリューム数 + 64` まで引き上げ、ハードリミットが不足している場合は対処方法を表示して終了します。モード 1 / 2 は BLAST DB を一切開きません。[巨大データベース利用時の OS 設定](#巨大データベース利用時の-os-設定) を参照してください。
+
 `ikafssnindex` も矛盾するオプションの組み合わせをエラーにします: `-template_type` は `-t > 0` が必要、`-freq_threshold_part` は `-mode 2` または `3` が必要、`-nthread_highfreq_filter` は `-max_freq_build` の有効化が必要です。`ikafssnretrieve` はローカル `-db` 実行時に efetch 専用オプション (`-api_key`、`-batch_size`、`-max_nretry`、`-timeout`、`-range_threshold`) を拒否します。`ikafssnclient` と `ikafssninfo` では、HTTP 認証オプション (`-user`、`-http_user`、`-http_password`、`-netrc_file`) は `-http` が必要で、3 つの方式は相互排他であり、`-http_password` は `-http_user` を必要とします。
 
 **所要時間の出力.** ステージごとの件数に加えて、実行のたびに 2 行の所要時間が標準エラー出力に書かれます。いずれも `info` レベルなので `-v` なしで出力されます。
@@ -454,8 +456,15 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
 検索結果に基づきマッチした部分配列を抽出します。配列ソースとしてローカル BLAST DB または NCBI E-utilities (efetch) を選択できます。
 
 **FASTA defline:** 各レコードは
-`>parent_accession:start-end query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`
-形式で出力されます。`start` / `end` は 1-based 包括の **親相対座標** で、左端のアクセッションは常に親 OID のもの（フラグメント由来の合成名は使われません）。検索出力の `sstart` / `send` とは異なり、この範囲は常に昇順です。`-` 鎖の行でも範囲は正鎖番号で同じ区間を指し、出力される配列がその逆相補になります。ローカルパスでは `BlastDbReader::get_subsequence(parent_oid, start, end)` 経由でサブシーケンスを取得するため、染色体級の親でも要求された区間だけがデコードされ、OID 全体を読み込むことはありません。
+`>parent_accession:start-end sseqid=<sseqid> query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`
+形式で出力されます。`start` / `end` は 1-based 包括の **親相対座標** で、左端のアクセッションは常に親 OID のもの（フラグメント由来の合成名は使われません）。ID 部には先頭アクセッションのみを置いて 1 個の正しいトークンに保ち、`\x01` 連結のマルチ defline 形式を含む値そのものは `sseqid=` フィールドが保持します。このフィールドは常に出力されます。検索出力の `sstart` / `send` とは異なり、この範囲は常に昇順です。`-` 鎖の行でも範囲は正鎖番号で同じ区間を指し、出力される配列がその逆相補になります。ローカルパスでは `BlastDbReader::get_subsequence(parent_oid, start, end)` 経由でサブシーケンスを取得するため、染色体級の親でも要求された区間だけがデコードされ、OID 全体を読み込むことはありません。
+
+**ローカル (`-db`) パスの要件:**
+
+- 検索結果ファイルに `volume` 列が必要です。各ヒットがどの BLAST DB ボリュームにあるかをこの列で判別し、ヒットのあるボリュームだけを 1 本ずつ開きます。ikafssn が出力する TSV / JSON はいずれもこの列を持ちます。列が無い結果ファイルはエラーになります。
+- BLAST DB がアクセッションで逆引きできる必要があります。BLAST v5 データベース（LMDB を持つ）、または `makeblastdb -parse_seqids` で構築した v4 データベースが該当します。またインデックス構築に使ったものと同じデータベースである必要があり、別のデータベースではアクセッションを解決できません。
+- ボリュームを走査する順序に関わらず出力を入力ヒット順に保つため、レコードは一時ファイルに退避されます。作成先は `-o` のあるディレクトリ、標準出力時はカレントディレクトリで、非圧縮の出力サイズ相当の空き容量が必要です。`TMPDIR` は多くの環境で RAM 上の tmpfs であるため使用しません。一時ファイルは作成直後に unlink するので、プロセスが強制終了しても残りません。
+- 同時に使うファイルディスクリプタ数は、データベースのボリューム数によらず 5 本程度の定数です。
 
 ```
 ikafssnretrieve [options]
@@ -518,6 +527,8 @@ ikafssnretrieve -db nt -tsv results.tsv -context_extend 0.1
 ### ikafssnserver
 
 検索デーモンです。インデックスを mmap でメモリに常駐させ、UNIX ドメインソケットまたは TCP ソケットで検索リクエストを受け付けます。
+
+`-db` を指定した場合、その BLAST DB の全ボリュームを起動時に開き、サーバの生存期間中は開いたまま保持します。モード 3 のリクエストは 1 本で複数ボリュームに触れ、かつ並行実行されるため、リクエストごとに開き直すとファイルディスクリプタは返らないまま初期化コストだけを毎回支払うことになるためです。開いたボリューム 1 本につき 2 個のファイルディスクリプタを消費するので、必要数の目安は `2 × (BLAST DB の総ボリューム数) + 256` です。サーバはデータベースをロードする前に自身の `RLIMIT_NOFILE` ソフトリミットをこの値まで引き上げます。ハードリミットが不足している場合は、リクエスト処理中に失敗するのではなく、起動時に対処方法を表示して終了します。[巨大データベース利用時の OS 設定](#巨大データベース利用時の-os-設定) を参照してください。
 
 ```
 ikafssnserver [options]
@@ -1375,6 +1386,51 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 ### systemd との統合
 
 サンプルの systemd ユニットファイルが `doc/systemd/` に提供されています。詳細は各ファイルを参照してください。
+
+## 巨大データベース利用時の OS 設定
+
+多数のボリュームに分割された BLAST DB では、既定のファイルディスクリプタ上限を超える数が必要になることがあります。ボリュームを 1 本開くごとに**ファイルディスクリプタを 2 個** (`.nin` + `.nsq`) 消費し、NCBI Toolkit はメモリマッピングが生存する限りそれらを保持し続けます。たとえば NCBI `nt` は数百ボリュームあります。
+
+コマンドごとの必要数:
+
+| コマンド | 同時に開くボリューム数 | 必要なディスクリプタ数 |
+|---|---|---|
+| `ikafssnindex` | 1 本 | 小さな定数 (10 未満) |
+| `ikafssnretrieve` | 1 本 | 小さな定数 (10 未満) |
+| `ikafssnsearch -mode 1` / `-mode 2` | 0 本 | 小さな定数 |
+| `ikafssnsearch -mode 3` | 全ボリューム | `2 × ボリューム数 + 64` |
+| `ikafssnserver` (`-db` 指定時) | 全ボリューム | `2 × (全 DB のボリューム数合計) + 256` |
+| `ikafssnhttpd` | 0 本 (BLAST DB を開かない) | 小さな定数 |
+
+`ikafssnsearch -mode 3` と `ikafssnserver` は、ファイルを開く前に自身の `RLIMIT_NOFILE` ソフトリミットを上表の値まで引き上げます。**ハード**リミットが足りていれば特権なしで成功し、足りない場合は不足内容を表示して終了します。ハードリミットの引き上げは OS 側の設定です。
+
+**対話シェル** — そのシェルから起動したコマンドに適用されます:
+
+```bash
+ulimit -n 4096          # ソフトリミット
+ulimit -Hn 4096         # ハードリミット (シェル内での引き下げは元に戻せません)
+```
+
+**マシン全体のログイン** — `/etc/security/limits.d/99-ikafssn.conf` (ログイン時に PAM が読み込みます):
+
+```
+*  soft  nofile  4096
+*  hard  nofile  65536
+```
+
+**systemd サービス** — ユニットには `ulimit` も `limits.d` も適用されません。ユニットの `[Service]` セクション (または `/etc/systemd/system/<unit>.d/` 以下のドロップイン) で指定します:
+
+```ini
+[Service]
+LimitNOFILE=65536
+```
+
+**カーネル側の上限** — `fs.nr_open` が 1 プロセスに与えられる上限を、`fs.file-max` がシステム全体の上限を決めます。必要なプロセス単位の上限がこれらを超える場合は `/etc/sysctl.d/99-ikafssn.conf` で引き上げます:
+
+```
+fs.nr_open = 1048576
+fs.file-max = 2097152
+```
 
 ## インデックスファイル形式
 

@@ -354,6 +354,8 @@ When `-accept_qdegen` is 0, queries containing IUPAC degenerate bases (R, Y, S, 
 
 Options that only take effect in a later stage are rejected with an error (non-zero exit) when an earlier `-mode` is selected, rather than being silently ignored. Stage 2 options (`-stage2_min_score`, `-stage2_max_gap`, `-stage2_max_lookback`, `-stage2_min_nhit_diag`, `-stage2_max_nhit_per_subject`, `-stage2_max_nhit_per_subject_mode`, `-stage2_max_nhit_in_total`) require `-mode 2` or higher; Stage 3 options (`-stage3_traceback`, `-stage3_gapopen`, `-stage3_gapext`, `-stage3_min_ppositive`, `-stage3_min_npositive`, `-stage3_score_matrix`, `-stage3_max_nhit_per_subject`, `-stage3_max_nhit_per_subject_mode`, `-stage3_max_nhit_in_total`, `-context_extend`, `-db`) require `-mode 3`. The same rule is enforced by `ikafssnclient` (CLI) and `ikafssnhttpd` (JSON request body).
 
+**File descriptors in mode 3.** Stage 3 opens every volume of the BLAST DB at once so hits can be fetched in parallel, and each open volume costs two file descriptors that the NCBI toolkit holds for the lifetime of the mapping. `ikafssnsearch` raises its own `RLIMIT_NOFILE` soft limit to `2 × volumes + 64` before Stage 3 runs, and exits with instructions when the hard limit is too low. Modes 1 and 2 do not open the BLAST DB at all. See [OS settings for large databases](#os-settings-for-large-databases).
+
 `ikafssnindex` likewise rejects contradictory option combinations: `-template_type` requires `-t > 0`, `-freq_threshold_part` requires `-mode 2` or `3`, and `-nthread_highfreq_filter` requires an active `-max_freq_build`. `ikafssnretrieve` rejects the efetch-only options (`-api_key`, `-batch_size`, `-max_nretry`, `-timeout`, `-range_threshold`) when run with local `-db`. For `ikafssnclient` and `ikafssninfo`, the HTTP authentication options (`-user`, `-http_user`, `-http_password`, `-netrc_file`) require `-http`, are mutually exclusive across the three methods, and `-http_password` requires `-http_user`.
 
 **Timing output.** Alongside the per-stage counts, every run prints two timing lines to stderr. Both are at `info` level, so they appear without `-v`:
@@ -467,8 +469,15 @@ ikafssnsearch -ix ./index/mydb -primer primers.fasta -insert_length 500 \
 Extract matched subsequences based on search results. Supports local BLAST DB extraction and remote retrieval via NCBI E-utilities (efetch).
 
 **FASTA defline:** Each retrieved record is emitted as
-`>parent_accession:start-end query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`,
-with `start` / `end` 1-based and inclusive in **parent-relative coordinates** (the parent OID accession on the left, never a fragment-derived synthetic name). Unlike the search output's `sstart` / `send`, this range always ascends: on a `-` strand row the range still names the same span in forward numbering and the emitted sequence is its reverse complement. On the local path the sequence fetch is routed through `BlastDbReader::get_subsequence(parent_oid, start, end)` so chromosome-scale parents only decode the requested window instead of the whole OID.
+`>parent_accession:start-end sseqid=<sseqid> query=<qseqid> strand=<+|-> score=<chainscore|alnscore>`,
+with `start` / `end` 1-based and inclusive in **parent-relative coordinates** (the parent OID accession on the left, never a fragment-derived synthetic name). The record ID carries only the first accession so it stays a single well-formed token; the `sseqid=` field carries the value verbatim, including the `\x01`-joined multi-defline form, and is always present. Unlike the search output's `sstart` / `send`, this range always ascends: on a `-` strand row the range still names the same span in forward numbering and the emitted sequence is its reverse complement. On the local path the sequence fetch is routed through `BlastDbReader::get_subsequence(parent_oid, start, end)` so chromosome-scale parents only decode the requested window instead of the whole OID.
+
+**Requirements of the local (`-db`) path:**
+
+- The results file must carry a `volume` column: it tells `ikafssnretrieve` which BLAST DB volume holds each hit, so only the volumes that carry a hit are opened, one at a time. Every TSV and JSON layout ikafssn writes includes it. A results file without the column is rejected.
+- The BLAST DB must be searchable by accession — a BLAST v5 database (which carries an LMDB), or a v4 database built with `makeblastdb -parse_seqids`. It must also be the database the index was built from; a different one will not resolve the accessions.
+- Records are staged in a scratch file so the output keeps the input hit order regardless of the order the volumes are walked in. It is created in the directory of `-o`, or in the current directory when writing to standard output, and needs room for the uncompressed output. `TMPDIR` is deliberately not used, since it is a memory-backed tmpfs on many systems. The file is unlinked as soon as it is created, so nothing is left behind even if the process is killed.
+- File descriptor use is a small constant — around five — no matter how many volumes the database has.
 
 ```
 ikafssnretrieve [options]
@@ -531,6 +540,8 @@ ikafssnretrieve -db nt -tsv results.tsv -context_extend 0.1
 ### ikafssnserver
 
 Search daemon. Keeps index files memory-mapped and accepts search requests via UNIX domain socket or TCP socket.
+
+When a `-db` is given, every volume of that BLAST DB is opened at startup and stays open for the server's lifetime: mode 3 requests touch several volumes each and run concurrently, so re-opening them per request would pay the setup cost every time without ever releasing a descriptor. Each open volume costs two file descriptors, so a server needs roughly `2 × (total BLAST DB volumes) + 256`. The server raises its own `RLIMIT_NOFILE` soft limit to cover that before it loads anything; if the hard limit is too low it reports what to change and exits at startup rather than failing mid-request. See [OS settings for large databases](#os-settings-for-large-databases).
 
 ```
 ikafssnserver [options]
@@ -1385,6 +1396,51 @@ ikafssnhttpd -server_socket /var/run/ikafssn_rs.sock -listen :8081 -path_prefix 
 ### systemd Integration
 
 Sample systemd unit files are provided in `doc/systemd/`. See the files for configuration details.
+
+## OS settings for large databases
+
+A BLAST DB that is split into many volumes can need more open file descriptors than the default limit allows. An open volume costs **two file descriptors** (`.nin` + `.nsq`), and the NCBI toolkit holds them for as long as the volume's memory mapping lives. NCBI `nt`, for example, is several hundred volumes.
+
+Which commands need how many:
+
+| Command | Volumes open at once | Descriptors needed |
+|---|---|---|
+| `ikafssnindex` | one | a small constant (under 10) |
+| `ikafssnretrieve` | one | a small constant (under 10) |
+| `ikafssnsearch -mode 1` / `-mode 2` | none | a small constant |
+| `ikafssnsearch -mode 3` | all | `2 × volumes + 64` |
+| `ikafssnserver` (with `-db`) | all | `2 × (volumes across all databases) + 256` |
+| `ikafssnhttpd` | none (opens no BLAST DB) | a small constant |
+
+`ikafssnsearch -mode 3` and `ikafssnserver` raise their own `RLIMIT_NOFILE` soft limit to the figure above before they open anything. That succeeds without any privilege as long as the **hard** limit is high enough; when it is not, they report the shortfall and exit. Raising the hard limit is an OS-level setting:
+
+**Interactive shell** — applies to commands started from that shell:
+
+```bash
+ulimit -n 4096          # soft limit
+ulimit -Hn 4096         # hard limit (lowering it is irreversible for the shell)
+```
+
+**All logins on the machine** — `/etc/security/limits.d/99-ikafssn.conf` (read by PAM at login):
+
+```
+*  soft  nofile  4096
+*  hard  nofile  65536
+```
+
+**systemd services** — `ulimit` and `limits.d` do not apply to units; set the limit in the unit's `[Service]` section (or via a drop-in under `/etc/systemd/system/<unit>.d/`):
+
+```ini
+[Service]
+LimitNOFILE=65536
+```
+
+**Kernel ceilings** — `fs.nr_open` caps what any single process may be given, and `fs.file-max` caps the whole system. Raise them in `/etc/sysctl.d/99-ikafssn.conf` if the per-process limit you need exceeds them:
+
+```
+fs.nr_open = 1048576
+fs.file-max = 2097152
+```
 
 ## Index File Formats
 
