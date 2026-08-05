@@ -183,23 +183,42 @@ bool Server::load_database(const std::string& ix_prefix, const std::string& db_p
         entry.default_template_type = (has_cod && has_opt) ? 3 : max_k_it->template_type;
     }
 
-    // Open every BLAST DB volume mode 3 may need and keep it open.
+    // Open every BLAST DB volume mode 3 may need and keep it open.  db_path
+    // defaults to the index prefix, so a prefix with no BLAST DB beside it is
+    // an index-only database: mode 3 is simply unavailable there.
     if (!db_path.empty()) {
         auto vol_paths = BlastDbReader::find_volume_paths(db_path);
         if (vol_paths.empty()) {
-            logger.error("No BLAST DB volumes found at '%s'", db_path.c_str());
-            return false;
-        }
-        entry.blast_readers.resize(vol_paths.size());
-        for (size_t vi = 0; vi < vol_paths.size(); vi++) {
-            if (!entry.blast_readers[vi].open(vol_paths[vi])) {
-                logger.error("Cannot open BLAST DB volume '%s'",
-                             vol_paths[vi].c_str());
+            logger.info("DB '%s': no BLAST DB volumes at '%s'; "
+                        "mode 3 unavailable", db_name.c_str(), db_path.c_str());
+            entry.db_path.clear();
+            if (entry.max_mode > 2) entry.max_mode = 2;
+        } else {
+            // Reserve the descriptors the volumes will hold before opening
+            // any of them.  Each open volume costs two (.nin + .nsq) for as
+            // long as it stays open; the margin covers the listening sockets,
+            // the accepted connections and the server's own I/O.  The count
+            // accumulates across databases because they are all held at once.
+            blast_volume_total_ += vol_paths.size();
+            std::string err;
+            if (!ensure_fd_limit(blast_volume_total_ * 2 + 256, err)) {
+                logger.error("Cannot reserve the file descriptors needed for "
+                             "the %zu BLAST DB volume(s) to be served.\n%s",
+                             blast_volume_total_, err.c_str());
                 return false;
             }
+
+            entry.blast_readers.resize(vol_paths.size());
+            for (size_t vi = 0; vi < vol_paths.size(); vi++) {
+                if (!entry.blast_readers[vi].open(vol_paths[vi])) {
+                    logger.error("Cannot open BLAST DB volume '%s'",
+                                 vol_paths[vi].c_str());
+                    return false;
+                }
+            }
+            logger.info("DB '%s': %zu BLAST DB volume(s) open for mode 3",
+                        db_name.c_str(), vol_paths.size());
         }
-        logger.info("DB '%s': %zu BLAST DB volume(s) open for mode 3",
-                    db_name.c_str(), vol_paths.size());
     }
 
     // resolved_search_config holds the per-DB defaults.  min_query_length /
@@ -351,30 +370,6 @@ void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger
 int Server::run(const ServerConfig& config_in) {
     ServerConfig config = config_in;
     Logger logger(config.log_level);
-
-    // Reserve the descriptors the BLAST DB volumes will occupy before any of
-    // them is opened, so a limit that is too low is reported here instead of
-    // surfacing as an unreadable volume partway through startup.  Each volume
-    // costs two descriptors (.nin + .nsq) for as long as it stays open; the
-    // margin covers the listening sockets, the accepted connections and the
-    // server's own I/O.
-    {
-        size_t blast_volumes = 0;
-        for (const auto& db_entry : config.db_entries) {
-            if (db_entry.db_path.empty()) continue;
-            blast_volumes +=
-                BlastDbReader::find_volume_paths(db_entry.db_path).size();
-        }
-        if (blast_volumes > 0) {
-            std::string err;
-            if (!ensure_fd_limit(blast_volumes * 2 + 256, err)) {
-                logger.error("Cannot reserve the file descriptors needed for "
-                             "the %zu BLAST DB volume(s) to be served.\n%s",
-                             blast_volumes, err.c_str());
-                return 1;
-            }
-        }
-    }
 
     // Load all databases
     for (const auto& db_entry : config.db_entries) {

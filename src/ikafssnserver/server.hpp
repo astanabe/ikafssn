@@ -200,6 +200,9 @@ private:
 
     std::vector<DatabaseEntry> databases_;
     std::unordered_map<std::string, size_t> db_index_;
+    // BLAST DB volumes held open across every loaded database; drives the
+    // descriptor reservation, which has to cover all of them at once.
+    size_t blast_volume_total_ = 0;
     std::atomic<bool> shutdown_requested_{false};
     std::vector<int> listen_fds_;
 
