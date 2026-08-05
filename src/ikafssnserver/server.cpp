@@ -5,8 +5,10 @@
 #include "core/version.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"
+#include "io/blastdb_reader.hpp"
 #include "io/volume_discovery.hpp"
 #include "util/common_init.hpp"
+#include "util/fd_limit.hpp"
 #include "util/socket_utils.hpp"
 
 #include <algorithm>
@@ -330,6 +332,30 @@ void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger
 int Server::run(const ServerConfig& config_in) {
     ServerConfig config = config_in;
     Logger logger(config.log_level);
+
+    // Reserve the descriptors the BLAST DB volumes will occupy before any of
+    // them is opened, so a limit that is too low is reported here instead of
+    // surfacing as an unreadable volume partway through startup.  Each volume
+    // costs two descriptors (.nin + .nsq) for as long as it stays open; the
+    // margin covers the listening sockets, the accepted connections and the
+    // server's own I/O.
+    {
+        size_t blast_volumes = 0;
+        for (const auto& db_entry : config.db_entries) {
+            if (db_entry.db_path.empty()) continue;
+            blast_volumes +=
+                BlastDbReader::find_volume_paths(db_entry.db_path).size();
+        }
+        if (blast_volumes > 0) {
+            std::string err;
+            if (!ensure_fd_limit(blast_volumes * 2 + 256, err)) {
+                logger.error("Cannot reserve the file descriptors needed for "
+                             "the %zu BLAST DB volume(s) to be served.\n%s",
+                             blast_volumes, err.c_str());
+                return 1;
+            }
+        }
+    }
 
     // Load all databases
     for (const auto& db_entry : config.db_entries) {

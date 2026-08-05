@@ -142,6 +142,7 @@ target_link_libraries(ikafssn_sam_writer PUBLIC
 # Utility library
 add_library(ikafssn_util STATIC
     util/cli_parser.cpp
+    util/fd_limit.cpp
     util/size_parser.cpp
     util/socket_utils.cpp
     util/common_init.cpp

@@ -41,6 +41,9 @@ endfunction()
 
 add_ikafssn_test(test_varint test_varint.cpp)
 
+# RLIMIT_NOFILE reservation used before opening every BLAST DB volume.
+add_ikafssn_test(test_fd_limit test_fd_limit.cpp)
+
 # Compressed I/O round-trip + concatenation + magic / extension detection.
 # ikafssn_io already PRIVATE-links zlib/bz2/lzma/zstd, so the test
 # binary inherits them via the static archive.

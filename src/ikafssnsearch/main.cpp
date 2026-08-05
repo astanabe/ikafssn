@@ -29,6 +29,7 @@
 #include "util/cli_parser.hpp"
 #include "util/cli_validators.hpp"
 #include "util/common_init.hpp"
+#include "util/fd_limit.hpp"
 #include "util/simd_dispatch.hpp"
 #include "util/context_parser.hpp"
 #include "util/logger.hpp"
@@ -472,6 +473,20 @@ int main(int argc, char* argv[]) {
         if (vol_paths.empty()) {
             std::fprintf(stderr, "Error: -mode 3 requires BLAST DB but none found at '%s'\n",
                          db_path.c_str());
+            return 1;
+        }
+        // Stage 3 keeps every volume open at once so hits can be fetched in
+        // parallel, and CSeqDB holds .nin + .nsq mapped (and their
+        // descriptors) for as long as the volume is open.  Reserve them now
+        // rather than failing partway through the search.  Modes 1 and 2 do
+        // not touch the BLAST DB, and MmapFile closes the descriptor right
+        // after mmap, so .kix / .ksx cost nothing here.
+        std::string err;
+        if (!ensure_fd_limit(vol_paths.size() * 2 + 64, err)) {
+            std::fprintf(stderr,
+                "Error: -mode 3 needs more file descriptors than this process "
+                "may open for the %zu BLAST DB volume(s) at '%s'.\n%s\n",
+                vol_paths.size(), db_path.c_str(), err.c_str());
             return 1;
         }
     }
