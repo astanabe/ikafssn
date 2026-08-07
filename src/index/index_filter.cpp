@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -139,6 +140,29 @@ std::size_t walk_kpx_posting(const std::uint8_t* p,
 
     *position_count = total_pos;
     return static_cast<std::size_t>(p - start);
+}
+
+// A short `fwrite` and a failing `fclose` (the final flush) are how a full
+// disk shows up; neither is visible unless the return value is inspected.
+bool write_checked(const void* data, std::size_t bytes, FILE* fp,
+                   const std::string& path, const Logger& logger) {
+    if (bytes == 0) return true;
+    if (std::fwrite(data, 1, bytes, fp) != bytes) {
+        logger.error("filter: failed to write %lu byte(s) to %s: %s",
+                     static_cast<unsigned long>(bytes),
+                     path.c_str(), std::strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+bool close_checked(FILE* fp, const std::string& path, const Logger& logger) {
+    if (std::fclose(fp) != 0) {
+        logger.error("filter: failed to close %s: %s",
+                     path.c_str(), std::strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 } // anonymous namespace
@@ -289,18 +313,16 @@ static bool write_filtered_kix(
         return false;
     }
 
-    // Build new offsets (tbl_size + 1 entries)
+    // Build new offsets (tbl_size + 1 entries).  The dictionary has to be
+    // written ahead of the posting file, so the surviving posting list
+    // sizes are summed here first and the bytes are copied straight from
+    // the mmapped input in the second pass below.
     std::vector<uint64_t> new_kix_offsets(tbl_size + 1, 0);
 
-    // Collect posting list bytes into buffer to determine final size
-    std::vector<uint8_t> posting_buf;
     uint64_t kix_data_pos = 0;
     for (uint32_t i = 0; i < tbl_size; i++) {
         new_kix_offsets[i] = kix_data_pos;
         if (kix_sizes[i] > 0 && !excluded[i]) {
-            posting_buf.insert(posting_buf.end(),
-                kix_posting_in + kix_in.posting_list_offset(i),
-                kix_posting_in + kix_in.posting_list_offset(i) + kix_sizes[i]);
             kix_data_pos += kix_sizes[i];
         }
     }
@@ -329,7 +351,10 @@ static bool write_filtered_kix(
     kix_hdr.tail_codec            = 0;
     kix_hdr.exception_codec_flags = 0;
 
-    std::fwrite(&kix_hdr, sizeof(kix_hdr), 1, kix_fp);
+    if (!write_checked(&kix_hdr, sizeof(kix_hdr), kix_fp, kix_final, logger)) {
+        std::fclose(kix_fp);
+        return false;
+    }
 
     if (!write_kix_dictionary_ef(kix_fp, new_kix_offsets.data(), tbl_size,
                                  kix_data_pos)) {
@@ -338,12 +363,31 @@ static bool write_filtered_kix(
         return false;
     }
 
-    if (!posting_buf.empty()) {
-        std::fwrite(posting_buf.data(), 1, posting_buf.size(), kix_fp);
+    // Copy the surviving posting lists from the mmapped input.  Runs of
+    // k-mers that are contiguous in the input go out in a single write;
+    // empty k-mers contribute nothing and so never break a run.
+    uint64_t run_begin = 0, run_len = 0;
+    for (uint32_t i = 0; i < tbl_size; i++) {
+        if (kix_sizes[i] == 0 || excluded[i]) continue;
+        const uint64_t off = kix_in.posting_list_offset(i);
+        if (run_len > 0 && off != run_begin + run_len) {
+            if (!write_checked(kix_posting_in + run_begin, run_len,
+                               kix_fp, kix_final, logger)) {
+                std::fclose(kix_fp);
+                return false;
+            }
+            run_len = 0;
+        }
+        if (run_len == 0) run_begin = off;
+        run_len += kix_sizes[i];
+    }
+    if (run_len > 0 && !write_checked(kix_posting_in + run_begin, run_len,
+                                      kix_fp, kix_final, logger)) {
+        std::fclose(kix_fp);
+        return false;
     }
 
-    std::fclose(kix_fp);
-    return true;
+    return close_checked(kix_fp, kix_final, logger);
 }
 
 // Write filtered .kpx from .kpx.tmp (excluded k-mers removed).
@@ -366,19 +410,18 @@ static bool write_filtered_kpx(
     }
 
     std::vector<uint64_t> new_kpx_offsets(tbl_size, 0);
-    std::vector<uint8_t> posting_buf;
     uint64_t kpx_data_pos = 0;
 
     // The offsets array is Elias-Fano encoded and must be monotonically
     // non-decreasing.  Empty / excluded k-mers therefore get the same
     // offset as the next non-empty non-excluded k-mer (forward-fill)
-    // rather than retaining the zero-init value.
+    // rather than retaining the zero-init value.  The dictionary has to be
+    // written ahead of the posting file, so this pass only sums the
+    // surviving posting list sizes; the bytes are copied straight from the
+    // mmapped input in the second pass below.
     for (uint32_t i = 0; i < tbl_size; i++) {
         new_kpx_offsets[i] = kpx_data_pos;
         if (kix_sizes[i] > 0 && !excluded[i]) {
-            posting_buf.insert(posting_buf.end(),
-                kpx_posting_in + kpx_in.pos_offset(i),
-                kpx_posting_in + kpx_in.pos_offset(i) + kpx_sizes[i]);
             kpx_data_pos += kpx_sizes[i];
         }
     }
@@ -400,7 +443,10 @@ static bool write_filtered_kpx(
     kpx_hdr.block_size    = 0;
     kpx_hdr.tail_codec    = 0;
 
-    std::fwrite(&kpx_hdr, sizeof(kpx_hdr), 1, kpx_fp);
+    if (!write_checked(&kpx_hdr, sizeof(kpx_hdr), kpx_fp, kpx_final, logger)) {
+        std::fclose(kpx_fp);
+        return false;
+    }
 
     if (!write_kpx_dictionary_ef(kpx_fp, new_kpx_offsets.data(), tbl_size,
                                  kpx_data_pos)) {
@@ -409,12 +455,31 @@ static bool write_filtered_kpx(
         return false;
     }
 
-    if (!posting_buf.empty()) {
-        std::fwrite(posting_buf.data(), 1, posting_buf.size(), kpx_fp);
+    // Copy the surviving posting lists from the mmapped input.  Runs of
+    // k-mers that are contiguous in the input go out in a single write;
+    // empty k-mers contribute nothing and so never break a run.
+    uint64_t run_begin = 0, run_len = 0;
+    for (uint32_t i = 0; i < tbl_size; i++) {
+        if (kix_sizes[i] == 0 || excluded[i]) continue;
+        const uint64_t off = kpx_in.pos_offset(i);
+        if (run_len > 0 && off != run_begin + run_len) {
+            if (!write_checked(kpx_posting_in + run_begin, run_len,
+                               kpx_fp, kpx_final, logger)) {
+                std::fclose(kpx_fp);
+                return false;
+            }
+            run_len = 0;
+        }
+        if (run_len == 0) run_begin = off;
+        run_len += kpx_sizes[i];
+    }
+    if (run_len > 0 && !write_checked(kpx_posting_in + run_begin, run_len,
+                                      kpx_fp, kpx_final, logger)) {
+        std::fclose(kpx_fp);
+        return false;
     }
 
-    std::fclose(kpx_fp);
-    return true;
+    return close_checked(kpx_fp, kpx_final, logger);
 }
 
 // Filter a single volume's .kix.tmp/.kpx.tmp -> .kix/.kpx (in parallel).
