@@ -76,6 +76,27 @@ void flip_byte(const std::string& path, std::streamoff off, char xor_mask) {
     fs.close();
 }
 
+// Number of posting file scratch files (.kix.pf.tmp / .kpx.pf.tmp)
+// currently in the index directory.
+int count_pf_tmp() {
+    int n = 0;
+    for (auto& e : std::filesystem::directory_iterator(g_index_dir)) {
+        const std::string name = e.path().filename().string();
+        if (name.size() >= 7 && name.compare(name.size() - 7, 7, ".pf.tmp") == 0) {
+            n++;
+        }
+    }
+    return n;
+}
+
+void write_garbage(const std::string& path) {
+    std::ofstream fs(path, std::ios::binary | std::ios::trunc);
+    CHECK(fs.is_open());
+    const std::string junk(4096, '\xA5');
+    fs.write(junk.data(), static_cast<std::streamsize>(junk.size()));
+    fs.close();
+}
+
 void setup() {
     check_ssu_available();
 
@@ -256,6 +277,39 @@ void test_post_build_validation_failure_api() {
     CHECK(!validate_volume_final_strict(fp, /*skip_kpx=*/true, silent));
 }
 
+// The posting file scratch never survives a completed build, and a stale
+// one left by an interrupted run is discarded rather than mistaken for
+// resumable postings.
+void test_posting_file_scratch_removed() {
+    std::fprintf(stderr, "-- test_posting_file_scratch_removed\n");
+    reset_index_dir();
+
+    CHECK_EQ(run_ikafssnindex(""), 0);
+    CHECK_EQ(count_pf_tmp(), 0);
+
+    // Simulate a crash partway through the postings pass: .kix.pf.tmp
+    // holds bytes that belong to no index.
+    std::string fp = final_prefix();
+    std::string pf = fp + ".kix.pf.tmp";
+    write_garbage(pf);
+    std::filesystem::remove(fp + ".kix");
+
+    std::string out;
+    CHECK_EQ(run_ikafssnindex("", &out), 0);
+    CHECK(out.find("=== Writing postings") != std::string::npos);
+    CHECK_EQ(count_pf_tmp(), 0);
+
+    Logger silent(Logger::kError);
+    CHECK(validate_volume_final_strict(fp, /*skip_kpx=*/true, silent));
+
+    // -force_rebuild 1 sweeps the scratch even when the final files are
+    // intact, so it cannot leak into the rebuild.
+    write_garbage(pf);
+    CHECK_EQ(run_ikafssnindex("-force_rebuild 1"), 0);
+    CHECK_EQ(count_pf_tmp(), 0);
+    CHECK(validate_volume_final_strict(fp, /*skip_kpx=*/true, silent));
+}
+
 void cleanup() {
     std::error_code ec;
     std::filesystem::remove_all(g_index_dir, ec);
@@ -273,6 +327,7 @@ int main() {
     test_resume_fractional_freq_filter();
     test_resume_khx_only_invalid();
     test_post_build_validation_failure_api();
+    test_posting_file_scratch_removed();
     cleanup();
     TEST_SUMMARY();
     return g_fail_count == 0 ? 0 : 1;
