@@ -57,6 +57,10 @@ static void remove_volume_tmp(const std::string& prefix, bool skip_kpx,
     remove_if_exists(prefix + ".ksx.tmp", logger);
     remove_if_exists(prefix + ".kix.tmp", logger);
     if (!skip_kpx) remove_if_exists(prefix + ".kpx.tmp", logger);
+    // Posting file scratch left behind by a run that died before the
+    // postings pass assembled the .kix.tmp / .kpx.tmp files.
+    remove_if_exists(prefix + ".kix.pf.tmp", logger);
+    if (!skip_kpx) remove_if_exists(prefix + ".kpx.pf.tmp", logger);
 }
 
 static void remove_volume_final(const std::string& prefix, bool skip_kpx,
