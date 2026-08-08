@@ -1,4 +1,4 @@
-# Core library (header-only for now, but define as INTERFACE target)
+# Core library (header-only)
 add_library(ikafssn_core INTERFACE)
 target_include_directories(ikafssn_core INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}"

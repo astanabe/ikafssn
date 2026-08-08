@@ -215,10 +215,6 @@ if(ENABLE_REMOTE_RETRIEVE)
     find_package(CURL REQUIRED)
 endif()
 
-# libzstd is now an unconditional project-wide dependency (see the codec
-# block above).  ikafssnclient / ikafssnhttpd reuse the same PkgConfig::ZSTD
-# imported target for their async-job persistence layer.
-
 # --- x86-simd-sort ---
 # Header + per-arch dispatch library used by index_builder for the posting
 # buffer sort. Header-only on its own; the per-arch object files (avx2 / skx)

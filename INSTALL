@@ -61,7 +61,8 @@ https://deb.ikafssn.org. The channel always reflects the latest
 release; older versions are not retained in the channel.
 
 Suites:
-  noble   Ubuntu 24.04 LTS  (amd64, arm64)
+  noble     Ubuntu 24.04 LTS  (amd64, arm64)
+  resolute  Ubuntu 26.04 LTS  (amd64, arm64)
 
 One-time setup (run as root or via sudo):
 
@@ -261,7 +262,7 @@ NCBI C++ Toolkit:
   On macOS:
     export CFLAGS="-I$(brew --prefix)/include"
     export CXXFLAGS="-I$(brew --prefix)/include -std=c++20"
-    (apply the same patch as above, then run cmake-configure:)
+    (then run cmake-configure as above:)
     cd CMake-Clang*/build
     make -j$(sysctl -n hw.ncpu)
     make install

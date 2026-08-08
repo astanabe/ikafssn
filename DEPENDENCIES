@@ -9,8 +9,23 @@ Ubuntu 24.04 (x86_64 / aarch64):
   libtbb12
   liblmdb0
   libsqlite3-0
-  libcurl4
+  libcurl4t64
   libjsoncpp25
+  libssl3t64
+  libuuid1
+  zlib1g
+  libbz2-1.0
+  liblzma5
+  libzstd1
+  libdeflate0
+
+Ubuntu 26.04 (x86_64 / aarch64):
+
+  libtbb12
+  liblmdb0
+  libsqlite3-0
+  libcurl4t64
+  libjsoncpp26
   libssl3t64
   libuuid1
   zlib1g
@@ -78,7 +93,8 @@ Conda channel (https://conda.ikafssn.org; runtime deps from conda-forge):
 APT channel (https://deb.ikafssn.org; .deb hosted in-channel):
 
   Suites available:
-    noble   Ubuntu 24.04 LTS
+    noble     Ubuntu 24.04 LTS
+    resolute  Ubuntu 26.04 LTS
   Architectures: amd64, arm64
 
   Runtime dependencies match the corresponding Ubuntu .deb variant
@@ -163,9 +179,10 @@ Conda packaging (recipe/, conda-forge channel):
 
 Source-built libraries:
 
-  NCBI C++ Toolkit 30.7.0  — BLAST DB access (CSeqDB::SetMMapStrategy, upstream since 30.7.0)
+  NCBI C++ Toolkit 30.7.0  — BLAST DB access via CSeqDB (SetMMapStrategy drives
+                             the page-cache advice from BlastDbReader)
   Parasail 2.6.2           — Stage 3 pairwise alignment
-  htslib 1.24            — SAM/BAM output
+  htslib 1.24              — SAM/BAM output
   Drogon 1.9.13            — HTTP framework for ikafssnhttpd
                              (static, with trantor 1.5.28 placed at
                              drogon-1.9.13/trantor; ORM/brotli/yaml-cpp/

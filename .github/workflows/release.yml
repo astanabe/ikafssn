@@ -147,9 +147,6 @@ jobs:
           dnf install -y gh
 
       # EL 9's system GCC is 11; the NCBI C++ Toolkit requires GCC 13 or newer.
-      # libstdc++-devel carries the linker script for -lstdc++; without it a
-      # program that includes <iostream> compiles but fails to link, which the
-      # toolkit reports as "Neither <iostream> nor <iostream.h> can be found".
       - name: Install GCC 13 toolset (EL 9)
         if: matrix.el_ver == '9'
         run: |
@@ -232,10 +229,7 @@ jobs:
           fi
 
       # Source the toolset's own enable script rather than naming the binaries
-      # by path: it also exports the LD_LIBRARY_PATH the toolset's linker and
-      # runtime need, without which linking anything that pulls in libstdc++
-      # fails.  The trailing check fails the job here instead of leaving a
-      # misleading "header not found" further down the toolkit build.
+      # by path, so PATH and LD_LIBRARY_PATH point at the toolset consistently.
       - name: Use GCC 13 (EL 9)
         if: steps.check_asset.outputs.exists != 'true' && matrix.el_ver == '9'
         run: |
@@ -504,11 +498,9 @@ jobs:
         run: |
           # Install conda-build into the base env: setup-miniconda activates a
           # separate "test" env via `bash -el {0}`, but `conda` itself lives in
-          # base, so its plugin discovery only finds subcommands installed
-          # there. With conda 26.3.x the entry-point lookup tightened, and a
-          # conda-build that lives in `test` no longer registers `conda build`,
-          # producing `argument COMMAND: invalid choice: 'build'` (cf. the
-          # 2026.05.04 release run on conda 26.3.2).
+          # base and its plugin discovery only finds subcommands installed
+          # there.  In `test` it does not register `conda build`, and the run
+          # dies with `argument COMMAND: invalid choice: 'build'`.
           mamba install -n base -y conda-build
 
       - name: Build .conda package
