@@ -350,17 +350,23 @@ static void test_build_with_max_freq_build() {
 
     CHECK(kix2.total_distinct_postings() <= kix1.total_distinct_postings());
 
-    // Verify that high-frequency kmers in kix2 have been zeroed
+    // Excluded k-mers are dropped; every surviving k-mer keeps exactly the
+    // postings it had, which only holds if the posting list bytes were
+    // copied to their new offsets intact.
     auto counts1 = kix1.bulk_count_postings();
     auto counts2 = kix2.bulk_count_postings();
     for (uint32_t kmer = 0; kmer < kix2.table_size(); kmer++) {
         if (counts1[kmer] > 3) {
             CHECK_EQ(counts2[kmer], 0u);
+        } else {
+            CHECK_EQ(counts2[kmer], counts1[kmer]);
         }
     }
 
     kix1.close();
     kix2.close();
+
+    CHECK(validate_volume(prefix2 + ".kix", prefix2 + ".kpx", nullptr, logger));
 
     // Build with keep_tmp=true, then apply cross-volume filter with fractional threshold
     uint32_t nseqs = db.num_sequences();
@@ -389,10 +395,22 @@ static void test_build_with_max_freq_build() {
     for (uint32_t kmer = 0; kmer < kix3.table_size(); kmer++) {
         if (counts1b[kmer] > frac_threshold) {
             CHECK_EQ(counts3[kmer], 0u);
+        } else {
+            CHECK_EQ(counts3[kmer], counts1b[kmer]);
         }
     }
     kix1.close();
     kix3.close();
+
+    // Most k-mers survive this threshold, so walking the filtered volume
+    // exercises the posting list copy: a mis-sized or mis-ordered run shows
+    // up as a structural failure here.
+    {
+        uint64_t filtered_pos = 0;
+        CHECK(validate_volume(prefix3 + ".kix", prefix3 + ".kpx",
+                              &filtered_pos, logger));
+        CHECK(filtered_pos > 0);
+    }
 }
 
 static void test_build_with_memory_limits() {

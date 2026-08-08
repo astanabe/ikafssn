@@ -1487,7 +1487,7 @@ ID ポスティングと位置ポスティングは別ファイルに格納さ�
 
 **インデックスフォーマットバージョン:** 現在のインデックスフォーマットは全ファイル (`.kix`、`.kpx`、`.ksx`、`.khx`、`.kvx`) で **v11** です。レイアウト概要:
 
-- **`.kix` / `.kpx` マジック**は `KIX11` / `KPX11`。フラグメント・インデックス用パラメータ（`min_seq_length`、`min_length_split`、`overlap_length`、解決済みの `max_freq_build` / `max_degen_expand`）はヘッダから移動し、ファイル名で表現される設計に変更されました。検索側はボリューム検出時に一度だけ parse して `-min_query_length` / `-max_query_length` のチェックに利用します。
+- **`.kix` / `.kpx` マジック**は `KIX11` / `KPX11`。フラグメント・インデックス用パラメータ（`min_seq_length`、`min_length_split`、`overlap_length`、解決済みの `max_freq_build` / `max_degen_expand`）はヘッダではなくファイル名で表現されます。検索側はボリューム検出時に一度だけ parse し、`-min_query_length` と長いクエリの上限判定に利用します。
 - **`.ksx` 二段レイアウト:** まず各親 OID の `(parent_length, blast_oid, accession)` を親テーブルに記録し、続いてフラグメントテーブルが各内部 SeqId を `(parent_idx, fragment_start, fragment_end)` にマップします。`KsxReader::seq_length` / `accession` などの簡易アクセサは SeqId を受け取り、内部で対応する親に解決します。マジックは `KMSX`。
 - **`.kix` ボディ:** Elias-Fano 辞書。各 posting list は `[u32 distinct_count]` に続いて、distinct seq_id のデルタ列を FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` で符号化したボディが並びます。
 - **`.kpx` ボディ:** Elias-Fano 辞書。各 posting list は 2-bit kind map から直接始まり（posting list ごとのヘッダはありません）、partition / short_occ1 / short_occ_ge2 サブバケットが続きます。いずれも frame-of-reference ブロックでビットパックされています。デコードは候補集合ドリブンで、必要な位置を含むブロックだけを展開します。

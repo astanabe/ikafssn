@@ -1041,7 +1041,7 @@ Valid (k, t) combinations and their mask values:
 
 ### High-Frequency K-mer Filtering
 
-High-frequency k-mer filtering is performed exclusively at index build time via `-max_freq_build`. There is no search-time high-frequency filter — the search hot path no longer pays the cost of per-query k-mer count aggregation across volumes.
+High-frequency k-mer filtering is performed exclusively at index build time via `-max_freq_build`. There is no search-time high-frequency filter, so the search hot path never aggregates per-query k-mer counts across volumes.
 
 **Build-time exclusion** (`-max_freq_build`): When indexing with `-max_freq_build`, high-frequency k-mers are excluded from the index entirely. K-mer counts are aggregated across all volumes before applying the threshold, so a k-mer that is locally below the threshold in each volume but exceeds it globally will be correctly excluded. A single shared `.khx` file (per k value, not per volume) records which k-mers were excluded. When a fractional value (0 < x < 1) is specified, the threshold is resolved using the total NSEQ across all volumes. At search time, when fractional `-stage1_min_score` is used, k-mers excluded at build time are recognized from the `.khx` file and subtracted from the threshold calculation (`Nhighfreq` term in the formula below).
 
@@ -1507,7 +1507,7 @@ filtering never touches `.kpx`, maximizing page cache efficiency.
 
 **Index format version:** The current index format is **v11** for every index file (`.kix`, `.kpx`, `.ksx`, `.khx`, `.kvx`). Layout summary:
 
-- **`.kix` / `.kpx` magic** is `KIX11` / `KPX11`; the fragment-indexing parameters that used to live in the headers (`min_seq_length`, `min_length_split`, `overlap_length`, plus the resolved `max_freq_build` / `max_degen_expand`) are now encoded in the file name and parsed once at volume discovery time.
+- **`.kix` / `.kpx` magic** is `KIX11` / `KPX11`; the fragment-indexing parameters (`min_seq_length`, `min_length_split`, `overlap_length`, plus the resolved `max_freq_build` / `max_degen_expand`) are encoded in the file name rather than the headers, and parsed once at volume discovery time.
 - **`.ksx` two-stage layout:** the sequence-metadata file records each parent OID's `(parent_length, blast_oid, accession)` in a parent table, followed by a fragment table that maps every internal SeqId to `(parent_idx, fragment_start, fragment_end)`. Convenience accessors (`KsxReader::seq_length` / `accession`) take a SeqId and resolve to the matching parent. Magic is `KMSX`.
 - **`.kix` body:** Elias-Fano dictionary; each posting list is `[u32 distinct_count]` followed by a FastPFor `CompositeCodec<SIMDFastPFor<4>, VariableByte>` body over the distinct seq_id delta stream.
 - **`.kpx` body:** Elias-Fano dictionary; each posting list starts directly at a 2-bit kind map (no per-list header) and continues with the partition / short_occ1 / short_occ_ge2 sub-buckets, all bit-packed as frame-of-reference blocks. The decoder is driven by the candidate set, so only the blocks holding a wanted position are unpacked.
