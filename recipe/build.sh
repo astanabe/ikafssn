@@ -6,9 +6,9 @@
 # resulting binaries only request glibc symbols up to c_stdlib_version (2.34
 # on Linux) and macOS 11.0 on osx-arm64:
 #   - Parasail 2.6.2  (Stage 3 alignment, with degmatch CIGAR/score patch)
-#   - htslib   1.23.1 (SAM/BAM output, libcurl/gcs/s3 disabled)
-#   - NCBI C++ Toolkit 30.2.0 (BLAST DB seqdb_reader + blastdb_format)
-#   - Drogon   1.9.12 (HTTP framework for ikafssnhttpd, with trantor 1.5.26
+#   - htslib   1.24 (SAM/BAM output, libcurl/gcs/s3 disabled)
+#   - NCBI C++ Toolkit 30.7.0 (BLAST DB seqdb_reader + blastdb_format)
+#   - Drogon   1.9.13 (HTTP framework for ikafssnhttpd, with trantor 1.5.28
 #                      fetched separately because the release tarball does
 #                      not include the trantor submodule contents)
 #
@@ -24,10 +24,10 @@ set -euo pipefail
 NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 
 PARASAIL_VER="2.6.2"
-HTSLIB_VER="1.23.1"
-NCBI_VER="30.2.0"
-DROGON_VER="1.9.12"
-TRANTOR_VER="1.5.26"
+HTSLIB_VER="1.24"
+NCBI_VER="30.7.0"
+DROGON_VER="1.9.13"
+TRANTOR_VER="1.5.28"
 
 PARASAIL_PREFIX="${SRC_DIR}/_parasail"
 HTSLIB_PREFIX="${SRC_DIR}/_htslib"
@@ -83,8 +83,6 @@ mkdir -p ncbi-src
 tar xf ncbi.tar.gz -C ncbi-src --strip-components=1
 
 cd ncbi-src
-patch -p1 < "${SRC_DIR}/patches/ncbi-cxx-toolkit-seqdb-mmap-strategy.patch"
-
 # Compute the sysroot path used by the conda-build toolchain.
 #   - Linux: ${BUILD_PREFIX}/${HOST}/sysroot ships glibc 2.34 stub libraries.
 #     The host system glibc (e.g. Ubuntu 24.04's 2.39 with C23 strtol overload)
@@ -255,7 +253,7 @@ if [ -n "${SYSROOT}" ]; then
   fi
 fi
 
-# trantor v1.5.26 discards the std::future::get() return value in
+# trantor v1.5.28 discards the std::future::get() return value in
 # TaskQueue::syncTaskInQueue (TaskQueue.h:52). conda-forge's libcxx on
 # osx-arm64 marks future::get() as [[nodiscard]], and conda-forge's clang
 # enables -Werror=unused-result by default, so the build fails. Demote

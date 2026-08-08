@@ -46,14 +46,12 @@ public:
     //   kSequential — aggressive readahead (whole-volume scans).
     //   kWillNeed   — pre-fault pages into the page cache up front.
     //   kDontNeed   — release pages from the page cache.
-    //   kNoReuse    — hint that data will be touched only once.
     enum class MMapStrategy {
         kNormal,
         kRandom,
         kSequential,
         kWillNeed,
         kDontNeed,
-        kNoReuse,
     };
     void set_mmap_strategy(MMapStrategy s) const;
 

@@ -2,33 +2,24 @@
 
 This directory contains patches applied to third-party dependencies before building them.
 
-## ncbi-cxx-toolkit-seqdb-mmap-strategy.patch
+## parasail-degmatch-cigar-score.patch
 
-Adds `CSeqDB::SetMMapStrategy(EMemMapAdvise)` (and a matching
-`CSeqDBAtlas::SetMMapStrategy()`) so callers can advise the kernel on
-the expected access pattern for memory-mapped BLAST DB files.  The
-patch also defaults `CAtlasMappedFile`'s mmap strategy to
-`eMMA_Normal` (OS-decided readahead), and exposes `eMADV_NoReuse`
-(`MADV_NOREUSE`) on the underlying `EMemoryAdvise` enum.
+Adds the `degmatch` nucleotide score matrix (`parasail/matrices/degmatch.h`,
+registered in `parasail/matrix_lookup.h`), which scores a pair of degenerate
+bases positively when the two IUPAC codes share at least one possible
+nucleotide.  ikafssn uses it as the default Stage 3 matrix
+(`-stage3_score_matrix degmatch`) so primer-style queries and subjects
+carrying degenerate bases align sensibly.
 
-ikafssn drives this from `BlastDbReader::set_mmap_strategy()`:
-- `kSequential` / `kWillNeed` for `ikafssnindex` metadata + postings
-  passes and Stage 3's batched subject-sequence fetch (kafsss
-  readahead, pre-fetch into page cache);
-- `kDontNeed` between batches so the page cache stays bounded by
-  `-memory_limit`;
-- `kRandom` for callers performing sparse OID lookups, suppressing
-  readahead and reducing page cache pollution.
-
-Submitted upstream as a pull request; once merged, this patch can
-be retired.
+The patch also fixes `src/cigar_template.c` so the score reported alongside a
+traceback matches the score of the emitted CIGAR.
 
 ### How to apply
 
-From the NCBI C++ Toolkit source directory (e.g. `ncbi-cxx-toolkit-public-release-30.2.0/`):
+From the Parasail source directory (e.g. `parasail-2.6.2/`):
 
 ```bash
-patch -p1 < /path/to/ikafssn/patches/ncbi-cxx-toolkit-seqdb-mmap-strategy.patch
+patch -p1 < /path/to/ikafssn/patches/parasail-degmatch-cigar-score.patch
 ```
 
-Apply this patch after extracting the toolkit source and before running `./cmake-configure`.
+Apply this patch after extracting the Parasail source and before running `cmake`.

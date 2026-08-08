@@ -1765,10 +1765,10 @@ ikafssn は SAM/BAM 出力に htslib を使用します。デフォルトでは�
 htslib のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o htslib-1.23.1.tar.bz2 \
-    https://github.com/samtools/htslib/releases/download/1.23.1/htslib-1.23.1.tar.bz2
-tar xf htslib-1.23.1.tar.bz2
-cd htslib-1.23.1
+curl -L -o htslib-1.24.tar.bz2 \
+    https://github.com/samtools/htslib/releases/download/1.24/htslib-1.24.tar.bz2
+tar xf htslib-1.24.tar.bz2
+cd htslib-1.24
 autoreconf -i
 ./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3
 make -j$(nproc)
@@ -1792,11 +1792,10 @@ Toolkit 内のビルドサブディレクトリ名 (例: `CMake-GCC1330-Release`
 Toolkit のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
-    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.2.0.tar.gz
-tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
-cd ncbi-cxx-toolkit-public-release-30.2.0
-patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch  # BLAST DB mmap のページキャッシュ汚染を防止
+curl -L -o ncbi-cxx-toolkit-public-release-30.7.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.7.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.7.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.7.0
 export CXXFLAGS="-std=c++20"
 ./cmake-configure \
     --without-debug \
@@ -1815,7 +1814,6 @@ macOS では、Homebrew の include パスをコンパイラに認識させる�
 ```bash
 export CFLAGS="-I$(brew --prefix)/include"
 export CXXFLAGS="-I$(brew --prefix)/include -std=c++20"
-patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch  # BLAST DB mmap のページキャッシュ汚染を防止
 ./cmake-configure \
     --without-debug \
     --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
@@ -1830,18 +1828,18 @@ cd ../../..
 
 ikafssnhttpd は Drogon HTTP フレームワークを使用します。デフォルトではソースルート直下の `./drogon` を参照します。別の場所にインストール済みの場合は `-DDROGON_DIR` で指定してください。`-DBUILD_HTTPD=OFF` を指定する場合、Drogon のビルドは不要です。
 
-Drogon のリリース tarball には trantor サブモジュールの中身が含まれないため、対応する trantor のリリースを別途取得する必要があります (Drogon 1.9.12 が参照するコミットは trantor v1.5.26 です)。Drogon と trantor のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
+Drogon のリリース tarball には trantor サブモジュールの中身が含まれないため、対応する trantor のリリースを別途取得する必要があります (Drogon 1.9.13 が参照するコミットは trantor v1.5.28 です)。Drogon と trantor のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o drogon-1.9.12.tar.gz \
-    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.tar.gz
-tar xf drogon-1.9.12.tar.gz
-curl -L -o trantor-1.5.26.tar.gz \
-    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.tar.gz
-tar xf trantor-1.5.26.tar.gz
-rmdir drogon-1.9.12/trantor
-mv trantor-1.5.26 drogon-1.9.12/trantor
-cd drogon-1.9.12
+curl -L -o drogon-1.9.13.tar.gz \
+    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.13.tar.gz
+tar xf drogon-1.9.13.tar.gz
+curl -L -o trantor-1.5.28.tar.gz \
+    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.28.tar.gz
+tar xf trantor-1.5.28.tar.gz
+rmdir drogon-1.9.13/trantor
+mv trantor-1.5.28 drogon-1.9.13/trantor
+cd drogon-1.9.13
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \

@@ -88,7 +88,6 @@ void BlastDbReader::set_mmap_strategy(MMapStrategy s) const {
         case MMapStrategy::kSequential: adv = CMemoryFile_Base::eMMA_Sequential; break;
         case MMapStrategy::kWillNeed:   adv = CMemoryFile_Base::eMMA_WillNeed;   break;
         case MMapStrategy::kDontNeed:   adv = CMemoryFile_Base::eMMA_DontNeed;   break;
-        case MMapStrategy::kNoReuse:    adv = CMemoryFile_Base::eMMA_NoReuse;    break;
         default:                        adv = CMemoryFile_Base::eMMA_Normal;     break;
     }
     impl_->db->SetMMapStrategy(adv);

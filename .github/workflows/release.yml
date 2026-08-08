@@ -278,7 +278,7 @@ jobs:
             htslib
             ncbi-cxx-toolkit
             drogon
-          key: deps-${{ matrix.target }}-ncbi30.2.0+mmapstrategy-parasail2.6.2+degmatch-htslib1.23.1-drogon1.9.12+trantor1.5.26-v1
+          key: deps-${{ matrix.target }}-ncbi30.7.0-parasail2.6.2+degmatch-htslib1.24-drogon1.9.13+trantor1.5.28-v1
 
       # ---- Build Parasail ----
 
@@ -305,10 +305,10 @@ jobs:
       - name: Build htslib
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o htslib-1.23.1.tar.bz2 \
-            https://github.com/samtools/htslib/releases/download/1.23.1/htslib-1.23.1.tar.bz2
-          tar xf htslib-1.23.1.tar.bz2
-          cd htslib-1.23.1
+          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o htslib-1.24.tar.bz2 \
+            https://github.com/samtools/htslib/releases/download/1.24/htslib-1.24.tar.bz2
+          tar xf htslib-1.24.tar.bz2
+          cd htslib-1.24
           autoreconf -i
           configure_args=(--prefix="${GITHUB_WORKSPACE}/htslib"
             --disable-libcurl --disable-gcs --disable-s3)
@@ -326,11 +326,10 @@ jobs:
       - name: Build NCBI C++ Toolkit
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
-            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.2.0.tar.gz
-          tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
-          cd ncbi-cxx-toolkit-public-release-30.2.0
-          patch -p1 < "${GITHUB_WORKSPACE}/patches/ncbi-cxx-toolkit-seqdb-mmap-strategy.patch"
+          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o ncbi-cxx-toolkit-public-release-30.7.0.tar.gz \
+            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.7.0.tar.gz
+          tar xf ncbi-cxx-toolkit-public-release-30.7.0.tar.gz
+          cd ncbi-cxx-toolkit-public-release-30.7.0
           if [ "$(uname)" = "Darwin" ]; then
             export CFLAGS="-I${HOMEBREW_PREFIX}/include"
             export CXXFLAGS="-I${HOMEBREW_PREFIX}/include -std=c++20"
@@ -359,15 +358,15 @@ jobs:
       - name: Build Drogon
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o drogon-1.9.12.tar.gz \
-            https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.tar.gz
-          tar xf drogon-1.9.12.tar.gz
-          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o trantor-1.5.26.tar.gz \
-            https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.tar.gz
-          tar xf trantor-1.5.26.tar.gz
-          rmdir drogon-1.9.12/trantor
-          mv trantor-1.5.26 drogon-1.9.12/trantor
-          cd drogon-1.9.12
+          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o drogon-1.9.13.tar.gz \
+            https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.13.tar.gz
+          tar xf drogon-1.9.13.tar.gz
+          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o trantor-1.5.28.tar.gz \
+            https://github.com/an-tao/trantor/archive/refs/tags/v1.5.28.tar.gz
+          tar xf trantor-1.5.28.tar.gz
+          rmdir drogon-1.9.13/trantor
+          mv trantor-1.5.28 drogon-1.9.13/trantor
+          cd drogon-1.9.13
           mkdir build && cd build
           cmake_args=(
             -DCMAKE_BUILD_TYPE=Release

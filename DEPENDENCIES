@@ -177,10 +177,10 @@ Conda packaging (recipe/, conda-forge channel):
 
 Source-built libraries:
 
-  NCBI C++ Toolkit 30.2.0  — BLAST DB access (patched: madvise MADV_RANDOM on SeqDB mmaps)
+  NCBI C++ Toolkit 30.7.0  — BLAST DB access (CSeqDB::SetMMapStrategy, upstream since 30.7.0)
   Parasail 2.6.2           — Stage 3 pairwise alignment
-  htslib 1.23.1            — SAM/BAM output
-  Drogon 1.9.12            — HTTP framework for ikafssnhttpd
-                             (static, with trantor 1.5.26 placed at
-                             drogon-1.9.12/trantor; ORM/brotli/yaml-cpp/
+  htslib 1.24            — SAM/BAM output
+  Drogon 1.9.13            — HTTP framework for ikafssnhttpd
+                             (static, with trantor 1.5.28 placed at
+                             drogon-1.9.13/trantor; ORM/brotli/yaml-cpp/
                              drogon_ctl/examples/docs disabled)

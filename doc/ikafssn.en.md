@@ -1785,10 +1785,10 @@ ikafssn uses htslib for SAM/BAM output. By default, CMake looks for htslib at `.
 To download, build, and install htslib into `./htslib`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o htslib-1.23.1.tar.bz2 \
-    https://github.com/samtools/htslib/releases/download/1.23.1/htslib-1.23.1.tar.bz2
-tar xf htslib-1.23.1.tar.bz2
-cd htslib-1.23.1
+curl -L -o htslib-1.24.tar.bz2 \
+    https://github.com/samtools/htslib/releases/download/1.24/htslib-1.24.tar.bz2
+tar xf htslib-1.24.tar.bz2
+cd htslib-1.24
 autoreconf -i
 ./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3
 make -j$(nproc)
@@ -1812,11 +1812,10 @@ The build subdirectory name within the toolkit (e.g. `CMake-GCC1330-Release`) is
 To download, build, and install the toolkit into `./ncbi-cxx-toolkit`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-public-release-30.2.0.tar.gz \
-    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.2.0.tar.gz
-tar xf ncbi-cxx-toolkit-public-release-30.2.0.tar.gz
-cd ncbi-cxx-toolkit-public-release-30.2.0
-patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
+curl -L -o ncbi-cxx-toolkit-public-release-30.7.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.7.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.7.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.7.0
 export CXXFLAGS="-std=c++20"
 ./cmake-configure \
     --without-debug \
@@ -1835,7 +1834,6 @@ On macOS, the Homebrew include path must be visible to the compiler (for `lmdb.h
 ```bash
 export CFLAGS="-I$(brew --prefix)/include"
 export CXXFLAGS="-I$(brew --prefix)/include -std=c++20"
-patch -p1 < ../patches/ncbi-cxx-toolkit-seqdb-madvise-random.patch
 ./cmake-configure \
     --without-debug \
     --with-projects="objtools/blast/seqdb_reader;objtools/blast/blastdb_format" \
@@ -1850,18 +1848,18 @@ cd ../../..
 
 ikafssnhttpd uses the Drogon HTTP framework. By default, CMake looks for Drogon at `./drogon` relative to the source root. If Drogon is installed elsewhere, specify the path with `-DDROGON_DIR`. If `-DBUILD_HTTPD=OFF` is used, Drogon is not required.
 
-The Drogon release tarball does not include the trantor submodule contents, so the corresponding trantor release must be downloaded separately (Drogon 1.9.12 references trantor v1.5.26). To download, build, and install Drogon and trantor into `./drogon`, run the following from the ikafssn source root:
+The Drogon release tarball does not include the trantor submodule contents, so the corresponding trantor release must be downloaded separately (Drogon 1.9.13 references trantor v1.5.28). To download, build, and install Drogon and trantor into `./drogon`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o drogon-1.9.12.tar.gz \
-    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.12.tar.gz
-tar xf drogon-1.9.12.tar.gz
-curl -L -o trantor-1.5.26.tar.gz \
-    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.26.tar.gz
-tar xf trantor-1.5.26.tar.gz
-rmdir drogon-1.9.12/trantor
-mv trantor-1.5.26 drogon-1.9.12/trantor
-cd drogon-1.9.12
+curl -L -o drogon-1.9.13.tar.gz \
+    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.13.tar.gz
+tar xf drogon-1.9.13.tar.gz
+curl -L -o trantor-1.5.28.tar.gz \
+    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.28.tar.gz
+tar xf trantor-1.5.28.tar.gz
+rmdir drogon-1.9.13/trantor
+mv trantor-1.5.28 drogon-1.9.13/trantor
+cd drogon-1.9.13
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \

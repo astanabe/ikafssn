@@ -76,7 +76,7 @@ about:
     search using k-mer matching and collinear chaining.
 
     This package includes ikafssnhttpd, which is statically linked against
-    a vendored Drogon 1.9.12 build to avoid an external Drogon dependency.
+    a vendored Drogon 1.9.13 build to avoid an external Drogon dependency.
   dev_url: https://github.com/astanabe/ikafssn
 
 extra:
