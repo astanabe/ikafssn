@@ -248,9 +248,30 @@ jobs:
           echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "$GITHUB_PATH"
 
           g++ --version
-          printf '#include <iostream>\nint main(){std::cout<<1;}\n' > /tmp/iostream_check.cpp
-          g++ -std=c++20 -o /tmp/iostream_check /tmp/iostream_check.cpp
-          echo "::notice::<iostream> compiles and links under gcc-toolset-13"
+
+          # The toolkit derives HAVE_IOSTREAM from check_include_file_cxx, which
+          # compiles *and links* the probe.  Run the same check standalone so a
+          # failure names the compiler invocation here instead of surfacing as
+          # "Neither <iostream> nor <iostream.h> can be found" mid-build.
+          mkdir -p /tmp/iock
+          {
+            echo 'cmake_minimum_required(VERSION 3.20)'
+            echo 'project(iock CXX)'
+            echo 'include(CheckIncludeFileCXX)'
+            echo 'check_include_file_cxx(iostream HAVE_IOSTREAM)'
+            echo 'if(NOT HAVE_IOSTREAM)'
+            echo '  message(FATAL_ERROR "check_include_file_cxx(iostream) failed")'
+            echo 'endif()'
+          } > /tmp/iock/CMakeLists.txt
+          if ! cmake -S /tmp/iock -B /tmp/iock/build -DCMAKE_CXX_FLAGS="-std=c++20" > /tmp/iock/out.txt 2>&1; then
+            cat /tmp/iock/out.txt
+            echo '----- CMakeConfigureLog.yaml -----'
+            cat /tmp/iock/build/CMakeFiles/CMakeConfigureLog.yaml 2>/dev/null || true
+            echo '----- CMakeError.log -----'
+            cat /tmp/iock/build/CMakeFiles/CMakeError.log 2>/dev/null || true
+            exit 1
+          fi
+          echo "::notice::check_include_file_cxx(iostream) succeeds under gcc-toolset-13"
 
       - name: Set Homebrew paths (macOS)
         if: steps.check_asset.outputs.exists != 'true' && runner.os == 'macOS' && matrix.pkg_type != 'conda'
