@@ -2,7 +2,7 @@
 #include "protocol/messages.hpp"
 #include "protocol/serializer.hpp"
 
-#include <cassert>
+#include "test_util.hpp"
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -20,8 +20,8 @@ static bool make_pipe(int& read_fd, int& write_fd) {
 
 static void test_frame_header_size() {
     std::printf("  test_frame_header_size...");
-    assert(sizeof(FrameHeader) == 12);
-    assert(FRAME_HEADER_SIZE == 12);
+    CHECK(sizeof(FrameHeader) == 12);
+    CHECK(FRAME_HEADER_SIZE == 12);
     std::printf(" OK\n");
 }
 
@@ -29,21 +29,21 @@ static void test_frame_round_trip() {
     std::printf("  test_frame_round_trip...");
 
     int rfd, wfd;
-    assert(make_pipe(rfd, wfd));
+    CHECK(make_pipe(rfd, wfd));
 
     std::vector<uint8_t> payload = {0x01, 0x02, 0x03, 0x04, 0x05};
-    assert(write_frame(wfd, MsgType::kSearchRequest, payload));
+    CHECK(write_frame(wfd, MsgType::kSearchRequest, payload));
 
     FrameHeader hdr;
     std::vector<uint8_t> recv_payload;
-    assert(read_frame(rfd, hdr, recv_payload));
+    CHECK(read_frame(rfd, hdr, recv_payload));
 
-    assert(hdr.magic == FRAME_MAGIC);
-    assert(hdr.payload_size == 5);
-    assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
-    assert(hdr.msg_version == 14);
-    assert(hdr.reserved == 0);
-    assert(recv_payload == payload);
+    CHECK(hdr.magic == FRAME_MAGIC);
+    CHECK(hdr.payload_size == 5);
+    CHECK(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
+    CHECK(hdr.msg_version == 14);
+    CHECK(hdr.reserved == 0);
+    CHECK(recv_payload == payload);
 
     ::close(rfd);
     ::close(wfd);
@@ -54,18 +54,18 @@ static void test_frame_empty_payload() {
     std::printf("  test_frame_empty_payload...");
 
     int rfd, wfd;
-    assert(make_pipe(rfd, wfd));
+    CHECK(make_pipe(rfd, wfd));
 
     std::vector<uint8_t> empty;
-    assert(write_frame(wfd, MsgType::kHealthRequest, empty));
+    CHECK(write_frame(wfd, MsgType::kHealthRequest, empty));
 
     FrameHeader hdr;
     std::vector<uint8_t> recv_payload;
-    assert(read_frame(rfd, hdr, recv_payload));
+    CHECK(read_frame(rfd, hdr, recv_payload));
 
-    assert(hdr.payload_size == 0);
-    assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kHealthRequest));
-    assert(recv_payload.empty());
+    CHECK(hdr.payload_size == 0);
+    CHECK(hdr.msg_type == static_cast<uint8_t>(MsgType::kHealthRequest));
+    CHECK(recv_payload.empty());
 
     ::close(rfd);
     ::close(wfd);
@@ -76,7 +76,7 @@ static void test_frame_invalid_magic() {
     std::printf("  test_frame_invalid_magic...");
 
     int rfd, wfd;
-    assert(make_pipe(rfd, wfd));
+    CHECK(make_pipe(rfd, wfd));
 
     // Write a frame with bad magic
     FrameHeader bad_hdr;
@@ -85,11 +85,11 @@ static void test_frame_invalid_magic() {
     bad_hdr.msg_type = 0x01;
     bad_hdr.msg_version = 9;
     bad_hdr.reserved = 0;
-    assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
+    CHECK(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 
     FrameHeader hdr;
     std::vector<uint8_t> payload;
-    assert(!read_frame(rfd, hdr, payload));
+    CHECK(!read_frame(rfd, hdr, payload));
 
     ::close(rfd);
     ::close(wfd);
@@ -100,7 +100,7 @@ static void test_frame_invalid_msg_version() {
     std::printf("  test_frame_invalid_msg_version...");
 
     int rfd, wfd;
-    assert(make_pipe(rfd, wfd));
+    CHECK(make_pipe(rfd, wfd));
 
     // Write a frame with bad msg_version
     FrameHeader bad_hdr;
@@ -109,11 +109,11 @@ static void test_frame_invalid_msg_version() {
     bad_hdr.msg_type = 0x01;
     bad_hdr.msg_version = 99;
     bad_hdr.reserved = 0;
-    assert(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
+    CHECK(write_all(wfd, &bad_hdr, sizeof(bad_hdr)));
 
     FrameHeader hdr;
     std::vector<uint8_t> payload;
-    assert(!read_frame(rfd, hdr, payload));
+    CHECK(!read_frame(rfd, hdr, payload));
 
     ::close(rfd);
     ::close(wfd);
@@ -151,38 +151,38 @@ static void test_search_request_serialize() {
     auto data = serialize(req);
 
     SearchRequest req2;
-    assert(deserialize(data, req2));
+    CHECK(deserialize(data, req2));
 
-    assert(req2.k == 9);
-    assert(req2.stage2_min_score == 5);
-    assert(req2.stage2_max_gap == 100);
-    assert(req2.stage2_min_nhit_diag == 3);
-    assert(req2.stage1_max_nhit_per_volume == 500);
-    assert(req2.stage1_max_nhit_in_total == 700);
-    assert(req2.stage1_max_nhit_per_subject == 3);
-    assert(req2.stage1_max_nhit_per_subject_mode == 4);
-    assert(req2.stage1_min_score == 2);
-    assert(req2.stage2_max_nhit_in_total == 800);
-    assert(req2.stage3_max_nhit_per_subject == 2);
-    assert(req2.stage3_max_nhit_per_subject_mode == 3);
-    assert(req2.stage3_max_nhit_in_total == 900);
-    assert(req2.max_degen_expand == 16);
-    assert(req2.stage2_max_nhit_per_subject == 0);
-    assert(req2.stage2_max_nhit_per_subject_mode == 0);
-    assert(req2.min_seq_length == 64);
-    assert(req2.min_length_split == 5000);
-    assert(req2.overlap_length == 250);
-    assert(req2.max_freq_build == 1000);
-    assert(req2.db == "testdb");
-    assert(req2.seqidlist_mode == SeqidlistMode::kInclude);
-    assert(req2.seqids.size() == 2);
-    assert(req2.seqids[0] == "NM_001234");
-    assert(req2.seqids[1] == "XM_005678");
-    assert(req2.queries.size() == 2);
-    assert(req2.queries[0].qseqid == "query1");
-    assert(req2.queries[0].sequence == "ACGTACGTACGT");
-    assert(req2.queries[1].qseqid == "query2");
-    assert(req2.queries[1].sequence == "TTTTAAAACCCC");
+    CHECK(req2.k == 9);
+    CHECK(req2.stage2_min_score == 5);
+    CHECK(req2.stage2_max_gap == 100);
+    CHECK(req2.stage2_min_nhit_diag == 3);
+    CHECK(req2.stage1_max_nhit_per_volume == 500);
+    CHECK(req2.stage1_max_nhit_in_total == 700);
+    CHECK(req2.stage1_max_nhit_per_subject == 3);
+    CHECK(req2.stage1_max_nhit_per_subject_mode == 4);
+    CHECK(req2.stage1_min_score == 2);
+    CHECK(req2.stage2_max_nhit_in_total == 800);
+    CHECK(req2.stage3_max_nhit_per_subject == 2);
+    CHECK(req2.stage3_max_nhit_per_subject_mode == 3);
+    CHECK(req2.stage3_max_nhit_in_total == 900);
+    CHECK(req2.max_degen_expand == 16);
+    CHECK(req2.stage2_max_nhit_per_subject == 0);
+    CHECK(req2.stage2_max_nhit_per_subject_mode == 0);
+    CHECK(req2.min_seq_length == 64);
+    CHECK(req2.min_length_split == 5000);
+    CHECK(req2.overlap_length == 250);
+    CHECK(req2.max_freq_build == 1000);
+    CHECK(req2.db == "testdb");
+    CHECK(req2.seqidlist_mode == SeqidlistMode::kInclude);
+    CHECK(req2.seqids.size() == 2);
+    CHECK(req2.seqids[0] == "NM_001234");
+    CHECK(req2.seqids[1] == "XM_005678");
+    CHECK(req2.queries.size() == 2);
+    CHECK(req2.queries[0].qseqid == "query1");
+    CHECK(req2.queries[0].sequence == "ACGTACGTACGT");
+    CHECK(req2.queries[1].qseqid == "query2");
+    CHECK(req2.queries[1].sequence == "TTTTAAAACCCC");
 
     std::printf(" OK\n");
 }
@@ -196,16 +196,16 @@ static void test_search_request_defaults() {
 
     auto data = serialize(req);
     SearchRequest req2;
-    assert(deserialize(data, req2));
+    CHECK(deserialize(data, req2));
 
-    assert(req2.k == 0);
-    assert(req2.stage2_min_score == 0);
-    assert(req2.stage2_max_gap == 0);
-    assert(req2.max_degen_expand == 0);
-    assert(req2.db.empty());
-    assert(req2.seqidlist_mode == SeqidlistMode::kNone);
-    assert(req2.seqids.empty());
-    assert(req2.queries.size() == 1);
+    CHECK(req2.k == 0);
+    CHECK(req2.stage2_min_score == 0);
+    CHECK(req2.stage2_max_gap == 0);
+    CHECK(req2.max_degen_expand == 0);
+    CHECK(req2.db.empty());
+    CHECK(req2.seqidlist_mode == SeqidlistMode::kNone);
+    CHECK(req2.seqids.empty());
+    CHECK(req2.queries.size() == 1);
 
     std::printf(" OK\n");
 }
@@ -220,16 +220,16 @@ static void test_search_request_max_degen_expand() {
 
     auto data = serialize(req);
     SearchRequest req2;
-    assert(deserialize(data, req2));
+    CHECK(deserialize(data, req2));
 
-    assert(req2.max_degen_expand == 256);
+    CHECK(req2.max_degen_expand == 256);
 
     // Also test with 0 (server default)
     req.max_degen_expand = 0;
     data = serialize(req);
     SearchRequest req3;
-    assert(deserialize(data, req3));
-    assert(req3.max_degen_expand == 0);
+    CHECK(deserialize(data, req3));
+    CHECK(req3.max_degen_expand == 0);
 
     std::printf(" OK\n");
 }
@@ -270,30 +270,30 @@ static void test_search_response_serialize() {
 
     auto data = serialize(resp);
     SearchResponse resp2;
-    assert(deserialize(data, resp2));
+    CHECK(deserialize(data, resp2));
 
-    assert(resp2.status == 0);
-    assert(resp2.k == 11);
-    assert(resp2.db == "testdb");
-    assert(resp2.results.size() == 1);
-    assert(resp2.results[0].qseqid == "query1");
-    assert(resp2.results[0].hits.size() == 2);
+    CHECK(resp2.status == 0);
+    CHECK(resp2.k == 11);
+    CHECK(resp2.db == "testdb");
+    CHECK(resp2.results.size() == 1);
+    CHECK(resp2.results[0].qseqid == "query1");
+    CHECK(resp2.results[0].hits.size() == 2);
 
     const auto& h0 = resp2.results[0].hits[0];
-    assert(h0.sseqid == "NM_001234");
-    assert(h0.sstrand == 0);
-    assert(h0.qstart == 10);
-    assert(h0.qend == 450);
-    assert(h0.sstart == 1020);
-    assert(h0.send == 1460);
-    assert(h0.chainscore == 42);
-    assert(h0.volume == 0);
+    CHECK(h0.sseqid == "NM_001234");
+    CHECK(h0.sstrand == 0);
+    CHECK(h0.qstart == 10);
+    CHECK(h0.qend == 450);
+    CHECK(h0.sstart == 1020);
+    CHECK(h0.send == 1460);
+    CHECK(h0.chainscore == 42);
+    CHECK(h0.volume == 0);
 
     const auto& h1 = resp2.results[0].hits[1];
-    assert(h1.sseqid == "XM_005678");
-    assert(h1.sstrand == 1);
-    assert(h1.chainscore == 38);
-    assert(h1.volume == 2);
+    CHECK(h1.sseqid == "XM_005678");
+    CHECK(h1.sstrand == 1);
+    CHECK(h1.chainscore == 38);
+    CHECK(h1.volume == 2);
 
     std::printf(" OK\n");
 }
@@ -307,10 +307,10 @@ static void test_error_response_serialize() {
 
     auto data = serialize(err);
     ErrorResponse err2;
-    assert(deserialize(data, err2));
+    CHECK(deserialize(data, err2));
 
-    assert(err2.error_code == 404);
-    assert(err2.message == "Index not found for k=15");
+    CHECK(err2.error_code == 404);
+    CHECK(err2.message == "Index not found for k=15");
 
     std::printf(" OK\n");
 }
@@ -320,19 +320,19 @@ static void test_health_roundtrip() {
 
     HealthRequest hreq;
     auto req_data = serialize(hreq);
-    assert(req_data.empty());
+    CHECK(req_data.empty());
 
     HealthRequest hreq2;
-    assert(deserialize(req_data, hreq2));
+    CHECK(deserialize(req_data, hreq2));
 
     HealthResponse hresp;
     hresp.status = 0;
     auto resp_data = serialize(hresp);
-    assert(resp_data.size() == 1);
+    CHECK(resp_data.size() == 1);
 
     HealthResponse hresp2;
-    assert(deserialize(resp_data, hresp2));
-    assert(hresp2.status == 0);
+    CHECK(deserialize(resp_data, hresp2));
+    CHECK(hresp2.status == 0);
 
     std::printf(" OK\n");
 }
@@ -348,11 +348,11 @@ static void test_search_request_with_seqidlist_exclude() {
 
     auto data = serialize(req);
     SearchRequest req2;
-    assert(deserialize(data, req2));
+    CHECK(deserialize(data, req2));
 
-    assert(req2.seqidlist_mode == SeqidlistMode::kExclude);
-    assert(req2.seqids.size() == 3);
-    assert(req2.seqids[2] == "ACC003");
+    CHECK(req2.seqidlist_mode == SeqidlistMode::kExclude);
+    CHECK(req2.seqids.size() == 3);
+    CHECK(req2.seqids[2] == "ACC003");
 
     std::printf(" OK\n");
 }
@@ -362,10 +362,10 @@ static void test_info_request_roundtrip() {
 
     InfoRequest ireq;
     auto req_data = serialize(ireq);
-    assert(req_data.empty());
+    CHECK(req_data.empty());
 
     InfoRequest ireq2;
-    assert(deserialize(req_data, ireq2));
+    CHECK(deserialize(req_data, ireq2));
 
     std::printf(" OK\n");
 }
@@ -425,44 +425,44 @@ static void test_info_response_serialize() {
 
     auto data = serialize(resp);
     InfoResponse resp2;
-    assert(deserialize(data, resp2));
+    CHECK(deserialize(data, resp2));
 
-    assert(resp2.status == 0);
-    assert(resp2.default_k == 11);
-    assert(resp2.max_queue_size == 1024);
-    assert(resp2.queue_depth == 42);
-    assert(resp2.max_nseq_per_req == 16);
-    assert(resp2.databases.size() == 1);
+    CHECK(resp2.status == 0);
+    CHECK(resp2.default_k == 11);
+    CHECK(resp2.max_queue_size == 1024);
+    CHECK(resp2.queue_depth == 42);
+    CHECK(resp2.max_nseq_per_req == 16);
+    CHECK(resp2.databases.size() == 1);
 
     const auto& rdb = resp2.databases[0];
-    assert(rdb.name == "testdb");
-    assert(rdb.default_k == 11);
-    assert(rdb.max_mode == 3);
-    assert(rdb.groups.size() == 2);
+    CHECK(rdb.name == "testdb");
+    CHECK(rdb.default_k == 11);
+    CHECK(rdb.max_mode == 3);
+    CHECK(rdb.groups.size() == 2);
 
-    assert(rdb.groups[0].k == 7);
-    assert(rdb.groups[0].kmer_type == 0);
-    assert(rdb.groups[0].min_seq_length == 64);
-    assert(rdb.groups[0].min_length_split == 5000);
-    assert(rdb.groups[0].overlap_length == 250);
-    assert(rdb.groups[0].max_freq_build == 777);
-    assert(rdb.groups[0].max_degen_expand == 8);
-    assert(rdb.groups[0].volumes.size() == 2);
-    assert(rdb.groups[0].volumes[0].volume_index == 0);
-    assert(rdb.groups[0].volumes[0].num_sequences == 1000);
-    assert(rdb.groups[0].volumes[0].total_postings == 500000);
-    assert(rdb.groups[0].volumes[0].total_bases == 1500000);
-    assert(rdb.groups[0].volumes[0].db == "testdb");
-    assert(rdb.groups[0].volumes[1].volume_index == 1);
-    assert(rdb.groups[0].volumes[1].num_sequences == 2000);
-    assert(rdb.groups[0].volumes[1].total_postings == 900000);
-    assert(rdb.groups[0].volumes[1].total_bases == 3200000);
+    CHECK(rdb.groups[0].k == 7);
+    CHECK(rdb.groups[0].kmer_type == 0);
+    CHECK(rdb.groups[0].min_seq_length == 64);
+    CHECK(rdb.groups[0].min_length_split == 5000);
+    CHECK(rdb.groups[0].overlap_length == 250);
+    CHECK(rdb.groups[0].max_freq_build == 777);
+    CHECK(rdb.groups[0].max_degen_expand == 8);
+    CHECK(rdb.groups[0].volumes.size() == 2);
+    CHECK(rdb.groups[0].volumes[0].volume_index == 0);
+    CHECK(rdb.groups[0].volumes[0].num_sequences == 1000);
+    CHECK(rdb.groups[0].volumes[0].total_postings == 500000);
+    CHECK(rdb.groups[0].volumes[0].total_bases == 1500000);
+    CHECK(rdb.groups[0].volumes[0].db == "testdb");
+    CHECK(rdb.groups[0].volumes[1].volume_index == 1);
+    CHECK(rdb.groups[0].volumes[1].num_sequences == 2000);
+    CHECK(rdb.groups[0].volumes[1].total_postings == 900000);
+    CHECK(rdb.groups[0].volumes[1].total_bases == 3200000);
 
-    assert(rdb.groups[1].k == 11);
-    assert(rdb.groups[1].kmer_type == 1);
-    assert(rdb.groups[1].volumes.size() == 1);
-    assert(rdb.groups[1].volumes[0].total_postings == 450000);
-    assert(rdb.groups[1].volumes[0].total_bases == 1500000);
+    CHECK(rdb.groups[1].k == 11);
+    CHECK(rdb.groups[1].kmer_type == 1);
+    CHECK(rdb.groups[1].volumes.size() == 1);
+    CHECK(rdb.groups[1].volumes[0].total_postings == 450000);
+    CHECK(rdb.groups[1].volumes[0].total_bases == 1500000);
 
     std::printf(" OK\n");
 }
@@ -480,14 +480,14 @@ static void test_info_response_empty() {
 
     auto data = serialize(resp);
     InfoResponse resp2;
-    assert(deserialize(data, resp2));
+    CHECK(deserialize(data, resp2));
 
-    assert(resp2.status == 0);
-    assert(resp2.default_k == 9);
-    assert(resp2.max_queue_size == 512);
-    assert(resp2.queue_depth == 0);
-    assert(resp2.max_nseq_per_req == 0);
-    assert(resp2.databases.empty());
+    CHECK(resp2.status == 0);
+    CHECK(resp2.default_k == 9);
+    CHECK(resp2.max_queue_size == 512);
+    CHECK(resp2.queue_depth == 0);
+    CHECK(resp2.max_nseq_per_req == 0);
+    CHECK(resp2.databases.empty());
 
     std::printf(" OK\n");
 }
@@ -496,7 +496,7 @@ static void test_frame_full_round_trip() {
     std::printf("  test_frame_full_round_trip...");
 
     int rfd, wfd;
-    assert(make_pipe(rfd, wfd));
+    CHECK(make_pipe(rfd, wfd));
 
     // Serialize a SearchRequest and send as frame
     SearchRequest req;
@@ -504,19 +504,19 @@ static void test_frame_full_round_trip() {
     req.queries.push_back({"q1", "ACGTACGT"});
     auto payload = serialize(req);
 
-    assert(write_frame(wfd, MsgType::kSearchRequest, payload));
+    CHECK(write_frame(wfd, MsgType::kSearchRequest, payload));
 
     // Read frame
     FrameHeader hdr;
     std::vector<uint8_t> recv_payload;
-    assert(read_frame(rfd, hdr, recv_payload));
-    assert(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
+    CHECK(read_frame(rfd, hdr, recv_payload));
+    CHECK(hdr.msg_type == static_cast<uint8_t>(MsgType::kSearchRequest));
 
     // Deserialize
     SearchRequest req2;
-    assert(deserialize(recv_payload, req2));
-    assert(req2.k == 9);
-    assert(req2.queries[0].sequence == "ACGTACGT");
+    CHECK(deserialize(recv_payload, req2));
+    CHECK(req2.k == 9);
+    CHECK(req2.queries[0].sequence == "ACGTACGT");
 
     ::close(rfd);
     ::close(wfd);
@@ -533,16 +533,16 @@ static void test_search_request_accept_qdegen() {
 
     auto data = serialize(req);
     SearchRequest req2;
-    assert(deserialize(data, req2));
+    CHECK(deserialize(data, req2));
 
-    assert(req2.accept_qdegen == 1);
+    CHECK(req2.accept_qdegen == 1);
 
     // Also test with accept_qdegen = 0
     req.accept_qdegen = 0;
     data = serialize(req);
     SearchRequest req3;
-    assert(deserialize(data, req3));
-    assert(req3.accept_qdegen == 0);
+    CHECK(deserialize(data, req3));
+    CHECK(req3.accept_qdegen == 0);
 
     std::printf(" OK\n");
 }
@@ -579,17 +579,17 @@ static void test_search_response_skipped() {
 
     auto data = serialize(resp);
     SearchResponse resp2;
-    assert(deserialize(data, resp2));
+    CHECK(deserialize(data, resp2));
 
-    assert(resp2.results.size() == 2);
-    assert(resp2.results[0].qseqid == "q1");
-    assert(resp2.results[0].skip_reason == kSkipDegenRejected);
-    assert(resp2.results[0].skip_detail == "query contains IUPAC degenerate bases");
-    assert(resp2.results[0].qlen == 50);
-    assert(resp2.results[0].hits.empty());
-    assert(resp2.results[1].qseqid == "q2");
-    assert(resp2.results[1].skip_reason == 0);
-    assert(resp2.results[1].hits.size() == 1);
+    CHECK(resp2.results.size() == 2);
+    CHECK(resp2.results[0].qseqid == "q1");
+    CHECK(resp2.results[0].skip_reason == kSkipDegenRejected);
+    CHECK(resp2.results[0].skip_detail == "query contains IUPAC degenerate bases");
+    CHECK(resp2.results[0].qlen == 50);
+    CHECK(resp2.results[0].hits.empty());
+    CHECK(resp2.results[1].qseqid == "q2");
+    CHECK(resp2.results[1].skip_reason == 0);
+    CHECK(resp2.results[1].hits.size() == 1);
 
     std::printf(" OK\n");
 }
@@ -610,15 +610,15 @@ static void test_search_request_stage3_fields() {
 
     auto data = serialize(req);
     SearchRequest req2;
-    assert(deserialize(data, req2));
+    CHECK(deserialize(data, req2));
 
-    assert(req2.stage3_traceback == 1);
-    assert(req2.stage3_gapopen == -10);
-    assert(req2.stage3_gapext == -1);
-    assert(req2.stage3_min_ppositive_x100 == 9500);
-    assert(req2.stage3_min_npositive == 200);
-    assert(req2.context_abs == 500);
-    assert(req2.context_frac_x10000 == 1500);
+    CHECK(req2.stage3_traceback == 1);
+    CHECK(req2.stage3_gapopen == -10);
+    CHECK(req2.stage3_gapext == -1);
+    CHECK(req2.stage3_min_ppositive_x100 == 9500);
+    CHECK(req2.stage3_min_npositive == 200);
+    CHECK(req2.context_abs == 500);
+    CHECK(req2.context_frac_x10000 == 1500);
 
     std::printf(" OK\n");
 }
@@ -659,22 +659,22 @@ static void test_search_response_stage3_fields() {
 
     auto data = serialize(resp);
     SearchResponse resp2;
-    assert(deserialize(data, resp2));
+    CHECK(deserialize(data, resp2));
 
-    assert(resp2.stage3_traceback == 1);
-    assert(resp2.mode == 3);
-    assert(resp2.results.size() == 1);
+    CHECK(resp2.stage3_traceback == 1);
+    CHECK(resp2.mode == 3);
+    CHECK(resp2.results.size() == 1);
 
     const auto& h = resp2.results[0].hits[0];
-    assert(h.qlen == 500);
-    assert(h.slen == 5000);
-    assert(h.alnscore == 380);
-    assert(h.npositive == 175);
-    assert(h.nnegative == 15);
-    assert(h.ppositive_x100 == 9211);
-    assert(h.cigar == "100M5I85M");
-    assert(h.qseq == "ACGTACGTACGT");
-    assert(h.sseq == "ACGTACGTTCGT");
+    CHECK(h.qlen == 500);
+    CHECK(h.slen == 5000);
+    CHECK(h.alnscore == 380);
+    CHECK(h.npositive == 175);
+    CHECK(h.nnegative == 15);
+    CHECK(h.ppositive_x100 == 9211);
+    CHECK(h.cigar == "100M5I85M");
+    CHECK(h.qseq == "ACGTACGTACGT");
+    CHECK(h.sseq == "ACGTACGTTCGT");
 
     std::printf(" OK\n");
 }
@@ -707,15 +707,15 @@ static void test_search_response_rejected_qseqids() {
 
     auto data = serialize(resp);
     SearchResponse resp2;
-    assert(deserialize(data, resp2));
+    CHECK(deserialize(data, resp2));
 
-    assert(resp2.results.size() == 1);
-    assert(resp2.results[0].qseqid == "q1");
-    assert(resp2.results[0].hits.size() == 1);
-    assert(resp2.rejected_qseqids.size() == 3);
-    assert(resp2.rejected_qseqids[0] == "q2");
-    assert(resp2.rejected_qseqids[1] == "q3");
-    assert(resp2.rejected_qseqids[2] == "q4");
+    CHECK(resp2.results.size() == 1);
+    CHECK(resp2.results[0].qseqid == "q1");
+    CHECK(resp2.results[0].hits.size() == 1);
+    CHECK(resp2.rejected_qseqids.size() == 3);
+    CHECK(resp2.rejected_qseqids[0] == "q2");
+    CHECK(resp2.rejected_qseqids[1] == "q3");
+    CHECK(resp2.rejected_qseqids[2] == "q4");
 
     std::printf(" OK\n");
 }
@@ -730,16 +730,16 @@ static void test_search_request_chain_max_lookback() {
 
     auto data = serialize(req);
     SearchRequest req2;
-    assert(deserialize(data, req2));
+    CHECK(deserialize(data, req2));
 
-    assert(req2.stage2_max_lookback == 128);
+    CHECK(req2.stage2_max_lookback == 128);
 
     // Also test with 0 (server default)
     req.stage2_max_lookback = 0;
     data = serialize(req);
     SearchRequest req3;
-    assert(deserialize(data, req3));
-    assert(req3.stage2_max_lookback == 0);
+    CHECK(deserialize(data, req3));
+    CHECK(req3.stage2_max_lookback == 0);
 
     std::printf(" OK\n");
 }
@@ -754,29 +754,29 @@ static void test_search_request_max_nhit_per_subject() {
 
     auto data = serialize(req);
     SearchRequest req2;
-    assert(deserialize(data, req2));
+    CHECK(deserialize(data, req2));
 
-    assert(req2.stage2_max_nhit_per_subject == 5);
+    CHECK(req2.stage2_max_nhit_per_subject == 5);
 
     // Also test with 0 (server default)
     req.stage2_max_nhit_per_subject = 0;
     data = serialize(req);
     SearchRequest req3;
-    assert(deserialize(data, req3));
-    assert(req3.stage2_max_nhit_per_subject == 0);
+    CHECK(deserialize(data, req3));
+    CHECK(req3.stage2_max_nhit_per_subject == 0);
 
     // The selection-mode field rides alongside and survives a round trip.
     req.stage2_max_nhit_per_subject_mode = 4;
     data = serialize(req);
     SearchRequest req4;
-    assert(deserialize(data, req4));
-    assert(req4.stage2_max_nhit_per_subject_mode == 4);
+    CHECK(deserialize(data, req4));
+    CHECK(req4.stage2_max_nhit_per_subject_mode == 4);
 
     req.stage2_max_nhit_per_subject_mode = 0;  // auto sentinel
     data = serialize(req);
     SearchRequest req5;
-    assert(deserialize(data, req5));
-    assert(req5.stage2_max_nhit_per_subject_mode == 0);
+    CHECK(deserialize(data, req5));
+    CHECK(req5.stage2_max_nhit_per_subject_mode == 0);
 
     std::printf(" OK\n");
 }
@@ -809,10 +809,10 @@ static void test_search_response_qlen_slen() {
 
     auto data = serialize(resp);
     SearchResponse resp2;
-    assert(deserialize(data, resp2));
+    CHECK(deserialize(data, resp2));
 
-    assert(resp2.results[0].hits[0].qlen == 1500);
-    assert(resp2.results[0].hits[0].slen == 8000);
+    CHECK(resp2.results[0].hits[0].qlen == 1500);
+    CHECK(resp2.results[0].hits[0].slen == 8000);
 
     std::printf(" OK\n");
 }
@@ -845,6 +845,6 @@ int main() {
     test_search_request_chain_max_lookback();
     test_search_request_max_nhit_per_subject();
 
-    std::printf("All protocol tests passed.\n");
-    return 0;
+    TEST_SUMMARY();
+    return g_fail_count == 0 ? 0 : 1;
 }

@@ -1,4 +1,4 @@
-#include <cassert>
+#include "test_util.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <dirent.h>
@@ -21,7 +21,7 @@ static std::string test_dir;
 static void setup_test_dir() {
     char tmpl[] = "/tmp/ikafssn_ckpt_test_XXXXXX";
     char* dir = ::mkdtemp(tmpl);
-    assert(dir != nullptr);
+    CHECK(dir != nullptr);
     test_dir = dir;
 }
 
@@ -57,11 +57,11 @@ static void test_sha256_string() {
     std::cout << "test_sha256_string... ";
     // SHA256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
     std::string hash = sha256_string("hello");
-    assert(hash == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    CHECK(hash == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
 
     // Empty string
     std::string empty_hash = sha256_string("");
-    assert(empty_hash == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    CHECK(empty_hash == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 
     std::cout << "OK\n";
 }
@@ -74,11 +74,11 @@ static void test_sha256_file() {
         out << "hello";
     }
     std::string hash = sha256_file(path);
-    assert(hash == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    CHECK(hash == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
 
     // Non-existent file
     std::string empty = sha256_file(test_dir + "/nonexistent");
-    assert(empty.empty());
+    CHECK(empty.empty());
 
     std::cout << "OK\n";
 }
@@ -102,14 +102,14 @@ static void test_build_options_text_deterministic() {
                                             "abc123", "");
     std::string text2 = build_options_text(req, stats, 9, OutputFormat::kTsv,
                                             "abc123", "");
-    assert(text1 == text2);
-    assert(!text1.empty());
+    CHECK(text1 == text2);
+    CHECK(!text1.empty());
 
     // Different parameter produces different text
     req.mode = 3;
     std::string text3 = build_options_text(req, stats, 9, OutputFormat::kTsv,
                                             "abc123", "");
-    assert(text3 != text1);
+    CHECK(text3 != text1);
 
     std::cout << "OK\n";
 }
@@ -123,17 +123,17 @@ static void test_lock_mechanism() {
     // Acquire lock
     {
         LockGuard guard(lock_dir);
-        assert(guard.locked());
+        CHECK(guard.locked());
 
         // Double acquire should fail
         LockGuard guard2(lock_dir);
-        assert(!guard2.locked());
+        CHECK(!guard2.locked());
     }
     // After scope exit, lock should be released
 
     // Re-acquire should succeed
     LockGuard guard3(lock_dir);
-    assert(guard3.locked());
+    CHECK(guard3.locked());
     guard3.release();
 
     std::cout << "OK\n";
@@ -178,17 +178,17 @@ static void test_checkpoint_roundtrip() {
     Checkpoint ckpt(cfg, logger);
 
     // Initialize
-    assert(!ckpt.exists());
-    assert(ckpt.initialize(options_text, input_sha, ""));
-    assert(ckpt.exists());
+    CHECK(!ckpt.exists());
+    CHECK(ckpt.initialize(options_text, input_sha, ""));
+    CHECK(ckpt.exists());
 
     // Acquire lock
     LockGuard lock;
-    assert(ckpt.acquire_lock(lock));
+    CHECK(ckpt.acquire_lock(lock));
 
     // Write batch 0
     std::vector<std::string> batch0_seqids = {"seq1", "seq2"};
-    assert(ckpt.write_batch_seqids(0, batch0_seqids));
+    CHECK(ckpt.write_batch_seqids(0, batch0_seqids));
 
     std::vector<OutputHit> batch0_hits;
     {
@@ -202,60 +202,60 @@ static void test_checkpoint_roundtrip() {
         h.volume = 0;
         batch0_hits.push_back(h);
     }
-    assert(ckpt.write_batch_results(0, batch0_hits, 2, false));
+    CHECK(ckpt.write_batch_results(0, batch0_hits, 2, false));
 
     // Write response meta
-    assert(ckpt.write_response_meta(2, false));
+    CHECK(ckpt.write_response_meta(2, false));
 
     // Release lock and simulate resume
     lock.release();
 
     // Create new checkpoint instance (simulating restart)
     Checkpoint ckpt2(cfg, logger);
-    assert(ckpt2.exists());
+    CHECK(ckpt2.exists());
 
     LockGuard lock2;
-    assert(ckpt2.acquire_lock(lock2));
+    CHECK(ckpt2.acquire_lock(lock2));
 
     std::unordered_set<std::string> completed;
     int next_batch = 0;
-    assert(ckpt2.resume(options_text, input_sha, completed, next_batch));
-    assert(completed.size() == 2);
-    assert(completed.count("seq1") == 1);
-    assert(completed.count("seq2") == 1);
-    assert(next_batch == 1);
+    CHECK(ckpt2.resume(options_text, input_sha, completed, next_batch));
+    CHECK(completed.size() == 2);
+    CHECK(completed.count("seq1") == 1);
+    CHECK(completed.count("seq2") == 1);
+    CHECK(next_batch == 1);
 
     // Write batch 1
     std::vector<std::string> batch1_seqids = {"seq3"};
-    assert(ckpt2.write_batch_seqids(1, batch1_seqids));
+    CHECK(ckpt2.write_batch_seqids(1, batch1_seqids));
     std::vector<OutputHit> batch1_hits;
-    assert(ckpt2.write_batch_results(1, batch1_hits, 2, false));
+    CHECK(ckpt2.write_batch_results(1, batch1_hits, 2, false));
 
     // Read response meta
     uint8_t mode;
     bool traceback;
-    assert(ckpt2.read_response_meta(mode, traceback));
-    assert(mode == 2);
-    assert(!traceback);
+    CHECK(ckpt2.read_response_meta(mode, traceback));
+    CHECK(mode == 2);
+    CHECK(!traceback);
 
     // Merge results
-    assert(ckpt2.merge_results(cfg.output_path, 2, false));
+    CHECK(ckpt2.merge_results(cfg.output_path, 2, false));
 
     // Verify output file exists and has content
     {
         std::ifstream in(cfg.output_path);
-        assert(in.is_open());
+        CHECK(in.is_open());
         std::string line;
-        assert(std::getline(in, line)); // header
-        assert(line[0] == '#');
-        assert(std::getline(in, line)); // batch 0 hit
-        assert(line.find("seq1") != std::string::npos);
+        CHECK(std::getline(in, line)); // header
+        CHECK(line[0] == '#');
+        CHECK(std::getline(in, line)); // batch 0 hit
+        CHECK(line.find("seq1") != std::string::npos);
     }
 
     // Cleanup
     lock2.release();
     ckpt2.cleanup();
-    assert(!ckpt2.exists());
+    CHECK(!ckpt2.exists());
 
     // Remove output file
     ::unlink(cfg.output_path.c_str());
@@ -298,7 +298,7 @@ static void test_tab_merge_header_dedup() {
     std::string input_sha = sha256_file(cfg.input_path);
 
     Checkpoint ckpt(cfg, logger);
-    assert(ckpt.initialize(options_text, input_sha, ""));
+    CHECK(ckpt.initialize(options_text, input_sha, ""));
 
     // Write two batches with hits
     {
@@ -323,7 +323,7 @@ static void test_tab_merge_header_dedup() {
     }
 
     // Merge
-    assert(ckpt.merge_results(cfg.output_path, 2, false));
+    CHECK(ckpt.merge_results(cfg.output_path, 2, false));
 
     // Read and verify: should have exactly one header line
     {
@@ -339,8 +339,8 @@ static void test_tab_merge_header_dedup() {
             if (line[0] == '#') header_count++;
             else data_count++;
         }
-        assert(header_count == 1);
-        assert(data_count == 2);
+        CHECK(header_count == 1);
+        CHECK(data_count == 2);
     }
 
     ckpt.cleanup();
@@ -385,7 +385,7 @@ static void test_json_fragment_merge() {
     std::string input_sha = sha256_file(cfg.input_path);
 
     Checkpoint ckpt(cfg, logger);
-    assert(ckpt.initialize(options_text, input_sha, ""));
+    CHECK(ckpt.initialize(options_text, input_sha, ""));
 
     // Write two batches
     {
@@ -410,7 +410,7 @@ static void test_json_fragment_merge() {
     }
 
     // Merge
-    assert(ckpt.merge_results(cfg.output_path, 2, false));
+    CHECK(ckpt.merge_results(cfg.output_path, 2, false));
 
     // Verify JSON structure
     {
@@ -418,18 +418,18 @@ static void test_json_fragment_merge() {
         std::string content((std::istreambuf_iterator<char>(in)),
                              std::istreambuf_iterator<char>());
         // Should start with {"results": [ and end with ]}
-        assert(content.find("{") != std::string::npos);
-        assert(content.find("\"results\"") != std::string::npos);
-        assert(content.find("\"q1\"") != std::string::npos);
-        assert(content.find("\"q2\"") != std::string::npos);
+        CHECK(content.find("{") != std::string::npos);
+        CHECK(content.find("\"results\"") != std::string::npos);
+        CHECK(content.find("\"q1\"") != std::string::npos);
+        CHECK(content.find("\"q2\"") != std::string::npos);
         // Should not have trailing comma before ]
         auto close_bracket = content.rfind(']');
-        assert(close_bracket != std::string::npos);
+        CHECK(close_bracket != std::string::npos);
         // Find last non-whitespace before ]
         size_t pos = close_bracket - 1;
         while (pos > 0 && (content[pos] == ' ' || content[pos] == '\n'))
             pos--;
-        assert(content[pos] != ',');
+        CHECK(content[pos] != ',');
     }
 
     ckpt.cleanup();
@@ -464,17 +464,17 @@ static void test_resolve_db_stats() {
     info.databases = {db};
 
     DbStats stats = resolve_db_stats(info, "nt", 11);
-    assert(stats.db_name == "nt");
-    assert(stats.total_sequences == 300);
-    assert(stats.total_bases == 130000);
+    CHECK(stats.db_name == "nt");
+    CHECK(stats.total_sequences == 300);
+    CHECK(stats.total_bases == 130000);
 
     // Non-matching k
     DbStats stats2 = resolve_db_stats(info, "nt", 9);
-    assert(stats2.total_sequences == 0);
+    CHECK(stats2.total_sequences == 0);
 
     // Non-matching db
     DbStats stats3 = resolve_db_stats(info, "other", 11);
-    assert(stats3.total_sequences == 0);
+    CHECK(stats3.total_sequences == 0);
 
     std::cout << "OK\n";
 }
@@ -493,6 +493,6 @@ int main() {
 
     cleanup_test_dir();
 
-    std::cout << "\nAll checkpoint tests passed!\n";
-    return 0;
+    TEST_SUMMARY();
+    return g_fail_count == 0 ? 0 : 1;
 }
