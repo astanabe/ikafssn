@@ -263,7 +263,11 @@ jobs:
             echo '  message(FATAL_ERROR "check_include_file_cxx(iostream) failed")'
             echo 'endif()'
           } > /tmp/iock/CMakeLists.txt
-          if ! cmake -S /tmp/iock -B /tmp/iock/build -DCMAKE_CXX_FLAGS="-std=c++20" > /tmp/iock/out.txt 2>&1; then
+          # Same flags the toolkit's generated toolchain applies.
+          if ! cmake -S /tmp/iock -B /tmp/iock/build \
+                 -DCMAKE_CXX_FLAGS="-gdwarf-4 -Wall -Wno-format-y2k -std=c++20" \
+                 -DCMAKE_EXE_LINKER_FLAGS="-Wl,--enable-new-dtags -Wl,--as-needed" \
+                 > /tmp/iock/out.txt 2>&1; then
             cat /tmp/iock/out.txt
             echo '----- CMakeConfigureLog.yaml -----'
             cat /tmp/iock/build/CMakeFiles/CMakeConfigureLog.yaml 2>/dev/null || true
