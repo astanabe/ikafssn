@@ -40,7 +40,6 @@ pool_dir="pool/main/i/ikafssn"
 mkdir -p "${pool_dir}"
 
 declare -A suite_for_ubuntu=(
-  ["22.04"]="jammy"
   ["24.04"]="noble"
   ["26.04"]="resolute"
 )
@@ -49,7 +48,7 @@ declare -A suite_for_ubuntu=(
 # working directory when its argument is a directory, but absolutises it when
 # the argument is a file.  APT requires Filename to be relative to the channel
 # root, and each suite must advertise only its own build.
-for ubuntu_ver in 22.04 24.04 26.04; do
+for ubuntu_ver in 24.04 26.04; do
   for arch in amd64 arm64; do
     asset="ikafssn_${IKAFSSN_VERSION}_ubuntu-${ubuntu_ver}_${arch}.deb"
     deb_dir="${pool_dir}/ubuntu-${ubuntu_ver}/${arch}"
@@ -65,7 +64,7 @@ for ubuntu_ver in 22.04 24.04 26.04; do
   done
 done
 
-for ubuntu_ver in 22.04 24.04 26.04; do
+for ubuntu_ver in 24.04 26.04; do
   suite=${suite_for_ubuntu[${ubuntu_ver}]}
   suite_dir="dists/${suite}"
   for arch in amd64 arm64; do

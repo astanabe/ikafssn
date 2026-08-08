@@ -19,21 +19,6 @@ Ubuntu 24.04 (x86_64 / aarch64):
   libzstd1
   libdeflate0
 
-Ubuntu 22.04 (x86_64 / aarch64):
-
-  libtbb12
-  liblmdb0
-  libsqlite3-0
-  libcurl4
-  libjsoncpp25
-  libssl3
-  libuuid1
-  zlib1g
-  libbz2-1.0
-  liblzma5
-  libzstd1
-  libdeflate0
-
 EL 9 / EL 10 (x86_64 / aarch64):
 
   tbb
@@ -93,7 +78,6 @@ Conda channel (https://conda.ikafssn.org; runtime deps from conda-forge):
 APT channel (https://deb.ikafssn.org; .deb hosted in-channel):
 
   Suites available:
-    jammy   Ubuntu 22.04 LTS
     noble   Ubuntu 24.04 LTS
   Architectures: amd64, arm64
 
@@ -127,10 +111,12 @@ Build dependencies (from source)
 
 Compiler and tools:
 
-  C++20 compiler (GCC >= 11 or Clang >= 13)
+  C++20 compiler (GCC >= 13 or Clang >= 15)
+
+  The NCBI C++ Toolkit 30.7.0 build refuses anything older than GCC 13.
   CMake >= 3.16
 
-System packages — Ubuntu 22.04 / 24.04 (x86_64 / aarch64):
+System packages — Ubuntu 24.04 / 26.04 (x86_64 / aarch64):
 
   build-essential cmake pkg-config
   libtbb-dev liblmdb-dev libsqlite3-dev

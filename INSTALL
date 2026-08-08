@@ -61,7 +61,6 @@ https://deb.ikafssn.org. The channel always reflects the latest
 release; older versions are not retained in the channel.
 
 Suites:
-  jammy   Ubuntu 22.04 LTS  (amd64, arm64)
   noble   Ubuntu 24.04 LTS  (amd64, arm64)
 
 One-time setup (run as root or via sudo):
@@ -132,7 +131,7 @@ downloaded directly from the GitHub Releases page:
 Package naming conventions:
 
   ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb
-    Ubuntu 22.04 / 24.04, amd64 / arm64
+    Ubuntu 24.04 / 26.04, amd64 / arm64
     e.g. ikafssn_0.1.2026.02.28_ubuntu-24.04_amd64.deb
 
   ikafssn-<version>.el<ver>.<arch>.rpm
@@ -164,7 +163,7 @@ B. Building from source
 1. Install build dependencies
 -------------------------------
 
-Ubuntu 22.04 / 24.04 (x86_64 / aarch64):
+Ubuntu 24.04 / 26.04 (x86_64 / aarch64):
 
   sudo apt-get install -y \
     build-essential cmake pkg-config \

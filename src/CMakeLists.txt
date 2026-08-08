@@ -321,6 +321,11 @@ if(BUILD_HTTPD)
         ikafssn_protocol ikafssn_util ikafssn_core
         SQLite::SQLite3
     )
+    # result_store.cpp includes <zstd.h> directly.  ikafssn_zstd_oneshot
+    # keeps PkgConfig::ZSTD private, so this target has to ask for the
+    # include path itself; a prefix outside the compiler's default search
+    # path (Homebrew, conda) does not resolve otherwise.
+    target_link_libraries(ikafssn_httpd_jobstore PRIVATE PkgConfig::ZSTD)
 
     add_library(ikafssn_httpd_controller STATIC
         ikafssnhttpd/http_controller.cpp

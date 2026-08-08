@@ -1554,7 +1554,6 @@ ikafssn は署名付き APT チャンネル `https://deb.ikafssn.org` 経由で�
 
 | Suite | Ubuntu リリース | アーキテクチャ |
 |---|---|---|
-| `jammy` | Ubuntu 22.04 LTS | `amd64`, `arm64` |
 | `noble` | Ubuntu 24.04 LTS | `amd64`, `arm64` |
 | `resolute` | Ubuntu 26.04 LTS | `amd64`, `arm64` |
 
@@ -1617,7 +1616,7 @@ Homebrew / Conda / APT / DNF が使用できない環境向けに、同じ `.deb
 パッケージ命名規則:
 
 ```
-ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb         # Ubuntu 22.04 / 24.04 / 26.04, amd64 / arm64
+ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb         # Ubuntu 24.04 / 26.04, amd64 / arm64
 ikafssn-<version>.el<el_ver>.<arch>.rpm                   # EL 9 / 10, x86_64 / aarch64
 ikafssn_<version>_<conda_subdir>.conda                    # linux-64 / linux-aarch64 / osx-arm64
 ikafssn-<version>.arm64_tahoe.bottle.tar.gz               # macOS 26 (Tahoe) arm64 用 Homebrew Bottle
@@ -1645,7 +1644,7 @@ ikafssnindex -version
 
 ### 依存関係
 
-- C++20 コンパイラ (GCC >= 11, Clang >= 13)
+- C++20 コンパイラ (GCC >= 13, Clang >= 15)。NCBI C++ Toolkit 30.7.0 のビルドは GCC 13 未満を拒否します。
 - CMake >= 3.16
 - NCBI C++ Toolkit (BLAST DB アクセス用)
 - Intel TBB (並列化用)
@@ -1668,7 +1667,7 @@ CMake が configure 時にダウンロードします。CMake の FetchContent �
 
 NCBI C++ Toolkit 以外の依存パッケージを以下のコマンドでインストールできます。
 
-**Ubuntu Server 22.04 / 24.04 / 26.04:**
+**Ubuntu Server 24.04 / 26.04:**
 
 ```bash
 sudo apt install build-essential cmake pkg-config libtbb-dev liblmdb-dev libsqlite3-dev \

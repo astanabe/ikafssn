@@ -1574,7 +1574,6 @@ ikafssn is distributed through a signed APT channel hosted at `https://deb.ikafs
 
 | Suite | Ubuntu release | Architectures |
 |---|---|---|
-| `jammy` | Ubuntu 22.04 LTS | `amd64`, `arm64` |
 | `noble` | Ubuntu 24.04 LTS | `amd64`, `arm64` |
 | `resolute` | Ubuntu 26.04 LTS | `amd64`, `arm64` |
 
@@ -1637,7 +1636,7 @@ If installing through Homebrew / Conda / APT / DNF is not an option, the same `.
 Package naming conventions:
 
 ```
-ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb         # Ubuntu 22.04 / 24.04 / 26.04, amd64 / arm64
+ikafssn_<version>_ubuntu-<ubuntu_ver>_<arch>.deb         # Ubuntu 24.04 / 26.04, amd64 / arm64
 ikafssn-<version>.el<el_ver>.<arch>.rpm                   # EL 9 / 10, x86_64 / aarch64
 ikafssn_<version>_<conda_subdir>.conda                    # linux-64 / linux-aarch64 / osx-arm64
 ikafssn-<version>.arm64_tahoe.bottle.tar.gz               # macOS 26 (Tahoe) arm64 Homebrew bottle
@@ -1665,7 +1664,7 @@ ikafssnindex -version
 
 ### Dependencies
 
-- C++20 compiler (GCC >= 11, Clang >= 13)
+- C++20 compiler (GCC >= 13, Clang >= 15). The NCBI C++ Toolkit 30.7.0 build refuses anything older than GCC 13.
 - CMake >= 3.16
 - NCBI C++ Toolkit (for BLAST DB access)
 - Intel TBB (for parallelization)
@@ -1688,7 +1687,7 @@ CMake FetchContent cache is already populated.  Nothing else has to be installed
 
 Install the required packages (excluding NCBI C++ Toolkit) with the following commands.
 
-**Ubuntu Server 22.04 / 24.04 / 26.04:**
+**Ubuntu Server 24.04 / 26.04:**
 
 ```bash
 sudo apt install build-essential cmake pkg-config libtbb-dev liblmdb-dev libsqlite3-dev \

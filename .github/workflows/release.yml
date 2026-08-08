@@ -18,14 +18,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-linux-gnu-22.04
-            os: ubuntu-22.04
-            ubuntu_ver: "22.04"
-            pkg_type: deb
-          - target: aarch64-linux-gnu-22.04
-            os: ubuntu-22.04-arm
-            ubuntu_ver: "22.04"
-            pkg_type: deb
           - target: x86_64-linux-gnu-24.04
             os: ubuntu-24.04
             ubuntu_ver: "24.04"
@@ -99,24 +91,12 @@ jobs:
 
       # ---- System dependencies ----
 
-      - name: Install system dependencies (Linux 24.04 / 26.04)
-        if: runner.os == 'Linux' && (matrix.ubuntu_ver == '24.04' || matrix.ubuntu_ver == '26.04')
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux' && matrix.ubuntu_ver != ''
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake dpkg-dev pkg-config \
-            libtbb-dev liblmdb-dev libsqlite3-dev libzstd-dev \
-            libcurl4-openssl-dev libjsoncpp-dev \
-            zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
-            libssl-dev uuid-dev
-
-      - name: Install system dependencies (Linux 22.04)
-        if: runner.os == 'Linux' && matrix.ubuntu_ver == '22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake dpkg-dev pkg-config \
-            gcc-12 g++-12 \
             libtbb-dev liblmdb-dev libsqlite3-dev libzstd-dev \
             libcurl4-openssl-dev libjsoncpp-dev \
             zlib1g-dev libbz2-dev liblzma-dev libdeflate-dev autoconf \
@@ -166,9 +146,10 @@ jobs:
           dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
           dnf install -y gh
 
-      - name: Install GCC 12 toolset (EL 9)
+      # EL 9's system GCC is 11; the NCBI C++ Toolkit requires GCC 13 or newer.
+      - name: Install GCC 13 toolset (EL 9)
         if: matrix.el_ver == '9'
-        run: dnf install -y gcc-toolset-12-gcc-c++
+        run: dnf install -y gcc-toolset-13-gcc-c++
 
       # ---- Environment ----
 
@@ -243,18 +224,12 @@ jobs:
             echo "::notice::Asset ${expected} not yet attached to ${tag}; will build."
           fi
 
-      - name: Use GCC 12 (Ubuntu 22.04)
-        if: steps.check_asset.outputs.exists != 'true' && matrix.ubuntu_ver == '22.04'
-        run: |
-          echo "CC=gcc-12" >> "$GITHUB_ENV"
-          echo "CXX=g++-12" >> "$GITHUB_ENV"
-
-      - name: Use GCC 12 (EL 9)
+      - name: Use GCC 13 (EL 9)
         if: steps.check_asset.outputs.exists != 'true' && matrix.el_ver == '9'
         run: |
-          echo "CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc" >> "$GITHUB_ENV"
-          echo "CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++" >> "$GITHUB_ENV"
-          echo "/opt/rh/gcc-toolset-12/root/usr/bin" >> "$GITHUB_PATH"
+          echo "CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc" >> "$GITHUB_ENV"
+          echo "CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++" >> "$GITHUB_ENV"
+          echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "$GITHUB_PATH"
 
       - name: Set Homebrew paths (macOS)
         if: steps.check_asset.outputs.exists != 'true' && runner.os == 'macOS' && matrix.pkg_type != 'conda'
@@ -263,7 +238,10 @@ jobs:
           echo "HOMEBREW_PREFIX=${HB}" >> "$GITHUB_ENV"
           {
             echo "CMAKE_PREFIX_PATH=${HB}:${HB}/opt/openssl@3:${HB}/opt/sqlite3:${HB}/opt/curl"
-            echo "PKG_CONFIG_PATH=${HB}/opt/openssl@3/lib/pkgconfig:${HB}/opt/sqlite3/lib/pkgconfig:${HB}/opt/curl/lib/pkgconfig"
+            # ${HB}/lib/pkgconfig carries the non-keg-only formulae (zstd
+            # among them); pkg-config does not search it by default, so name
+            # it here rather than relying on CMAKE_PREFIX_PATH propagation.
+            echo "PKG_CONFIG_PATH=${HB}/lib/pkgconfig:${HB}/opt/openssl@3/lib/pkgconfig:${HB}/opt/sqlite3/lib/pkgconfig:${HB}/opt/curl/lib/pkgconfig"
           } >> "$GITHUB_ENV"
 
       # ---- Cache source-built dependencies ----
@@ -787,13 +765,13 @@ jobs:
         id: version
         run: echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify release has all six .deb assets
+      - name: Verify release has all four .deb assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="v${{ steps.version.outputs.version }}"
           missing=()
-          for ubuntu_ver in 22.04 24.04 26.04; do
+          for ubuntu_ver in 24.04 26.04; do
             for arch in amd64 arm64; do
               asset="ikafssn_${{ steps.version.outputs.version }}_ubuntu-${ubuntu_ver}_${arch}.deb"
               if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
