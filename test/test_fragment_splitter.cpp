@@ -5,10 +5,7 @@
 // per-segment split would fail loudly) and to a stand-alone Perl-equivalent
 // reimplementation in C++ (so larger random parents are also covered).
 //
-// The reference implementation lives at
-//   ~/claudecode/kafsss/kafssstore.pl:1078-1180
-//
-// Coverage notes on the kafsss formula:
+// Coverage notes on the kafssstore formula:
 //   * nsplit = floor((seg_len - ovllen) / (minsplitlen - ovllen)).
 //   * If nsplit < 1 the segment becomes one fragment unchanged.
 //   * Else L = seg_len - (nsplit - 1) * ovllen, q = L / nsplit,

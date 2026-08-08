@@ -178,9 +178,8 @@ static bool has_degenerate_base_avx512bw(const char* data,
 __attribute__((target("avx512vbmi2,avx512vbmi,avx512bw,avx512f")))
 static bool has_degenerate_base_avx512vbmi2(const char* data,
                                             std::size_t n) noexcept {
-    // VBMI2 introduces vpcompressb / vpexpandb / vpshrdv. None of those
-    // simplifies this kernel further; body matches BW. Separate symbol
-    // for tier-effect benchmarking.
+    // VBMI2 adds nothing this kernel can use; delegates to the BW tier.
+    // Its own symbol so every SimdCap level dispatches explicitly.
     return has_degenerate_base_avx512bw(data, n);
 }
 

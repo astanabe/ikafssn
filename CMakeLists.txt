@@ -11,7 +11,7 @@ endif()
 
 project(ikafssn LANGUAGES C CXX)
 
-set(IKAFSSN_VERSION "0.1.2026.08.07")
+set(IKAFSSN_VERSION "0.1.2026.08.08")
 
 # --- Optional benchmark suite (Google Benchmark via FetchContent) ---
 # OFF by default; ON pulls Google Benchmark v1.9.4 and adds bench/ subdir.
@@ -341,7 +341,7 @@ set(FASTPFOR_INC_DIR "${FASTPFOR_SRC_DIR}/headers")
 # FastPFor TUs we compile per tier.  Only the bitpacker primitives are
 # included — pfd_codec_tier.cpp drives `simdpackwithoutmask` /
 # `simdunpack` directly under a custom block layout (FOR-within-block
-# + varint tail).
+# + bit-packed tail).
 set(IKAFSSN_FASTPFOR_SOURCES
     ${FASTPFOR_SRC_DIR}/src/bitpacking.cpp
     ${FASTPFOR_SRC_DIR}/src/bitpackingaligned.cpp

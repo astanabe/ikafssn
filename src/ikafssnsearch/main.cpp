@@ -789,9 +789,9 @@ int main(int argc, char* argv[]) {
     // Persistent madvise covers only the small per-volume metadata that
     // every search re-walks (.khx + .ksx).  The .kix / .kpx mappings live
     // for one group at a time inside the search orchestrator, so they are
-    // not pinned here.  Stage 1 / Stage 2A no longer spend a memory budget;
-    // whatever budget remains after .khx/.ksx becomes `posting_budget`,
-    // which bounds the Stage 3 posting heap batching.
+    // not pinned here.  Stage 1 / Stage 2A draw no budget; whatever remains
+    // after .khx/.ksx becomes `posting_budget`, which bounds the Stage 3
+    // posting heap batching.
     uint64_t posting_budget = 0;
     {
         uint64_t budget = memory_limit;

@@ -40,9 +40,9 @@ void extract_kmer_ct_batch_scalar(const std::uint64_t* a, std::size_t n,
 // template (one per tier — the recursion plus the per-tier target attribute
 // keep every shift count visible to the codegen as a compile-time immediate).
 //
-// AVX-512BW and AVX-512VBMI2 share the body — the latter is a separate
-// symbol for tier-effect benchmarking. VBMI2 introduces vpcompressb /
-// vpexpandb / vpshrdv but none of those simplifies this kernel further.
+// AVX-512BW and AVX-512VBMI2 share the body: VBMI2 adds nothing this kernel
+// can use.  It keeps its own symbol so every SimdCap level dispatches
+// explicitly.
 // ===========================================================================
 #if IKAFSSN_SS_X86
 

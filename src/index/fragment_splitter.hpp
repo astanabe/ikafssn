@@ -15,8 +15,7 @@ struct Fragment {
     uint32_t end;     // 1-based, inclusive (start <= end <= parent_length)
 };
 
-// Port of kafssstore's split_long_sequence_positions()
-// (`~/claudecode/kafsss/kafssstore.pl:1078–1180`, DNA2 mode).
+// Port of kafssstore's split_long_sequence_positions() (DNA2 mode).
 //
 // Given a parent of length `parent_length` and its BLAST-DB ambiguity
 // table, split the parent into overlapping fragments of approximately

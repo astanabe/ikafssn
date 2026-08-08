@@ -356,7 +356,7 @@ void Server::accept_loop(int listen_fd, const ServerConfig& config, const Logger
         // Dispatch to worker thread
         arena.execute([&, client_fd] {
             tg.run([&, client_fd] {
-                handle_connection(client_fd, *this, config, arena, logger);
+                handle_connection(client_fd, *this, arena, logger);
             });
         });
     }

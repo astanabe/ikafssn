@@ -5,7 +5,6 @@
 #include "search/hit_limits.hpp"
 #include "index/kix_reader.hpp"
 #include "core/config.hpp"
-#include "core/varint.hpp"
 
 #include <algorithm>
 #include <cmath>

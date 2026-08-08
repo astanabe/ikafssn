@@ -17,7 +17,6 @@ static void send_error(int fd, uint32_t code, const std::string& msg) {
 void handle_connection(
     int client_fd,
     Server& server,
-    const ServerConfig& config,
     tbb::task_arena& arena,
     const Logger& logger) {
 

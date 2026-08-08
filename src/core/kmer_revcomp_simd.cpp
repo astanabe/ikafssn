@@ -128,9 +128,8 @@ __attribute__((target("avx512vbmi2,avx512vbmi,avx512bw,avx512f,avx2")))
 static void kmer_revcomp_batch_avx512vbmi2_u32(const std::uint32_t* in,
                                                std::uint32_t* out,
                                                std::size_t n, int k) noexcept {
-    // VBMI2 introduces vpcompressb / vpexpandb / vpshrdv. None of those
-    // simplifies this kernel further; body matches VBMI/BW. Separate symbol
-    // for tier-effect benchmarking.
+    // VBMI2 adds nothing this kernel can use; the body matches the VBMI/BW
+    // tier.  Its own symbol so every SimdCap level dispatches explicitly.
     const int shift_out = 32 - 2 * k;
     alignas(64) static const std::int8_t bswap_pattern[64] = {
         3,2,1,0,  7,6,5,4,  11,10,9,8,  15,14,13,12,

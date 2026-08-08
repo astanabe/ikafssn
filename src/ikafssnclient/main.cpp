@@ -357,8 +357,7 @@ static int cmd_resume(const std::string& id, Logger& logger,
 static bool execute_info(
     const CliParser& cli,
     bool has_http,
-    InfoResponse& resp,
-    const Logger& logger
+    InfoResponse& resp
 #ifdef IKAFSSN_ENABLE_HTTP
     , const HttpAuthConfig& auth
 #endif
@@ -402,8 +401,7 @@ static bool execute_info(
 static bool execute_search(
     const CliParser& cli,
     const SearchRequest& req,
-    SearchResponse& resp,
-    const Logger& logger) {
+    SearchResponse& resp) {
     int fd = -1;
     if (cli.has("-socket")) {
         std::string sock_path = cli.get_string("-socket");
@@ -846,7 +844,7 @@ int main(int argc, char* argv[]) {
     }
 
     InfoResponse server_info;
-    if (!execute_info(cli, has_http, server_info, logger
+    if (!execute_info(cli, has_http, server_info
 #ifdef IKAFSSN_ENABLE_HTTP
                       , auth
 #endif
@@ -1300,7 +1298,7 @@ int main(int argc, char* argv[]) {
         sent = batch_end;
         for (int attempt = 0; ; attempt++) {
             SearchResponse resp;
-            if (!execute_search(cli, req, resp, logger)) {
+            if (!execute_search(cli, req, resp)) {
                 lock.release();
                 return 1;
             }

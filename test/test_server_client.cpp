@@ -184,7 +184,7 @@ static void test_server_client_search() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            handle_connection(client_fd, server, server_config, arena, logger);
+            handle_connection(client_fd, server, arena, logger);
         }
     });
 
@@ -459,7 +459,7 @@ static void test_health_check() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            handle_connection(client_fd, server, server_config, arena, logger);
+            handle_connection(client_fd, server, arena, logger);
         }
     });
 
@@ -516,7 +516,7 @@ static void test_seqidlist_filter_via_server() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            handle_connection(client_fd, server, server_config, arena, logger);
+            handle_connection(client_fd, server, arena, logger);
         }
     });
 

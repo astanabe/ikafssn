@@ -178,7 +178,7 @@ enum class TemplateResolveMode {
 // kBothRequired / kBothOrSingle (pair case): coding and optimal must agree on
 // the 6-field pairing key (k / t / min_seq_length / min_length_split /
 // overlap_length / max_freq_build) AND on a common max_degen_expand value — no
-// max_degen_expand mixing ("chanpon") between the two sides.  The shared
+// max_degen_expand mixing between the two sides.  The shared
 // max_degen_expand is tie-broken among the values present on BOTH sides
 // (query value preferred, else the largest common one).  The returned indices
 // cover the coding and optimal volumes of that single shared value.

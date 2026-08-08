@@ -13,7 +13,6 @@
 //     dump_postings --kix <path> [--kpx <path>] [--max-kmers N] [--min-count N]
 //                   [--out <path>]
 
-#include "core/varint.hpp"
 #include "core/config.hpp"
 #include "index/kix_reader.hpp"
 #include "index/kpx_reader.hpp"

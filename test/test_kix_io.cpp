@@ -2,7 +2,6 @@
 #include "kix_writer.hpp"
 #include "index/kix_reader.hpp"
 #include "core/config.hpp"
-#include "core/varint.hpp"
 #include "search/seq_id_decoder.hpp"
 
 #include <cstdio>

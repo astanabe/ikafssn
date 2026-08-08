@@ -39,7 +39,6 @@ function(add_index_writer_test TEST_NAME TEST_SOURCE)
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 endfunction()
 
-add_ikafssn_test(test_varint test_varint.cpp)
 
 # RLIMIT_NOFILE reservation used before opening every BLAST DB volume.
 add_ikafssn_test(test_fd_limit test_fd_limit.cpp)

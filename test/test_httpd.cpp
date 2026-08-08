@@ -155,7 +155,7 @@ static void test_backend_search() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            handle_connection(client_fd, server, server_config, arena, logger);
+            handle_connection(client_fd, server, arena, logger);
         }
     });
 
@@ -252,7 +252,7 @@ static void test_backend_health() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            handle_connection(client_fd, server, server_config, arena, logger);
+            handle_connection(client_fd, server, arena, logger);
         }
     });
 
@@ -291,7 +291,7 @@ static void test_backend_info() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            handle_connection(client_fd, server, server_config, arena, logger);
+            handle_connection(client_fd, server, arena, logger);
         }
     });
 
@@ -385,7 +385,7 @@ static void test_backend_seqidlist_filter() {
     std::thread server_thread([&] {
         int client_fd = accept_connection(listen_fd);
         if (client_fd >= 0) {
-            handle_connection(client_fd, server, server_config, arena, logger);
+            handle_connection(client_fd, server, arena, logger);
         }
     });
 

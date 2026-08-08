@@ -519,7 +519,6 @@ static bool filter_one_volume(
 
     std::vector<uint64_t> kpx_sizes;
     if (has_kpx_tmp) {
-        const uint8_t* kpx_posting = kpx_in.posting_file();
         uint64_t kpx_total_data = kpx_in.posting_file_size();
         kpx_sizes.resize(tbl_size, 0);
 
