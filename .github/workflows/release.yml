@@ -247,6 +247,17 @@ jobs:
           fi
           echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "$GITHUB_PATH"
 
+          # gcc-toolset splits libstdc++ into the system libstdc++.so.6 plus
+          # libstdc++_nonshared.a for the newer symbols, and the archive calls
+          # back into the shared library.  Under --as-needed the linker drops
+          # libstdc++.so.6 before it reaches those references and the link dies
+          # on std::ios_base::Init.  The NCBI toolchain puts --as-needed in
+          # CMAKE_EXE_LINKER_FLAGS_INIT, to which CMake appends $LDFLAGS, so
+          # naming --no-as-needed here is what ends up last and wins.
+          LDFLAGS="-Wl,--no-as-needed"
+          export LDFLAGS
+          echo "LDFLAGS=${LDFLAGS}" >> "$GITHUB_ENV"
+
           g++ --version
 
           # The toolkit derives HAVE_IOSTREAM from check_include_file_cxx, which
@@ -266,7 +277,7 @@ jobs:
           # Same flags the toolkit's generated toolchain applies.
           if ! cmake -S /tmp/iock -B /tmp/iock/build \
                  -DCMAKE_CXX_FLAGS="-gdwarf-4 -Wall -Wno-format-y2k -std=c++20" \
-                 -DCMAKE_EXE_LINKER_FLAGS="-Wl,--enable-new-dtags -Wl,--as-needed" \
+                 -DCMAKE_EXE_LINKER_FLAGS="-Wl,--enable-new-dtags -Wl,--as-needed ${LDFLAGS}" \
                  > /tmp/iock/out.txt 2>&1; then
             cat /tmp/iock/out.txt
             echo '----- CMakeConfigureLog.yaml -----'
