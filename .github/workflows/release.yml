@@ -147,9 +147,16 @@ jobs:
           dnf install -y gh
 
       # EL 9's system GCC is 11; the NCBI C++ Toolkit requires GCC 13 or newer.
+      # libstdc++-devel carries the linker script for -lstdc++; without it a
+      # program that includes <iostream> compiles but fails to link, which the
+      # toolkit reports as "Neither <iostream> nor <iostream.h> can be found".
       - name: Install GCC 13 toolset (EL 9)
         if: matrix.el_ver == '9'
-        run: dnf install -y gcc-toolset-13-gcc-c++
+        run: |
+          dnf install -y \
+            gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ \
+            gcc-toolset-13-libstdc++-devel gcc-toolset-13-binutils \
+            gcc-toolset-13-runtime
 
       # ---- Environment ----
 
@@ -224,12 +231,26 @@ jobs:
             echo "::notice::Asset ${expected} not yet attached to ${tag}; will build."
           fi
 
+      # Source the toolset's own enable script rather than naming the binaries
+      # by path: it also exports the LD_LIBRARY_PATH the toolset's linker and
+      # runtime need, without which linking anything that pulls in libstdc++
+      # fails.  The trailing check fails the job here instead of leaving a
+      # misleading "header not found" further down the toolkit build.
       - name: Use GCC 13 (EL 9)
         if: steps.check_asset.outputs.exists != 'true' && matrix.el_ver == '9'
         run: |
-          echo "CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc" >> "$GITHUB_ENV"
-          echo "CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++" >> "$GITHUB_ENV"
+          . /opt/rh/gcc-toolset-13/enable
+          echo "CC=$(command -v gcc)" >> "$GITHUB_ENV"
+          echo "CXX=$(command -v g++)" >> "$GITHUB_ENV"
+          if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+            echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          fi
           echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "$GITHUB_PATH"
+
+          g++ --version
+          printf '#include <iostream>\nint main(){std::cout<<1;}\n' > /tmp/iostream_check.cpp
+          g++ -std=c++20 -o /tmp/iostream_check /tmp/iostream_check.cpp
+          echo "::notice::<iostream> compiles and links under gcc-toolset-13"
 
       - name: Set Homebrew paths (macOS)
         if: steps.check_asset.outputs.exists != 'true' && runner.os == 'macOS' && matrix.pkg_type != 'conda'
