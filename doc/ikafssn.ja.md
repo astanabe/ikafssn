@@ -1644,7 +1644,7 @@ ikafssnindex -version
 
 ### 依存関係
 
-- C++20 コンパイラ (GCC >= 13, Clang >= 15)。NCBI C++ Toolkit 30.7.0 のビルドは GCC 13 未満を拒否します。
+- C++20 コンパイラ (GCC >= 13, Clang >= 15)。NCBI C++ Toolkit 30.8.0 のビルドは GCC 13 未満を拒否します。
 - CMake >= 3.16
 - NCBI C++ Toolkit (BLAST DB アクセス用)
 - Intel TBB (並列化用)
@@ -1791,10 +1791,10 @@ Toolkit 内のビルドサブディレクトリ名 (例: `CMake-GCC1330-Release`
 Toolkit のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-public-release-30.7.0.tar.gz \
-    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.7.0.tar.gz
-tar xf ncbi-cxx-toolkit-public-release-30.7.0.tar.gz
-cd ncbi-cxx-toolkit-public-release-30.7.0
+curl -L -o ncbi-cxx-toolkit-public-release-30.8.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.8.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.8.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.8.0
 export CXXFLAGS="-std=c++20"
 ./cmake-configure \
     --without-debug \
@@ -1827,18 +1827,18 @@ cd ../../..
 
 ikafssnhttpd は Drogon HTTP フレームワークを使用します。デフォルトではソースルート直下の `./drogon` を参照します。別の場所にインストール済みの場合は `-DDROGON_DIR` で指定してください。`-DBUILD_HTTPD=OFF` を指定する場合、Drogon のビルドは不要です。
 
-Drogon のリリース tarball には trantor サブモジュールの中身が含まれないため、対応する trantor のリリースを別途取得する必要があります (Drogon 1.9.13 が参照するコミットは trantor v1.5.28 です)。Drogon と trantor のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
+Drogon のリリース tarball には trantor サブモジュールの中身が含まれないため、対応する trantor のリリースを別途取得する必要があります (Drogon 1.9.14 が参照するコミットは trantor v1.5.29 です)。Drogon と trantor のダウンロード・ビルド・インストールは、ikafssn ソースルートで以下を実行します:
 
 ```bash
-curl -L -o drogon-1.9.13.tar.gz \
-    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.13.tar.gz
-tar xf drogon-1.9.13.tar.gz
-curl -L -o trantor-1.5.28.tar.gz \
-    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.28.tar.gz
-tar xf trantor-1.5.28.tar.gz
-rmdir drogon-1.9.13/trantor
-mv trantor-1.5.28 drogon-1.9.13/trantor
-cd drogon-1.9.13
+curl -L -o drogon-1.9.14.tar.gz \
+    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.14.tar.gz
+tar xf drogon-1.9.14.tar.gz
+curl -L -o trantor-1.5.29.tar.gz \
+    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.29.tar.gz
+tar xf trantor-1.5.29.tar.gz
+rmdir drogon-1.9.14/trantor
+mv trantor-1.5.29 drogon-1.9.14/trantor
+cd drogon-1.9.14
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \

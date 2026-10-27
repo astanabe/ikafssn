@@ -307,7 +307,7 @@ jobs:
             htslib
             ncbi-cxx-toolkit
             drogon
-          key: deps-${{ matrix.target }}-ncbi30.7.0-parasail2.6.2+degmatch-htslib1.24-drogon1.9.13+trantor1.5.28-v1
+          key: deps-${{ matrix.target }}-ncbi30.8.0-parasail2.6.2+degmatch-htslib1.24-drogon1.9.14+trantor1.5.29-v1
 
       # ---- Build Parasail ----
 
@@ -355,10 +355,10 @@ jobs:
       - name: Build NCBI C++ Toolkit
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o ncbi-cxx-toolkit-public-release-30.7.0.tar.gz \
-            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.7.0.tar.gz
-          tar xf ncbi-cxx-toolkit-public-release-30.7.0.tar.gz
-          cd ncbi-cxx-toolkit-public-release-30.7.0
+          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o ncbi-cxx-toolkit-public-release-30.8.0.tar.gz \
+            https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.8.0.tar.gz
+          tar xf ncbi-cxx-toolkit-public-release-30.8.0.tar.gz
+          cd ncbi-cxx-toolkit-public-release-30.8.0
           if [ "$(uname)" = "Darwin" ]; then
             export CFLAGS="-I${HOMEBREW_PREFIX}/include"
             export CXXFLAGS="-I${HOMEBREW_PREFIX}/include -std=c++20"
@@ -387,15 +387,15 @@ jobs:
       - name: Build Drogon
         if: steps.check_asset.outputs.exists != 'true' && matrix.pkg_type != 'conda' && steps.deps-cache.outputs.cache-hit != 'true'
         run: |
-          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o drogon-1.9.13.tar.gz \
-            https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.13.tar.gz
-          tar xf drogon-1.9.13.tar.gz
-          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o trantor-1.5.28.tar.gz \
-            https://github.com/an-tao/trantor/archive/refs/tags/v1.5.28.tar.gz
-          tar xf trantor-1.5.28.tar.gz
-          rmdir drogon-1.9.13/trantor
-          mv trantor-1.5.28 drogon-1.9.13/trantor
-          cd drogon-1.9.13
+          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o drogon-1.9.14.tar.gz \
+            https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.14.tar.gz
+          tar xf drogon-1.9.14.tar.gz
+          curl --retry 8 --retry-delay 5 --retry-all-errors --retry-max-time 300 -fL -o trantor-1.5.29.tar.gz \
+            https://github.com/an-tao/trantor/archive/refs/tags/v1.5.29.tar.gz
+          tar xf trantor-1.5.29.tar.gz
+          rmdir drogon-1.9.14/trantor
+          mv trantor-1.5.29 drogon-1.9.14/trantor
+          cd drogon-1.9.14
           mkdir build && cd build
           cmake_args=(
             -DCMAKE_BUILD_TYPE=Release

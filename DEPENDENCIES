@@ -129,7 +129,7 @@ Compiler and tools:
 
   C++20 compiler (GCC >= 13 or Clang >= 15)
 
-  The NCBI C++ Toolkit 30.7.0 build refuses anything older than GCC 13.
+  The NCBI C++ Toolkit 30.8.0 build refuses anything older than GCC 13.
   CMake >= 3.16
 
 System packages — Ubuntu 24.04 / 26.04 (x86_64 / aarch64):
@@ -179,11 +179,11 @@ Conda packaging (recipe/, conda-forge channel):
 
 Source-built libraries:
 
-  NCBI C++ Toolkit 30.7.0  — BLAST DB access via CSeqDB (SetMMapStrategy drives
+  NCBI C++ Toolkit 30.8.0  — BLAST DB access via CSeqDB (SetMMapStrategy drives
                              the page-cache advice from BlastDbReader)
   Parasail 2.6.2           — Stage 3 pairwise alignment
   htslib 1.24              — SAM/BAM output
-  Drogon 1.9.13            — HTTP framework for ikafssnhttpd
-                             (static, with trantor 1.5.28 placed at
-                             drogon-1.9.13/trantor; ORM/brotli/yaml-cpp/
+  Drogon 1.9.14            — HTTP framework for ikafssnhttpd
+                             (static, with trantor 1.5.29 placed at
+                             drogon-1.9.14/trantor; ORM/brotli/yaml-cpp/
                              drogon_ctl/examples/docs disabled)

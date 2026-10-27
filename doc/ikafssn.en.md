@@ -1664,7 +1664,7 @@ ikafssnindex -version
 
 ### Dependencies
 
-- C++20 compiler (GCC >= 13, Clang >= 15). The NCBI C++ Toolkit 30.7.0 build refuses anything older than GCC 13.
+- C++20 compiler (GCC >= 13, Clang >= 15). The NCBI C++ Toolkit 30.8.0 build refuses anything older than GCC 13.
 - CMake >= 3.16
 - NCBI C++ Toolkit (for BLAST DB access)
 - Intel TBB (for parallelization)
@@ -1811,10 +1811,10 @@ The build subdirectory name within the toolkit (e.g. `CMake-GCC1330-Release`) is
 To download, build, and install the toolkit into `./ncbi-cxx-toolkit`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o ncbi-cxx-toolkit-public-release-30.7.0.tar.gz \
-    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.7.0.tar.gz
-tar xf ncbi-cxx-toolkit-public-release-30.7.0.tar.gz
-cd ncbi-cxx-toolkit-public-release-30.7.0
+curl -L -o ncbi-cxx-toolkit-public-release-30.8.0.tar.gz \
+    https://github.com/ncbi/ncbi-cxx-toolkit-public/archive/refs/tags/release/30.8.0.tar.gz
+tar xf ncbi-cxx-toolkit-public-release-30.8.0.tar.gz
+cd ncbi-cxx-toolkit-public-release-30.8.0
 export CXXFLAGS="-std=c++20"
 ./cmake-configure \
     --without-debug \
@@ -1847,18 +1847,18 @@ cd ../../..
 
 ikafssnhttpd uses the Drogon HTTP framework. By default, CMake looks for Drogon at `./drogon` relative to the source root. If Drogon is installed elsewhere, specify the path with `-DDROGON_DIR`. If `-DBUILD_HTTPD=OFF` is used, Drogon is not required.
 
-The Drogon release tarball does not include the trantor submodule contents, so the corresponding trantor release must be downloaded separately (Drogon 1.9.13 references trantor v1.5.28). To download, build, and install Drogon and trantor into `./drogon`, run the following from the ikafssn source root:
+The Drogon release tarball does not include the trantor submodule contents, so the corresponding trantor release must be downloaded separately (Drogon 1.9.14 references trantor v1.5.29). To download, build, and install Drogon and trantor into `./drogon`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o drogon-1.9.13.tar.gz \
-    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.13.tar.gz
-tar xf drogon-1.9.13.tar.gz
-curl -L -o trantor-1.5.28.tar.gz \
-    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.28.tar.gz
-tar xf trantor-1.5.28.tar.gz
-rmdir drogon-1.9.13/trantor
-mv trantor-1.5.28 drogon-1.9.13/trantor
-cd drogon-1.9.13
+curl -L -o drogon-1.9.14.tar.gz \
+    https://github.com/drogonframework/drogon/archive/refs/tags/v1.9.14.tar.gz
+tar xf drogon-1.9.14.tar.gz
+curl -L -o trantor-1.5.29.tar.gz \
+    https://github.com/an-tao/trantor/archive/refs/tags/v1.5.29.tar.gz
+tar xf trantor-1.5.29.tar.gz
+rmdir drogon-1.9.14/trantor
+mv trantor-1.5.29 drogon-1.9.14/trantor
+cd drogon-1.9.14
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$(realpath ../..)/drogon" \

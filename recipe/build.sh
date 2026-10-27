@@ -7,8 +7,8 @@
 # on Linux) and macOS 11.0 on osx-arm64:
 #   - Parasail 2.6.2  (Stage 3 alignment, with degmatch CIGAR/score patch)
 #   - htslib   1.24 (SAM/BAM output, libcurl/gcs/s3 disabled)
-#   - NCBI C++ Toolkit 30.7.0 (BLAST DB seqdb_reader + blastdb_format)
-#   - Drogon   1.9.13 (HTTP framework for ikafssnhttpd, with trantor 1.5.28
+#   - NCBI C++ Toolkit 30.8.0 (BLAST DB seqdb_reader + blastdb_format)
+#   - Drogon   1.9.14 (HTTP framework for ikafssnhttpd, with trantor 1.5.29
 #                      fetched separately because the release tarball does
 #                      not include the trantor submodule contents)
 #
@@ -25,9 +25,9 @@ NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 
 PARASAIL_VER="2.6.2"
 HTSLIB_VER="1.24"
-NCBI_VER="30.7.0"
-DROGON_VER="1.9.13"
-TRANTOR_VER="1.5.28"
+NCBI_VER="30.8.0"
+DROGON_VER="1.9.14"
+TRANTOR_VER="1.5.29"
 
 PARASAIL_PREFIX="${SRC_DIR}/_parasail"
 HTSLIB_PREFIX="${SRC_DIR}/_htslib"
@@ -253,7 +253,7 @@ if [ -n "${SYSROOT}" ]; then
   fi
 fi
 
-# trantor v1.5.28 discards the std::future::get() return value in
+# trantor v1.5.29 discards the std::future::get() return value in
 # TaskQueue::syncTaskInQueue (TaskQueue.h:52). conda-forge's libcxx on
 # osx-arm64 marks future::get() as [[nodiscard]], and conda-forge's clang
 # enables -Werror=unused-result by default, so the build fails. Demote

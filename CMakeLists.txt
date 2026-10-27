@@ -321,8 +321,8 @@ endif()
 include(FetchContent)
 FetchContent_Declare(
     fastpfor
-    URL      https://github.com/fast-pack/FastPFOR/archive/refs/tags/v0.5.0.tar.gz
-    URL_HASH SHA256=d72f61fdef11d5293a4506350eaba3d293b94e955e2b65c7b2558c2cdad8b32c
+    URL      https://github.com/fast-pack/FastPFOR/archive/refs/tags/v0.5.1.tar.gz
+    URL_HASH SHA256=bd1244923d01b3d90a774752c0b3f926119c79c4b87fddcdc77a40dc9dee8afe
     # SOURCE_SUBDIR names a directory the archive does not contain, so
     # FetchContent_MakeAvailable() downloads and extracts without calling
     # add_subdirectory(): FastPFor's own CMakeLists would build a "native"
