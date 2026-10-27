@@ -183,9 +183,13 @@ if(ENABLE_CLIENT_HTTP)
     # module-mode fallback is Drogon's FindJsoncpp.cmake, which find_package
     # (Drogon) puts on the module path; asking for it under the name its file
     # actually uses keeps CMake from matching a module whose case differs.
-    find_package(jsoncpp CONFIG QUIET)
-    if(NOT jsoncpp_FOUND)
-        find_package(Jsoncpp MODULE REQUIRED)
+    # find_package(Drogon) may already have loaded the jsoncpp config package;
+    # loading it again fails because its imported targets are not guarded.
+    if(NOT TARGET jsoncpp_lib AND NOT TARGET JsonCpp::JsonCpp)
+        find_package(jsoncpp CONFIG QUIET)
+        if(NOT jsoncpp_FOUND)
+            find_package(Jsoncpp MODULE REQUIRED)
+        endif()
     endif()
     # Determine the correct jsoncpp imported target.
     # - Ubuntu's libjsoncpp-dev provides jsoncpp_lib + JsonCpp::JsonCpp.

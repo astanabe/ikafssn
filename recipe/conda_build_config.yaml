@@ -11,3 +11,12 @@ c_stdlib_version:            # [unix]
 
 MACOSX_DEPLOYMENT_TARGET:    # [osx]
   - "11.0"                   # [osx]
+
+# conda-forge's libc++ 23 headers no longer pull in <new> transitively, and
+# NCBI C++ Toolkit's corelib/ncbi_system.cpp calls std::set_new_handler
+# without including it.  Keep the osx-arm64 toolchain (clang and the
+# libcxx-devel headers it pins) on 22.
+c_compiler_version:          # [osx]
+  - "22"                     # [osx]
+cxx_compiler_version:        # [osx]
+  - "22"                     # [osx]
