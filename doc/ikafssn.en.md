@@ -1784,10 +1784,10 @@ ikafssn uses htslib for SAM/BAM output. By default, CMake looks for htslib at `.
 To download, build, and install htslib into `./htslib`, run the following from the ikafssn source root:
 
 ```bash
-curl -L -o htslib-1.24.tar.bz2 \
-    https://github.com/samtools/htslib/releases/download/1.24/htslib-1.24.tar.bz2
-tar xf htslib-1.24.tar.bz2
-cd htslib-1.24
+curl -L -o htslib-1.25.tar.bz2 \
+    https://github.com/samtools/htslib/releases/download/1.25/htslib-1.25.tar.bz2
+tar xf htslib-1.25.tar.bz2
+cd htslib-1.25
 autoreconf -i
 ./configure --prefix="$(realpath ..)/htslib" --disable-libcurl --disable-gcs --disable-s3
 make -j$(nproc)

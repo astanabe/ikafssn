@@ -6,7 +6,7 @@
 # resulting binaries only request glibc symbols up to c_stdlib_version (2.34
 # on Linux) and macOS 11.0 on osx-arm64:
 #   - Parasail 2.6.2  (Stage 3 alignment, with degmatch CIGAR/score patch)
-#   - htslib   1.24 (SAM/BAM output, libcurl/gcs/s3 disabled)
+#   - htslib   1.25 (SAM/BAM output, libcurl/gcs/s3 disabled)
 #   - NCBI C++ Toolkit 30.8.0 (BLAST DB seqdb_reader + blastdb_format)
 #   - Drogon   1.9.14 (HTTP framework for ikafssnhttpd, with trantor 1.5.29
 #                      fetched separately because the release tarball does
@@ -24,7 +24,7 @@ set -euo pipefail
 NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 
 PARASAIL_VER="2.6.2"
-HTSLIB_VER="1.24"
+HTSLIB_VER="1.25"
 NCBI_VER="30.8.0"
 DROGON_VER="1.9.14"
 TRANTOR_VER="1.5.29"
